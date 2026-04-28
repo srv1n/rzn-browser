@@ -14,39 +14,39 @@ RZN ships with built-in workflow packs. For sites that need authentication, assu
 
 | Icon | System | Capabilities |
 | --- | --- | --- |
-| `G` | Google | Search, Maps, News, Scholar, Images, Shopping, Trends, Flights, Hotels, Weather |
-| `B` | Bing | Search, news, and image workflows |
-| `YT` | YouTube | Search and video discovery |
-| `PM` | PubMed | Search and paper extraction |
-| `arX` | arXiv | Search and preprint extraction |
-| `SD` | ScienceDirect | Search and paper access workflows |
+| <img alt="Google" src="https://www.google.com/s2/favicons?sz=64&domain=google.com" width="24" height="24"> | Google | Search, Maps, News, Scholar, Images, Shopping, Trends, Flights, Hotels, Weather |
+| <img alt="Bing" src="https://www.google.com/s2/favicons?sz=64&domain=bing.com" width="24" height="24"> | Bing | Search, news, and image workflows |
+| <img alt="YouTube" src="https://www.google.com/s2/favicons?sz=64&domain=youtube.com" width="24" height="24"> | YouTube | Search and video discovery |
+| <img alt="PubMed" src="https://www.google.com/s2/favicons?sz=64&domain=pubmed.ncbi.nlm.nih.gov" width="24" height="24"> | PubMed | Search and paper extraction |
+| <img alt="arXiv" src="https://www.google.com/s2/favicons?sz=64&domain=arxiv.org" width="24" height="24"> | arXiv | Search and preprint extraction |
+| <img alt="ScienceDirect" src="https://www.google.com/s2/favicons?sz=64&domain=sciencedirect.com" width="24" height="24"> | ScienceDirect | Search and paper access workflows |
 
 ### Shopping, Travel & Reviews
 
 | Icon | System | Capabilities |
 | --- | --- | --- |
-| `AM` | Amazon | Product search, key facts, and review extraction |
-| `ET` | Etsy | Listing search and review extraction |
-| `G2` | G2 | Product search, details, and review extraction |
-| `CP` | Capterra | Product search, details, and review extraction |
-| `AS` | App Store | App search, app details, and draft review flows |
-| `AB` | Airbnb | Search workflows |
+| <img alt="Amazon" src="https://www.google.com/s2/favicons?sz=64&domain=amazon.com" width="24" height="24"> | Amazon | Product search, key facts, and review extraction |
+| <img alt="Etsy" src="https://www.google.com/s2/favicons?sz=64&domain=etsy.com" width="24" height="24"> | Etsy | Listing search and review extraction |
+| <img alt="G2" src="https://www.google.com/s2/favicons?sz=64&domain=g2.com" width="24" height="24"> | G2 | Product search, details, and review extraction |
+| <img alt="Capterra" src="https://www.google.com/s2/favicons?sz=64&domain=capterra.com" width="24" height="24"> | Capterra | Product search, details, and review extraction |
+| <img alt="App Store" src="https://www.google.com/s2/favicons?sz=64&domain=apps.apple.com" width="24" height="24"> | App Store | App search, app details, and draft review flows |
+| <img alt="Airbnb" src="https://www.google.com/s2/favicons?sz=64&domain=airbnb.com" width="24" height="24"> | Airbnb | Search workflows |
 
 ### AI Apps
 
 | Icon | System | Capabilities |
 | --- | --- | --- |
-| `CG` | ChatGPT | New chats, continue chats, export chats, recent chats, image generation and downloads |
-| `CL` | Claude | Recent chats, replies, and full chat export |
+| <img alt="ChatGPT" src="https://www.google.com/s2/favicons?sz=64&domain=chatgpt.com" width="24" height="24"> | ChatGPT | New chats, continue chats, export chats, recent chats, image generation and downloads |
+| <img alt="Claude" src="https://www.google.com/s2/favicons?sz=64&domain=claude.ai" width="24" height="24"> | Claude | Recent chats, replies, and full chat export |
 
 ### Social & Communities
 
 | Icon | System | Capabilities |
 | --- | --- | --- |
-| `X` | X | Timeline reads, thread export, post drafts, likes, replies, inbox, and DMs |
-| `RD` | Reddit | Inbox, chats, comment flows, drafts, and replies |
-| `HN` | Hacker News | Submit, comment, reply, and draft-first write flows |
-| `IG` | Instagram | Profile posts and post asset extraction |
+| <img alt="X" src="https://www.google.com/s2/favicons?sz=64&domain=x.com" width="24" height="24"> | X | Timeline reads, thread export, post drafts, likes, replies, inbox, and DMs |
+| <img alt="Reddit" src="https://www.google.com/s2/favicons?sz=64&domain=reddit.com" width="24" height="24"> | Reddit | Inbox, chats, comment flows, drafts, and replies |
+| <img alt="Hacker News" src="https://www.google.com/s2/favicons?sz=64&domain=news.ycombinator.com" width="24" height="24"> | Hacker News | Submit, comment, reply, and draft-first write flows |
+| <img alt="Instagram" src="https://www.google.com/s2/favicons?sz=64&domain=instagram.com" width="24" height="24"> | Instagram | Profile posts and post asset extraction |
 
 ## Best Fit
 
@@ -226,13 +226,13 @@ rzn-browser llm-auto "Search Google for browser automation and extract the top r
 
 | icon | system name | workflows |
 | --- | --- | --- |
-| `G` | Google | Search and related flows under `google/*` |
-| `B` | Bing | Search/image-style flows under `bing/*` |
-| `HN` | Hacker News | Read, draft, and comment flows under `hn/*` |
-| `IG` | Instagram | Profile/post asset flows under `instagram/*` |
-| `X` | X | Session-aware extraction flows under `x/*` |
-| `CG` | ChatGPT | ChatGPT web app flows under `chatgpt/*` |
-| `EX` | Examples | Packaged examples under `examples/*` |
+| <img alt="Google" src="https://www.google.com/s2/favicons?sz=64&domain=google.com" width="24" height="24"> | Google | Search and related flows under `google/*` |
+| <img alt="Bing" src="https://www.google.com/s2/favicons?sz=64&domain=bing.com" width="24" height="24"> | Bing | Search/image-style flows under `bing/*` |
+| <img alt="Hacker News" src="https://www.google.com/s2/favicons?sz=64&domain=news.ycombinator.com" width="24" height="24"> | Hacker News | Read, draft, and comment flows under `hn/*` |
+| <img alt="Instagram" src="https://www.google.com/s2/favicons?sz=64&domain=instagram.com" width="24" height="24"> | Instagram | Profile/post asset flows under `instagram/*` |
+| <img alt="X" src="https://www.google.com/s2/favicons?sz=64&domain=x.com" width="24" height="24"> | X | Session-aware extraction flows under `x/*` |
+| <img alt="ChatGPT" src="https://www.google.com/s2/favicons?sz=64&domain=chatgpt.com" width="24" height="24"> | ChatGPT | ChatGPT web app flows under `chatgpt/*` |
+| <img alt="Examples" src="extension/public/icons/brain-32.png" width="24" height="24"> | Examples | Packaged examples under `examples/*` |
 
 Useful commands:
 
