@@ -1,0 +1,92 @@
+{
+  "system_id": "google",
+  "id": "google_flights_v1",
+  "name": "Google Flights Lookup",
+  "description": "Search for flights from origin to destination via Google Search and extract the visible Flights widget text (best-effort).",
+  "domain": "google.com",
+  "version": "1.1.0",
+  "last_updated": "2026-04-24T00:00:00Z",
+  "browser_automation": {
+    "description": "Uses google.com/search?q=flights+from+ORIGIN+to+DESTINATION because the full Flights SPA at google.com/travel/flights is too brittle to extract reliably.",
+    "sequences": [
+      {
+        "name": "google_flights_search_extract",
+        "description": "Navigate to a Google Search flights query and dump the result panel text.",
+        "required_variables": [
+          {
+            "name": "origin",
+            "description": "Departure city or airport code (e.g. NYC, JFK, New York)."
+          },
+          {
+            "name": "destination",
+            "description": "Arrival city or airport code (e.g. LON, LHR, London)."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Google Search flights query",
+            "type": "navigate_to_url",
+            "url": "https://www.google.com/search?q=flights%20from%20{origin}%20to%20{destination}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for results panel",
+            "type": "wait_for_element",
+            "selector": "#search, #rso",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s3",
+            "name": "Dismiss common popups",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s4",
+            "name": "Extract visible search panel text",
+            "type": "extract_structured_data",
+            "extraction_type": "flights_text",
+            "item_selector": "body",
+            "fields": [
+              { "name": "search_text", "selector": "#search" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Look up flights via Google Search and return the visible Flights widget text. Best-effort.",
+    "parameters": [
+      {
+        "name": "origin",
+        "required": true,
+        "shape": "text",
+        "description": "Departure city or airport code. City names work; IATA codes (JFK, LHR) are most reliable.",
+        "example": "NYC"
+      },
+      {
+        "name": "destination",
+        "required": true,
+        "shape": "text",
+        "description": "Arrival city or airport code.",
+        "example": "LON"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run google flights --param origin=\"NYC\" --param destination=\"LON\"",
+        "description": "NYC → London flights."
+      },
+      {
+        "command": "rzn-browser run google flights --param origin=\"SFO\" --param destination=\"NRT\"",
+        "description": "SFO → Tokyo Narita."
+      }
+    ],
+    "returns": "Object with one field, search_text — the inner text of the #search panel, including the Flights widget. Parsing into structured price/date/airline rows is left to the caller because Google rotates that DOM frequently.",
+    "notes": [
+      "This workflow does not pick dates or filter cabins — it returns whatever the default widget shows.",
+      "For deeper flight queries (dates, cabin class), build on top of this output or open google/travel/flights directly via the orchestrator."
+    ]
+  }
+}

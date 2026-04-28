@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Nested Table Fixture</title>
+    <style>
+      body { font-family: sans-serif; margin: 16px; }
+      table { border-collapse: collapse; width: 100%; }
+      th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+      .name { font-weight: 600; }
+      .tags { color: #666; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Products</h1>
+    <table id="products">
+      <thead>
+        <tr><th>Name</th><th>Price</th><th>Tags</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="name">Widget A</td>
+          <td class="price">$10</td>
+          <td class="tags">
+            <ul>
+              <li>small</li>
+              <li>blue</li>
+            </ul>
+          </td>
+        </tr>
+        <tr>
+          <td class="name">Widget B</td>
+          <td class="price">$20</td>
+          <td class="tags">
+            <ul>
+              <li>large</li>
+              <li>red</li>
+            </ul>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </body>
+</html>
+

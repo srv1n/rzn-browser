@@ -1,0 +1,121 @@
+{
+  "system_id": "google",
+  "id": "google_search_v2",
+  "name": "Google Search",
+  "description": "Search Google's web, news, or books vertical and extract title/url/snippet for each organic result.",
+  "domain": "google.com",
+  "version": "2.0.0",
+  "last_updated": "2026-04-24T00:00:00Z",
+  "browser_automation": {
+    "description": "Performs a Google Search against the chosen vertical and extracts organic result cards.",
+    "sequences": [
+      {
+        "name": "google_search_extract",
+        "description": "Run a search against the selected vertical and extract organic results.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "Query text. Aliases: query, q (resolved by the engine)."
+          }
+        ],
+        "optional_variables": [
+          {
+            "name": "vertical",
+            "description": "Search vertical: web (default), news, books"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Open Google homepage (creates tab for the SPA redirect in s2)",
+            "type": "navigate_to_url",
+            "url": "https://www.google.com/"
+          },
+          {
+            "id": "s1b",
+            "name": "Redirect to the chosen vertical (web/news/books)",
+            "type": "execute_javascript",
+            "world": "main",
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst q = cleanArg('{search_query}');\nconst vRaw = cleanArg('{vertical}').toLowerCase();\nconst tbm = { news: 'nws', books: 'bks' }[vRaw] || '';\nconst params = new URLSearchParams({ q });\nif (tbm) params.set('tbm', tbm);\nconst target = 'https://www.google.com/search?' + params.toString();\nsetTimeout(() => window.location.assign(target), 0);\nreturn { redirected: true, target, vertical: vRaw || 'web' };",
+            "return_value": true
+          },
+          {
+            "id": "s2",
+            "name": "Wait for results container",
+            "type": "wait_for_element",
+            "selector": "#search, #rso",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s3",
+            "name": "Dismiss common popups (consent, sign-in)",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for at least one result card (web/news/books)",
+            "type": "wait_for_element",
+            "selector": "#search h3, #rso h3, #search .SoaBEf, #search .MBeuO",
+            "timeout_ms": 12000
+          },
+          {
+            "id": "s5",
+            "name": "Extract organic results (covers web + news + books)",
+            "type": "extract_structured_data",
+            "extraction_type": "search_results",
+            "item_selector": ".MjjYud, .SoaBEf",
+            "fields": [
+              { "name": "title", "selector": "h3, .MBeuO" },
+              { "name": "url", "selector": "a[href]", "attribute": "href" },
+              { "name": "snippet", "selector": ".VwiC3b, [data-content-feature], .yXK7lf, .UqSP2b, .HSSq5c, .GI74Re" },
+              { "name": "source", "selector": ".NUnG9d" },
+              { "name": "age", "selector": ".OSrXXb" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Search Google (web/news/books) and extract organic results.",
+    "parameters": [
+      {
+        "name": "search_query",
+        "required": true,
+        "shape": "text",
+        "description": "Query text. The engine accepts the aliases query and q as well.",
+        "example": "rust browser automation"
+      },
+      {
+        "name": "vertical",
+        "required": false,
+        "shape": "enum:web|news|books",
+        "description": "Which Google vertical to search. Defaults to web. news → tbm=nws, books → tbm=bks.",
+        "example": "news"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run google search --param search_query=\"rust browser automation\"",
+        "description": "Default web search."
+      },
+      {
+        "command": "rzn-browser run google search --param query=\"AI regulation\" --param vertical=news",
+        "description": "News vertical (uses the query alias). Returns extra source + age fields per result."
+      },
+      {
+        "command": "rzn-browser run google search --param search_query=\"category theory\" --param vertical=books",
+        "description": "Books vertical (titles + URLs; snippets often empty)."
+      }
+    ],
+    "returns": "Array of { title, url, snippet, source?, age? }. source/age populate for news results only; snippet is often empty for books cards.",
+    "notes": [
+      "Shopping is intentionally NOT included — Google moved shopping to a React widget at udm=28 with no clean per-product anchors. A dedicated google/shopping workflow would be needed; out of scope here.",
+      "For raw image results, use google/images — different output contract (image URLs).",
+      "For Scholar, use google/scholar — paper-shaped fields.",
+      "On news results, source/age come from .NUnG9d/.OSrXXb — those classes occasionally appear in YouTube cards on web results, so for web you may see one row with the YouTube title leaking into 'age'. Filter by URL host downstream.",
+      "If results are empty, dismiss_popups may have failed on a consent gate — check the browser tab.",
+      "Unknown vertical values fall back to web."
+    ]
+  }
+}

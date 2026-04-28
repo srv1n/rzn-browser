@@ -1,0 +1,10 @@
+id: find-rust-runtime-emits
+language: rust
+rule:
+  any:
+    - pattern: serde_json::to_string($X)
+    - pattern: $S.send($M)
+    - pattern: write_all($B)
+message: "Runtime emit/send"
+severity: info
+

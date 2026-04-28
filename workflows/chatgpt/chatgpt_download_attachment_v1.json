@@ -1,0 +1,67 @@
+{
+  "system_id": "chatgpt",
+  "id": "chatgpt_download_attachment_v1",
+  "name": "ChatGPT: Download Attachment",
+  "description": "Open a ChatGPT thread, find an attachment-like button in the latest assistant turn by exact label, click it, and return the click result.",
+  "domain": "chatgpt.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "use_current_tab": true,
+    "description": "Current-tab ChatGPT attachment click workflow. It scopes to the latest assistant turn instead of global page buttons.",
+    "sequences": [
+      {
+        "name": "chatgpt_download_attachment",
+        "description": "Open thread -> warm transcript DOM -> click the exact latest-assistant attachment button.",
+        "required_variables": [
+          {
+            "name": "chat_id",
+            "description": "ChatGPT conversation id from /c/<chat_id>"
+          },
+          {
+            "name": "attachment_label",
+            "description": "Exact visible attachment label from the latest assistant turn."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open the target ChatGPT conversation in the current tab",
+            "type": "navigate_to_url",
+            "url": "https://chatgpt.com/c/{chat_id}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the route to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1800
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the ChatGPT thread surface",
+            "type": "wait_for_element",
+            "selector": "[data-message-author-role], main article, #prompt-textarea, textarea[placeholder*='Message' i]",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s4",
+            "name": "Click the exact latest-assistant attachment button",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 180000,
+            "args": [
+              "{chat_id}",
+              "{attachment_label}"
+            ],
+            "script": "const cleanArg=(value)=>{const text=String(value==null?'':value).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(text)?'':text;};const expectedChatId=cleanArg(arg0);const attachmentLabel=cleanArg(arg1);const normalize=(value)=>(value||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));const chatIdFromLocation=()=>{const match=window.location.pathname.match(/^\\/c\\/([^/?#]+)/);return match?match[1]:null;};const candidateSelector='[data-message-author-role], [data-testid*=\"conversation-turn\"], [data-testid*=\"conversationTurn\"]';const collectRoots=()=>{const roots=[];const seen=new Set();for(const node of Array.from(document.querySelectorAll(candidateSelector))){if(!(node instanceof Element)) continue;const explicitRoleAncestor=node.parentElement?.closest?.('[data-message-author-role]');if(explicitRoleAncestor instanceof Element) continue;if(!node.hasAttribute('data-message-author-role')&&node.querySelector('[data-message-author-role]')) continue;const nestedCandidate=Array.from(node.querySelectorAll(candidateSelector)).find((child)=>child!==node&&child instanceof Element&&normalize(child.textContent||'').length>=8);if(!node.hasAttribute('data-message-author-role')&&nestedCandidate) continue;const root=node;if(seen.has(root)) continue;seen.add(root);const explicitRole=(root.getAttribute('data-message-author-role')||'').toLowerCase();const testId=(root.getAttribute('data-testid')||'').toLowerCase();const role=explicitRole||(/assistant|model/.test(testId)?'assistant':/user|prompt/.test(testId)?'user':'unknown');const text=normalize(root.textContent||'');if(!text&&root.querySelectorAll('a,button,img').length===0) continue;roots.push({root,role,text,test_id:root.getAttribute('data-testid')||null});}return roots;};const currentChatId=chatIdFromLocation();if(expectedChatId&&currentChatId&&currentChatId!==expectedChatId) throw new Error(`expected chat_id ${expectedChatId} but opened ${currentChatId}`);let roots=collectRoots();const scrollRoot=document.scrollingElement||document.documentElement;for(let pass=0;pass<8&&(roots.length<2||!roots.some((entry)=>entry.role==='assistant'));pass+=1){const beforeTop=typeof scrollRoot.scrollTop==='number'?scrollRoot.scrollTop:window.scrollY;const targetTop=Math.max(0,beforeTop-Math.max(window.innerHeight*0.9,700));window.scrollTo(0,targetTop);await sleep(850);roots=collectRoots();if(targetTop===0) break;}window.scrollTo(0,document.body.scrollHeight);await sleep(950);roots=collectRoots();const latestAssistantEntry=[...roots].reverse().find((entry)=>entry.role==='assistant')||null;if(!latestAssistantEntry){return{success:false,error:'NO_ASSISTANT_ROOT',chat_id:currentChatId,root_count:roots.length,available_roles:Array.from(new Set(roots.map((entry)=>entry.role)))};}const buttons=Array.from(latestAssistantEntry.root.querySelectorAll('button,[role=\"button\"]')).filter((node)=>node instanceof Element&&getComputedStyle(node).visibility!=='hidden'&&getComputedStyle(node).display!=='none'&&node.getBoundingClientRect().width>0&&node.getBoundingClientRect().height>0);const availableButtons=buttons.map((node)=>normalize(node.textContent||'')).filter(Boolean);const target=buttons.find((node)=>normalize(node.textContent||'')===attachmentLabel)||buttons.find((node)=>normalize(node.textContent||'').toLowerCase()===attachmentLabel.toLowerCase());if(!target){return{success:false,error:'ATTACHMENT_BUTTON_NOT_FOUND',chat_id:currentChatId,available_buttons:availableButtons};}target.click();await sleep(1800);return{success:true,chat_id:currentChatId,clicked_label:attachmentLabel,current_url:window.location.href,title:document.title,available_buttons:availableButtons};"
+          }
+        ]
+      }
+    ]
+  }
+}

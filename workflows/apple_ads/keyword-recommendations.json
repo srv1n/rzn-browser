@@ -1,0 +1,89 @@
+{
+  "system_id": "apple_ads",
+  "id": "apple_ads_keyword_recommendations",
+  "name": "Apple Ads: Recommendations Page (DOM)",
+  "description": "Extract recommendation-card rows from the Apple Ads portal `Recommendations` page using the authenticated browser session. Use this when the keyword-suggest API endpoint is unavailable or when you need the full recommendation card text (not just keyword suggestions). Read-only.",
+  "domain": "app-ads.apple.com",
+  "version": "2.0.0",
+  "last_updated": "2026-04-25T00:00:00Z",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigate to the portal shell, click the Recommendations nav, and extract `.rc-card-component.row` rows.",
+    "sequences": [
+      {
+        "name": "apple_ads_keyword_recommendations",
+        "description": "Open the Recommendations page and dump visible cards (or the no-recommendations empty state).",
+        "required_variables": [],
+        "optional_variables": [
+          { "name": "adam_id", "description": "Optional: app adamId, for recipient-side filtering only (this workflow does not apply it)." },
+          { "name": "adgroup_id", "description": "Optional: ad group id for context only." },
+          { "name": "query", "description": "Optional: seed keyword for context only." },
+          { "name": "storefront", "description": "Optional: storefront code (us, gb, ca) for context only." }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to the Apple Ads portal",
+            "type": "navigate_to_url",
+            "url": "https://app-ads.apple.com/cm/app",
+            "wait": "domcontentloaded",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s2",
+            "name": "Wait for portal shell",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          },
+          {
+            "id": "s3",
+            "name": "Open the Recommendations page",
+            "type": "click_element",
+            "selector": "a[href*='recommendations']",
+            "timeout_ms": 12000
+          },
+          {
+            "id": "s4",
+            "name": "Wait for recommendation view",
+            "type": "wait_for_timeout",
+            "timeout_ms": 3000
+          },
+          {
+            "id": "s5",
+            "name": "Extract recommendation summary cards",
+            "type": "extract_structured_data",
+            "item_selector": ".rc-card-component",
+            "limit": 50,
+            "fields": [
+              { "name": "title", "selector": ".rc-card-component-title, .rc-title, .rc-unavailable__header, h1, h2, h3", "post_processing": ["collapse_whitespace"] },
+              { "name": "info", "selector": ".rc-card-component-info, .rc-card-component--supply-source--body, .rc-unavailable__title, p", "post_processing": ["collapse_whitespace"] },
+              { "name": "supply_source_title", "selector": ".rc-card-component--supply-source--title", "post_processing": ["collapse_whitespace"] },
+              { "name": "states_summary", "selector": ".rc-card-component-states", "post_processing": ["collapse_whitespace"] },
+              { "name": "raw_text", "selector": "*", "post_processing": ["collapse_whitespace"] }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Extract recommendation-card rows from Apple Ads Recommendations page (authenticated browser session).",
+    "parameters": [
+      { "name": "adam_id", "required": false, "shape": "text", "description": "App adamId — currently only used for caller-side filtering; not applied to the UI.", "example": "1232780281" },
+      { "name": "adgroup_id", "required": false, "shape": "text", "description": "Ad group id — caller-side context only.", "example": "777000222" },
+      { "name": "query", "required": false, "shape": "text", "description": "Seed keyword — caller-side context only.", "example": "notes app" },
+      { "name": "storefront", "required": false, "shape": "text", "description": "Storefront code (us, gb, ca) — caller-side context only.", "example": "us" }
+    ],
+    "examples": [
+      { "command": "rzn-browser run apple-ads keyword-recommendations", "description": "Dump current Recommendations cards for the authenticated org." }
+    ],
+    "returns": "Array of { title, info, supply_source_title, states_summary, raw_text } summary cards. As of 2026-04, Apple's portal shows category-level summary cards (e.g. 'Keywords — 98 Available, 0 Applied, 0 Dismissed') rather than a flat per-keyword list. Drill into the keyword-suggest workflow for actual keyword data.",
+    "notes": [
+      "Read-only.",
+      "Requires an authenticated app-ads.apple.com session in the browser.",
+      "Optional params are passed through but do NOT currently filter the portal view — they exist so the caller can tag the result set and filter downstream. If Apple adds a query-string filter for the Recommendations page, wire it into step s1.",
+      "Apple changed the layout in 2026-Q1: the page now lists category summary cards (Keywords, Negative Keywords, Bid, etc.) instead of individual recommendations. To get per-keyword recs, click into a category in the portal and use `apple-ads/keyword-suggest` for the actual keyword suggestion data.",
+      "`raw_text` is a fallback text blob; prefer title + info + states_summary for clean data."
+    ]
+  }
+}

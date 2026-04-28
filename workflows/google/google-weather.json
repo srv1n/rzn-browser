@@ -1,0 +1,94 @@
+{
+  "system_id": "google",
+  "id": "google_weather_v1",
+  "name": "Google Weather Lookup",
+  "description": "Look up current weather for a location via Google Search's weather widget.",
+  "domain": "google.com",
+  "version": "1.1.0",
+  "last_updated": "2026-04-24T00:00:00Z",
+  "browser_automation": {
+    "description": "Hits google.com/search?q=weather+LOCATION and reads the inline weather widget (#wob_wc).",
+    "sequences": [
+      {
+        "name": "google_weather_extract",
+        "description": "Extract current conditions from the Google Search weather widget.",
+        "required_variables": [
+          {
+            "name": "location",
+            "description": "City or location name (e.g. 'San Francisco', 'Paris, France', 'Tokyo')."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Google Search weather query",
+            "type": "navigate_to_url",
+            "url": "https://www.google.com/search?q=weather+{location}"
+          },
+          {
+            "id": "s2",
+            "name": "Settle: let widget mount",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          },
+          {
+            "id": "s3",
+            "name": "Dismiss common popups",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for the weather widget",
+            "type": "wait_for_element",
+            "selector": "#wob_wc, #wob_tm, #wob_loc",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s5",
+            "name": "Extract widget fields (location label sits in a sibling section, others are inside #wob_wc)",
+            "type": "extract_structured_data",
+            "extraction_type": "weather",
+            "item_selector": "body",
+            "limit": 1,
+            "fields": [
+              { "name": "location", "selector": ".BBwThe" },
+              { "name": "time", "selector": "#wob_dts" },
+              { "name": "condition", "selector": "#wob_dc" },
+              { "name": "temperature", "selector": "#wob_tm" },
+              { "name": "precipitation", "selector": "#wob_pp" },
+              { "name": "humidity", "selector": "#wob_hm" },
+              { "name": "wind", "selector": "#wob_ws" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Get current weather conditions for a location from Google Search's weather widget.",
+    "parameters": [
+      {
+        "name": "location",
+        "required": true,
+        "shape": "text",
+        "description": "City or location name. Use 'City, Country' for disambiguation if needed.",
+        "example": "San Francisco, CA"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run google weather --param location=\"San Francisco, CA\"",
+        "description": "SF weather."
+      },
+      {
+        "command": "rzn-browser run google weather --param location=\"Paris, France\"",
+        "description": "Paris weather, disambiguated from Paris, TX."
+      }
+    ],
+    "returns": "Object: { location, time, condition, temperature, precipitation, humidity, wind }. Temperature unit (F vs C) follows the user's regional setting on Google.",
+    "notes": [
+      "The widget toggles F/C based on Google's locale guess for the session — the workflow does not force a unit. Inspect the temperature field's trailing unit if you need to normalize.",
+      "Forecast (next-day) extraction is not included; this is current conditions only."
+    ]
+  }
+}

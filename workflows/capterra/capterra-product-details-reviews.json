@@ -1,0 +1,82 @@
+{
+  "system_id": "capterra",
+  "id": "capterra_product_details_reviews",
+  "name": "Capterra: Product Details + Reviews",
+  "description": "Open a Capterra product page and return product metadata plus reviews from the embedded JSON-LD SoftwareApplication block. JSON-LD is much more reliable than DOM scraping on Capterra (Cloudflare/SPA); typical pages return ~25 reviews per call.",
+  "domain": "capterra.com",
+  "version": "2.0.0",
+  "last_updated": "2026-04-25T00:00:00Z",
+  "help": {
+    "summary": "Fetch product metadata and reviews for a Capterra product. Reads the embedded JSON-LD SoftwareApplication block instead of scraping DOM (more stable, returns ~25 reviews).",
+    "parameters": [
+      {
+        "name": "product_url",
+        "required": true,
+        "shape": "https URL",
+        "description": "Full Capterra product URL — e.g. the .../p/<id>/<slug>/reviews/ canonical from capterra/search.",
+        "example": "https://www.capterra.com/p/155928/Zoho-CRM/reviews/"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Fetch Zoho CRM details + reviews",
+        "command": "rzn-browser run capterra product-details-reviews --param product_url=\"https://www.capterra.com/p/155928/Zoho-CRM/reviews/\""
+      }
+    ],
+    "returns": "Object: { product: { name, description, category, rating, total_reviews, best_rating, url }, reviews: [{ author, body, rating, best_rating }], reviews_returned }. Capterra exposes ~25 reviews per page in its JSON-LD; for deeper coverage walk additional ?page=N URLs separately.",
+    "notes": [
+      "Capterra is fronted by Cloudflare. Cold sessions may hit a 'Just a moment...' challenge — open the URL once in the same browser profile to clear it before re-running.",
+      "Source of truth is script[type='application/ld+json'] containing @type='SoftwareApplication'. The DOM-scraping approach in v1 returned zero reviews because Capterra removed [itemprop='review'] markup.",
+      "JSON-LD only ships ~25 reviews per page. Pagination via ?page=N would need a follow-up workflow if deep coverage is required."
+    ]
+  },
+  "browser_automation": {
+    "description": "Navigate to a Capterra product page and parse the SoftwareApplication JSON-LD block.",
+    "sequences": [
+      {
+        "name": "capterra_product_details_reviews",
+        "description": "Navigate -> wait for JSON-LD -> parse SoftwareApplication block via JS.",
+        "required_variables": [
+          {
+            "name": "product_url",
+            "description": "Capterra product URL"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to product page",
+            "type": "navigate_to_url",
+            "url": "{product_url}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for JSON-LD or h1",
+            "type": "wait_for_element",
+            "selector": "script[type='application/ld+json'], h1",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s3",
+            "name": "Allow JSON-LD to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1500
+          },
+          {
+            "id": "s4",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s5",
+            "name": "Extract product + reviews from JSON-LD",
+            "type": "execute_javascript",
+            "world": "main",
+            "return_value": true,
+            "script": "const norm = (v) => { const t = String(v || '').replace(/\\s+/g, ' ').trim(); return t || 'N/A'; }; const scripts = Array.from(document.querySelectorAll(\"script[type='application/ld+json']\")); let app = null; let breadcrumb = null; for (const s of scripts) { try { const data = JSON.parse(s.textContent); const candidates = Array.isArray(data) ? data : [data]; for (const c of candidates) { if (c && c['@type'] === 'SoftwareApplication') app = c; if (c && c['@type'] === 'BreadcrumbList') breadcrumb = c; } } catch (_) {} } if (!app) throw new Error('No SoftwareApplication JSON-LD block found on this page'); const agg = app.aggregateRating || {}; const category = (() => { if (!breadcrumb || !Array.isArray(breadcrumb.itemListElement)) return 'N/A'; const items = breadcrumb.itemListElement.filter((i) => i && i.name).map((i) => i.name); return items.length ? items.join(' > ') : 'N/A'; })(); const product = { name: norm(app.name), description: norm(app.description), category, rating: agg.ratingValue != null ? String(agg.ratingValue) : 'N/A', total_reviews: agg.reviewCount != null ? String(agg.reviewCount) : 'N/A', best_rating: agg.bestRating != null ? String(agg.bestRating) : '5', url: location.href.replace(/[?#].*$/, '') }; const rawReviews = Array.isArray(app.review) ? app.review : []; const reviews = rawReviews.map((r) => { const rating = r && r.reviewRating ? r.reviewRating : {}; return { author: norm(r && r.author && r.author.name), body: norm(r && r.reviewBody), rating: rating.ratingValue != null ? String(rating.ratingValue) : 'N/A', best_rating: rating.bestRating != null ? String(rating.bestRating) : '5' }; }); return { product, reviews, reviews_returned: reviews.length };"
+          }
+        ]
+      }
+    ]
+  }
+}

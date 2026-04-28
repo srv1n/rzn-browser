@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Cross-Origin Integration Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .test-section {
+            border: 2px solid #333;
+            padding: 15px;
+            margin: 20px 0;
+            background: #f5f5f5;
+        }
+        .test-section h2 {
+            margin-top: 0;
+            color: #333;
+        }
+        iframe {
+            border: 1px solid #999;
+            width: 100%;
+            height: 300px;
+            margin: 10px 0;
+        }
+        .nested-iframe {
+            background: #fff;
+            padding: 10px;
+            border: 1px dashed #666;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        input {
+            padding: 8px;
+            margin: 5px;
+            font-size: 14px;
+            width: 200px;
+        }
+        .result {
+            background: #e8f5e9;
+            border: 1px solid #4caf50;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            display: none;
+        }
+        .result.show {
+            display: block;
+        }
+        .status {
+            padding: 5px 10px;
+            border-radius: 3px;
+            display: inline-block;
+            margin: 5px 0;
+        }
+        .status.success {
+            background: #4caf50;
+            color: white;
+        }
+        .status.error {
+            background: #f44336;
+            color: white;
+        }
+        .status.pending {
+            background: #ff9800;
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <h1>RZN Cross-Origin Integration Test Suite</h1>
+    
+    <!-- Test 1: Same-Origin Interaction -->
+    <div class="test-section" id="test-same-origin">
+        <h2>Test 1: Same-Origin DOM Interaction (Should use Rung 1)</h2>
+        <p>This tests basic DOM events on same-origin elements.</p>
+        <button id="same-origin-btn" onclick="handleSameOriginClick()">Click Me (Same Origin)</button>
+        <input type="text" id="same-origin-input" placeholder="Type here...">
+        <div class="result" id="same-origin-result"></div>
+        <div class="status pending" id="same-origin-status">Not tested</div>
+    </div>
+
+    <!-- Test 2: Single Cross-Origin iframe -->
+    <div class="test-section" id="test-single-iframe">
+        <h2>Test 2: Single Cross-Origin iframe (Should use Rung 3 - CDP)</h2>
+        <p>This iframe points to a different origin. Actions inside require CDP.</p>
+        <iframe id="cross-origin-frame" src="https://example.com" sandbox="allow-scripts allow-same-origin"></iframe>
+        <button onclick="testCrossOriginClick()">Test Cross-Origin Click</button>
+        <div class="result" id="cross-origin-result"></div>
+        <div class="status pending" id="cross-origin-status">Not tested</div>
+    </div>
+
+    <!-- Test 3: Nested Cross-Origin iframes -->
+    <div class="test-section" id="test-nested-iframes">
+        <h2>Test 3: Nested Cross-Origin iframes (4 levels deep)</h2>
+        <p>Multiple nested iframes with different origins. Tests deep frame routing.</p>
+        <div class="nested-iframe">
+            <p>Level 0 (Main Frame)</p>
+            <iframe id="level-1-frame" srcdoc="
+                <html>
+                <body style='background: #ffebee; padding: 10px;'>
+                    <p>Level 1 iframe (same-origin via srcdoc)</p>
+                    <button id='level-1-btn'>Level 1 Button</button>
+                    <iframe src='data:text/html,
+                        <html>
+                        <body style=%27background: %23e3f2fd; padding: 10px;%27>
+                            <p>Level 2 iframe (data URL)</p>
+                            <button id=%27level-2-btn%27>Level 2 Button</button>
+                            <iframe srcdoc=%22
+                                <html>
+                                <body style=%27background: %23f3e5f5; padding: 10px;%27>
+                                    <p>Level 3 iframe</p>
+                                    <button id=%27level-3-btn%27>Level 3 Button</button>
+                                    <iframe src=%27about:blank%27></iframe>
+                                </body>
+                                </html>
+                            %22></iframe>
+                        </body>
+                        </html>
+                    '></iframe>
+                </body>
+                </html>
+            "></iframe>
+        </div>
+        <button onclick="testNestedFrames()">Test Nested Frame Navigation</button>
+        <div class="result" id="nested-result"></div>
+        <div class="status pending" id="nested-status">Not tested</div>
+    </div>
+
+    <!-- Test 4: User Activation Gates -->
+    <div class="test-section" id="test-activation-gates">
+        <h2>Test 4: User Activation Gates (Should escalate to Rung 3)</h2>
+        <p>Elements that require user activation (trusted events).</p>
+        
+        <input type="file" id="file-upload" accept="image/*">
+        <button onclick="testFileUpload()">Test File Upload Trigger</button>
+        
+        <video id="test-video" width="320" height="240" controls>
+            <source src="data:video/mp4;base64,AAAAAA==" type="video/mp4">
+        </video>
+        <button onclick="testVideoAutoplay()">Test Video Autoplay</button>
+        
+        <button id="fullscreen-btn" onclick="requestFullscreen()">Request Fullscreen</button>
+        
+        <div class="result" id="activation-result"></div>
+        <div class="status pending" id="activation-status">Not tested</div>
+    </div>
+
+    <!-- Test 5: Shadow DOM -->
+    <div class="test-section" id="test-shadow-dom">
+        <h2>Test 5: Shadow DOM Components</h2>
+        <p>Custom elements with closed shadow roots.</p>
+        <custom-button id="shadow-button"></custom-button>
+        <custom-input id="shadow-input"></custom-input>
+        <div class="result" id="shadow-result"></div>
+        <div class="status pending" id="shadow-status">Not tested</div>
+    </div>
+
+    <!-- Test 6: Dynamic Content -->
+    <div class="test-section" id="test-dynamic-content">
+        <h2>Test 6: Dynamic Content & DOM Changes</h2>
+        <p>Tests element resolution after DOM mutations.</p>
+        <div id="dynamic-container"></div>
+        <button onclick="addDynamicContent()">Add Dynamic Content</button>
+        <button onclick="removeDynamicContent()">Remove Dynamic Content</button>
+        <button onclick="testDynamicElements()">Test Dynamic Elements</button>
+        <div class="result" id="dynamic-result"></div>
+        <div class="status pending" id="dynamic-status">Not tested</div>
+    </div>
+
+    <!-- Test 7: Performance & Metrics -->
+    <div class="test-section" id="test-performance">
+        <h2>Test 7: Performance Metrics</h2>
+        <p>Measures CDP attach/detach time, element resolution speed, and rung usage.</p>
+        <button onclick="runPerformanceTest()">Run Performance Test</button>
+        <div class="result" id="performance-result"></div>
+        <table id="metrics-table" style="display: none; width: 100%; margin-top: 10px;">
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th>Value</th>
+                    <th>Target</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody id="metrics-body"></tbody>
+        </table>
+    </div>
+
+    <!-- Test Results Summary -->
+    <div class="test-section" id="test-summary">
+        <h2>Test Results Summary</h2>
+        <button onclick="runAllTests()">Run All Tests</button>
+        <button onclick="exportResults()">Export Results</button>
+        <div id="summary-content"></div>
+    </div>
+
+    <script>
+        // Define custom elements for shadow DOM testing
+        class CustomButton extends HTMLElement {
+            constructor() {
+                super();
+                const shadow = this.attachShadow({ mode: 'closed' });
+                const button = document.createElement('button');
+                button.textContent = 'Shadow Button';
+                button.id = 'internal-shadow-btn';
+                shadow.appendChild(button);
+            }
+        }
+        
+        class CustomInput extends HTMLElement {
+            constructor() {
+                super();
+                const shadow = this.attachShadow({ mode: 'closed' });
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.placeholder = 'Shadow input...';
+                input.id = 'internal-shadow-input';
+                shadow.appendChild(input);
+            }
+        }
+        
+        customElements.define('custom-button', CustomButton);
+        customElements.define('custom-input', CustomInput);
+
+        // Test functions
+        function handleSameOriginClick() {
+            const result = document.getElementById('same-origin-result');
+            result.textContent = 'Same-origin button clicked at ' + new Date().toISOString();
+            result.classList.add('show');
+            updateStatus('same-origin-status', 'success', 'Passed - Rung 1 used');
+        }
+
+        function testCrossOriginClick() {
+            // This would be handled by the extension
+            sendTestAction({
+                type: 'click_element_enhanced',
+                target_spec: {
+                    css: 'button',
+                    frame_ordinal: 1  // Inside the iframe
+                }
+            }).then(result => {
+                const resultDiv = document.getElementById('cross-origin-result');
+                resultDiv.textContent = `Cross-origin click result: ${JSON.stringify(result)}`;
+                resultDiv.classList.add('show');
+                
+                if (result.rung_used === 3) {
+                    updateStatus('cross-origin-status', 'success', 'Passed - CDP (Rung 3) used as expected');
+                } else {
+                    updateStatus('cross-origin-status', 'error', `Failed - Expected Rung 3, got ${result.rung_used}`);
+                }
+            });
+        }
+
+        function testNestedFrames() {
+            // Test deep frame navigation
+            sendTestAction({
+                type: 'click_element_enhanced',
+                target_spec: {
+                    deep_xpath: '/html/body/iframe[1]/iframe[1]/iframe[1]//button',
+                    css: '#level-3-btn'
+                }
+            }).then(result => {
+                const resultDiv = document.getElementById('nested-result');
+                resultDiv.textContent = `Nested frame navigation: ${JSON.stringify(result)}`;
+                resultDiv.classList.add('show');
+                
+                if (result.ok && result.rung_used === 3) {
+                    updateStatus('nested-status', 'success', 'Passed - Deep frame routing works');
+                } else {
+                    updateStatus('nested-status', 'error', 'Failed - Deep frame routing issue');
+                }
+            });
+        }
+
+        function testFileUpload() {
+            sendTestAction({
+                type: 'click_element_enhanced',
+                target_spec: {
+                    css: '#file-upload'
+                }
+            }).then(result => {
+                const resultDiv = document.getElementById('activation-result');
+                resultDiv.textContent = `File upload click: ${JSON.stringify(result)}`;
+                resultDiv.classList.add('show');
+                
+                if (result.rung_used === 3) {
+                    updateStatus('activation-status', 'success', 'Passed - CDP used for user activation');
+                } else {
+                    updateStatus('activation-status', 'error', 'Failed - Should escalate to CDP');
+                }
+            });
+        }
+
+        function testVideoAutoplay() {
+            const video = document.getElementById('test-video');
+            video.play().catch(e => {
+                console.log('Autoplay blocked as expected:', e);
+            });
+        }
+
+        function addDynamicContent() {
+            const container = document.getElementById('dynamic-container');
+            container.innerHTML = `
+                <div id="dynamic-content">
+                    <button id="dynamic-btn-${Date.now()}">Dynamic Button</button>
+                    <input id="dynamic-input-${Date.now()}" placeholder="Dynamic input">
+                </div>
+            `;
+        }
+
+        function removeDynamicContent() {
+            const container = document.getElementById('dynamic-container');
+            container.innerHTML = '';
+        }
+
+        function testDynamicElements() {
+            const button = document.querySelector('[id^="dynamic-btn"]');
+            if (!button) {
+                updateStatus('dynamic-status', 'error', 'No dynamic content to test');
+                return;
+            }
+
+            sendTestAction({
+                type: 'click_element_enhanced',
+                target_spec: {
+                    css: `#${button.id}`
+                }
+            }).then(result => {
+                const resultDiv = document.getElementById('dynamic-result');
+                resultDiv.textContent = `Dynamic element test: ${JSON.stringify(result)}`;
+                resultDiv.classList.add('show');
+                
+                if (result.ok) {
+                    updateStatus('dynamic-status', 'success', 'Passed - Dynamic elements resolved');
+                } else {
+                    updateStatus('dynamic-status', 'error', 'Failed - Could not resolve dynamic element');
+                }
+            });
+        }
+
+        async function runPerformanceTest() {
+            const startTime = Date.now();
+            const metrics = {
+                cdp_attach_time: 0,
+                element_resolution_time: 0,
+                action_execution_time: 0,
+                snapshot_generation_time: 0,
+                total_time: 0
+            };
+
+            try {
+                // Test CDP attach
+                const attachStart = Date.now();
+                await sendTestAction({ type: 'attach_cdp' });
+                metrics.cdp_attach_time = Date.now() - attachStart;
+
+                // Test element resolution
+                const resolveStart = Date.now();
+                await sendTestAction({
+                    type: 'resolve_element',
+                    target_spec: { css: 'button' }
+                });
+                metrics.element_resolution_time = Date.now() - resolveStart;
+
+                // Test action execution
+                const actionStart = Date.now();
+                await sendTestAction({
+                    type: 'click_element_enhanced',
+                    target_spec: { css: '#same-origin-btn' }
+                });
+                metrics.action_execution_time = Date.now() - actionStart;
+
+                // Test snapshot generation
+                const snapshotStart = Date.now();
+                await sendTestAction({ type: 'get_snapshot' });
+                metrics.snapshot_generation_time = Date.now() - snapshotStart;
+
+                // Detach CDP
+                await sendTestAction({ type: 'detach_cdp' });
+
+                metrics.total_time = Date.now() - startTime;
+
+                displayMetrics(metrics);
+            } catch (error) {
+                console.error('Performance test error:', error);
+                updateStatus('performance-status', 'error', 'Performance test failed');
+            }
+        }
+
+        function displayMetrics(metrics) {
+            const table = document.getElementById('metrics-table');
+            const tbody = document.getElementById('metrics-body');
+            
+            tbody.innerHTML = '';
+            
+            const targets = {
+                cdp_attach_time: 100,
+                element_resolution_time: 50,
+                action_execution_time: 100,
+                snapshot_generation_time: 100,
+                total_time: 500
+            };
+
+            for (const [key, value] of Object.entries(metrics)) {
+                const row = tbody.insertRow();
+                const target = targets[key];
+                const status = value <= target ? '✅' : '❌';
+                
+                row.innerHTML = `
+                    <td>${key.replace(/_/g, ' ').toUpperCase()}</td>
+                    <td>${value}ms</td>
+                    <td>${target}ms</td>
+                    <td>${status}</td>
+                `;
+            }
+            
+            table.style.display = 'table';
+            
+            const resultDiv = document.getElementById('performance-result');
+            resultDiv.textContent = 'Performance metrics collected successfully';
+            resultDiv.classList.add('show');
+        }
+
+        async function runAllTests() {
+            console.log('Running all tests...');
+            
+            // Run tests sequentially
+            handleSameOriginClick();
+            await sleep(500);
+            
+            await testCrossOriginClick();
+            await sleep(500);
+            
+            await testNestedFrames();
+            await sleep(500);
+            
+            await testFileUpload();
+            await sleep(500);
+            
+            addDynamicContent();
+            await sleep(100);
+            await testDynamicElements();
+            await sleep(500);
+            
+            await runPerformanceTest();
+            
+            // Generate summary
+            generateSummary();
+        }
+
+        function generateSummary() {
+            const statuses = document.querySelectorAll('.status');
+            let passed = 0;
+            let failed = 0;
+            let pending = 0;
+            
+            statuses.forEach(status => {
+                if (status.classList.contains('success')) passed++;
+                else if (status.classList.contains('error')) failed++;
+                else pending++;
+            });
+            
+            const summary = document.getElementById('summary-content');
+            summary.innerHTML = `
+                <h3>Test Results</h3>
+                <p>✅ Passed: ${passed}</p>
+                <p>❌ Failed: ${failed}</p>
+                <p>⏳ Pending: ${pending}</p>
+                <p>Total: ${statuses.length}</p>
+                <p>Success Rate: ${Math.round((passed / (passed + failed)) * 100)}%</p>
+            `;
+        }
+
+        function exportResults() {
+            const results = {
+                timestamp: new Date().toISOString(),
+                tests: []
+            };
+            
+            const sections = document.querySelectorAll('.test-section');
+            sections.forEach(section => {
+                const title = section.querySelector('h2')?.textContent;
+                const status = section.querySelector('.status')?.textContent;
+                const result = section.querySelector('.result')?.textContent;
+                
+                if (title && title !== 'Test Results Summary') {
+                    results.tests.push({
+                        title,
+                        status,
+                        result
+                    });
+                }
+            });
+            
+            const blob = new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `rzn-test-results-${Date.now()}.json`;
+            a.click();
+        }
+
+        // Helper functions
+        function updateStatus(id, type, text) {
+            const status = document.getElementById(id);
+            status.className = `status ${type}`;
+            status.textContent = text;
+        }
+
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        async function sendTestAction(action) {
+            // This would communicate with the extension
+            return new Promise((resolve) => {
+                chrome.runtime.sendMessage({
+                    type: 'test_action',
+                    action
+                }, response => {
+                    resolve(response || { ok: false, error: 'No response' });
+                });
+            });
+        }
+
+        // Initialize on load
+        window.addEventListener('load', () => {
+            console.log('RZN Cross-Origin Test Suite loaded');
+            
+            // Check if extension is available
+            if (typeof chrome === 'undefined' || !chrome.runtime) {
+                const warning = document.createElement('div');
+                warning.style.cssText = 'background: #ff9800; color: white; padding: 10px; margin: 10px 0;';
+                warning.textContent = 'Warning: Chrome extension API not available. Install the RZN extension to run tests.';
+                document.body.insertBefore(warning, document.body.firstChild);
+            }
+        });
+    </script>
+</body>
+</html>

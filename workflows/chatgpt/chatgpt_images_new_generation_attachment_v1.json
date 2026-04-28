@@ -1,0 +1,131 @@
+{
+  "system_id": "chatgpt",
+  "id": "chatgpt_images_new_generation_attachment_v1",
+  "name": "ChatGPT Images: New Generation With Attachment",
+  "description": "Open ChatGPT Images in the current tab, upload one local file or image, send a prompt that defaults to two variations unless already specified, and return the resolved chat id for follow-up polling.",
+  "domain": "chatgpt.com",
+  "version": "1.0.0",
+  "help": {
+    "summary": "Send a ChatGPT Images prompt with a local file/image attachment in the current tab. Defaults the prompt to request two variations when caller does not specify a count.",
+    "parameters": [
+      {
+        "name": "message_text",
+        "required": true,
+        "shape": "text",
+        "description": "Prompt for the image generation. Variation count is auto-injected if not already mentioned.",
+        "example": "Turn this sketch into a watercolor."
+      },
+      {
+        "name": "attachment_file_path",
+        "required": true,
+        "shape": "absolute local file path",
+        "description": "Absolute path to the local image or file to upload.",
+        "example": "/Users/me/Pictures/sketch.png"
+      },
+      {
+        "name": "variation_count",
+        "required": false,
+        "shape": "integer >= 1",
+        "description": "How many variations to request when the prompt does not already specify a count. Defaults to 2.",
+        "example": "2"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Two-variation watercolor render of a sketch",
+        "command": "rzn-browser run chatgpt images-new-generation-attachment-v1 --param message_text=\"Turn this sketch into a watercolor\" --param attachment_file_path=\"/Users/me/sketch.png\""
+      }
+    ],
+    "returns": "Resolved chat URL and attachment metadata for downstream polling/render workflows.",
+    "notes": [
+      "Caller must already be signed into ChatGPT in the active browser profile.",
+      "Uses CDP only for the upload_file step; the rest of the flow is JS-first.",
+      "If the prompt already mentions a count (\"three variations\", \"4 options\"), the auto-default is skipped."
+    ]
+  },
+  "browser_automation": {
+    "use_current_tab": true,
+    "description": "Current-tab ChatGPT Images attachment flow. It reuses the authenticated browser session, prepares the file input, uploads a local image or file, sends the prompt, and returns the chat handle for downstream polling.",
+    "sequences": [
+      {
+        "name": "chatgpt_images_new_generation_attachment",
+        "description": "Open ChatGPT Images -> prepare attachment input -> upload file -> send prompt -> return chat state.",
+        "required_variables": [
+          {
+            "name": "message_text",
+            "description": "Prompt text to send to ChatGPT Images"
+          },
+          {
+            "name": "attachment_file_path",
+            "description": "Absolute local path to a single image or file to upload before generation"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open ChatGPT Images in the current tab",
+            "type": "navigate_to_url",
+            "url": "https://chatgpt.com/images/",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the Images SPA shell to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1800
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the ChatGPT Images composer or thread shell",
+            "type": "wait_for_element",
+            "selector": "#prompt-textarea, textarea[placeholder*='Describe' i], textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], form textarea, [data-message-author-role], main article",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s4",
+            "name": "Prepare the ChatGPT Images attachment input",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 180000,
+            "args": [
+              "{attachment_file_path}"
+            ],
+            "script": "const cleanArg = (value) => {\\n  const text = String(value == null ? '' : value).trim();\\n  return /^\\\\{[a-zA-Z0-9_]+\\\\}$/.test(text) ? '' : text;\\n};\\nconst attachmentPath = cleanArg(arg0);\\nif (!attachmentPath) throw new Error('attachment_file_path is required');\\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\\nconst normalize = (value) => (value || '').replace(/\\\\u00a0/g, ' ').replace(/\\\\s+/g, ' ').trim();\\nconst isVisible = (node) => {\\n  if (!node || !(node instanceof Element)) return false;\\n  const style = window.getComputedStyle(node);\\n  if (style.visibility === 'hidden' || style.display === 'none') return false;\\n  const rect = node.getBoundingClientRect();\\n  return rect.width > 0 && rect.height > 0;\\n};\\nconst labelOf = (node) => normalize([\\n  node.getAttribute('aria-label') || '',\\n  node.getAttribute('title') || '',\\n  node.getAttribute('data-testid') || '',\\n  node.textContent || ''\\n].join(' '));\\nconst temporaryChatActive = () => new URLSearchParams(window.location.search).get('temporary-chat') === 'true';\\nconst findComposer = () => Array.from(document.querySelectorAll(\\\"#prompt-textarea, textarea[placeholder*='Describe' i], textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], form textarea, div[role='textbox'][contenteditable='true'], [contenteditable='true'][data-testid*='composer']\\\")).find(isVisible) || null;\\nconst findTemporaryToggle = () => Array.from(document.querySelectorAll(\\\"button, [role='button']\\\")).filter(isVisible).find((node) => /temporary chat/.test(labelOf(node).toLowerCase())) || null;\\nconst ensureImagesSurface = async () => {\\n  const actions = [];\\n  const temporaryToggle = findTemporaryToggle();\\n  if (temporaryChatActive() && temporaryToggle) {\\n    temporaryToggle.click();\\n    await sleep(700);\\n    actions.push('toggled_temporary_chat_off');\\n  }\\n  let composer = findComposer();\\n  if (composer) return { ready: true, actions };\\n  const deadline = Date.now() + 12000;\\n  while (Date.now() < deadline) {\\n    await sleep(250);\\n    composer = findComposer();\\n    if (composer) return { ready: true, actions };\\n  }\\n  throw new Error('ChatGPT Images composer not found');\\n};\\nconst findFileInput = () => Array.from(document.querySelectorAll(\\\"input[type='file']\\\")).find((node) => node instanceof HTMLInputElement) || null;\\nconst stampFileInput = (input) => {\\n  input.id = 'rzn-chatgpt-upload-input';\\n  input.setAttribute('data-rzn-upload-prepared', 'true');\\n  return '#rzn-chatgpt-upload-input';\\n};\\nconst findAttachmentTrigger = () => {\\n  const composer = findComposer();\\n  const form = composer ? composer.closest('form') : null;\\n  const scopes = [form, composer?.parentElement, document].filter(Boolean);\\n  for (const scope of scopes) {\\n    const matches = Array.from(scope.querySelectorAll(\\\"button, [role='button'], label\\\"))\\n      .filter(isVisible)\\n      .filter((node) => {\\n        const label = labelOf(node).toLowerCase();\\n        if (/send|submit|create|generate|voice|microphone|mic/.test(label)) return false;\\n        if (/attach|upload|photo|image|file|edit image/.test(label)) return true;\\n        return !label && !!node.querySelector('svg');\\n      });\\n    if (matches.length) return matches[0];\\n  }\\n  return null;\\n};\\nconst ensureAttachmentInput = async () => {\\n  let input = findFileInput();\\n  if (input) return { selector: stampFileInput(input), trigger_used: false };\\n  const trigger = findAttachmentTrigger();\\n  if (!trigger) throw new Error('ChatGPT Images attachment trigger not found');\\n  trigger.click();\\n  const deadline = Date.now() + 12000;\\n  while (Date.now() < deadline) {\\n    await sleep(250);\\n    input = findFileInput();\\n    if (input) {\\n      return {\\n        selector: stampFileInput(input),\\n        trigger_used: true,\\n        trigger_label: labelOf(trigger) || null,\\n      };\\n    }\\n  }\\n  throw new Error('ChatGPT Images file input not found after opening attachment UI');\\n};\\nconst surface = await ensureImagesSurface();\\nconst attachment = await ensureAttachmentInput();\\nreturn {\\n  url: window.location.href,\\n  title: document.title,\\n  attachment_file_name: attachmentPath.split(/[\\\\\\\\/]/).pop() || attachmentPath,\\n  images_surface: surface,\\n  attachment_preparation: attachment,\\n};\\n"
+          },
+          {
+            "id": "s5",
+            "name": "Upload the attachment into the prepared file input",
+            "type": "upload_file",
+            "selector": "#rzn-chatgpt-upload-input",
+            "file_path": "{attachment_file_path}",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s6",
+            "name": "Allow the attachment chip to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1200
+          },
+          {
+            "id": "s7",
+            "name": "Send the image generation prompt and return the chat state",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 180000,
+            "args": [
+              "{message_text}",
+              "{attachment_file_path}",
+              "{variation_count}"
+            ],
+            "script": "const cleanArg = (value) => {\\n  const text = String(value == null ? '' : value).trim();\\n  return /^\\\\{[a-zA-Z0-9_]+\\\\}$/.test(text) ? '' : text;\\n};\\nconst rawMessage = cleanArg(arg0);\\nconst attachmentPath = cleanArg(arg1);\\nconst parsedVariationCount = Number.parseInt(cleanArg(arg2), 10);\\nconst variationCount = Number.isFinite(parsedVariationCount) && parsedVariationCount > 0 ? parsedVariationCount : 2;\\nif (!rawMessage) throw new Error('message_text is required');\\nif (!attachmentPath) throw new Error('attachment_file_path is required');\\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\\nconst normalize = (value) => (value || '').replace(/\\\\u00a0/g, ' ').replace(/\\\\s+/g, ' ').trim();\\nconst parseTime = (value) => {\\n  const ts = value ? Date.parse(value) : NaN;\\n  return Number.isFinite(ts) ? ts : 0;\\n};\\nconst isVisible = (node) => {\\n  if (!node || !(node instanceof Element)) return false;\\n  const style = window.getComputedStyle(node);\\n  if (style.visibility === 'hidden' || style.display === 'none') return false;\\n  const rect = node.getBoundingClientRect();\\n  return rect.width > 0 && rect.height > 0;\\n};\\nconst labelOf = (node) => normalize([\\n  node.getAttribute('aria-label') || '',\\n  node.getAttribute('title') || '',\\n  node.getAttribute('data-testid') || '',\\n  node.textContent || ''\\n].join(' '));\\nconst chatIdFromLocation = () => {\\n  const match = window.location.pathname.match(/^\\\\/c\\\\/([^/?#]+)/);\\n  return match ? match[1] : null;\\n};\\nconst collectTurns = () => Array.from(document.querySelectorAll(\\\"[data-message-author-role], main article, [data-testid*='conversation-turn'], [data-testid*='conversationTurn']\\\"));\\nconst getConversationHistoryItems = () => {\\n  for (let i = 0; i < localStorage.length; i += 1) {\\n    const key = localStorage.key(i);\\n    if (!key || !/conversation-history/i.test(key)) continue;\\n    try {\\n      const raw = localStorage.getItem(key);\\n      if (!raw) continue;\\n      const parsed = JSON.parse(raw);\\n      const pages = parsed?.value?.pages || [];\\n      const items = pages.flatMap((page) => Array.isArray(page?.items) ? page.items : []);\\n      return items.filter((item) => item && typeof item.id === 'string');\\n    } catch {}\\n  }\\n  return [];\\n};\\nconst snapshotConversationHistory = () => getConversationHistoryItems().map((item, index) => ({\\n  id: item.id,\\n  title: item.title || null,\\n  update_time: item.update_time || null,\\n  create_time: item.create_time || null,\\n  updated_at_ms: Math.max(parseTime(item.update_time), parseTime(item.create_time)),\\n  index,\\n})).filter((item) => item.id);\\nconst makeHistoryMap = (items) => new Map(items.map((item) => [item.id, item]));\\nconst chooseHistoryConversation = (beforeMap, afterItems) => {\\n  const changed = afterItems.filter((item) => {\\n    const previous = beforeMap.get(item.id);\\n    return !previous || item.updated_at_ms > previous.updated_at_ms;\\n  });\\n  const pool = changed.length ? changed : afterItems;\\n  if (!pool.length) return null;\\n  return [...pool].sort((left, right) => {\\n    const leftIsNew = beforeMap.has(left.id) ? 0 : 1;\\n    const rightIsNew = beforeMap.has(right.id) ? 0 : 1;\\n    if (rightIsNew !== leftIsNew) return rightIsNew - leftIsNew;\\n    if (right.updated_at_ms !== left.updated_at_ms) return right.updated_at_ms - left.updated_at_ms;\\n    return left.index - right.index;\\n  })[0] || null;\\n};\\nconst findComposer = () => Array.from(document.querySelectorAll(\\\"#prompt-textarea, textarea[placeholder*='Describe' i], textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], form textarea, div[role='textbox'][contenteditable='true'], [contenteditable='true'][data-testid*='composer']\\\")).find(isVisible) || null;\\nconst setComposerText = (node, text) => {\\n  node.focus();\\n  if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) {\\n    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), 'value')?.set\\n      || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set\\n      || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;\\n    if (setter) setter.call(node, text);\\n    else node.value = text;\\n    node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));\\n    node.dispatchEvent(new Event('change', { bubbles: true }));\\n    return;\\n  }\\n  node.textContent = text;\\n  node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text }));\\n};\\nconst findSendButton = (composer) => {\\n  const form = composer ? composer.closest('form') : null;\\n  const scopes = [form, composer?.parentElement, document].filter(Boolean);\\n  for (const scope of scopes) {\\n    const candidates = Array.from(scope.querySelectorAll(\\\"button, [role='button']\\\"))\\n      .filter(isVisible)\\n      .filter((node) => {\\n        const label = labelOf(node).toLowerCase();\\n        const disabled = node.matches(':disabled') || node.getAttribute('aria-disabled') === 'true';\\n        if (disabled) return false;\\n        return /send prompt|send|submit|create image|create images|create|generate/.test(label);\\n      });\\n    if (candidates.length) return candidates[0];\\n  }\\n  return null;\\n};\\nconst attachmentFileName = attachmentPath.split(/[\\\\\\\\/]/).pop() || attachmentPath;\\nconst verifyAttachment = async () => {\\n  const deadline = Date.now() + 15000;\\n  while (Date.now() < deadline) {\\n    const composer = findComposer();\\n    const form = composer ? composer.closest('form') : null;\\n    const preparedInput = document.querySelector('#rzn-chatgpt-upload-input');\\n    const hasInputFile = !!(preparedInput && preparedInput.files && preparedInput.files.length > 0);\\n    const formText = normalize(form ? form.innerText : '').toLowerCase();\\n    const attachmentMentioned = formText.includes(attachmentFileName.toLowerCase());\\n    const attachmentDecorations = !!(form && form.querySelector(\\\"img, [data-testid*='upload'], [data-testid*='attachment'], button[aria-label*='remove' i], button[title*='remove' i]\\\"));\\n    if (hasInputFile || attachmentMentioned || attachmentDecorations) {\\n      return {\\n        confirmed: true,\\n        has_input_file: hasInputFile,\\n        attachment_mentioned: attachmentMentioned,\\n        attachment_decorations: attachmentDecorations,\\n      };\\n    }\\n    await sleep(400);\\n  }\\n  throw new Error(`expected attachment '${attachmentFileName}' is not visible in the ChatGPT Images composer`);\\n};\\nconst buildPrompt = () => {\\n  const normalized = normalize(rawMessage);\\n  if (!normalized) return normalized;\\n  if (/\\\\b(?:exactly|create)\\\\s+\\\\d+\\\\s+(?:distinct\\\\s+)?(?:image\\\\s+)?variations?\\\\b/i.test(normalized)) {\\n    return normalized;\\n  }\\n  return `${normalized}\\\\n\\\\nGenerate exactly ${variationCount} distinct image variations. Return the final images in this chat.`;\\n};\\nconst historyBeforeItems = snapshotConversationHistory();\\nconst historyBeforeMap = makeHistoryMap(historyBeforeItems);\\nconst turnsBefore = collectTurns().length;\\nconst attachmentState = await verifyAttachment();\\nconst finalPrompt = buildPrompt();\\nlet composer = findComposer();\\nif (!composer) throw new Error('ChatGPT Images composer not found');\\nsetComposerText(composer, finalPrompt);\\nawait sleep(250);\\ncomposer = findComposer() || composer;\\nconst sendButton = findSendButton(composer);\\nif (!sendButton) throw new Error('ChatGPT Images send button not found');\\nsendButton.click();\\nlet chatId = chatIdFromLocation();\\nlet historyConversation = null;\\nlet historySignal = 'none';\\nlet turnCount = collectTurns().length;\\nconst deadline = Date.now() + 45000;\\nwhile (Date.now() < deadline) {\\n  chatId = chatIdFromLocation();\\n  const historyAfterItems = snapshotConversationHistory();\\n  const candidate = chooseHistoryConversation(historyBeforeMap, historyAfterItems);\\n  const previous = candidate ? historyBeforeMap.get(candidate.id) : null;\\n  const candidateIsFresh = !!candidate && (!previous || candidate.updated_at_ms > previous.updated_at_ms);\\n  if (candidate) {\\n    historyConversation = candidate;\\n    historySignal = candidateIsFresh ? (previous ? 'updated_history_item' : 'new_history_item') : 'stale_history_fallback';\\n  }\\n  turnCount = collectTurns().length;\\n  if (chatId || candidateIsFresh || turnCount > turnsBefore) break;\\n  await sleep(turnCount > turnsBefore ? 1200 : 750);\\n}\\nreturn {\\n  url: window.location.href,\\n  title: document.title,\\n  chat_id: chatIdFromLocation() || (historySignal !== 'stale_history_fallback' && historyConversation ? historyConversation.id : null),\\n  attachment_state: attachmentState,\\n  message_sent: rawMessage,\\n  submitted_prompt: finalPrompt,\\n  variation_count: variationCount,\\n  turn_count: turnCount,\\n  history_signal: historySignal,\\n  history_before_count: historyBeforeItems.length,\\n  history_conversation: historyConversation ? {\\n    id: historyConversation.id,\\n    title: historyConversation.title || null,\\n    update_time: historyConversation.update_time || null,\\n    create_time: historyConversation.create_time || null,\\n  } : null,\\n};\\n"
+          }
+        ]
+      }
+    ]
+  }
+}

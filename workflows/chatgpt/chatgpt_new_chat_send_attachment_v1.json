@@ -1,0 +1,147 @@
+{
+  "system_id": "chatgpt",
+  "id": "chatgpt_new_chat_send_attachment_v1",
+  "name": "ChatGPT: New Chat Send With Attachment",
+  "description": "Open ChatGPT in the current tab, normalize to a fresh chat, default to Pro with Extended effort unless overridden, upload a file or image, send the prompt, and return the resolved chat id.",
+  "domain": "chatgpt.com",
+  "version": "1.0.0",
+  "help": {
+    "summary": "Send a ChatGPT prompt with a file attachment in a fresh chat using the current authenticated tab. Optionally pin a model and effort.",
+    "parameters": [
+      {
+        "name": "message_text",
+        "required": true,
+        "shape": "text",
+        "description": "Prompt text to send alongside the attachment.",
+        "example": "Summarize this contract and flag risky clauses."
+      },
+      {
+        "name": "attachment_file_path",
+        "required": true,
+        "shape": "absolute local file path",
+        "description": "Absolute path to the file to upload from the local machine.",
+        "example": "/Users/me/Documents/contract.pdf"
+      },
+      {
+        "name": "model_slug",
+        "required": false,
+        "shape": "model name as shown in ChatGPT model picker",
+        "description": "Model to select (e.g. Pro, GPT-5, o3). Defaults to Pro when empty.",
+        "example": "Pro"
+      },
+      {
+        "name": "model_effort",
+        "required": false,
+        "shape": "Extended | Standard",
+        "description": "Pro effort tier. Defaults to Extended when model is Pro and value is empty; ignored for non-Pro models.",
+        "example": "Extended"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Default Pro / Extended with a PDF",
+        "command": "rzn-browser run chatgpt new-chat-send-attachment-v1 --param message_text=\"Summarize this\" --param attachment_file_path=\"/Users/me/file.pdf\""
+      }
+    ],
+    "returns": "Resolved chat URL plus model/effort selection metadata and attachment trigger details.",
+    "notes": [
+      "Caller must already be signed into ChatGPT in the active browser profile.",
+      "Uses CDP only for the upload_file step; the rest of the flow is JS-first.",
+      "Toggles off Temporary Chat if it was active."
+    ]
+  },
+  "browser_automation": {
+    "use_current_tab": true,
+    "description": "Current-tab ChatGPT attachment flow. It reuses the authenticated browser session, resets to a fresh composer, defaults to Pro with Extended effort unless overridden, prepares the file input, uploads a file, sends the prompt, and returns thread metadata.",
+    "sequences": [
+      {
+        "name": "chatgpt_new_chat_send_attachment",
+        "description": "Open ChatGPT home -> ensure fresh chat -> default/select model and effort -> prepare attachment input -> upload file -> send message -> return chat_id.",
+        "required_variables": [
+          {
+            "name": "message_text",
+            "description": "Prompt text to send to ChatGPT"
+          },
+          {
+            "name": "attachment_file_path",
+            "description": "Absolute path to the local file to upload"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open ChatGPT home in the current tab",
+            "type": "navigate_to_url",
+            "url": "https://chatgpt.com/",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the SPA shell to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1800
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the ChatGPT composer or thread shell",
+            "type": "wait_for_element",
+            "selector": "#prompt-textarea, textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], form textarea, [data-message-author-role], main article",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s4",
+            "name": "Ensure a fresh chat, default/select model and effort, and prepare the attachment input",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 180000,
+            "args": [
+              "{message_text}",
+              "{attachment_file_path}",
+              "{model_slug}|||{model_effort}"
+            ],
+            "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const message = cleanArg(arg0); const attachmentPath = cleanArg(arg1); const [modelArgRaw, effortArgRaw] = String(arg2 == null ? '' : arg2).split('|||'); const requestedModel = cleanArg(modelArgRaw); const desiredModel = requestedModel || 'Pro'; const requestedEffort = cleanArg(effortArgRaw); const desiredEffort = requestedEffort || (/\\bpro\\b/i.test(desiredModel) ? 'Extended' : ''); if (!message) throw new Error('message_text is required'); if (!attachmentPath) throw new Error('attachment_file_path is required'); const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const interactiveSelector = \"button, [role='button'], [role='option'], [role='menuitemradio'], [role='menuitem'], [data-testid], label\"; const isVisible = (node) => { if (!node || !(node instanceof Element)) return false; const style = window.getComputedStyle(node); if (style.visibility === 'hidden' || style.display === 'none') return false; const rect = node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; }; const labelOf = (node) => normalize([node.getAttribute('aria-label') || '', node.getAttribute('title') || '', node.getAttribute('data-testid') || '', node.textContent || ''].join(' ')); const isNoiseLabel = (label) => /share|login|log in|sign up|sidebar|history|search chats|temporary chat|new chat|new conversation|cookie preferences|developer mode/.test(label); const click = async (node) => { node.scrollIntoView({ block: 'center', inline: 'center' }); node.click(); await sleep(350); }; const temporaryChatActive = () => new URLSearchParams(window.location.search).get('temporary-chat') === 'true'; const findComposer = () => Array.from(document.querySelectorAll(\"#prompt-textarea, textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], textarea[placeholder*='Ask anything' i], textarea[aria-label*='message' i], textarea[aria-label*='chatgpt' i], form textarea, div[role='textbox'][contenteditable='true'], div[role='textbox'][contenteditable='plaintext-only'], [contenteditable='true'][data-testid*='composer'], [contenteditable='plaintext-only'][data-testid*='composer'], div.ProseMirror[contenteditable='true'], div.ProseMirror[contenteditable='plaintext-only']\")).find(isVisible) || null; const findNewChatControl = () => Array.from(document.querySelectorAll(\"a[data-testid='create-new-chat-button'], a[href='/'][data-testid='create-new-chat-button'], a[href='/'], a[href^='/?model='], button, [role='button']\")).filter(isVisible).find((node) => { const href = node.getAttribute('href') || ''; const label = labelOf(node).toLowerCase(); return node.getAttribute('data-testid') === 'create-new-chat-button' || href === '/' || href.startsWith('/?model=') || /new chat|new conversation|start new chat/.test(label); }) || null; const findTemporaryToggle = () => Array.from(document.querySelectorAll(\"button, [role='button']\")).filter(isVisible).find((node) => /temporary chat/.test(labelOf(node).toLowerCase())) || null; const ensureFreshChat = async () => { const actions = []; const tempToggle = findTemporaryToggle(); if (temporaryChatActive() && tempToggle) { await click(tempToggle); await sleep(700); actions.push('toggled_temporary_chat_off'); } const newChatControl = findNewChatControl(); if (newChatControl) { await click(newChatControl); await sleep(1200); actions.push('clicked_new_chat'); } const composer = findComposer(); if (!composer) return { changed: actions.length > 0, reason: actions.join(',') || 'composer_missing' }; return { changed: actions.length > 0, reason: actions.join(',') || 'fresh_ready' }; }; const labelMatchesModel = (label, wanted) => { const normalizedLabel = normalize(label).toLowerCase(); const normalizedWanted = normalize(wanted).toLowerCase(); if (!normalizedLabel || !normalizedWanted) return false; if (normalizedWanted === 'pro') return /\\bpro\\b/.test(normalizedLabel); return normalizedLabel.includes(normalizedWanted); }; const labelMatchesEffort = (label, wanted) => { const normalizedLabel = normalize(label).toLowerCase(); const normalizedWanted = normalize(wanted).toLowerCase(); if (!normalizedLabel || !normalizedWanted) return false; if (normalizedWanted === 'extended') return /\\bextended\\b/.test(normalizedLabel); if (normalizedWanted === 'standard') return /\\bstandard\\b/.test(normalizedLabel); return normalizedLabel.includes(normalizedWanted); }; const extractEffortFromLabel = (label) => { const normalizedLabel = normalize(label).toLowerCase(); if (/\\bextended\\b/.test(normalizedLabel)) return 'Extended'; if (/\\bstandard\\b/.test(normalizedLabel)) return 'Standard'; return null; }; const distanceTo = (node, anchor) => { if (!anchor || !(anchor instanceof Element)) return 0; const a = anchor.getBoundingClientRect(); const b = node.getBoundingClientRect(); const ax = a.left + (a.width / 2); const ay = a.top + (a.height / 2); const bx = b.left + (b.width / 2); const by = b.top + (b.height / 2); return Math.hypot(ax - bx, ay - by); }; const sortByAnchor = (nodes, anchor) => [...nodes].sort((left, right) => distanceTo(left, anchor) - distanceTo(right, anchor)); const collectInteractive = (scope = document) => Array.from(scope.querySelectorAll(interactiveSelector)).filter(isVisible); const findCurrentModelChip = () => { const composer = findComposer(); const form = composer ? composer.closest('form') : null; const scopes = [form, composer?.parentElement, document].filter(Boolean); for (const scope of scopes) { const matches = sortByAnchor(collectInteractive(scope).filter((node) => { const label = labelOf(node).toLowerCase(); if (!label || isNoiseLabel(label) || /configure/.test(label)) return false; return /extended pro|standard pro|\\bpro\\b|instant|thinking|latest|model|gpt|o1|o3|o4|4o|4\\.1|mini|reason/.test(label); }), composer); if (matches.length) return matches[0]; } return null; }; const openModelMenu = async () => { const composer = findComposer(); const form = composer ? composer.closest('form') : null; const scopes = [form, composer?.parentElement, document].filter(Boolean); for (const scope of scopes) { const matches = sortByAnchor(collectInteractive(scope).filter((node) => { const label = labelOf(node).toLowerCase(); if (isNoiseLabel(label) || /configure/.test(label)) return false; if (/extended pro|standard pro|\\bpro\\b|instant|thinking|latest|model|gpt|o1|o3|o4|4o|4\\.1|mini|reason/.test(label)) return true; return node.getAttribute('aria-haspopup') === 'menu'; }), composer); if (matches.length) { await click(matches[0]); await sleep(500); return matches[0]; } } throw new Error('requested model but no model picker was found'); }; const findModelOption = () => sortByAnchor(collectInteractive(document).filter((node) => { const label = labelOf(node).toLowerCase(); if (!label || isNoiseLabel(label) || /configure/.test(label)) return false; return labelMatchesModel(label, desiredModel); }), findComposer())[0] || null; const findEffortOption = () => sortByAnchor(collectInteractive(document).filter((node) => { const label = labelOf(node).toLowerCase(); if (!label || isNoiseLabel(label)) return false; if (/pro thinking effort/.test(label)) return false; return labelMatchesEffort(label, desiredEffort); }), findComposer())[0] || null; const trySelectModel = async () => { let currentChip = findCurrentModelChip(); let selectedModel = currentChip ? labelOf(currentChip) : null; let selectedEffort = extractEffortFromLabel(selectedModel); let modelChanged = false; let effortChanged = false; let modelStrategy = requestedModel ? 'requested_explicitly' : 'defaulted_to_pro'; let effortStrategy = desiredEffort ? (requestedEffort ? 'requested_explicitly' : 'defaulted_for_pro') : 'skipped'; if (!labelMatchesModel(selectedModel, desiredModel)) { let option = findModelOption(); if (!option) { await openModelMenu(); option = findModelOption(); } if (!option) throw new Error(`requested model '${desiredModel}' but no matching option was found`); const optionLabel = labelOf(option); await click(option); await sleep(700); modelChanged = true; currentChip = findCurrentModelChip(); selectedModel = currentChip ? labelOf(currentChip) : optionLabel; } if (desiredEffort && /\\bpro\\b/i.test(desiredModel)) { currentChip = findCurrentModelChip(); selectedModel = currentChip ? labelOf(currentChip) : selectedModel; selectedEffort = extractEffortFromLabel(selectedModel); if (!labelMatchesEffort(selectedModel, desiredEffort)) { let option = findEffortOption(); if (!option) { const trigger = currentChip || await openModelMenu(); if (trigger) { await click(trigger); await sleep(500); } option = findEffortOption(); } if (!option) throw new Error(`requested model effort '${desiredEffort}' but no matching option was found`); const optionLabel = labelOf(option); await click(option); await sleep(700); effortChanged = true; currentChip = findCurrentModelChip(); selectedModel = currentChip ? labelOf(currentChip) : (selectedModel || optionLabel); selectedEffort = extractEffortFromLabel(selectedModel) || optionLabel; } } currentChip = findCurrentModelChip(); selectedModel = currentChip ? labelOf(currentChip) : selectedModel; selectedEffort = extractEffortFromLabel(selectedModel) || selectedEffort; return { requested_model: desiredModel, requested_effort: desiredEffort || null, selected_model: selectedModel, selected_effort: selectedEffort, changed: modelChanged || effortChanged, model_changed: modelChanged, effort_changed: effortChanged, strategy: { model: modelStrategy, effort: effortStrategy } }; }; const findFileInput = () => Array.from(document.querySelectorAll(\"input[type='file']\")).find((node) => node instanceof HTMLInputElement) || null; const stampFileInput = (input) => { input.id = 'rzn-chatgpt-upload-input'; input.setAttribute('data-rzn-upload-prepared', 'true'); return '#rzn-chatgpt-upload-input'; }; const findAttachmentTrigger = () => { const composer = findComposer(); const form = composer ? composer.closest('form') : null; const scopes = [form, composer?.parentElement, document].filter(Boolean); for (const scope of scopes) { const matches = sortByAnchor(Array.from(scope.querySelectorAll(\"button, [role='button'], label\")).filter(isVisible).filter((node) => { const label = labelOf(node).toLowerCase(); if (isNoiseLabel(label) || /send|submit|voice|microphone|mic|instant|thinking|latest|\\bpro\\b|extended|standard/.test(label)) return false; if (/attach|upload|photo|image|file/.test(label)) return true; return !label && !!node.querySelector('svg'); }), composer); if (matches.length) return matches[0]; } return null; }; const ensureAttachmentInput = async () => { let input = findFileInput(); if (input) return { selector: stampFileInput(input), trigger_used: false }; const trigger = findAttachmentTrigger(); if (!trigger) throw new Error('ChatGPT attachment trigger not found'); await click(trigger); const deadline = Date.now() + 12000; while (Date.now() < deadline) { input = findFileInput(); if (input) return { selector: stampFileInput(input), trigger_used: true, trigger_label: labelOf(trigger) || null }; await sleep(250); } throw new Error('ChatGPT file input not found after opening attachment UI'); }; const freshChat = await ensureFreshChat(); const modelSelection = await trySelectModel(); const attachment = await ensureAttachmentInput(); return { url: window.location.href, title: document.title, fresh_chat: freshChat, model_selection: modelSelection, attachment_prepared: true, attachment_selector: attachment.selector, attachment_trigger_used: attachment.trigger_used, attachment_trigger_label: attachment.trigger_label || null, attachment_file_name: attachmentPath.split(/[\\\\/]/).pop() || attachmentPath };"
+          },
+          {
+            "id": "s5",
+            "name": "Upload the attachment into the prepared file input",
+            "type": "upload_file",
+            "selector": "#rzn-chatgpt-upload-input",
+            "file_path": "{attachment_file_path}",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s6",
+            "name": "Let the attachment chip settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1800
+          },
+          {
+            "id": "s7",
+            "name": "Submit the prompt through the ChatGPT textarea",
+            "type": "submit_input",
+            "selector": "#prompt-textarea, textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], form textarea",
+            "text": "{message_text}",
+            "submit_fallback": false,
+            "timeout_ms": 120000
+          },
+          {
+            "id": "s8",
+            "name": "Allow ChatGPT to create the conversation route",
+            "type": "wait_for_timeout",
+            "timeout_ms": 6000
+          },
+          {
+            "id": "s9",
+            "name": "Return the current URL after send",
+            "type": "get_current_url"
+          }
+        ]
+      }
+    ]
+  }
+}

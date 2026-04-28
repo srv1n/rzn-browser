@@ -1,0 +1,3 @@
+RZN upload_file smoke fixture.
+
+If you can read this file name in the page after upload, the CDP-based file input set succeeded.

@@ -1,0 +1,108 @@
+{
+  "schema": "clipper.website_visual.manifest.v0.1",
+  "meta": {
+    "id": "rzn_browser_modes_matrix_v1",
+    "page_url": "https://github.com/srv1n/rzn-browser#where-it-shines",
+    "repo": "rzn-browser",
+    "locale": "en_US"
+  },
+  "asset": {
+    "kind": "compare_matrix",
+    "template_id": "editorial.compare_matrix.v1",
+    "width": 1500,
+    "height": 960
+  },
+  "theme": {
+    "theme_ref": "builtin:editorial_warm_v1"
+  },
+  "copy": {
+    "eyebrow": "Modes on one runtime",
+    "title": "Workflow mode or agent mode?",
+    "subtitle": "Two entry points, one runtime. Pick based on how much freedom the browser should get."
+  },
+  "proof": {
+    "kind": "matrix",
+    "columns": [
+      {
+        "id": "workflow",
+        "label": "Workflow mode"
+      },
+      {
+        "id": "agent",
+        "label": "Agent mode"
+      }
+    ],
+    "rows": [
+      {
+        "label": "Same task every time",
+        "values": {
+          "workflow": "Exact JSON steps",
+          "agent": "Too much freedom"
+        },
+        "winner": "workflow"
+      },
+      {
+        "label": "UI shifts mid-run",
+        "values": {
+          "workflow": "Needs manual updates",
+          "agent": "Planner can adapt"
+        },
+        "winner": "agent"
+      },
+      {
+        "label": "Need strict review and audit",
+        "values": {
+          "workflow": "Most predictable",
+          "agent": "Harder to lock tight"
+        },
+        "winner": "workflow"
+      },
+      {
+        "label": "Exploring an unknown flow",
+        "values": {
+          "workflow": "Too rigid to scout",
+          "agent": "Best first pass"
+        },
+        "winner": "agent"
+      }
+    ]
+  },
+  "constraints": {
+    "slots": {
+      "title": {
+        "max_chars": 32,
+        "max_lines": 2
+      },
+      "subtitle": {
+        "max_chars": 88,
+        "max_lines": 3
+      },
+      "proof.rows.label": {
+        "max_chars": 28,
+        "max_lines": 2
+      },
+      "proof.rows.cells": {
+        "max_chars": 24,
+        "max_lines": 2
+      }
+    },
+    "overflow_policy": "fail",
+    "thumbnail_legibility": true
+  },
+  "outputs": [
+    {
+      "format": "png",
+      "path": "rzn_browser_modes_matrix_v1.png"
+    }
+  ],
+  "qa": {
+    "required_checks": [
+      "no_overflow",
+      "no_overlap",
+      "grid_alignment",
+      "font_lock",
+      "thumbnail_legibility"
+    ],
+    "fail_on_warn": true
+  }
+}

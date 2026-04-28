@@ -1,0 +1,79 @@
+{
+  "system_id": "bing",
+  "id": "bing_images_search",
+  "name": "Bing: Images Search",
+  "description": "Run a Bing Images search in a fresh tab and return structured metadata for up to 50 results — the original high-resolution URL (`high_res_url`, from Bing's `m` attribute), the Bing-hosted thumbnail (`thumbnail_url`), the host page (`source_page`), and title. Use when you want the raw image URLs to hand off to wget/curl. Do not use to actually download files in-browser (use `bing_images_download`), or for general web results (`bing_web_search`).",
+  "domain": "bing.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigates a fresh tab to /images/search, waits for the image grid, parses each tile's `a.iusc[m]` JSON attribute, and returns the decoded fields.",
+    "sequences": [
+      {
+        "name": "bing_images_search",
+        "description": "Open Bing Images -> wait for grid -> parse a.iusc[m] metadata.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "Image search query"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Bing Images search",
+            "type": "navigate_to_url",
+            "url": "https://www.bing.com/images/search?q={search_query}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s2",
+            "name": "Allow the image grid to hydrate",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the image grid",
+            "type": "wait_for_element",
+            "selector": "a.iusc[m]",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s4",
+            "name": "Parse a.iusc[m] metadata into high-signal fields",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 15000,
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const items = []; for (const node of Array.from(document.querySelectorAll('a.iusc[m]')).slice(0, 50)) { let parsed = null; try { parsed = JSON.parse(node.getAttribute('m') || '{}'); } catch (e) {} if (!parsed) continue; items.push({ title: (parsed.t || '').trim(), high_res_url: parsed.murl || '', thumbnail_url: parsed.turl || '', source_page: parsed.purl || '' }); } return { items_count: items.length, items };"
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Return up to 50 Bing Images results with high-res URL, thumbnail URL, source page, title, and dimensions.",
+    "parameters": [
+      {
+        "name": "search_query",
+        "required": true,
+        "shape": "text",
+        "description": "Bing Images search query.",
+        "example": "sunset photos"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run bing images-search --param search_query=\"sunset photos\"",
+        "description": "Return 50 image metadata entries including original high-res URLs."
+      }
+    ],
+    "returns": "{ items_count, items[] } where each item has { title, high_res_url, thumbnail_url, source_page }.",
+    "notes": [
+      "`high_res_url` is the real URL on the hosting site (pulled from Bing's `m` attribute's `murl`). Hand those off to `wget`/`curl` for actual downloads.",
+      "`thumbnail_url` is the Bing-hosted thumbnail (`murl`'s smaller companion `turl`).",
+      "If you want Chrome to save files directly inside the authenticated session, use `bing_images_download` instead.",
+      "Opens a fresh tab."
+    ]
+  }
+}

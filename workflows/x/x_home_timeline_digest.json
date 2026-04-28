@@ -1,0 +1,79 @@
+{
+  "system_id": "x",
+  "id": "x_home_timeline_digest",
+  "name": "X: Home Timeline Digest",
+  "description": "Open the authenticated X home timeline in a fresh tab, scroll a bounded number of cards, and return a structured digest of visible posts. Use when you need a quick read of what is on the logged-in user's For You / Following feed right now. Do not use to inspect a specific author (prefer `x_profile_posts`), or to mutate anything.",
+  "domain": "x.com",
+  "version": "1.1.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Opens https://x.com/home in a fresh tab so parallel runs don't clobber each other. Scrolls up to 8 times to accumulate ~30 cards, then returns a compact digest.",
+    "sequences": [
+      {
+        "name": "x_home_timeline_digest",
+        "description": "Open X home -> wait for timeline cards -> scroll to load more -> extract digest.",
+        "required_variables": [],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open the X home timeline in a fresh tab",
+            "type": "navigate_to_url",
+            "url": "https://x.com/home",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the home timeline to hydrate",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2200
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for timeline post cards",
+            "type": "wait_for_element",
+            "selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s4",
+            "name": "Scroll until enough timeline cards are visible",
+            "type": "infinite_scroll",
+            "max_scrolls": 8,
+            "scroll_delay": 1400,
+            "item_selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
+            "target_count": 30
+          },
+          {
+            "id": "s5",
+            "name": "Read a digest of visible timeline posts",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 20000,
+            "script": "const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const normalizeUrl = (raw) => { if (!raw) return ''; try { return new URL(raw, window.location.origin).toString(); } catch { return String(raw); } }; const getStatusUrl = (article) => { const links = Array.from(article.querySelectorAll(\"a[href*='/status/']\")).map((link) => normalizeUrl(link.getAttribute('href') || link.href)).filter(Boolean); return links[0] || ''; }; const textOf = (article) => normalize(Array.from(article.querySelectorAll(\"div[data-testid='tweetText'], div[lang]\")).map((node) => normalize(node.textContent)).filter(Boolean).join('\\n\\n')); const buttonText = (article, selector) => { const el = article.querySelector(selector); return el ? normalize(el.textContent) : null; }; const posts = []; const seen = new Set(); for (const article of Array.from(document.querySelectorAll(\"main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article\"))) { const postUrl = getStatusUrl(article); if (!postUrl || seen.has(postUrl)) continue; seen.add(postUrl); posts.push({ post_url: postUrl, author: normalize(article.querySelector(\"div[data-testid='User-Name']\")?.textContent || ''), text: textOf(article), posted_at: article.querySelector('time')?.getAttribute('datetime') || null, reply_count: buttonText(article, \"button[data-testid='reply'], [data-testid='reply']\"), repost_count: buttonText(article, \"button[data-testid='retweet'], button[data-testid='unretweet'], [data-testid='retweet'], [data-testid='unretweet']\"), like_count: buttonText(article, \"button[data-testid='like'], button[data-testid='unlike'], [data-testid='like'], [data-testid='unlike']\"), view_count: buttonText(article, \"a[href*='/analytics']\") }); if (posts.length >= 30) break; } return { url: location.href, post_count: posts.length, posts };"
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Return a digest of posts currently visible on the authenticated X home timeline.",
+    "parameters": [],
+    "examples": [
+      {
+        "command": "rzn-browser run x home-timeline-digest",
+        "description": "Scroll the home feed and return a compact post digest."
+      }
+    ],
+    "returns": "{ url, post_count, posts[] } where each post has post_url, author, text, posted_at, reply_count, repost_count, like_count, view_count.",
+    "notes": [
+      "Opens a fresh tab so parallel runs do not fight over the same window.",
+      "Requires an already-logged-in x.com session in the browser.",
+      "Read-only: no likes, follows, or posts are ever issued."
+    ]
+  }
+}

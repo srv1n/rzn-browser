@@ -1,0 +1,63 @@
+{
+  "system_id": "chatgpt",
+  "id": "chatgpt_export_chat_v1",
+  "name": "ChatGPT: Export Visible Chat",
+  "description": "Open an existing ChatGPT conversation by chat id and export the visible transcript as structured role/content turns.",
+  "domain": "chatgpt.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "use_current_tab": true,
+    "description": "Current-tab ChatGPT transcript exporter. It reuses the authenticated browser session, opens a conversation route, and extracts the visible DOM transcript.",
+    "sequences": [
+      {
+        "name": "chatgpt_export_chat",
+        "description": "Open thread -> extract visible turns -> return structured transcript.",
+        "required_variables": [
+          {
+            "name": "chat_id",
+            "description": "ChatGPT conversation id from /c/<chat_id>"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open the target ChatGPT conversation in the current tab",
+            "type": "navigate_to_url",
+            "url": "https://chatgpt.com/c/{chat_id}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the route to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1800
+          },
+          {
+            "id": "s2",
+            "name": "Give the thread shell another moment",
+            "type": "wait_for_timeout",
+            "timeout_ms": 700
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the ChatGPT thread surface",
+            "type": "wait_for_element",
+            "selector": "[data-message-author-role], main article, #prompt-textarea, textarea[placeholder*='Message' i]",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s4",
+            "name": "Extract the visible transcript",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 120000,
+            "args": [
+              "{chat_id}"
+            ],
+            "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const expectedChatId = cleanArg(arg0); const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const chatIdFromLocation = () => { const match = window.location.pathname.match(/^\\/c\\/([^/?#]+)/); return match ? match[1] : null; }; const stripNoise = (node) => { const clone = node.cloneNode(true); clone.querySelectorAll('button, nav, form, textarea, input, svg, style, script').forEach((child) => child.remove()); return normalize(clone.textContent || ''); }; const linksFrom = (node) => Array.from(node.querySelectorAll('a[href]')).map((link) => { const href = link.getAttribute('href') || link.href || ''; const text = normalize(link.textContent || ''); if (!href) return null; try { return { href: new URL(href, window.location.origin).toString(), text }; } catch { return { href, text }; } }).filter(Boolean).slice(0, 25); const turns = []; const raw = Array.from(document.querySelectorAll(\"[data-message-author-role], main article, [data-testid*='conversation-turn'], [data-testid*='conversationTurn']\")); const seen = new Set(); for (const node of raw) { const root = node.closest('[data-message-author-role]') || node; if (seen.has(root)) continue; seen.add(root); const explicitRole = (root.getAttribute('data-message-author-role') || '').toLowerCase(); const testId = (root.getAttribute('data-testid') || '').toLowerCase(); const role = explicitRole || (/assistant|model/.test(testId) ? 'assistant' : /user|prompt/.test(testId) ? 'user' : 'unknown'); const codeBlocks = Array.from(root.querySelectorAll('pre, code')).map((block) => normalize(block.textContent || '')).filter(Boolean); const markdownText = Array.from(root.querySelectorAll('.markdown, [data-message-content], [data-testid*=\"markdown\"], pre, code, p, li')).map((child) => normalize(child.textContent || '')).filter(Boolean); const text = normalize(markdownText.join('\\n\\n')) || stripNoise(root); if (!text) continue; turns.push({ index: turns.length, role, text, code_blocks: codeBlocks, links: linksFrom(root), test_id: root.getAttribute('data-testid') || null }); } const currentChatId = chatIdFromLocation(); if (expectedChatId && currentChatId && currentChatId !== expectedChatId) throw new Error(`expected chat_id ${expectedChatId} but opened ${currentChatId}`); return { url: window.location.href, title: document.title, chat_id: currentChatId, message_count: turns.length, assistant_turn_count: turns.filter((turn) => turn.role === 'assistant').length, user_turn_count: turns.filter((turn) => turn.role === 'user').length, transcript: turns };"
+          }
+        ]
+      }
+    ]
+  }
+}

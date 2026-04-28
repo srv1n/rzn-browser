@@ -1,0 +1,34 @@
+# Remove the [package] section and its dependencies
+# [package]
+# name = "rzn-broser-control"
+# version = "0.1.0"
+# edition = "2024" # Note: "2024" edition is not stable yet, use "2021"
+#
+# [dependencies]
+# serde = { version = "1.0", features = ["derive"] }
+# serde_json = "1.0"
+# urlencoding = "2.1"
+# ctrlc = "3.2"
+# chrono = "0.4"
+# libc = "0.2"
+
+[workspace]
+resolver = "2"
+
+members = [
+    "crates/rzn_browser",
+    "crates/rzn_core",
+    "crates/rzn_contracts",
+    "crates/rzn_plan",
+    "crates/rzn_sdk",
+    "crates/rzn_plugin_devkit",
+    "crates/rzn_broker_endpoint",
+    "crates/rzn_browser_worker",
+    "crates/rzn_native_host",
+]
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = "z"

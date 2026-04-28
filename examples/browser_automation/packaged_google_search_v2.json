@@ -1,0 +1,81 @@
+{
+  "system_id": "google",
+  "id": "google_search_v2",
+  "name": "Google Search Workflow (Robust Selectors)",
+  "description": "Search Google and extract organic results using robust selectors.",
+  "domain": "google.com",
+  "version": "1.1.0",
+  "last_updated": "2025-09-03T00:00:00Z",
+  "browser_automation": {
+    "description": "Workflow sequences executed via the browser extension for Google search.",
+    "sequences": [
+      {
+        "name": "google_search_extract",
+        "description": "Performs a Google search and extracts results.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "The search term."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Google homepage",
+            "type": "navigate_to_url",
+            "url": "https://www.google.com"
+          },
+          {
+            "id": "s1b",
+            "name": "Wait for search box",
+            "type": "wait_for_element",
+            "selector": "textarea[name='q'], input[name='q']",
+            "timeout_ms": 8000
+          },
+          {
+            "id": "s1c",
+            "name": "Submit search",
+            "type": "submit_input",
+            "selector": "textarea[name='q'], input[name='q']",
+            "text": "{search_query}"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for results to render",
+            "type": "wait_for_timeout",
+            "timeout_ms": 3000
+          },
+          {
+            "id": "s4",
+            "name": "Wait for results container",
+            "type": "wait_for_element",
+            "selector": "#search, #rso",
+            "timeout_ms": 12000
+          },
+          {
+            "id": "s5",
+            "name": "Extract search results (robust)",
+            "type": "extract_structured_data",
+            "item_selector": "#search .g, #rso .g, .MjjYud, .tF2Cxc, [data-sokoban-container]",
+            "extraction_type": "search_results",
+            "fields": [
+              {
+                "name": "title",
+                "selector": "h3"
+              },
+              {
+                "name": "url",
+                "selector": "a",
+                "attribute": "href"
+              },
+              {
+                "name": "snippet",
+                "selector": ".VwiC3b, [data-content-feature], .yXK7lf"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "system_id": "amazon",
+  "id": "amazon_search",
+  "name": "Amazon Product Search",
+  "description": "Search Amazon and extract product listing cards with title, URL, price, and rating metadata.",
+  "domain": "amazon.com",
+  "version": "2.0.0",
+  "browser_automation": {
+    "description": "Amazon search extraction workflow tuned for dynamic SERP cards.",
+    "sequences": [
+      {
+        "name": "amazon_search_extract",
+        "description": "Performs Amazon search and extracts visible product cards.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "Search term to run on Amazon."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate directly to Amazon search results",
+            "type": "navigate_to_url",
+            "url": "https://www.amazon.com/s?k={search_query}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for search results hydration",
+            "type": "wait_for_timeout",
+            "timeout_ms": 3500
+          },
+          {
+            "id": "s3",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for result cards",
+            "type": "wait_for_element",
+            "selector": "[data-component-type='s-search-result'] h2 a, .s-main-slot [data-component-type='s-search-result'] h2",
+            "timeout_ms": 25000
+          },
+          {
+            "id": "s5",
+            "name": "Extra wait for lazy-loaded data",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          },
+          {
+            "id": "s6",
+            "name": "Extract search result cards",
+            "type": "extract_structured_data",
+            "item_selector": "[data-component-type='s-search-result']",
+            "fields": [
+              {
+                "name": "title",
+                "selector": "h2 a span, h2 span"
+              },
+              {
+                "name": "product_url",
+                "selector": "h2 a",
+                "attribute": "href"
+              },
+              {
+                "name": "asin",
+                "selector": "[data-asin]",
+                "attribute": "data-asin"
+              },
+              {
+                "name": "price",
+                "selector": ".a-price .a-offscreen, .a-price-whole"
+              },
+              {
+                "name": "rating",
+                "selector": ".a-icon-star-small .a-icon-alt, .a-icon-star .a-icon-alt"
+              },
+              {
+                "name": "review_count",
+                "selector": "a[href*='customerReviews'] span.a-size-base, span.a-size-base.s-underline-text"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

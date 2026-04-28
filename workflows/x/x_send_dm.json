@@ -1,0 +1,182 @@
+{
+  "system_id": "x",
+  "id": "x_send_dm",
+  "name": "X: Send DM",
+  "description": "Open a recipient profile in a fresh tab, launch the DM composer, draft a first message, pause for human approval, then send. Use when you need to open a NEW DM conversation with a user by handle. Do not use when you already have an open thread URL (use `x_reply_dm_thread`).",
+  "domain": "x.com",
+  "version": "1.1.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigates a fresh tab to /{recipient_handle}, clicks the profile DM button, handles the X Chat passcode gate if shown, types the message, asserts the send control is enabled, and pauses at the review gate before sending.",
+    "sequences": [
+      {
+        "name": "x_send_dm",
+        "description": "Open profile -> open DM composer -> (onboarding gate) -> type message -> verify send enabled -> pause for review -> send.",
+        "required_variables": [
+          {
+            "name": "recipient_handle",
+            "description": "Recipient handle without the leading @"
+          },
+          {
+            "name": "message_text",
+            "description": "Message text to send"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open the recipient profile in a fresh tab",
+            "type": "navigate_to_url",
+            "url": "https://x.com/{recipient_handle}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the profile page to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the profile DM button",
+            "type": "wait_for_element",
+            "selector": "div[role='button'][data-testid='sendDMFromProfile'], button[data-testid='sendDMFromProfile'], a[href*='/messages/compose'], button[aria-label*='Message' i], a[aria-label*='Message' i]",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s4",
+            "name": "Open the DM composer",
+            "type": "click_element",
+            "selector": "div[role='button'][data-testid='sendDMFromProfile'], button[data-testid='sendDMFromProfile'], a[href*='/messages/compose'], button[aria-label*='Message' i], a[aria-label*='Message' i]",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s5",
+            "name": "Wait for the DM composer or X Chat onboarding gate",
+            "type": "wait_for_element",
+            "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true'], button[data-testid='pin-onboarding-setup-now']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s6",
+            "name": "Pause if X Chat requires passcode setup",
+            "type": "request_user_intervention",
+            "message": "If X Chat asks you to create a passcode, finish that setup now. Otherwise click Continue immediately.",
+            "instructions": "After the passcode gate is cleared, the workflow will wait for the DM composer and continue typing.",
+            "approval_mode": "ask_user",
+            "continue_on_timeout": false,
+            "timeout_ms": 2147483647
+          },
+          {
+            "id": "s7",
+            "name": "Wait for the DM composer after onboarding is cleared",
+            "type": "wait_for_element",
+            "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s8",
+            "name": "Activate the DM composer with a trusted click",
+            "type": "click_element",
+            "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']",
+            "use_cdp": true,
+            "timeout_ms": 10000
+          },
+          {
+            "id": "s9",
+            "name": "Allow the DM caret to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 350
+          },
+          {
+            "id": "s10",
+            "name": "Type the DM message",
+            "type": "type_text",
+            "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']",
+            "text": "{message_text}",
+            "use_native_input": false,
+            "delay_ms": 35,
+            "typing_speed": "medium",
+            "timeout_ms": 120000
+          },
+          {
+            "id": "s11",
+            "name": "Confirm the DM send control is enabled",
+            "type": "assert_selector_state",
+            "selector": "button[data-testid='dmComposerSendButton'], div[role='button'][data-testid='dmComposerSendButton'], button[aria-label*='Send' i]",
+            "condition": "enabled",
+            "timeout_ms": 5000
+          },
+          {
+            "id": "s12",
+            "name": "Pause for review before sending the DM",
+            "type": "request_user_intervention",
+            "message": "DM draft is ready. Click Continue only if you want to send it.",
+            "instructions": "If you do not want to send this message, stop the workflow instead of waiting for the timeout.",
+            "approval_mode": "ask_user",
+            "continue_on_timeout": false,
+            "timeout_ms": 2147483647
+          },
+          {
+            "id": "s13",
+            "name": "Click the DM send control",
+            "type": "click_element",
+            "selector": "button[data-testid='dmComposerSendButton'], div[role='button'][data-testid='dmComposerSendButton'], button[aria-label*='Send' i]",
+            "use_cdp": true,
+            "timeout_ms": 10000
+          },
+          {
+            "id": "s14",
+            "name": "Allow the DM send to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 900
+          },
+          {
+            "id": "s15",
+            "name": "Read the final DM composer state",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 10000,
+            "script": "const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const composer = document.querySelector(\"div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']\"); return { url: location.href, composer_text: composer ? normalize(composer.textContent || '') : null, send_button_present: !!document.querySelector(\"button[data-testid='dmComposerSendButton'], div[role='button'][data-testid='dmComposerSendButton'], button[aria-label*='Send' i]\"), pin_onboarding_present: !!document.querySelector(\"button[data-testid='pin-onboarding-setup-now']\") };"
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Open a new DM with a handle and send a message after human approval.",
+    "parameters": [
+      {
+        "name": "recipient_handle",
+        "required": true,
+        "shape": "string",
+        "description": "Recipient X handle without the leading @.",
+        "example": "jack"
+      },
+      {
+        "name": "message_text",
+        "required": true,
+        "shape": "text",
+        "description": "Message body to send.",
+        "example": "Today's a great day"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run x send-dm --param recipient_handle=\"jack\" --param message_text=\"Today's a great day\"",
+        "description": "Send a first DM to a handle after confirming at the review gate."
+      }
+    ],
+    "returns": "{ url, composer_text, send_button_present, pin_onboarding_present } post-send.",
+    "notes": [
+      "Mutating. Two gates: one for passcode setup (if shown), one for send approval.",
+      "Opens a fresh tab; parallel DM sends to different handles are safe.",
+      "Recipient must accept DMs from the authenticated user for the Message button to exist."
+    ]
+  }
+}

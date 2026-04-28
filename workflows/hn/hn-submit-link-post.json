@@ -1,0 +1,153 @@
+{
+  "system_id": "hacker_news",
+  "id": "hn_submit_link_post_v1",
+  "name": "Hacker News: Submit Link Post",
+  "description": "Open the Hacker News submit form, fill a link post (title, URL, optional text), pause for explicit operator approval, and submit only after the operator clicks Continue. To dry-run (draft without posting), let the workflow stop at the approval gate by clicking Stop in the extension UI — the form stays filled in the browser tab.",
+  "domain": "news.ycombinator.com",
+  "version": "1.2.0",
+  "last_updated": "2026-04-24T00:00:00Z",
+  "help": {
+    "summary": "Submit a Hacker News link post with an explicit approval gate before the final POST. Click Stop at the gate to leave a draft instead of submitting.",
+    "parameters": [
+      {
+        "name": "post_title",
+        "required": true,
+        "shape": "text",
+        "description": "Title of the HN post (HN truncates aggressively; keep it factual and under ~80 chars).",
+        "example": "Dwarkesh Patel interviews Jensen Huang on TPUs and supply chains"
+      },
+      {
+        "name": "post_url",
+        "required": true,
+        "shape": "https URL",
+        "description": "Canonical URL to submit. Must be the original source — HN penalises duplicate or aggregator URLs.",
+        "example": "https://www.youtube.com/watch?v=Hrbq66XqtCo"
+      },
+      {
+        "name": "post_text",
+        "required": true,
+        "shape": "text (pass empty string for none)",
+        "description": "Optional body text for the link post. Pass an empty string when you do not want any body text. Keep short and non-promotional.",
+        "example": ""
+      }
+    ],
+    "examples": [
+      {
+        "description": "Submit a link post with no body text (operator approves at the gate)",
+        "command": "rzn-browser run hn submit-link-post --param post_title=\"Show HN: rzn-browser, an extension-driven automation runtime\" --param post_url=\"https://github.com/example/rzn-browser\" --param post_text=\"\""
+      },
+      {
+        "description": "Submit a link post with a short context blurb",
+        "command": "rzn-browser run hn submit-link-post --param post_title=\"Dwarkesh Patel interviews Jensen Huang on TPUs and supply chains\" --param post_url=\"https://www.youtube.com/watch?v=Hrbq66XqtCo\" --param post_text=\"Covers TPU competition, chip policy, and why Nvidia has not become a hyperscaler.\""
+      },
+      {
+        "description": "Dry-run: fill the form but do not post (click Stop in the extension UI when the approval gate appears)",
+        "command": "rzn-browser run hn submit-link-post --param post_title=\"Test post — DO NOT APPROVE\" --param post_url=\"https://example.com\" --param post_text=\"\""
+      }
+    ],
+    "returns": "title_length, url, and text_length captured at the approval gate; on submit, the workflow waits for the post to land but does not return the new HN item id (read it from the redirected tab if needed).",
+    "notes": [
+      "Caller must already be logged into Hacker News in the active browser profile. The workflow does not handle login.",
+      "HN aggressively flags duplicate URL submissions. Search HN for the URL before submitting if there is any doubt.",
+      "The approval gate uses request_user_intervention with no timeout. The workflow blocks until the operator clicks Continue (submit) or Stop (leave as draft)."
+    ]
+  },
+  "browser_automation": {
+    "description": "Workflow sequence executed via the browser extension for drafting a Hacker News link submission and sending it only after an explicit approval gate.",
+    "sequences": [
+      {
+        "name": "hn_submit_link_post",
+        "description": "Navigate to submit page -> fill title/url/text -> verify draft -> approval gate -> submit",
+        "required_variables": [
+          {
+            "name": "post_title",
+            "description": "HN post title"
+          },
+          {
+            "name": "post_url",
+            "description": "Canonical URL to submit"
+          },
+          {
+            "name": "post_text",
+            "description": "Optional short text field content. Pass an empty string when you do not want any body text."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Navigate to the HN submit page",
+            "type": "navigate_to_url",
+            "url": "https://news.ycombinator.com/submit"
+          },
+          {
+            "id": "s1",
+            "name": "Allow the submit form to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 900
+          },
+          {
+            "id": "s2",
+            "name": "Wait for the title field",
+            "type": "wait_for_element",
+            "selector": "input[name='title']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s3",
+            "name": "Fill the title",
+            "type": "fill_input_field",
+            "selector": "input[name='title']",
+            "value": "{post_title}",
+            "simulate_typing": false
+          },
+          {
+            "id": "s4",
+            "name": "Fill the URL",
+            "type": "fill_input_field",
+            "selector": "input[name='url']",
+            "value": "{post_url}",
+            "simulate_typing": false
+          },
+          {
+            "id": "s5",
+            "name": "Fill the optional text field",
+            "type": "fill_input_field",
+            "selector": "textarea[name='text']",
+            "value": "{post_text}",
+            "simulate_typing": false
+          },
+          {
+            "id": "s6",
+            "name": "Verify the draft has a title and URL",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 10000,
+            "script": "const title = document.querySelector(\"input[name='title']\"); const url = document.querySelector(\"input[name='url']\"); const text = document.querySelector(\"textarea[name='text']\"); const titleValue = title && 'value' in title ? String(title.value || '').trim() : ''; const urlValue = url && 'value' in url ? String(url.value || '').trim() : ''; const textValue = text && 'value' in text ? String(text.value || '').trim() : ''; if (!titleValue) { throw new Error('Title is empty'); } if (!urlValue) { throw new Error('URL is empty'); } return { title_length: titleValue.length, url: urlValue, text_length: textValue.length };"
+          },
+          {
+            "id": "s7",
+            "name": "Pause for approval before submitting the link post",
+            "type": "request_user_intervention",
+            "message": "HN link submission draft is ready. Click Continue only if you want to post it. Click Stop to leave it as a draft.",
+            "instructions": "If the title feels promotional, the URL looks duplicated, or the text field is too bloated, click Stop instead of Continue.",
+            "approval_mode": "ask_user",
+            "continue_on_timeout": false,
+            "timeout_ms": 2147483647
+          },
+          {
+            "id": "s8",
+            "name": "Submit the link post",
+            "type": "click_element",
+            "selector": "input[type='submit']"
+          },
+          {
+            "id": "s9",
+            "name": "Allow the submission to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,265 @@
+{
+  "system_id": "airbnb",
+  "id": "airbnb_search_v1",
+  "name": "Airbnb Property Search Workflow",
+  "description": "Search for properties in San Francisco on Airbnb with filters and extraction",
+  "domain": "airbnb.com",
+  "version": "1.0.0",
+  "last_updated": "2025-07-28T00:00:00Z",
+  "browser_automation": {
+    "description": "Comprehensive Airbnb search workflow with date selection, guest configuration, filtering, and property details extraction",
+    "sequences": [
+      {
+        "name": "airbnb_property_search",
+        "description": "Search for properties in San Francisco with specific dates and guest count",
+        "required_variables": [],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Airbnb homepage",
+            "type": "navigate_to_url",
+            "url": "https://www.airbnb.com",
+            "strict": true
+          },
+          {
+            "id": "s2",
+            "name": "Wait for page to load",
+            "type": "wait_for_element",
+            "selector": "[data-testid='structured-search-input-field-query']",
+            "condition": "visible",
+            "timeout_ms": 10000
+          },
+          {
+            "id": "s3",
+            "name": "Click on location search field",
+            "type": "click_element",
+            "selector": "[data-testid='structured-search-input-field-query']",
+            "wait_after_ms": 500
+          },
+          {
+            "id": "s4",
+            "name": "Type location",
+            "type": "fill_input_field",
+            "selector": "[data-testid='structured-search-input-field-query']",
+            "value": "San Francisco",
+            "clear_first": true,
+            "wait_after_ms": 1500
+          },
+          {
+            "id": "s5",
+            "name": "Select San Francisco from suggestions",
+            "type": "click_element",
+            "selector": "[data-testid='option-0']",
+            "wait_after_ms": 800
+          },
+          {
+            "id": "s6",
+            "name": "Calculate dates using JavaScript",
+            "type": "execute_javascript",
+            "script": "(() => { const today = new Date(); const checkIn = new Date(today); checkIn.setDate(today.getDate() + 7); const checkOut = new Date(checkIn); checkOut.setDate(checkIn.getDate() + 3); window.__airbnb_dates = { checkIn: checkIn.toISOString().split('T')[0], checkOut: checkOut.toISOString().split('T')[0], checkInFormatted: checkIn.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), checkOutFormatted: checkOut.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) }; return window.__airbnb_dates; })()"
+          },
+          {
+            "id": "s7",
+            "name": "Click on check-in date field",
+            "type": "click_element",
+            "selector": "[data-testid='structured-search-input-field-split-dates-0']",
+            "wait_after_ms": 1000
+          },
+          {
+            "id": "s8",
+            "name": "Select check-in date (7 days from now)",
+            "type": "execute_javascript",
+            "script": "(() => { const checkInDate = window.__airbnb_dates.checkIn; const dateElements = document.querySelectorAll('[data-testid*=\"calendar-day\"]'); for (const el of dateElements) { if (el.getAttribute('data-testid').includes(checkInDate)) { el.click(); return true; } } return false; })()"
+          },
+          {
+            "id": "s9",
+            "name": "Wait for check-out date to be selectable",
+            "type": "wait_for_timeout",
+            "timeout_ms": 500
+          },
+          {
+            "id": "s10",
+            "name": "Select check-out date (3 days after check-in)",
+            "type": "execute_javascript",
+            "script": "(() => { const checkOutDate = window.__airbnb_dates.checkOut; const dateElements = document.querySelectorAll('[data-testid*=\"calendar-day\"]'); for (const el of dateElements) { if (el.getAttribute('data-testid').includes(checkOutDate)) { el.click(); return true; } } return false; })()"
+          },
+          {
+            "id": "s11",
+            "name": "Click on guests field",
+            "type": "click_element",
+            "selector": "[data-testid='structured-search-input-field-guests-button']",
+            "wait_after_ms": 800
+          },
+          {
+            "id": "s12",
+            "name": "Add adults (click + button once to make it 2)",
+            "type": "click_element",
+            "selector": "[data-testid='stepper-adults-increase-button']",
+            "wait_after_ms": 300
+          },
+          {
+            "id": "s13",
+            "name": "Add child (click + button once)",
+            "type": "click_element",
+            "selector": "[data-testid='stepper-children-increase-button']",
+            "wait_after_ms": 300
+          },
+          {
+            "id": "s14",
+            "name": "Click search button",
+            "type": "click_element",
+            "selector": "[data-testid='structured-search-input-search-button']",
+            "wait_after_ms": 3000
+          },
+          {
+            "id": "s15",
+            "name": "Wait for results to load",
+            "type": "wait_for_element",
+            "selector": "[data-testid='card-container']",
+            "condition": "visible",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s16",
+            "name": "Human-like scroll to see results",
+            "type": "scroll_window_to",
+            "y": 300,
+            "smooth": true
+          },
+          {
+            "id": "s17",
+            "name": "Wait a moment",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1500
+          },
+          {
+            "id": "s18",
+            "name": "Open filters",
+            "type": "click_element",
+            "selector": "[data-testid='category-bar-filter-button']",
+            "wait_after_ms": 1500
+          },
+          {
+            "id": "s19",
+            "name": "Select 'Entire place' filter",
+            "type": "click_element",
+            "selector": "[id='filter-item-room_type-checkbox-room_types-Entire_home_apt']",
+            "wait_after_ms": 500
+          },
+          {
+            "id": "s20",
+            "name": "Scroll to price range in filter modal",
+            "type": "scroll_element_into_view",
+            "selector": "[data-testid='price-range-min-input']",
+            "smooth": true
+          },
+          {
+            "id": "s21",
+            "name": "Set minimum price",
+            "type": "fill_input_field",
+            "selector": "[data-testid='price-range-min-input']",
+            "value": "100",
+            "clear_first": true,
+            "wait_after_ms": 300
+          },
+          {
+            "id": "s22",
+            "name": "Set maximum price",
+            "type": "fill_input_field",
+            "selector": "[data-testid='price-range-max-input']",
+            "value": "300",
+            "clear_first": true,
+            "wait_after_ms": 500
+          },
+          {
+            "id": "s23",
+            "name": "Apply filters",
+            "type": "click_element",
+            "selector": "[data-testid='more-filters-modal-submit-button']",
+            "wait_after_ms": 3000
+          },
+          {
+            "id": "s24",
+            "name": "Wait for filtered results",
+            "type": "wait_for_element",
+            "selector": "[data-testid='card-container']",
+            "condition": "visible",
+            "timeout_ms": 10000
+          },
+          {
+            "id": "s25",
+            "name": "Extract first 5 property listings",
+            "type": "execute_javascript",
+            "script": "(() => { const listings = []; const cards = document.querySelectorAll('[data-testid=\"card-container\"]'); const maxListings = Math.min(5, cards.length); for (let i = 0; i < maxListings; i++) { const card = cards[i]; const titleEl = card.querySelector('[data-testid=\"listing-card-title\"]'); const priceEl = card.querySelector('span._tyxjp1'); const ratingEl = card.querySelector('[aria-label*=\"rating\"]'); const typeEl = card.querySelector('[data-testid=\"listing-card-subtitle\"] > span:first-child'); const imageEl = card.querySelector('img[data-original-uri]'); listings.push({ position: i + 1, title: titleEl ? titleEl.textContent.trim() : 'N/A', price: priceEl ? priceEl.textContent.trim() : 'N/A', rating: ratingEl ? ratingEl.textContent.trim() : 'No rating', type: typeEl ? typeEl.textContent.trim() : 'N/A', image: imageEl ? imageEl.src : null }); } return { timestamp: new Date().toISOString(), checkIn: window.__airbnb_dates.checkInFormatted, checkOut: window.__airbnb_dates.checkOutFormatted, location: 'San Francisco', guests: { adults: 2, children: 1 }, filters: { type: 'Entire place', priceRange: '$100-$300' }, listings: listings }; })()"
+          },
+          {
+            "id": "s26",
+            "name": "Click on first property",
+            "type": "click_element",
+            "selector": "[data-testid='card-container']:first-child a",
+            "wait_after_ms": 3000
+          },
+          {
+            "id": "s27",
+            "name": "Wait for property page to load",
+            "type": "wait_for_element",
+            "selector": "[data-section-id='TITLE_DEFAULT']",
+            "condition": "visible",
+            "timeout_ms": 10000
+          },
+          {
+            "id": "s28",
+            "name": "Scroll through photos slowly",
+            "type": "scroll_window_to",
+            "y": 400,
+            "smooth": true
+          },
+          {
+            "id": "s29",
+            "name": "Wait to view photos",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s30",
+            "name": "Scroll to property details",
+            "type": "scroll_window_to",
+            "y": 800,
+            "smooth": true
+          },
+          {
+            "id": "s31",
+            "name": "Extract property details",
+            "type": "execute_javascript",
+            "script": "(() => { const propertyName = document.querySelector('[data-section-id=\"TITLE_DEFAULT\"] h1')?.textContent?.trim() || 'N/A'; const hostName = document.querySelector('[data-section-id=\"HOST_PROFILE_DEFAULT\"] h2')?.textContent?.trim() || 'N/A'; const amenitiesSection = document.querySelector('[data-section-id=\"AMENITIES_DEFAULT\"]'); const amenities = amenitiesSection ? Array.from(amenitiesSection.querySelectorAll('[id^=\"pdp_v3_\"]')).map(el => el.textContent.trim()).filter(text => text && !text.includes('Show all')) : []; const descriptionEl = document.querySelector('[data-section-id=\"DESCRIPTION_DEFAULT\"] span'); const description = descriptionEl ? descriptionEl.textContent.trim() : 'N/A'; const bedroomsEl = document.querySelector('[data-section-id=\"OVERVIEW_DEFAULT\"] ol li:nth-child(2)'); const bedrooms = bedroomsEl ? bedroomsEl.textContent.trim() : 'N/A'; const reviewsEl = document.querySelector('[data-section-id=\"REVIEWS_DEFAULT\"] h2'); const reviews = reviewsEl ? reviewsEl.textContent.trim() : 'No reviews'; return { propertyName: propertyName, host: hostName, bedrooms: bedrooms, amenities: amenities.slice(0, 10), description: description.substring(0, 500) + (description.length > 500 ? '...' : ''), reviews: reviews }; })()"
+          },
+          {
+            "id": "s32",
+            "name": "Scroll to availability calendar",
+            "type": "scroll_element_into_view",
+            "selector": "[data-section-id='AVAILABILITY_CALENDAR_INLINE']",
+            "smooth": true
+          },
+          {
+            "id": "s33",
+            "name": "Wait to view calendar",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s34",
+            "name": "Check availability in calendar",
+            "type": "execute_javascript",
+            "script": "(() => { const calendarSection = document.querySelector('[data-section-id=\"AVAILABILITY_CALENDAR_INLINE\"]'); if (!calendarSection) return { calendarFound: false }; const availableDates = Array.from(calendarSection.querySelectorAll('[data-is-day-blocked=\"false\"]')).length; const blockedDates = Array.from(calendarSection.querySelectorAll('[data-is-day-blocked=\"true\"]')).length; return { calendarFound: true, availableDates: availableDates, blockedDates: blockedDates, checkInDate: window.__airbnb_dates.checkInFormatted, checkOutDate: window.__airbnb_dates.checkOutFormatted }; })()"
+          },
+          {
+            "id": "s35",
+            "name": "Close the tab",
+            "type": "close_current_tab",
+            "tab_identifier": "current"
+          }
+        ]
+      }
+    ]
+  }
+}

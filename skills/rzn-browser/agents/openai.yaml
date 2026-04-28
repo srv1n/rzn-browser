@@ -1,0 +1,4 @@
+interface:
+  display_name: "RZN Browser"
+  short_description: "Automate browser extraction, form filling, search, posting, and signed-in workflows."
+  default_prompt: "Use $rzn-browser for browser automation through the native host bridge. Prefer premade workflows for known tasks, use llm-auto for fuzzy browser goals, and build a reusable workflow when the task should repeat."

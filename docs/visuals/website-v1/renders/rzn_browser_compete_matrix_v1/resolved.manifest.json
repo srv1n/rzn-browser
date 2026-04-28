@@ -1,0 +1,124 @@
+{
+  "asset": {
+    "height": 1000,
+    "kind": "compare_matrix",
+    "template_id": "editorial.compare_matrix.v1",
+    "width": 1600
+  },
+  "constraints": {
+    "overflow_policy": "fail",
+    "slots": {
+      "proof.rows.cells": {
+        "max_chars": 28,
+        "max_lines": 2
+      },
+      "proof.rows.label": {
+        "max_chars": 34,
+        "max_lines": 2
+      },
+      "subtitle": {
+        "max_chars": 78,
+        "max_lines": 2
+      },
+      "title": {
+        "max_chars": 46,
+        "max_lines": 3
+      }
+    },
+    "thumbnail_legibility": true
+  },
+  "copy": {
+    "eyebrow": "Compare browser tools",
+    "subtitle": "These tools solve different jobs. The matrix should make that obvious.",
+    "title": "Which browser automation stack fits which job?"
+  },
+  "meta": {
+    "id": "rzn_browser_compete_matrix_v1",
+    "locale": "en_US",
+    "page_url": "https://github.com/srv1n/rzn-browser#how-it-compares",
+    "repo": "rzn-browser"
+  },
+  "outputs": [
+    {
+      "format": "png",
+      "path": "rzn_browser_compete_matrix_v1.png"
+    }
+  ],
+  "proof": {
+    "columns": [
+      {
+        "id": "rzn",
+        "label": "RZN Browser"
+      },
+      {
+        "id": "browserbase",
+        "label": "Browserbase"
+      },
+      {
+        "id": "stagehand",
+        "label": "Stagehand"
+      },
+      {
+        "id": "browser_use",
+        "label": "Browser Use"
+      }
+    ],
+    "kind": "matrix",
+    "rows": [
+      {
+        "label": "Drive your logged-in Chrome",
+        "values": {
+          "browser_use": "Persistent, not your Chrome",
+          "browserbase": "Remote browser instead",
+          "rzn": "Native fit",
+          "stagehand": "Needs your own stack"
+        },
+        "winner": "rzn"
+      },
+      {
+        "label": "Build on managed cloud browsers",
+        "values": {
+          "browser_use": "Cloud exists, less infra-led",
+          "browserbase": "Core product",
+          "rzn": "Not the point",
+          "stagehand": "Pairs with cloud infra"
+        },
+        "winner": "browserbase"
+      },
+      {
+        "label": "Embed browser AI in TypeScript",
+        "values": {
+          "browser_use": "Broader product surface",
+          "browserbase": "Platform APIs",
+          "rzn": "CLI-first runtime",
+          "stagehand": "Best fit"
+        },
+        "winner": "stagehand"
+      },
+      {
+        "label": "Need a broad agent and CLI",
+        "values": {
+          "browser_use": "Strongest match",
+          "browserbase": "Infra over operator UX",
+          "rzn": "Focused local runner",
+          "stagehand": "Library, not product"
+        },
+        "winner": "browser_use"
+      }
+    ]
+  },
+  "qa": {
+    "fail_on_warn": true,
+    "required_checks": [
+      "no_overflow",
+      "no_overlap",
+      "grid_alignment",
+      "font_lock",
+      "thumbnail_legibility"
+    ]
+  },
+  "schema": "clipper.website_visual.manifest.v0.1",
+  "theme": {
+    "theme_ref": "builtin:editorial_slate_v1"
+  }
+}

@@ -1,0 +1,528 @@
+<!--
+  Design Vocabulary · v1
+  Canvas: 1600 × 2000
+  Upper band (0..1200): type + color (left), shapes + edges (right)
+  Lower band (1224..1960): sequence + matrix + badges + stacks
+  This is the surface a diagram-author can choose from. Nothing else exists.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 2000" width="1600" height="2000">
+  <defs>
+    <pattern id="boundaryHatch" x="0" y="0" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="10" height="10" fill="#FBFAF4"/>
+      <line x1="0" y1="0" x2="0" y2="10" stroke="#1A1A17" stroke-width="0.4" stroke-opacity="0.14"/>
+    </pattern>
+    <marker id="ah-flow" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1A1A17"/>
+    </marker>
+    <marker id="ah-feedback" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3F6F1A"/>
+    </marker>
+    <marker id="ah-warn" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9E821B"/>
+    </marker>
+    <marker id="ah-bidi" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1A1A17"/>
+    </marker>
+    <marker id="ah-call" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1A1A17"/>
+    </marker>
+    <marker id="ah-return" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+      <path d="M0,1 L9,5 L0,9" fill="none" stroke="#1A1A17" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="2000" fill="#FAFAF7"/>
+
+  <!-- HEADER -->
+  <text x="80" y="104"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2.4"
+        fill="#3A352D">RZN  ·  DIAGRAM SYSTEM  ·  VOCABULARY</text>
+  <text x="80" y="160"
+        font-family="Inter, sans-serif"
+        font-size="36" font-weight="600" letter-spacing="-0.5"
+        fill="#1A1A17">The vocabulary.</text>
+  <text x="80" y="196"
+        font-family="Inter, sans-serif"
+        font-size="16" font-weight="400"
+        fill="#3A352D">Every visual choice the system can make. Nothing exists outside this surface — no ad-hoc colors, no one-off shapes.</text>
+
+  <line x1="80" y1="224" x2="1520" y2="224" stroke="#1A1A17" stroke-width="0.5" stroke-opacity="0.25"/>
+
+  <!--
+    LEFT COLUMN  ·  x: 80 .. 776  (w=696)
+  -->
+
+  <!-- TYPE SCALE -->
+  <text x="80" y="264"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2"
+        fill="#3A352D">TYPE SCALE  ·  base 14, ratio 1.2</text>
+
+  <!-- Each row: token name (mono, left) + sample (right) -->
+  <g font-family="Inter, sans-serif" fill="#1A1A17">
+    <!-- meta 11 -->
+    <text x="80" y="304" font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace" font-size="11" font-weight="500" fill="#6F6A60">meta · 11/16 · mono 700</text>
+    <text x="280" y="304" font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace" font-size="11" font-weight="700" letter-spacing="2.4">RZN · ARCHITECTURE · 01</text>
+
+    <!-- caption 12 -->
+    <text x="80" y="336" font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace" font-size="11" font-weight="500" fill="#6F6A60">caption · 12/18 · 500</text>
+    <text x="280" y="336" font-size="12" font-weight="500">Caption text under a node title.</text>
+
+    <!-- body 14 -->
+    <text x="80" y="372" font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace" font-size="11" font-weight="500" fill="#6F6A60">body · 14/22 · 400</text>
+    <text x="280" y="372" font-size="14" font-weight="400">Body copy for descriptions and notes.</text>
+
+    <!-- node-title 17 -->
+    <text x="80" y="412" font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace" font-size="11" font-weight="500" fill="#6F6A60">node-title · 17/22 · 700</text>
+    <text x="280" y="412" font-size="17" font-weight="700" letter-spacing="-0.1">RZN Native Host</text>
+
+    <!-- section 20 -->
+    <text x="80" y="456" font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace" font-size="11" font-weight="500" fill="#6F6A60">section · 20/26 · 600</text>
+    <text x="280" y="456" font-size="20" font-weight="600">Section heading</text>
+
+    <!-- subhead 24 -->
+    <text x="80" y="504" font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace" font-size="11" font-weight="500" fill="#6F6A60">subhead · 24/30 · 500</text>
+    <text x="280" y="504" font-size="24" font-weight="500">Subhead above a headline</text>
+
+    <!-- headline 32 -->
+    <text x="80" y="556" font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace" font-size="11" font-weight="500" fill="#6F6A60">headline · 32/38 · 600</text>
+    <text x="280" y="560" font-size="32" font-weight="600" letter-spacing="-0.4">Headline statement</text>
+
+    <!-- display 40 -->
+    <text x="80" y="616" font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace" font-size="11" font-weight="500" fill="#6F6A60">display · 40/46 · 600</text>
+    <text x="280" y="624" font-size="40" font-weight="600" letter-spacing="-0.6">Display text</text>
+  </g>
+
+  <line x1="80" y1="680" x2="776" y2="680" stroke="#1A1A17" stroke-width="0.5" stroke-opacity="0.18"/>
+
+  <!-- COLOR TOKENS -->
+  <text x="80" y="720"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2"
+        fill="#3A352D">COLOR TOKENS  ·  semantic, max 4 slots per diagram</text>
+
+  <!-- Each row: swatch (40×40) + name (mono) + hex + use -->
+  <g>
+    <!-- ink -->
+    <rect x="80" y="752" width="40" height="40" rx="4" fill="#1A1A17"/>
+    <text x="136" y="772" font-family="'IBM Plex Mono', monospace" font-size="12" font-weight="700" fill="#1A1A17">ink</text>
+    <text x="136" y="788" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">#1A1A17  ·  primary text + strokes</text>
+
+    <!-- ink-2 -->
+    <rect x="80" y="800" width="40" height="40" rx="4" fill="#3A352D"/>
+    <text x="136" y="820" font-family="'IBM Plex Mono', monospace" font-size="12" font-weight="700" fill="#1A1A17">ink-2</text>
+    <text x="136" y="836" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">#3A352D  ·  secondary text (AA on surface)</text>
+
+    <!-- surface -->
+    <rect x="440" y="752" width="40" height="40" rx="4" fill="#FAFAF7" stroke="#1A1A17" stroke-width="0.5"/>
+    <text x="496" y="772" font-family="'IBM Plex Mono', monospace" font-size="12" font-weight="700" fill="#1A1A17">surface</text>
+    <text x="496" y="788" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">#FAFAF7  ·  warm canvas</text>
+
+    <!-- surface-2 -->
+    <rect x="440" y="800" width="40" height="40" rx="4" fill="#F4F1EA" stroke="#1A1A17" stroke-width="0.5"/>
+    <text x="496" y="820" font-family="'IBM Plex Mono', monospace" font-size="12" font-weight="700" fill="#1A1A17">surface-2</text>
+    <text x="496" y="836" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">#F4F1EA  ·  utility fill</text>
+
+    <!-- accent (RZN green) -->
+    <rect x="80" y="864" width="40" height="40" rx="4" fill="#3F6F1A"/>
+    <text x="136" y="884" font-family="'IBM Plex Mono', monospace" font-size="12" font-weight="700" fill="#1A1A17">accent</text>
+    <text x="136" y="900" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">#3F6F1A  ·  RZN-authored only</text>
+
+    <!-- accent-tint -->
+    <rect x="80" y="912" width="40" height="40" rx="4" fill="#F4FAEB" stroke="#3F6F1A" stroke-width="0.5"/>
+    <text x="136" y="932" font-family="'IBM Plex Mono', monospace" font-size="12" font-weight="700" fill="#1A1A17">accent-tint</text>
+    <text x="136" y="948" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">#F4FAEB  ·  accent fills</text>
+
+    <!-- flow (Chrome blue) -->
+    <rect x="440" y="864" width="40" height="40" rx="4" fill="#1A4596"/>
+    <text x="496" y="884" font-family="'IBM Plex Mono', monospace" font-size="12" font-weight="700" fill="#1A1A17">flow</text>
+    <text x="496" y="900" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">#1A4596  ·  external surfaces</text>
+
+    <!-- flow-tint -->
+    <rect x="440" y="912" width="40" height="40" rx="4" fill="#E8F0FE" stroke="#1A4596" stroke-width="0.5"/>
+    <text x="496" y="932" font-family="'IBM Plex Mono', monospace" font-size="12" font-weight="700" fill="#1A1A17">flow-tint</text>
+    <text x="496" y="948" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">#E8F0FE  ·  flow fills</text>
+
+    <!-- warn -->
+    <rect x="80" y="976" width="40" height="40" rx="4" fill="#9E821B"/>
+    <text x="136" y="996" font-family="'IBM Plex Mono', monospace" font-size="12" font-weight="700" fill="#1A1A17">warn</text>
+    <text x="136" y="1012" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">#9E821B  ·  caution / escalation</text>
+
+    <!-- warn-tint -->
+    <rect x="440" y="976" width="40" height="40" rx="4" fill="#FEF7D6" stroke="#9E821B" stroke-width="0.5"/>
+    <text x="496" y="996" font-family="'IBM Plex Mono', monospace" font-size="12" font-weight="700" fill="#1A1A17">warn-tint</text>
+    <text x="496" y="1012" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">#FEF7D6  ·  warn fills</text>
+  </g>
+
+  <line x1="80" y1="1064" x2="776" y2="1064" stroke="#1A1A17" stroke-width="0.5" stroke-opacity="0.18"/>
+
+  <!-- SPACING note -->
+  <text x="80" y="1100"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2"
+        fill="#3A352D">SPACING SCALE  ·  base 8</text>
+
+  <!-- Bars at each scale value -->
+  <g>
+    <rect x="80" y="1124" width="4"   height="16" fill="#1A1A17"/>
+    <text x="92" y="1136" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#1A1A17">xxs · 4</text>
+    <rect x="160" y="1124" width="8"  height="16" fill="#1A1A17"/>
+    <text x="176" y="1136" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#1A1A17">xs · 8</text>
+    <rect x="240" y="1124" width="16" height="16" fill="#1A1A17"/>
+    <text x="264" y="1136" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#1A1A17">s · 16</text>
+    <rect x="320" y="1124" width="24" height="16" fill="#1A1A17"/>
+    <text x="352" y="1136" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#1A1A17">m · 24</text>
+    <rect x="408" y="1124" width="32" height="16" fill="#1A1A17"/>
+    <text x="448" y="1136" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#1A1A17">l · 32</text>
+    <rect x="512" y="1124" width="48" height="16" fill="#1A1A17"/>
+    <text x="568" y="1136" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#1A1A17">xl · 48</text>
+    <rect x="632" y="1124" width="64" height="16" fill="#1A1A17"/>
+    <text x="704" y="1136" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#1A1A17">xxl · 64</text>
+  </g>
+
+  <!--
+    RIGHT COLUMN  ·  x: 824 .. 1520  (w=696)
+  -->
+
+  <!-- SHAPE VOCABULARY -->
+  <text x="824" y="264"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2"
+        fill="#3A352D">SHAPE VOCABULARY  ·  silhouette → semantic kind</text>
+
+  <!-- Capsule -->
+  <g>
+    <rect x="824" y="296" width="160" height="48" rx="24" fill="#F4F1EA" stroke="#1A1A17" stroke-width="1.2"/>
+    <text x="904" y="324" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="#1A1A17">capsule</text>
+    <text x="1000" y="320" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">capsule</text>
+    <text x="1000" y="336" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">runtime component / agent</text>
+  </g>
+
+  <!-- Capsule-cylinder -->
+  <g>
+    <rect x="824" y="368" width="160" height="48" rx="24" fill="#F4FAEB" stroke="#3F6F1A" stroke-width="1.2"/>
+    <line x1="844" y1="380" x2="844" y2="404" stroke="#3F6F1A" stroke-width="1.2"/>
+    <line x1="964" y1="380" x2="964" y2="404" stroke="#3F6F1A" stroke-width="1.2"/>
+    <text x="904" y="396" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="#1A1A17">cylinder</text>
+    <text x="1000" y="392" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">capsule-cylinder</text>
+    <text x="1000" y="408" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">executor / has internal state</text>
+  </g>
+
+  <!-- Card -->
+  <g>
+    <rect x="824" y="440" width="160" height="48" rx="8" fill="#FFFFFF" stroke="#3A352D" stroke-width="1.2"/>
+    <text x="904" y="468" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="600" fill="#1A1A17">card</text>
+    <text x="1000" y="464" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">card</text>
+    <text x="1000" y="480" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">passive artifact / external surface</text>
+  </g>
+
+  <!-- Container (trust boundary) -->
+  <g>
+    <rect x="824" y="512" width="160" height="56" rx="12" fill="url(#boundaryHatch)" stroke="#1A1A17" stroke-width="0.8" stroke-dasharray="4 3"/>
+    <text x="904" y="544" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" letter-spacing="1.5" fill="#1A1A17">CONTAINER</text>
+    <text x="1000" y="536" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">container</text>
+    <text x="1000" y="552" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">grouping / trust boundary</text>
+  </g>
+
+  <!-- Badge -->
+  <g>
+    <rect x="824" y="592" width="80" height="22" rx="11" fill="#1A1A17"/>
+    <text x="864" y="608" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" letter-spacing="1.5" fill="#FAFAF7">BADGE</text>
+    <text x="1000" y="600" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">badge</text>
+    <text x="1000" y="616" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">label / tag (sticker, not a node)</text>
+  </g>
+
+  <!-- Diamond -->
+  <g>
+    <polygon points="904,640 952,672 904,704 856,672" fill="#FEF7D6" stroke="#9E821B" stroke-width="1.2"/>
+    <text x="904" y="676" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#1A1A17">if / else</text>
+    <text x="1000" y="668" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">diamond</text>
+    <text x="1000" y="684" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">decision / branch (sparingly)</text>
+  </g>
+
+  <line x1="824" y1="744" x2="1520" y2="744" stroke="#1A1A17" stroke-width="0.5" stroke-opacity="0.18"/>
+
+  <!-- EDGE VOCABULARY -->
+  <text x="824" y="784"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2"
+        fill="#3A352D">EDGE VOCABULARY  ·  one visual treatment per kind</text>
+
+  <!-- structural -->
+  <g>
+    <line x1="824" y1="824" x2="984" y2="824" stroke="#1A1A17" stroke-opacity="0.5" stroke-width="1" stroke-dasharray="4 4"/>
+    <text x="1000" y="820" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">structural</text>
+    <text x="1000" y="836" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">topology · containment · no flow</text>
+  </g>
+
+  <!-- flow -->
+  <g>
+    <line x1="824" y1="876" x2="980" y2="876" stroke="#1A1A17" stroke-width="1.5" marker-end="url(#ah-flow)"/>
+    <text x="1000" y="872" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">flow</text>
+    <text x="1000" y="888" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">directional data or control</text>
+  </g>
+
+  <!-- feedback -->
+  <g>
+    <line x1="824" y1="928" x2="980" y2="928" stroke="#3F6F1A" stroke-width="1.8" marker-end="url(#ah-feedback)"/>
+    <text x="1000" y="924" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">feedback</text>
+    <text x="1000" y="940" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">RZN-authored channel · accent</text>
+  </g>
+
+  <!-- escalation -->
+  <g>
+    <line x1="824" y1="980" x2="980" y2="980" stroke="#9E821B" stroke-width="1.5" marker-end="url(#ah-warn)"/>
+    <text x="1000" y="976" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">escalation</text>
+    <text x="1000" y="992" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">fallback · caution path · warn</text>
+  </g>
+
+  <!-- bidirectional -->
+  <g>
+    <line x1="828" y1="1032" x2="976" y2="1032" stroke="#1A1A17" stroke-width="1.5" marker-end="url(#ah-bidi)" marker-start="url(#ah-bidi)"/>
+    <text x="1000" y="1028" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">bidirectional</text>
+    <text x="1000" y="1044" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">two-way coupling</text>
+  </g>
+
+  <line x1="824" y1="1080" x2="1520" y2="1080" stroke="#1A1A17" stroke-width="0.5" stroke-opacity="0.18"/>
+
+  <!-- DENSITY note -->
+  <text x="824" y="1116"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2"
+        fill="#3A352D">DENSITY  ·  legible at every scale</text>
+  <text x="824" y="1140"
+        font-family="Inter, sans-serif"
+        font-size="13" font-weight="400"
+        fill="#3A352D">thumbnail 300px · inline 800px · full 1600px. Floor: 11 px text, 1.2 px stroke.</text>
+
+  <!-- ============================================================
+       MORE PRIMITIVES BAND  ·  y: 1224 .. 1960
+       Sequence (left), Matrix (right), Badges + Stacks (lower)
+       ============================================================ -->
+
+  <line x1="80" y1="1224" x2="1520" y2="1224" stroke="#1A1A17" stroke-width="0.5" stroke-opacity="0.25"/>
+
+  <text x="80" y="1264"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2.4"
+        fill="#3A352D">RZN  ·  DIAGRAM SYSTEM  ·  PRIMITIVES — SEQUENCE / MATRIX / META</text>
+  <text x="80" y="1300"
+        font-family="Inter, sans-serif"
+        font-size="20" font-weight="600" letter-spacing="-0.2"
+        fill="#1A1A17">More primitives — earned during the first five diagrams.</text>
+
+  <!--
+    LEFT COLUMN  ·  SEQUENCE PRIMITIVES
+  -->
+
+  <text x="80" y="1348"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2"
+        fill="#3A352D">SEQUENCE PRIMITIVES  ·  time, lifelines, calls</text>
+
+  <!-- lifeline -->
+  <g>
+    <line x1="120" y1="1372" x2="120" y2="1420" stroke="#1A1A17" stroke-opacity="0.30" stroke-width="1" stroke-dasharray="4 4"/>
+    <line x1="200" y1="1372" x2="200" y2="1420" stroke="#1A1A17" stroke-opacity="0.30" stroke-width="1" stroke-dasharray="4 4"/>
+    <text x="256" y="1392" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">lifeline</text>
+    <text x="256" y="1408" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">vertical dashed  ·  actor over time</text>
+  </g>
+
+  <!-- activation bar -->
+  <g>
+    <line x1="160" y1="1436" x2="160" y2="1484" stroke="#1A1A17" stroke-opacity="0.30" stroke-width="1" stroke-dasharray="4 4"/>
+    <rect x="153" y="1444" width="14" height="32" fill="#1A4596" opacity="0.85"/>
+    <text x="256" y="1456" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">activation bar</text>
+    <text x="256" y="1472" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">semantic-color  ·  "actor is busy"</text>
+  </g>
+
+  <!-- loop frame -->
+  <g>
+    <rect x="80" y="1500" width="160" height="64" rx="4" fill="none" stroke="#3A352D" stroke-width="1" stroke-dasharray="6 4"/>
+    <rect x="80" y="1500" width="56" height="16" fill="#3A352D"/>
+    <text x="86" y="1512" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="700" letter-spacing="1.4" fill="#FAFAF7">LOOP</text>
+    <text x="160" y="1546" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="500" fill="#6F6A60">for each step</text>
+    <text x="256" y="1524" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">loop frame</text>
+    <text x="256" y="1540" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">UML group  ·  corner-tab labels intent</text>
+  </g>
+
+  <!-- call arrow -->
+  <g>
+    <line x1="80" y1="1596" x2="232" y2="1596" stroke="#1A1A17" stroke-width="1.5" marker-end="url(#ah-call)"/>
+    <text x="256" y="1592" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">call arrow</text>
+    <text x="256" y="1608" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">solid stroke  ·  filled triangle head</text>
+  </g>
+
+  <!-- return arrow -->
+  <g>
+    <line x1="80" y1="1636" x2="228" y2="1636" stroke="#1A1A17" stroke-width="1" stroke-dasharray="5 4" marker-end="url(#ah-return)"/>
+    <text x="256" y="1632" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">return arrow</text>
+    <text x="256" y="1648" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">dashed stroke  ·  open V head</text>
+  </g>
+
+  <!-- time-axis cue -->
+  <g>
+    <text x="98" y="1684" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="500" letter-spacing="1.2" fill="#6F6A60">t0</text>
+    <line x1="120" y1="1692" x2="120" y2="1736" stroke="#1A1A17" stroke-width="1"/>
+    <polygon points="116,1736 124,1736 120,1744" fill="#1A1A17"/>
+    <text x="98" y="1758" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="500" letter-spacing="1.2" fill="#6F6A60">tn</text>
+    <text x="170" y="1718" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="500" letter-spacing="2.4" fill="#6F6A60" transform="rotate(90, 170, 1718)">TIME</text>
+    <text x="256" y="1712" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">time-axis cue</text>
+    <text x="256" y="1728" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">vertical orient  ·  top to bottom</text>
+  </g>
+
+  <line x1="80" y1="1772" x2="776" y2="1772" stroke="#1A1A17" stroke-width="0.5" stroke-opacity="0.18"/>
+
+  <!--
+    LEFT COLUMN  ·  BADGES & INDICES
+  -->
+
+  <text x="80" y="1808"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2"
+        fill="#3A352D">BADGES &amp; INDICES  ·  small marks, big role</text>
+
+  <!-- numbered index badge -->
+  <g>
+    <circle cx="100" cy="1844" r="11" fill="#FAFAF7" stroke="#1A1A17" stroke-width="1"/>
+    <text x="100" y="1848" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">1</text>
+    <text x="124" y="1840" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">numbered index badge</text>
+    <text x="124" y="1856" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">1..N  ·  identifies parallel instances</text>
+  </g>
+
+  <!-- status pill -->
+  <g>
+    <rect x="80" y="1876" width="44" height="16" rx="8" fill="#3F6F1A"/>
+    <text x="102" y="1888" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="700" letter-spacing="1.4" fill="#FAFAF7">OURS</text>
+    <text x="140" y="1882" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">status pill</text>
+    <text x="140" y="1898" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">corner tag  ·  short caps  ·  semantic fill</text>
+  </g>
+
+  <!-- edge-label backplate -->
+  <g>
+    <line x1="80" y1="1924" x2="232" y2="1924" stroke="#1A1A17" stroke-width="1.5" marker-end="url(#ah-flow)"/>
+    <rect x="124" y="1916" width="64" height="16" rx="3" fill="#FAFAF7"/>
+    <text x="156" y="1928" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="10" font-weight="600" letter-spacing="0.5" fill="#1A1A17">label</text>
+    <text x="256" y="1920" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">edge-label backplate</text>
+    <text x="256" y="1936" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">mono on surface  ·  rests on the line</text>
+  </g>
+
+  <!--
+    RIGHT COLUMN  ·  MATRIX PRIMITIVES
+  -->
+
+  <text x="824" y="1348"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2"
+        fill="#3A352D">MATRIX PRIMITIVES  ·  column-headers, marks, gutters</text>
+
+  <!-- column-header card -->
+  <g>
+    <rect x="824" y="1372" width="120" height="88" rx="6" fill="#FFFFFF" stroke="#3A352D" stroke-width="1"/>
+    <rect x="824" y="1372" width="120" height="6" fill="#3F6F1A"/>
+    <rect x="836" y="1392" width="20" height="20" rx="3" fill="#F4FAEB" stroke="#3F6F1A" stroke-width="0.6"/>
+    <text x="836" y="1432" font-family="Inter, sans-serif" font-size="13" font-weight="700" fill="#1A1A17">RZN</text>
+    <text x="836" y="1448" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="500" letter-spacing="0.5" fill="#6F6A60">your real chrome</text>
+    <rect x="908" y="1382" width="28" height="14" rx="7" fill="#3F6F1A"/>
+    <text x="922" y="1392" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="7" font-weight="700" letter-spacing="1.2" fill="#FAFAF7">OURS</text>
+    <text x="960" y="1396" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">column-header card</text>
+    <text x="960" y="1412" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">stripe + tile + title + tagline + badge</text>
+  </g>
+
+  <!-- featured-column tint -->
+  <g>
+    <rect x="824" y="1476" width="80" height="48" fill="#F4FAEB"/>
+    <rect x="824" y="1476" width="80" height="6" fill="#3F6F1A"/>
+    <text x="864" y="1508" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="700" letter-spacing="1.4" fill="#3F6F1A">FEATURED</text>
+    <text x="920" y="1496" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">featured-column tint</text>
+    <text x="920" y="1512" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">accent-tint backdrop  ·  marks "ours"</text>
+  </g>
+
+  <!-- row-label gutter -->
+  <g>
+    <text x="824" y="1548" font-family="Inter, sans-serif" font-size="14" font-weight="600" fill="#1A1A17">Whose Chrome?</text>
+    <text x="824" y="1564" font-family="'IBM Plex Mono', monospace" font-size="10" font-weight="500" fill="#6F6A60">browser identity</text>
+    <text x="980" y="1548" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">row-label gutter</text>
+    <text x="980" y="1564" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">primary + secondary  ·  left of matrix</text>
+  </g>
+
+  <!-- row separator -->
+  <g>
+    <line x1="824" y1="1592" x2="940" y2="1592" stroke="#1A1A17" stroke-opacity="0.10" stroke-width="0.8"/>
+    <text x="960" y="1588" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">row separator</text>
+    <text x="960" y="1604" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">faint horizontal  ·  low-emphasis grid</text>
+  </g>
+
+  <!-- mark · positive -->
+  <g>
+    <circle cx="864" cy="1633" r="13" fill="#3F6F1A"/>
+    <path d="M 858 1633 L 862 1638 L 870 1628" fill="none" stroke="#FAFAF7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="900" y="1631" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">mark · positive</text>
+    <text x="900" y="1647" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">accent fill  ·  check glyph  ·  "yes"</text>
+  </g>
+
+  <!-- mark · partial -->
+  <g>
+    <circle cx="864" cy="1673" r="13" fill="#D97706"/>
+    <text x="864" y="1679" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="14" font-weight="700" fill="#FAFAF7">~</text>
+    <text x="900" y="1671" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">mark · partial</text>
+    <text x="900" y="1687" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">amber fill  ·  tilde glyph  ·  "kinda"</text>
+  </g>
+
+  <!-- mark · negative -->
+  <g>
+    <circle cx="864" cy="1713" r="13" fill="#C5BDAA"/>
+    <path d="M 858 1707 L 870 1719 M 870 1707 L 858 1719" fill="none" stroke="#FAFAF7" stroke-width="1.8" stroke-linecap="round"/>
+    <text x="900" y="1711" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">mark · negative</text>
+    <text x="900" y="1727" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">muted fill  ·  X glyph  ·  "no"</text>
+  </g>
+
+  <line x1="824" y1="1772" x2="1520" y2="1772" stroke="#1A1A17" stroke-width="0.5" stroke-opacity="0.18"/>
+
+  <!--
+    RIGHT COLUMN  ·  STACKED PATTERNS
+  -->
+
+  <text x="824" y="1808"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2"
+        fill="#3A352D">STACKED PATTERNS  ·  N-of-many in one container</text>
+
+  <!-- pool stack -->
+  <g>
+    <rect x="824" y="1832" width="160" height="108" rx="6" fill="#FBFAF4" stroke="#1A1A17" stroke-width="1" stroke-dasharray="5 3"/>
+    <rect x="824" y="1832" width="160" height="20" fill="#1A1A17"/>
+    <text x="836" y="1846" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="700" letter-spacing="1.4" fill="#FAFAF7">POOL  ·  x 3</text>
+
+    <rect x="836" y="1860" width="136" height="22" rx="11" fill="#F4F1EA" stroke="#1A1A17" stroke-width="1"/>
+    <circle cx="852" cy="1871" r="7" fill="#FAFAF7" stroke="#1A1A17" stroke-width="0.8"/>
+    <text x="852" y="1874" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="700" fill="#1A1A17">1</text>
+    <text x="868" y="1875" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#1A1A17">worker</text>
+
+    <rect x="836" y="1886" width="136" height="22" rx="11" fill="#F4F1EA" stroke="#1A1A17" stroke-width="1"/>
+    <circle cx="852" cy="1897" r="7" fill="#FAFAF7" stroke="#1A1A17" stroke-width="0.8"/>
+    <text x="852" y="1900" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="700" fill="#1A1A17">2</text>
+    <text x="868" y="1901" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#1A1A17">worker</text>
+
+    <rect x="836" y="1912" width="136" height="22" rx="11" fill="#F4F1EA" stroke="#1A1A17" stroke-width="1"/>
+    <circle cx="852" cy="1923" r="7" fill="#FAFAF7" stroke="#1A1A17" stroke-width="0.8"/>
+    <text x="852" y="1926" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="9" font-weight="700" fill="#1A1A17">3</text>
+    <text x="868" y="1927" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#1A1A17">worker</text>
+
+    <text x="1000" y="1862" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#1A1A17">pool stack</text>
+    <text x="1000" y="1878" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">N parallel instances  ·  header strip</text>
+    <text x="1000" y="1894" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="500" fill="#6F6A60">indexed 1..N  ·  single in / single out</text>
+  </g>
+
+  <!-- FOOTER -->
+  <line x1="80" y1="1970" x2="1520" y2="1970" stroke="#1A1A17" stroke-width="0.5" stroke-opacity="0.18"/>
+  <text x="80" y="1992"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="500" letter-spacing="1.5"
+        fill="#6F6A60">RZN DIAGRAM SYSTEM  ·  VOCABULARY  ·  v1</text>
+  <text x="1520" y="1992" text-anchor="end"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="500" letter-spacing="1.5"
+        fill="#6F6A60">EVERY CHOICE LIVES HERE</text>
+</svg>

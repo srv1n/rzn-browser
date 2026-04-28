@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="880" viewBox="0 0 1600 880" role="img" aria-label="RZN Browser Automation — Product Overview">
+  <defs>
+    
+    <pattern id="dotPattern" width="12" height="12" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="0.7" fill="#d7cfbf" opacity="0.48"/>
+      <circle cx="8" cy="6" r="0.7" fill="#d7cfbf" opacity="0.35"/>
+      <circle cx="5" cy="10" r="0.6" fill="#d7cfbf" opacity="0.28"/>
+    </pattern>
+  
+    
+    <pattern id="paperSpeckle" width="34" height="34" patternUnits="userSpaceOnUse">
+      <circle cx="6" cy="8" r="0.55" fill="#d8d0c0" opacity="0.18"/>
+      <circle cx="18" cy="14" r="0.45" fill="#d8d0c0" opacity="0.14"/>
+      <circle cx="26" cy="22" r="0.5" fill="#d8d0c0" opacity="0.11"/>
+    </pattern>
+  
+  </defs>
+  <rect x="0" y="0" width="1600" height="880" fill="#fbfaf4"/>
+<rect x="0" y="0" width="1600" height="880" fill="url(#paperSpeckle)" opacity="0.55"/>
+<text text-anchor="start" font-family="Georgia, Times New Roman, serif" font-size="40" font-weight="700" fill="#22211d"><tspan x="84" y="92">RZN Browser Automation — Product Overview</tspan></text>
+<text text-anchor="start" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="16" font-weight="500" fill="#676258"><tspan x="84" y="132">Local runtime, real browser session. RZN automates the Chrome you already use.</tspan></text>
+
+    <path d="M 60 180 H 1540 Q 1560 180 1560 200 V 320 Q 1560 340 1540 340 H 60 Q 40 340 40 320 V 200 Q 40 180 60 180 Z" fill="none"/>
+    
+    <path d="M 60 180 H 1540 Q 1560 180 1560 200 V 320 Q 1560 340 1540 340 H 60 Q 40 340 40 320 V 200 Q 40 180 60 180 Z" fill="none" stroke="#676258" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.2287330930586905 -0.8950757018756121)"/>
+    <path d="M 60 180 H 1540 Q 1560 180 1560 200 V 320 Q 1560 340 1540 340 H 60 Q 40 340 40 320 V 200 Q 40 180 60 180 Z" fill="none" stroke="#676258" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.04940467192791398 0.8658917414490134)"/>
+  
+  
+<text text-anchor="start" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="26" font-weight="700" fill="#22211d"><tspan x="76" y="218">User / Entry Point</tspan></text>
+
+    <path d="M 60 370 H 1540 Q 1560 370 1560 390 V 550 Q 1560 570 1540 570 H 60 Q 40 570 40 550 V 390 Q 40 370 60 370 Z" fill="url(#dotPattern)"/>
+    
+    <path d="M 60 370 H 1540 Q 1560 370 1560 390 V 550 Q 1560 570 1540 570 H 60 Q 40 570 40 550 V 390 Q 40 370 60 370 Z" fill="none" stroke="#8ac24c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.020856687566265464 0.05390353482216592)"/>
+    <path d="M 60 370 H 1540 Q 1560 370 1560 390 V 550 Q 1560 570 1540 570 H 60 Q 40 570 40 550 V 390 Q 40 370 60 370 Z" fill="none" stroke="#8ac24c" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.194613415421918 0.1622837447561324)"/>
+  
+  
+<text text-anchor="start" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="26" font-weight="700" fill="#22211d"><tspan x="76" y="408">RZN Runtime</tspan></text>
+
+    <path d="M 60 600 H 1540 Q 1560 600 1560 620 V 810 Q 1560 830 1540 830 H 60 Q 40 830 40 810 V 620 Q 40 600 60 600 Z" fill="none"/>
+    
+    <path d="M 60 600 H 1540 Q 1560 600 1560 620 V 810 Q 1560 830 1540 830 H 60 Q 40 830 40 810 V 620 Q 40 600 60 600 Z" fill="none" stroke="#4285F4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.12187580117024477 -0.09534769286401568)"/>
+    <path d="M 60 600 H 1540 Q 1560 600 1560 620 V 810 Q 1560 830 1540 830 H 60 Q 40 830 40 810 V 620 Q 40 600 60 600 Z" fill="none" stroke="#4285F4" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.3900887436233461 -0.2117049269378185)"/>
+  
+  
+<text text-anchor="start" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="26" font-weight="700" fill="#22211d"><tspan x="76" y="638">External Runtime / Target Surface</tspan></text>
+
+    <path d="M 118 255 H 302 Q 320 255 320 273 V 307 Q 320 325 302 325 H 118 Q 100 325 100 307 V 273 Q 100 255 118 255 Z" fill="#f8f7f2"/>
+    
+    <path d="M 118 255 H 302 Q 320 255 320 273 V 307 Q 320 325 302 325 H 118 Q 100 325 100 307 V 273 Q 100 255 118 255 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.31006100890226673 0.6047028673812748)"/>
+    <path d="M 118 255 H 302 Q 320 255 320 273 V 307 Q 320 325 302 325 H 118 Q 100 325 100 307 V 273 Q 100 255 118 255 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.4493888155091553 -0.8119491511490197)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="22" font-weight="700" fill="#22211d"><tspan x="210" y="297.04">User task</tspan></text>
+
+    <path d="M 242 450 H 458 Q 480 450 480 472 V 528 Q 480 550 458 550 H 242 Q 220 550 220 528 V 472 Q 220 450 242 450 Z" fill="#f4faeb"/>
+    
+    <path d="M 242 450 H 458 Q 480 450 480 472 V 528 Q 480 550 458 550 H 242 Q 220 550 220 528 V 472 Q 220 450 242 450 Z" fill="none" stroke="#8ac24c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.6318256448954344 0.015925546037033222)"/>
+    <path d="M 242 450 H 458 Q 480 450 480 472 V 528 Q 480 550 458 550 H 242 Q 220 550 220 528 V 472 Q 220 450 242 450 Z" fill="none" stroke="#8ac24c" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.2419408618938178 0.07413820303045215)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="22" font-weight="800" fill="#22211d"><tspan x="350" y="507.04">RZN Runtime</tspan></text>
+
+    <path d="M 602 450 H 818 Q 840 450 840 472 V 528 Q 840 550 818 550 H 602 Q 580 550 580 528 V 472 Q 580 450 602 450 Z" fill="#f4faeb"/>
+    
+    <path d="M 602 450 H 818 Q 840 450 840 472 V 528 Q 840 550 818 550 H 602 Q 580 550 580 528 V 472 Q 580 450 602 450 Z" fill="none" stroke="#8ac24c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.6353547375183553 -0.7690067995805293)"/>
+    <path d="M 602 450 H 818 Q 840 450 840 472 V 528 Q 840 550 818 550 H 602 Q 580 550 580 528 V 472 Q 580 450 602 450 Z" fill="none" stroke="#8ac24c" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.15646680076606567 -0.7417300129774957)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="21" font-weight="700" fill="#22211d"><tspan x="710" y="506.72">RZN Native Host</tspan></text>
+
+    <path d="M 962 450 H 1198 Q 1220 450 1220 472 V 528 Q 1220 550 1198 550 H 962 Q 940 550 940 528 V 472 Q 940 450 962 450 Z" fill="#f4faeb"/>
+    
+    <path d="M 962 450 H 1198 Q 1220 450 1220 472 V 528 Q 1220 550 1198 550 H 962 Q 940 550 940 528 V 472 Q 940 450 962 450 Z" fill="none" stroke="#8ac24c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.08670765515416856 0.37492282935418186)"/>
+    <path d="M 962 450 H 1198 Q 1220 450 1220 472 V 528 Q 1220 550 1198 550 H 962 Q 940 550 940 528 V 472 Q 940 450 962 450 Z" fill="none" stroke="#8ac24c" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.6853829237166792 0.4164758494589479)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="21" font-weight="700" fill="#22211d"><tspan x="1080" y="492.975">RZN Chrome</tspan><tspan x="1080" y="515.025">Extension</tspan></text>
+
+    <path d="M 1010 648 H 1010 Q 1017 648 1017 655 V 655 Q 1017 662 1010 662 H 1010 Q 1003 662 1003 655 V 655 Q 1003 648 1010 648 Z" fill="#EA4335"/>
+    
+    <path d="M 1010 648 H 1010 Q 1017 648 1017 655 V 655 Q 1017 662 1010 662 H 1010 Q 1003 662 1003 655 V 655 Q 1003 648 1010 648 Z" fill="none" stroke="#EA4335" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.47283898042514927 -0.6127066440414637)"/>
+    <path d="M 1010 648 H 1010 Q 1017 648 1017 655 V 655 Q 1017 662 1010 662 H 1010 Q 1003 662 1003 655 V 655 Q 1003 648 1010 648 Z" fill="none" stroke="#EA4335" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.18891151431016617 0.32115475824102757)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="1" font-weight="400" fill="#EA4335"><tspan x="1010" y="655.32"></tspan></text>
+
+    <path d="M 1028 648 H 1028 Q 1035 648 1035 655 V 655 Q 1035 662 1028 662 H 1028 Q 1021 662 1021 655 V 655 Q 1021 648 1028 648 Z" fill="#FBBC04"/>
+    
+    <path d="M 1028 648 H 1028 Q 1035 648 1035 655 V 655 Q 1035 662 1028 662 H 1028 Q 1021 662 1021 655 V 655 Q 1021 648 1028 648 Z" fill="none" stroke="#FBBC04" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.6080092105083167 -0.33713650368154047)"/>
+    <path d="M 1028 648 H 1028 Q 1035 648 1035 655 V 655 Q 1035 662 1028 662 H 1028 Q 1021 662 1021 655 V 655 Q 1021 648 1028 648 Z" fill="none" stroke="#FBBC04" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.23090219255536792 0.09936935598962005)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="1" font-weight="400" fill="#FBBC04"><tspan x="1028" y="655.32"></tspan></text>
+
+    <path d="M 1046 648 H 1046 Q 1053 648 1053 655 V 655 Q 1053 662 1046 662 H 1046 Q 1039 662 1039 655 V 655 Q 1039 648 1046 648 Z" fill="#34A853"/>
+    
+    <path d="M 1046 648 H 1046 Q 1053 648 1053 655 V 655 Q 1053 662 1046 662 H 1046 Q 1039 662 1039 655 V 655 Q 1039 648 1046 648 Z" fill="none" stroke="#34A853" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.29747523176483803 -0.8494249759241939)"/>
+    <path d="M 1046 648 H 1046 Q 1053 648 1053 655 V 655 Q 1053 662 1046 662 H 1046 Q 1039 662 1039 655 V 655 Q 1039 648 1046 648 Z" fill="none" stroke="#34A853" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.8531738755758852 -0.12245337087661023)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="1" font-weight="400" fill="#34A853"><tspan x="1046" y="655.32"></tspan></text>
+
+    <path d="M 1064 648 H 1064 Q 1071 648 1071 655 V 655 Q 1071 662 1064 662 H 1064 Q 1057 662 1057 655 V 655 Q 1057 648 1064 648 Z" fill="#4285F4"/>
+    
+    <path d="M 1064 648 H 1064 Q 1071 648 1071 655 V 655 Q 1071 662 1064 662 H 1064 Q 1057 662 1057 655 V 655 Q 1057 648 1064 648 Z" fill="none" stroke="#4285F4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.6558338526170701 0.4766435099299998)"/>
+    <path d="M 1064 648 H 1064 Q 1071 648 1071 655 V 655 Q 1071 662 1064 662 H 1064 Q 1057 662 1057 655 V 655 Q 1057 648 1064 648 Z" fill="none" stroke="#4285F4" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.07309495699591939 0.2574295469094069)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="1" font-weight="400" fill="#4285F4"><tspan x="1064" y="655.32"></tspan></text>
+
+    <path d="M 962 680 H 1198 Q 1220 680 1220 702 V 788 Q 1220 810 1198 810 H 962 Q 940 810 940 788 V 702 Q 940 680 962 680 Z" fill="#e8f0fe"/>
+    
+    <path d="M 962 680 H 1198 Q 1220 680 1220 702 V 788 Q 1220 810 1198 810 H 962 Q 940 810 940 788 V 702 Q 940 680 962 680 Z" fill="none" stroke="#4285F4" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.8822056420147418 0.5463202639482915)"/>
+    <path d="M 962 680 H 1198 Q 1220 680 1220 702 V 788 Q 1220 810 1198 810 H 962 Q 940 810 940 788 V 702 Q 940 680 962 680 Z" fill="none" stroke="#4285F4" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.7197204470168799 -0.038087569177150726)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="22" font-weight="800" fill="#22211d"><tspan x="1080" y="752.04">Google Chrome</tspan></text>
+
+    <path d="M 1302 680 H 1498 Q 1520 680 1520 702 V 788 Q 1520 810 1498 810 H 1302 Q 1280 810 1280 788 V 702 Q 1280 680 1302 680 Z" fill="#f8f7f2"/>
+    
+    <path d="M 1302 680 H 1498 Q 1520 680 1520 702 V 788 Q 1520 810 1498 810 H 1302 Q 1280 810 1280 788 V 702 Q 1280 680 1302 680 Z" fill="none" stroke="#9a9388" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.8293683816678822 0.8264528129249812)"/>
+    <path d="M 1302 680 H 1498 Q 1520 680 1520 702 V 788 Q 1520 810 1498 810 H 1302 Q 1280 810 1280 788 V 702 Q 1280 680 1302 680 Z" fill="none" stroke="#9a9388" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.5049165699630976 -0.3578709793277085)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="22" font-weight="700" fill="#22211d"><tspan x="1400" y="737.45">Target</tspan><tspan x="1400" y="760.5500000000001">Web App</tspan></text>
+
+    <path d="M 210 325 L 210 500 L 220 500" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.5528015915304423 0.8662438710685819)"/>
+    <path d="M 210 325 L 210 500 L 220 500" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.7177449464332313 -0.7905569437891246)"/>
+  
+    
+    <path d="M 209 506.05 L 220 500" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.48262151135131715 0.1743030540179461)"/>
+    <path d="M 209 506.05 L 220 500" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.17000733660534018 -0.7878602801822127)"/>
+  
+    
+    <path d="M 209 493.95 L 220 500" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.7656414009165019 0.3845087078399957)"/>
+    <path d="M 209 493.95 L 220 500" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.3231255968101322 -0.22309220640454439) translate(-0.5726111995987595 0.7711698846425862)"/>
+  
+  
+
+    <path d="M 480 500 L 580 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.5230219577439129 -0.5968674743548036)"/>
+    <path d="M 480 500 L 580 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.40075263669714334 0.05151018630713222)"/>
+  
+    
+    <path d="M 569 506.05 L 580 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.4002417416777463 0.22289590006694204)"/>
+    <path d="M 569 506.05 L 580 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.48911559535190474 0.6508833857718855)"/>
+  
+    
+    <path d="M 569 493.95 L 580 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.49374351776205005 -0.08290150417014952)"/>
+    <path d="M 569 493.95 L 580 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.4134098104666918 0.6059536585584283)"/>
+  
+  
+
+    <path d="M 840 500 L 940 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.3975739260669797 -0.6353495562449099)"/>
+    <path d="M 840 500 L 940 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.4644148634746671 -0.16188631136901677)"/>
+  
+    
+    <path d="M 929 506.05 L 940 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.15926352960523216 0.26449134631548077) translate(0.12710483553819352 -0.06610969933681188)"/>
+    <path d="M 929 506.05 L 940 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.15926352960523216 0.26449134631548077) translate(0.35399860376492154 0.11060841106809682)"/>
+  
+    
+    <path d="M 929 493.95 L 940 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.15926352960523216 0.26449134631548077) translate(0.8614102135878056 -0.07966032908298071)"/>
+    <path d="M 929 493.95 L 940 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.15926352960523216 0.26449134631548077) translate(0.4638391591608525 0.18692188477143656)"/>
+  
+  
+
+    <path d="M 1080 550 L 1080 680" fill="none" stroke="#4285F4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.37737387428060176 -0.464083584677428)"/>
+    <path d="M 1080 550 L 1080 680" fill="none" stroke="#4285F4" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.4801385368220509 0.06725685708224771)"/>
+  
+    
+    <path d="M 1073.95 669 L 1080 680" fill="none" stroke="#4285F4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.222195124393329 -0.024818570003844798) translate(-0.82762340772897 0.5812615206465125)"/>
+    <path d="M 1073.95 669 L 1080 680" fill="none" stroke="#4285F4" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.222195124393329 -0.024818570003844798) translate(-0.2734831990208477 0.19053682652302084)"/>
+  
+    
+    <path d="M 1086.05 669 L 1080 680" fill="none" stroke="#4285F4" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.222195124393329 -0.024818570003844798) translate(-0.3216571829281747 -0.7903653074987232)"/>
+    <path d="M 1086.05 669 L 1080 680" fill="none" stroke="#4285F4" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.222195124393329 -0.024818570003844798) translate(-0.8618648253846913 0.6531933741644026)"/>
+  
+  
+
+    <path d="M 1220 745 L 1280 745" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.23798846472054713 0.0899558928329498)"/>
+    <path d="M 1220 745 L 1280 745" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.851516152638942 0.12031703079119327)"/>
+  
+    
+    <path d="M 1269 751.05 L 1280 745" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.10632679362315683 0.3228649070020765) translate(-0.16600624769926076 -0.6396647205110639)"/>
+    <path d="M 1269 751.05 L 1280 745" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.10632679362315683 0.3228649070020765) translate(0.7613477630540729 -0.6911845535505563)"/>
+  
+    
+    <path d="M 1269 738.95 L 1280 745" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.10632679362315683 0.3228649070020765) translate(0.2898151500150562 0.8089870301540941)"/>
+    <path d="M 1269 738.95 L 1280 745" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.10632679362315683 0.3228649070020765) translate(0.158647868782282 0.14537016679532833)"/>
+  
+  
+<text text-anchor="start" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="13" font-weight="600" fill="#676258"><tspan x="340" y="302">CLI · workflow · SDK · agent task</tspan></text>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="13" font-weight="600" fill="#676258"><tspan x="352" y="435">plans + dispatches</tspan></text>
+<rect x="510" y="476" width="40" height="22" rx="10" ry="10" fill="#fbfaf4" opacity="1"/>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="13" font-weight="600" fill="#676258"><tspan x="530" y="490">IPC</tspan></text>
+<rect x="830" y="476" width="120" height="22" rx="10" ry="10" fill="#fbfaf4" opacity="1"/>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="13" font-weight="600" fill="#676258"><tspan x="890" y="490">native messaging</tspan></text>
+<rect x="960" y="601" width="270" height="22" rx="10" ry="10" fill="#fbfaf4" opacity="1"/>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="13" font-weight="600" fill="#4285F4"><tspan x="1095" y="615">attaches to the real browser</tspan></text>
+<rect x="1210" y="736" width="80" height="22" rx="10" ry="10" fill="#fbfaf4" opacity="1"/>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="13" font-weight="600" fill="#676258"><tspan x="1250" y="750">DOM action</tspan></text>
+<text text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="18" font-weight="500" fill="#454039"><tspan x="800" y="858">Browser automation in your existing Chrome profile — local runtime, real browser session.</tspan></text>
+</svg>

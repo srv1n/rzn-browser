@@ -1,0 +1,31 @@
+{
+  "name": "rzn-browser-control",
+  "version": "0.2.5",
+  "description": "Chrome extension for browser automation",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "generate-types": "bun run scripts/generate-types.ts",
+    "build": "bun run scripts/generate-types.ts && ./build.sh",
+    "build:dev": "bun run scripts/generate-types.ts && ./build.sh",
+    "clean": "rm -rf dist dist-chrome dist-firefox",
+    "test": "bun x vitest",
+    "test:e2e": "bun x playwright test",
+    "test:e2e:headful": "RZN_PW_HEADFUL=1 bun x playwright test"
+  },
+  "dependencies": {
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.251",
+    "@types/webextension-polyfill": "^0.10.0",
+    "ts-node": "^10.9.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.8.3",
+    "vite": "^5.0.0",
+    "vitest": "^1.0.0",
+    "playwright": "^1.55.0",
+    "@playwright/test": "^1.55.0",
+    "webextension-polyfill": "^0.10.0"
+  }
+}

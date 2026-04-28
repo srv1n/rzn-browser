@@ -1,0 +1,196 @@
+{
+  "system_id": "reddit",
+  "id": "reddit_comment_v1",
+  "name": "Reddit: Comment",
+  "description": "Unified Reddit commenter. Posts or drafts a top-level comment on a post, a reply on a specific comment, or a comment on the current front-page first post. Uses old.reddit.com for deterministic HTML.",
+  "domain": "old.reddit.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "description": "Navigate to the target context (post URL, front-page first post, or comment permalink), optionally scroll to read, then fill and optionally submit the correct comment/reply form.",
+    "sequences": [
+      {
+        "name": "reddit_comment",
+        "description": "Route to post or reply form by `target`, fill `comment_text`, submit or leave as draft based on `mode`.",
+        "required_variables": [
+          {
+            "name": "target",
+            "description": "What to comment on: 'post_url' (top-level comment on a given post), 'first_post' (top-level on old.reddit.com's first post), or 'comment_id' (nested reply on a specific comment)."
+          },
+          {
+            "name": "comment_text",
+            "description": "The comment body to post."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Open an old.reddit.com tab (bootstrap — a tab must exist before execute_javascript can run)",
+            "type": "navigate_to_url",
+            "url": "https://old.reddit.com/",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s1b",
+            "name": "If target is 'post_url' or 'comment_id', redirect to the provided post_url",
+            "type": "execute_javascript",
+            "timeout_ms": 5000,
+            "args": [
+              "{target}",
+              "{post_url}"
+            ],
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const target = cleanArg(arg0) || 'post_url'; const postUrl = cleanArg(arg1); if (target === 'first_post') return JSON.stringify({ skipped: true, stays_on: 'old.reddit.com' }); if (!postUrl) throw new Error('post_url is required when target is \"post_url\" or \"comment_id\"'); setTimeout(() => { window.location.assign(postUrl); }, 0); return JSON.stringify({ navigated_to: postUrl });"
+          },
+          {
+            "id": "s2",
+            "name": "Initial page settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1500
+          },
+          {
+            "id": "s3",
+            "name": "If target is first_post, click the first /comments/ link on the front page",
+            "type": "execute_javascript",
+            "timeout_ms": 15000,
+            "args": [
+              "{target}"
+            ],
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const target = cleanArg(arg0) || 'post_url'; if (target !== 'first_post') return JSON.stringify({ skipped: true }); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const deadline = Date.now() + 12000; let link = null; while (Date.now() < deadline) { link = document.querySelector(\"#siteTable .thing a[href*='/comments/'], .thing a[href*='/comments/']\"); if (link) break; await sleep(300); } if (!link) throw new Error('No /comments/ link found on old.reddit.com front page'); const href = link.href; setTimeout(() => { window.location.assign(href); }, 0); return JSON.stringify({ navigated: true, url: href });"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for the comments page to settle after any first_post navigation (≥3s avoids context-destroyed errors)",
+            "type": "wait_for_timeout",
+            "timeout_ms": 4000
+          },
+          {
+            "id": "s5",
+            "name": "Optional read-pass: scroll four times with reading pauses when read_first=yes",
+            "type": "execute_javascript",
+            "timeout_ms": 12000,
+            "args": [
+              "{read_first}"
+            ],
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const readFirst = (cleanArg(arg0) || 'no').toLowerCase(); if (readFirst !== 'yes') return JSON.stringify({ skipped: true }); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const pauses = [1200, 1600, 1400, 1200]; for (const p of pauses) { window.scrollBy(0, Math.floor(window.innerHeight * 0.85)); await sleep(p); } return JSON.stringify({ scrolled: pauses.length });"
+          },
+          {
+            "id": "s6",
+            "name": "If target is comment_id, click the reply link on that specific comment and wait for its nested form",
+            "type": "execute_javascript",
+            "timeout_ms": 20000,
+            "args": [
+              "{target}",
+              "{comment_id}"
+            ],
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const target = cleanArg(arg0) || 'post_url'; const commentId = cleanArg(arg1); if (target !== 'comment_id') return JSON.stringify({ skipped: true }); if (!commentId) throw new Error('comment_id is required when target is \"comment_id\"'); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const node = document.querySelector('#thing_t1_' + commentId); if (!node) throw new Error('target comment node #thing_t1_' + commentId + ' not found'); const replyLink = node.querySelector(\"div.entry a[data-event-action='reply']\") || node.querySelector('div.entry > ul.flat-list.buttons > li:last-child > a'); if (!replyLink) throw new Error('reply link not found on #thing_t1_' + commentId); replyLink.click(); const deadline = Date.now() + 15000; let ta = null; while (Date.now() < deadline) { ta = node.querySelector(\"div.child form textarea[name='text']\"); if (ta) break; await sleep(200); } if (!ta) throw new Error('nested reply textarea never rendered'); return JSON.stringify({ opened_reply_for: commentId });"
+          },
+          {
+            "id": "s7",
+            "name": "Wait for the comment/reply editor to be present",
+            "type": "wait_for_element",
+            "selector": "form#commentform textarea[name='text'], form.usertext-edit textarea[name='text'], textarea[name='text']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s8",
+            "name": "Fill comment text into the correct form (nested reply form scoped to comment_id when target=comment_id, else the top-level commentform)",
+            "type": "execute_javascript",
+            "timeout_ms": 10000,
+            "args": [
+              "{target}",
+              "{comment_id}",
+              "{comment_text}"
+            ],
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const target = cleanArg(arg0) || 'post_url'; const commentId = cleanArg(arg1); const text = cleanArg(arg2); if (!text) throw new Error('comment_text is required'); let ta = null; if (target === 'comment_id' && commentId) { const node = document.querySelector('#thing_t1_' + commentId); ta = node ? node.querySelector(\"div.child form textarea[name='text']\") : null; } if (!ta) { ta = document.querySelector(\"form#commentform textarea[name='text'], form.usertext-edit textarea[name='text'], textarea[name='text']\"); } if (!ta) throw new Error('comment textarea not found'); ta.focus(); const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; setter.call(ta, text); ta.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); ta.dispatchEvent(new Event('change', { bubbles: true })); return JSON.stringify({ filled_chars: text.length, scoped_to: (target === 'comment_id' ? commentId : 'top_level') });"
+          },
+          {
+            "id": "s9",
+            "name": "If mode=submit, click the save button on the correct form; if mode=draft, stop here and leave the draft",
+            "type": "execute_javascript",
+            "timeout_ms": 10000,
+            "args": [
+              "{mode}",
+              "{target}",
+              "{comment_id}"
+            ],
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const mode = (cleanArg(arg0) || 'submit').toLowerCase(); const target = cleanArg(arg1) || 'post_url'; const commentId = cleanArg(arg2); if (mode !== 'submit') return JSON.stringify({ submitted: false, mode: mode }); let btn = null; if (target === 'comment_id' && commentId) { const node = document.querySelector('#thing_t1_' + commentId); btn = node ? (node.querySelector('div.child form button.save') || node.querySelector(\"div.child form button[type='submit']\")) : null; } if (!btn) { btn = document.querySelector(\"form#commentform button[type='submit'], form.usertext-edit button[type='submit'], button.save, button[name='submit']\"); } if (!btn) throw new Error('submit button not found'); btn.click(); return JSON.stringify({ submitted: true, mode: mode });"
+          },
+          {
+            "id": "s10",
+            "name": "Final settle (post-submit render or draft stabilization)",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Post or draft a Reddit comment — top-level on a post URL, a reply on a specific comment, or a quick comment on the front page's first post.",
+    "parameters": [
+      {
+        "name": "target",
+        "required": true,
+        "shape": "enum: post_url | first_post | comment_id",
+        "description": "Where to comment. 'post_url' = top-level comment on the post at `post_url`. 'first_post' = top-level comment on the first submission currently on old.reddit.com's front page. 'comment_id' = nested reply under the comment with that id on the page at `post_url`.",
+        "example": "post_url"
+      },
+      {
+        "name": "post_url",
+        "required": false,
+        "shape": "absolute URL",
+        "description": "Full Reddit post URL. Required when target is 'post_url' or 'comment_id'. Ignored when target is 'first_post'. Prefer old.reddit.com for deterministic selectors.",
+        "example": "https://old.reddit.com/r/rust/comments/abc123/title/"
+      },
+      {
+        "name": "comment_id",
+        "required": false,
+        "shape": "base36 id (no t1_ prefix)",
+        "description": "The target comment's base36 id — required when target='comment_id'. Used to scope the reply form to the correct comment node (#thing_t1_<id>).",
+        "example": "l5x9abc"
+      },
+      {
+        "name": "comment_text",
+        "required": true,
+        "shape": "text",
+        "description": "Comment body to fill. Newlines and markdown are accepted as-is by old.reddit.com.",
+        "example": "Thanks, this was helpful!"
+      },
+      {
+        "name": "mode",
+        "required": false,
+        "shape": "enum: submit | draft",
+        "description": "Submit (default) clicks save on the form. 'draft' leaves the text in the editor without sending — useful when a human needs to review first.",
+        "default": "submit",
+        "example": "draft"
+      },
+      {
+        "name": "read_first",
+        "required": false,
+        "shape": "enum: yes | no",
+        "description": "When 'yes', scroll through the post four times with reading pauses before commenting. Makes the session look less scripted; slower by ~5s.",
+        "default": "no",
+        "example": "yes"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Post a top-level comment on a specific post",
+        "command": "rzn-browser run reddit comment --param target=post_url --param post_url=\"https://old.reddit.com/r/rust/comments/abc123/title/\" --param comment_text=\"Great write-up.\""
+      },
+      {
+        "description": "Draft (do not submit) a reply under a specific comment",
+        "command": "rzn-browser run reddit comment --param target=comment_id --param post_url=\"https://old.reddit.com/r/rust/comments/abc123/title/\" --param comment_id=\"l5x9abc\" --param comment_text=\"Good point — one caveat…\" --param mode=draft"
+      },
+      {
+        "description": "Comment on the current first post on the old.reddit.com front page, with a read pass",
+        "command": "rzn-browser run reddit comment --param target=first_post --param comment_text=\"Hello!\" --param read_first=yes"
+      }
+    ],
+    "returns": "No structured payload beyond success. Side effect is a posted or drafted comment on old.reddit.com.",
+    "notes": [
+      "Uses old.reddit.com selectors throughout; pass an old.reddit.com URL in post_url. new.reddit.com is not supported.",
+      "For target=comment_id both post_url (the thread permalink or parent post URL) and comment_id must be provided — the workflow navigates to post_url and scopes the reply to #thing_t1_<comment_id>.",
+      "read_first=yes adds ~5s of scroll/pause time; use it when the caller wants 'read-then-comment' behavior."
+    ]
+  }
+}

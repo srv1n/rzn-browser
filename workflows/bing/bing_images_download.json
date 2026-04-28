@@ -1,0 +1,89 @@
+{
+  "system_id": "bing",
+  "id": "bing_images_download",
+  "name": "Bing: Images Download",
+  "description": "Run a Bing Images search in a fresh tab and download the thumbnails through Chrome's download manager into `~/Downloads/<download_folder>/`. Use when you need files locally and want them to flow through the authenticated browser (firewalls, geo-blocks). Do not use to get metadata or original high-res URLs (use `bing_images_search`, then wget the `high_res_url`s).",
+  "domain": "bing.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigates a fresh tab to /images/search, waits for the thumbnail grid, and streams matching `th.bing.com` thumbnails through Chrome's download_images action.",
+    "sequences": [
+      {
+        "name": "bing_images_download",
+        "description": "Open Bing Images -> wait for grid -> download thumbnails.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "Image search query"
+          },
+          {
+            "name": "download_folder",
+            "description": "Subfolder under ~/Downloads to save files into"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Bing Images search",
+            "type": "navigate_to_url",
+            "url": "https://www.bing.com/images/search?q={search_query}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s2",
+            "name": "Allow the image grid to hydrate",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          },
+          {
+            "id": "s3",
+            "name": "Wait for thumbnail tiles",
+            "type": "wait_for_element",
+            "selector": "div.img_cont img[src*='th.bing.com']",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s4",
+            "name": "Download up to 20 thumbnails",
+            "type": "download_images",
+            "selector": "div.img_cont img[src*='th.bing.com']",
+            "download_folder": "{download_folder}",
+            "limit": 20
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Download up to 20 Bing Images thumbnails through Chrome into ~/Downloads/<folder>/.",
+    "parameters": [
+      {
+        "name": "search_query",
+        "required": true,
+        "shape": "text",
+        "description": "Bing Images search query.",
+        "example": "cats"
+      },
+      {
+        "name": "download_folder",
+        "required": true,
+        "shape": "path-fragment",
+        "description": "Subfolder under ~/Downloads to save the thumbnails into.",
+        "example": "cats"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run bing images-download --param search_query=\"cats\" --param download_folder=\"cats\"",
+        "description": "Saves up to 20 cat thumbnails to ~/Downloads/cats/."
+      }
+    ],
+    "returns": "Chrome download manager writes files. Step result reports `downloaded` count.",
+    "notes": [
+      "Only thumbnails (Bing-hosted under `th.bing.com`) — the host origin's high-res is not fetched here. For real high-res use `bing_images_search` + wget.",
+      "Chrome may prompt the first time you run against a fresh profile. Subsequent runs reuse the prior choice.",
+      "Opens a fresh tab."
+    ]
+  }
+}

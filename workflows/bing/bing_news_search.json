@@ -1,0 +1,84 @@
+{
+  "system_id": "bing",
+  "id": "bing_news_search",
+  "name": "Bing: News Search",
+  "description": "Run a Bing News search in a fresh tab and return up to 10 news cards with title, source, time, url, and snippet. Use for timely news coverage of a topic. Do not use for general web results (`bing_web_search`) or opinion/blog content (not all sources on bing news qualify).",
+  "domain": "bing.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigates a fresh tab directly to /news/search, waits for the news card list, and extracts the first 10 cards.",
+    "sequences": [
+      {
+        "name": "bing_news_search",
+        "description": "Open Bing News -> wait for cards -> extract the first 10.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "News search query"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Bing News search",
+            "type": "navigate_to_url",
+            "url": "https://www.bing.com/news/search?q={search_query}&FORM=HDRSC6",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s2",
+            "name": "Allow results to hydrate",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s3",
+            "name": "Wait for news cards",
+            "type": "wait_for_element",
+            "selector": ".news-card, .newsitem, .newscard.vr",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s4",
+            "name": "Extract the first 10 news cards",
+            "type": "extract_structured_data",
+            "item_selector": ".news-card.newsitem.cardcommon, .newscard.vr, .newsitem, .news-card",
+            "max_items": 10,
+            "fields": [
+              { "name": "title", "selector": "a.title" },
+              { "name": "url", "selector": "a.title", "attribute": "href" },
+              { "name": "source", "selector": "a[data-author]", "attribute": "data-author" },
+              { "name": "time", "selector": "span[aria-label]", "attribute": "aria-label" },
+              { "name": "snippet", "selector": "div.snippet" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Return up to 10 news cards from Bing News for one search query.",
+    "parameters": [
+      {
+        "name": "search_query",
+        "required": true,
+        "shape": "text",
+        "description": "Bing News search query.",
+        "example": "anthropic"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run bing news-search --param search_query=\"anthropic\"",
+        "description": "Return 10 recent news cards about Anthropic."
+      }
+    ],
+    "returns": "Array of { title, url, source, time, snippet }.",
+    "notes": [
+      "Read-only.",
+      "`time` is Bing's published aria-label (e.g. \"2 hours ago\").",
+      "Opens a fresh tab; safe for parallel runs."
+    ]
+  }
+}

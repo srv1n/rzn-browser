@@ -1,0 +1,41 @@
+{
+  "asset_id": "rzn_browser_local_chrome_og_v1",
+  "checks": [
+    {
+      "detail": "",
+      "id": "no_overflow",
+      "issue_count": 0,
+      "issues": [],
+      "status": "pass"
+    },
+    {
+      "detail": "",
+      "id": "no_overlap",
+      "issue_count": 0,
+      "issues": [],
+      "status": "pass"
+    },
+    {
+      "detail": "",
+      "id": "grid_alignment",
+      "issue_count": 0,
+      "issues": [],
+      "status": "pass"
+    },
+    {
+      "detail": "",
+      "id": "font_lock",
+      "issue_count": 0,
+      "issues": [],
+      "status": "pass"
+    },
+    {
+      "detail": "",
+      "id": "thumbnail_legibility",
+      "issue_count": 0,
+      "issues": [],
+      "status": "pass"
+    }
+  ],
+  "status": "pass"
+}

@@ -1,0 +1,9 @@
+{
+  "schema": "clipper.website_visual.batch.v0.1",
+  "manifests": [
+    "rzn_browser_local_chrome_og_v1.json",
+    "rzn_browser_compete_matrix_v1.json",
+    "rzn_browser_choose_rzn_decision_v1.json",
+    "rzn_browser_modes_matrix_v1.json"
+  ]
+}

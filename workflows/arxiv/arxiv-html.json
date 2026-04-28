@@ -1,0 +1,84 @@
+{
+    "system_id": "arxiv",
+    "id": "arxiv_html_v1",
+    "name": "arXiv HTML Extractor",
+    "description": "Extract machine-readable HTML versions and metadata from arXiv papers",
+    "domain": "arxiv.org",
+    "version": "1.0.0",
+    "last_updated": "2025-07-30T00:00:00Z",
+    "browser_automation": {
+        "description": "Workflow to extract arXiv paper metadata and HTML links",
+        "sequences": [
+            {
+                "name": "arxiv_extract",
+                "description": "Navigate to arXiv paper and extract metadata including HTML link",
+                "required_variables": [
+                    {
+                        "name": "arxiv_id",
+                        "description": "arXiv paper ID (e.g., 2301.00234)"
+                    }
+                ],
+                "steps": [
+                    {
+                        "id": "s1",
+                        "name": "Navigate to arXiv paper",
+                        "type": "navigate_to_url",
+                        "url": "https://arxiv.org/abs/{arxiv_id}"
+                    },
+                    {
+                        "id": "s2",
+                        "name": "Wait for page to load",
+                        "type": "wait_for_element",
+                        "selector": "h1.title",
+                        "timeout_ms": 5000
+                    },
+                    {
+                        "id": "s3",
+                        "name": "Extract paper metadata",
+                        "type": "extract_structured_data",
+                        "item_selector": "body",
+                        "fields": [
+                            {
+                                "name": "title",
+                                "selector": "h1.title"
+                            },
+                            {
+                                "name": "authors",
+                                "selector": "div.authors a",
+                                "multiple": true
+                            },
+                            {
+                                "name": "abstract",
+                                "selector": "blockquote.abstract"
+                            },
+                            {
+                                "name": "arxiv_id",
+                                "selector": "td.arxivid a"
+                            },
+                            {
+                                "name": "categories",
+                                "selector": "td.subjects"
+                            },
+                            {
+                                "name": "pdf_link",
+                                "selector": "a.abs-button[href*='/pdf/']",
+                                "attribute": "href"
+                            },
+                            {
+                                "name": "html_link",
+                                "selector": "a#latexml-download-link[href*='/html/']",
+                                "attribute": "href",
+                                "optional": true
+                            },
+                            {
+                                "name": "source_link",
+                                "selector": "a.abs-button[href*='/src/']",
+                                "attribute": "href"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

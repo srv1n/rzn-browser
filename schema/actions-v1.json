@@ -1,0 +1,918 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RZN Actions Schema",
+  "schema_version": "rzn.actions.v1",
+  "compatibility": {
+    "status": "stable",
+    "notes": [
+      "Canonical step/action schema for extension + CLI + worker.",
+      "Compatible within the same major version (v1.*).",
+      "Runtimes may ignore unknown fields; additional properties are allowed."
+    ]
+  },
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "navigate_to_url",
+        "open_new_tab",
+        "switch_to_tab",
+        "close_current_tab",
+        "get_current_url",
+        "click_element",
+        "dbl_click_element",
+        "hover_element",
+        "fill_input_field",
+        "fill_and_submit",
+        "type_text",
+        "submit_input",
+        "press_special_key",
+        "select_option_in_dropdown",
+        "upload_file",
+        "drag_and_drop",
+        "scroll_window_to",
+        "scroll_element_into_view",
+        "infinite_scroll",
+        "wait_for_timeout",
+        "wait_for_element",
+        "wait_for_navigation",
+        "wait_for_network_idle",
+        "extract_structured_data",
+        "get_element_text",
+        "get_element_value",
+        "get_element_count",
+        "get_element_attribute",
+        "take_screenshot",
+        "get_page_source",
+        "assert_selector_state",
+        "assert_text_in_element",
+        "assert_url_matches",
+        "execute_javascript",
+        "eval_main_world",
+        "eval_isolated_world",
+        "inspect_element",
+        "inspect_click_surface",
+        "capture_ui_bundle",
+        "verify_ui_change",
+        "read_field_value",
+        "semantic_action",
+        "same_origin_request",
+        "set_cookie",
+        "get_cookies",
+        "clear_cookies",
+        "set_local_storage_item",
+        "get_local_storage_item",
+        "clear_local_storage",
+        "download_images",
+        "simulate_human_behavior",
+        "detect_popups",
+        "dismiss_popups",
+        "wait_for_no_popups",
+        "handle_captcha",
+        "configure_captcha_solver",
+        "request_user_intervention",
+        "wait_for_auth",
+        "wait_for_totp",
+        "wait_for_verification",
+        "extract_page_assets"
+      ]
+    },
+    "id": { "type": "string" },
+    "name": { "type": "string" }
+  },
+  "required": ["type"],
+  "oneOf": [
+    { "$ref": "#/definitions/navigate_to_url" },
+    { "$ref": "#/definitions/open_new_tab" },
+    { "$ref": "#/definitions/switch_to_tab" },
+    { "$ref": "#/definitions/close_current_tab" },
+    { "$ref": "#/definitions/get_current_url" },
+    { "$ref": "#/definitions/click_element" },
+    { "$ref": "#/definitions/dbl_click_element" },
+    { "$ref": "#/definitions/hover_element" },
+    { "$ref": "#/definitions/fill_input_field" },
+    { "$ref": "#/definitions/fill_and_submit" },
+    { "$ref": "#/definitions/type_text" },
+    { "$ref": "#/definitions/submit_input" },
+    { "$ref": "#/definitions/press_special_key" },
+    { "$ref": "#/definitions/select_option_in_dropdown" },
+    { "$ref": "#/definitions/upload_file" },
+    { "$ref": "#/definitions/drag_and_drop" },
+    { "$ref": "#/definitions/scroll_window_to" },
+    { "$ref": "#/definitions/scroll_element_into_view" },
+    { "$ref": "#/definitions/infinite_scroll" },
+    { "$ref": "#/definitions/wait_for_timeout" },
+    { "$ref": "#/definitions/wait_for_element" },
+    { "$ref": "#/definitions/wait_for_navigation" },
+    { "$ref": "#/definitions/wait_for_network_idle" },
+    { "$ref": "#/definitions/extract_structured_data" },
+    { "$ref": "#/definitions/get_element_text" },
+    { "$ref": "#/definitions/get_element_value" },
+    { "$ref": "#/definitions/get_element_count" },
+    { "$ref": "#/definitions/get_element_attribute" },
+    { "$ref": "#/definitions/take_screenshot" },
+    { "$ref": "#/definitions/get_page_source" },
+    { "$ref": "#/definitions/assert_selector_state" },
+    { "$ref": "#/definitions/assert_text_in_element" },
+    { "$ref": "#/definitions/assert_url_matches" },
+    { "$ref": "#/definitions/execute_javascript" },
+    { "$ref": "#/definitions/eval_main_world" },
+    { "$ref": "#/definitions/eval_isolated_world" },
+    { "$ref": "#/definitions/inspect_element" },
+    { "$ref": "#/definitions/inspect_click_surface" },
+    { "$ref": "#/definitions/capture_ui_bundle" },
+    { "$ref": "#/definitions/verify_ui_change" },
+    { "$ref": "#/definitions/read_field_value" },
+    { "$ref": "#/definitions/semantic_action" },
+    { "$ref": "#/definitions/same_origin_request" },
+    { "$ref": "#/definitions/set_cookie" },
+    { "$ref": "#/definitions/get_cookies" },
+    { "$ref": "#/definitions/clear_cookies" },
+    { "$ref": "#/definitions/set_local_storage_item" },
+    { "$ref": "#/definitions/get_local_storage_item" },
+    { "$ref": "#/definitions/clear_local_storage" },
+    { "$ref": "#/definitions/download_images" },
+    { "$ref": "#/definitions/simulate_human_behavior" },
+    { "$ref": "#/definitions/detect_popups" },
+    { "$ref": "#/definitions/dismiss_popups" },
+    { "$ref": "#/definitions/wait_for_no_popups" },
+    { "$ref": "#/definitions/handle_captcha" },
+    { "$ref": "#/definitions/configure_captcha_solver" },
+    { "$ref": "#/definitions/request_user_intervention" },
+    { "$ref": "#/definitions/wait_for_auth" },
+    { "$ref": "#/definitions/wait_for_totp" },
+    { "$ref": "#/definitions/wait_for_verification" },
+    { "$ref": "#/definitions/extract_page_assets" }
+  ],
+  "definitions": {
+    "field_spec": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "selector": { "type": "string" },
+        "attribute": { "type": "string" },
+        "post_processing": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["name", "selector"],
+      "additionalProperties": true
+    },
+    "cookie_spec": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "value": { "type": "string" },
+        "domain": { "type": "string" },
+        "path": { "type": "string" },
+        "secure": { "type": "boolean" },
+        "http_only": { "type": "boolean" },
+        "expiration_date": { "type": "number" }
+      },
+      "required": ["name", "value"],
+      "additionalProperties": true
+    },
+    "navigate_to_url": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "navigate_to_url" },
+        "url": { "type": "string" },
+        "wait": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "url"],
+      "additionalProperties": true
+    },
+    "open_new_tab": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "open_new_tab" },
+        "url": { "type": "string" }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "switch_to_tab": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "switch_to_tab" },
+        "tab_identifier": {}
+      },
+      "required": ["type", "tab_identifier"],
+      "additionalProperties": true
+    },
+    "close_current_tab": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "close_current_tab" },
+        "tab_identifier": {}
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "get_current_url": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "get_current_url" }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "click_element": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "click_element" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "random_offset": { "type": "boolean" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "dbl_click_element": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "dbl_click_element" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "random_offset": { "type": "boolean" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "hover_element": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "hover_element" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "random_offset": { "type": "boolean" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "fill_input_field": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "fill_input_field" },
+        "selector": { "type": "string" },
+        "value": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "clear_first": { "type": "boolean" },
+        "simulate_typing": { "type": "boolean" },
+        "use_native_input": { "type": "boolean" },
+        "typing_speed": { "type": "string", "enum": ["slow", "medium", "fast"] },
+        "delay_ms": { "type": "integer", "minimum": 0 },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector", "value"],
+      "additionalProperties": true
+    },
+    "fill_and_submit": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "fill_and_submit" },
+        "selector": { "type": "string" },
+        "value": { "type": "string" },
+        "submit_selector": { "type": "string" },
+        "submit_label_regex": { "type": "string" },
+        "wait_for_increase_selector": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "clear_first": { "type": "boolean" },
+        "simulate_typing": { "type": "boolean" },
+        "delay_ms": { "type": "integer", "minimum": 0 },
+        "timeout_ms": { "type": "integer", "minimum": 0 },
+        "wait_timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector", "value"],
+      "additionalProperties": true
+    },
+    "type_text": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "type_text" },
+        "selector": { "type": "string" },
+        "text": { "type": "string" },
+        "value": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "use_native_input": { "type": "boolean" },
+        "delay_ms": { "type": "integer", "minimum": 0 },
+        "typing_speed": {
+          "type": "string",
+          "enum": ["slow", "medium", "fast"]
+        },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector"],
+      "anyOf": [
+        { "required": ["text"] },
+        { "required": ["value"] }
+      ],
+      "additionalProperties": true
+    },
+    "submit_input": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "submit_input" },
+        "selector": { "type": "string" },
+        "text": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "clear_first": { "type": "boolean" },
+        "simulate_typing": { "type": "boolean" },
+        "delay_ms": { "type": "integer", "minimum": 0 },
+        "use_native_input": { "type": "boolean" },
+        "submit_fallback": { "type": "boolean" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector", "text"],
+      "additionalProperties": true
+    },
+    "press_special_key": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "press_special_key" },
+        "key": { "type": "string" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "key"],
+      "additionalProperties": true
+    },
+    "select_option_in_dropdown": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "select_option_in_dropdown" },
+        "selector": { "type": "string" },
+        "value": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector", "value"],
+      "additionalProperties": true
+    },
+    "upload_file": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "upload_file" },
+        "selector": { "type": "string" },
+        "file_path": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector", "file_path"],
+      "additionalProperties": true
+    },
+    "drag_and_drop": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "drag_and_drop" },
+        "source_selector": { "type": "string" },
+        "target_selector": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "source_selector", "target_selector"],
+      "additionalProperties": true
+    },
+    "scroll_window_to": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "scroll_window_to" },
+        "direction": { "type": "string" },
+        "amount": { "type": "integer" },
+        "delta": { "type": "integer" },
+        "x": { "type": "integer" },
+        "y": { "type": "integer" },
+        "wait_after_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "scroll_element_into_view": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "scroll_element_into_view" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "infinite_scroll": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "infinite_scroll" },
+        "max_scrolls": { "type": "integer", "minimum": 0 },
+        "scroll_delay": { "type": "integer", "minimum": 0 },
+        "target_selector": { "type": "string" },
+        "target_count": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "wait_for_timeout": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "wait_for_timeout" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "timeout_ms"],
+      "additionalProperties": true
+    },
+    "wait_for_element": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "wait_for_element" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "condition": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "wait_for_navigation": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "wait_for_navigation" },
+        "url_pattern": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "wait_for_network_idle": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "wait_for_network_idle" },
+        "idle_time_ms": { "type": "integer", "minimum": 0 },
+        "max_wait_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "extract_structured_data": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "extract_structured_data" },
+        "item_selector": { "type": "string" },
+        "limit": { "type": "integer", "minimum": 1 },
+        "fields": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/field_spec" }
+        },
+        "frame_id": { "type": "string" },
+        "extraction_type": { "type": "string" }
+      },
+      "required": ["type", "item_selector", "fields"],
+      "additionalProperties": true
+    },
+    "get_element_text": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "get_element_text" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "get_element_value": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "get_element_value" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "get_element_count": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "get_element_count" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "get_element_attribute": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "get_element_attribute" },
+        "selector": { "type": "string" },
+        "attribute": { "type": "string" },
+        "frame_id": { "type": "string" }
+      },
+      "required": ["type", "selector", "attribute"],
+      "additionalProperties": true
+    },
+    "take_screenshot": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "take_screenshot" },
+        "full_page": { "type": "boolean" },
+        "annotate": { "type": "boolean" },
+        "annotate_max_labels": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "annotate_max_elements": { "type": "integer", "minimum": 1, "maximum": 200 },
+        "quality": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "format": { "type": "string" }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "get_page_source": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "get_page_source" }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "assert_selector_state": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "assert_selector_state" },
+        "selector": { "type": "string" },
+        "condition": { "type": "string" },
+        "frame_id": { "type": "string" }
+      },
+      "required": ["type", "selector", "condition"],
+      "additionalProperties": true
+    },
+    "assert_text_in_element": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "assert_text_in_element" },
+        "selector": { "type": "string" },
+        "text": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "match_type": { "type": "string" }
+      },
+      "required": ["type", "selector", "text"],
+      "additionalProperties": true
+    },
+    "assert_url_matches": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "assert_url_matches" },
+        "url_pattern": { "type": "string" },
+        "match_type": { "type": "string" }
+      },
+      "required": ["type", "url_pattern"],
+      "additionalProperties": true
+    },
+    "execute_javascript": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "execute_javascript" },
+        "script": { "type": "string" },
+        "args": { "type": "array" },
+        "return_value": { "type": "boolean" },
+        "world": { "type": "string", "enum": ["isolated", "main"] },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "script"],
+      "additionalProperties": true
+    },
+    "eval_main_world": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "eval_main_world" },
+        "script": { "type": "string" },
+        "args": { "type": "array" },
+        "return_value": { "type": "boolean" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "script"],
+      "additionalProperties": true
+    },
+    "eval_isolated_world": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "eval_isolated_world" },
+        "script": { "type": "string" },
+        "args": { "type": "array" },
+        "return_value": { "type": "boolean" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "script"],
+      "additionalProperties": true
+    },
+    "inspect_element": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "inspect_element" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "include_ancestors": { "type": "boolean" },
+        "include_shadow_path": { "type": "boolean" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "inspect_click_surface": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "inspect_click_surface" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "capture_ui_bundle": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "capture_ui_bundle" },
+        "selector": { "type": "string" },
+        "include_dom_snapshot": { "type": "boolean" },
+        "include_screenshot": { "type": "boolean" },
+        "annotate": { "type": "boolean" },
+        "max_elements": { "type": "integer", "minimum": 1 },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "verify_ui_change": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "verify_ui_change" },
+        "selector": { "type": "string" },
+        "condition": { "type": "string" },
+        "text": { "type": "string" },
+        "match_type": { "type": "string" },
+        "value_equals": { "type": "string" },
+        "value_contains": { "type": "string" },
+        "url_includes": { "type": "string" },
+        "url_matches": { "type": "string" },
+        "active_selector": { "type": "string" },
+        "count_at_least": { "type": "integer", "minimum": 0 },
+        "count_equals": { "type": "integer", "minimum": 0 },
+        "all": { "type": "array", "items": { "type": "object" } },
+        "any": { "type": "array", "items": { "type": "object" } },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "read_field_value": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "read_field_value" },
+        "selector": { "type": "string" },
+        "frame_id": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "semantic_action": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "semantic_action" },
+        "action": { "type": "string" },
+        "selector": { "type": "string" },
+        "value": { "type": "string" },
+        "key": { "type": "string" },
+        "step": { "type": "object" },
+        "postcondition": { "type": "object" },
+        "postcondition_required": { "type": "boolean" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "action"],
+      "additionalProperties": true
+    },
+    "same_origin_request": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "same_origin_request" },
+        "method": { "type": "string" },
+        "path": { "type": "string" },
+        "query": { "type": "object" },
+        "headers": { "type": "object" },
+        "body": {},
+        "response_format": { "type": "string", "enum": ["json", "text"] },
+        "max_bytes": { "type": "integer" }
+      },
+      "required": ["type", "path"],
+      "additionalProperties": true
+    },
+    "set_cookie": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "set_cookie" },
+        "cookie": { "$ref": "#/definitions/cookie_spec" }
+      },
+      "required": ["type", "cookie"],
+      "additionalProperties": true
+    },
+    "get_cookies": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "get_cookies" },
+        "domain": { "type": "string" }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "clear_cookies": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "clear_cookies" },
+        "domain": { "type": "string" }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "set_local_storage_item": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "set_local_storage_item" },
+        "storage_key": { "type": "string" },
+        "storage_value": { "type": "string" }
+      },
+      "required": ["type", "storage_key", "storage_value"],
+      "additionalProperties": true
+    },
+    "get_local_storage_item": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "get_local_storage_item" },
+        "storage_key": { "type": "string" }
+      },
+      "required": ["type", "storage_key"],
+      "additionalProperties": true
+    },
+    "clear_local_storage": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "clear_local_storage" }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "download_images": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "download_images" },
+        "selector": { "type": "string" },
+        "download_folder": { "type": "string" },
+        "limit": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type", "selector"],
+      "additionalProperties": true
+    },
+    "simulate_human_behavior": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "simulate_human_behavior" },
+        "behaviors": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "detect_popups": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "detect_popups" },
+        "custom_selectors": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "dismiss_popups": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "dismiss_popups" },
+        "dismiss_selectors": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "wait_for_no_popups": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "wait_for_no_popups" },
+        "timeout_ms": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "handle_captcha": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "handle_captcha" }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "configure_captcha_solver": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "configure_captcha_solver" },
+        "solver": { "type": "string" },
+        "api_key": { "type": "string" }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "request_user_intervention": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "request_user_intervention" },
+        "message": { "type": "string" },
+        "instructions": { "type": "string" },
+        "timeout_ms": { "type": "integer", "minimum": 0 },
+        "approval_mode": {
+          "type": "string",
+          "enum": ["ask_user", "notify", "auto_continue", "noop"]
+        },
+        "approval_policy": {
+          "type": "string",
+          "enum": ["ask_user", "notify", "auto_continue", "noop"]
+        },
+        "continue_on_timeout": { "type": "boolean" },
+        "notification_title": { "type": "string" },
+        "notification_message": { "type": "string" }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "wait_for_auth": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "wait_for_auth" },
+        "timeout_ms": { "type": "integer", "minimum": 0 },
+        "success_selectors": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "success_url_pattern": { "type": "string" }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "wait_for_totp": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "wait_for_totp" },
+        "timeout_ms": { "type": "integer", "minimum": 0 },
+        "totp_selectors": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "wait_for_verification": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "wait_for_verification" },
+        "timeout_ms": { "type": "integer", "minimum": 0 },
+        "success_url_pattern": { "type": "string" },
+        "success_selectors": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "extract_page_assets": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "extract_page_assets" },
+        "asset_types": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "limit": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    }
+  }
+}

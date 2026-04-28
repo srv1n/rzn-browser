@@ -1,0 +1,225 @@
+{
+  "system_id": "etsy",
+  "id": "etsy_listing_details_reviews",
+  "name": "Etsy Listing Details and Reviews",
+  "description": "Open an Etsy listing and extract key facts plus reviews.",
+  "domain": "etsy.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "description": "Details + reviews workflow for one Etsy listing.",
+    "sequences": [
+      {
+        "name": "etsy_listing_details_reviews",
+        "description": "Extract listing metadata and review rows from Etsy listing page.",
+        "required_variables": [
+          {
+            "name": "listing_url",
+            "description": "Full Etsy listing URL."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to listing page",
+            "type": "navigate_to_url",
+            "url": "{listing_url}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for hydration",
+            "type": "wait_for_timeout",
+            "timeout_ms": 5000
+          },
+          {
+            "id": "s3",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for listing title",
+            "type": "wait_for_element",
+            "selector": "h1, [data-buy-box-listing-title='true'], [class*='listing-title'], [data-test-id*='listing-page-title']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s5",
+            "name": "Extract listing details",
+            "type": "extract_structured_data",
+            "item_selector": "body",
+            "fields": [
+              {
+                "name": "listing_title",
+                "selector": "h1, [data-buy-box-listing-title='true'], [class*='listing-title'], [data-test-id*='listing-page-title']"
+              },
+              {
+                "name": "price",
+                "selector": "[class*='currency-value'], [class*='price']"
+              },
+              {
+                "name": "shop_name",
+                "selector": "[class*='shop-name'], [data-shop-name], [class*='seller'], a[href*='/shop/']"
+              },
+              {
+                "name": "rating_summary",
+                "selector": "[aria-label*='out of 5'], [aria-label*='stars'], [class*='rating'], [class*='star']"
+              },
+              {
+                "name": "rating_count",
+                "selector": "[class*='rating-count'], [class*='review-count'], a[href*='#reviews'], a[href*='reviews']"
+              },
+              {
+                "name": "description",
+                "selector": "meta[name='description']",
+                "attribute": "content"
+              }
+            ]
+          },
+          {
+            "id": "s6",
+            "name": "Extract listing images",
+            "type": "extract_structured_data",
+            "item_selector": "img[src*='etsy'], img[data-src*='etsy'], source[srcset*='etsy']",
+            "fields": [
+              {
+                "name": "image_src",
+                "selector": "*",
+                "attribute": "src"
+              },
+              {
+                "name": "image_srcset",
+                "selector": "*",
+                "attribute": "srcset"
+              },
+              {
+                "name": "image_alt",
+                "selector": "*",
+                "attribute": "alt"
+              }
+            ]
+          },
+          {
+            "id": "s7",
+            "name": "Open reviews section",
+            "type": "click_element",
+            "selector": "a[href*='#reviews'], a[href*='reviews'], [aria-controls*='reviews'], button[aria-controls*='reviews']"
+          },
+          {
+            "id": "s8",
+            "name": "Wait for review rows",
+            "type": "wait_for_element",
+            "selector": "[data-review-id], #reviews li, #reviews article, [id*='review'] li, [data-test-id*='review'], [class*='review']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s9",
+            "name": "Extract reviews pass 1",
+            "type": "extract_structured_data",
+            "item_selector": "[data-review-id], #reviews li, #reviews article, [id*='review'] li, [data-test-id*='review'], [class*='review']",
+            "fields": [
+              {
+                "name": "review_title",
+                "selector": "h2, h3, [class*='review-title'], [class*='title']"
+              },
+              {
+                "name": "review_body",
+                "selector": "[data-test-id='review-body'], [class*='review-body'], [class*='review-content'], p"
+              },
+              {
+                "name": "review_author",
+                "selector": "[class*='reviewer'], [class*='author'], a[href*='/people/']"
+              },
+              {
+                "name": "review_date",
+                "selector": "time, [datetime], [class*='date']"
+              },
+              {
+                "name": "review_rating",
+                "selector": "[aria-label*='star'], [aria-label*='out of 5'], [class*='rating']",
+                "attribute": "aria-label"
+              }
+            ]
+          },
+          {
+            "id": "s10",
+            "name": "Scroll for more reviews",
+            "type": "scroll_window_to",
+            "direction": "down",
+            "amount": 2500,
+            "wait_after_ms": 1000
+          },
+          {
+            "id": "s11",
+            "name": "Extract reviews pass 2",
+            "type": "extract_structured_data",
+            "item_selector": "[data-review-id], #reviews li, #reviews article, [id*='review'] li, [data-test-id*='review'], [class*='review']",
+            "fields": [
+              {
+                "name": "review_title",
+                "selector": "h2, h3, [class*='review-title'], [class*='title']"
+              },
+              {
+                "name": "review_body",
+                "selector": "[data-test-id='review-body'], [class*='review-body'], [class*='review-content'], p"
+              },
+              {
+                "name": "review_author",
+                "selector": "[class*='reviewer'], [class*='author'], a[href*='/people/']"
+              },
+              {
+                "name": "review_date",
+                "selector": "time, [datetime], [class*='date']"
+              },
+              {
+                "name": "review_rating",
+                "selector": "[aria-label*='star'], [aria-label*='out of 5'], [class*='rating']",
+                "attribute": "aria-label"
+              }
+            ]
+          },
+          {
+            "id": "s12",
+            "name": "Go to next review page if available",
+            "type": "click_element",
+            "selector": "a[rel='next'], a[aria-label*='Next'], button[aria-label*='Next'], a[href*='page=2'], a[href*='page=']"
+          },
+          {
+            "id": "s13",
+            "name": "Wait for next review page",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          },
+          {
+            "id": "s14",
+            "name": "Extract reviews pass 3",
+            "type": "extract_structured_data",
+            "item_selector": "[data-review-id], #reviews li, #reviews article, [id*='review'] li, [data-test-id*='review'], [class*='review']",
+            "fields": [
+              {
+                "name": "review_title",
+                "selector": "h2, h3, [class*='review-title'], [class*='title']"
+              },
+              {
+                "name": "review_body",
+                "selector": "[data-test-id='review-body'], [class*='review-body'], [class*='review-content'], p"
+              },
+              {
+                "name": "review_author",
+                "selector": "[class*='reviewer'], [class*='author'], a[href*='/people/']"
+              },
+              {
+                "name": "review_date",
+                "selector": "time, [datetime], [class*='date']"
+              },
+              {
+                "name": "review_rating",
+                "selector": "[aria-label*='star'], [aria-label*='out of 5'], [class*='rating']",
+                "attribute": "aria-label"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

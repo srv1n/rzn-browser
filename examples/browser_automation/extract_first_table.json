@@ -1,0 +1,61 @@
+{
+  "system_id": "browser_automation",
+  "id": "browser_extract_first_table_v1",
+  "name": "Extract First Table From Page",
+  "description": "Open a page with a table and extract the first table into structured rows.",
+  "version": "1.0.0",
+  "last_updated": "2026-03-11T00:00:00Z",
+  "browser_automation": {
+    "description": "Structured table extraction example packaged with the browser plugin.",
+    "sequences": [
+      {
+        "name": "extract_first_table",
+        "description": "Open a page, wait for the first table, and extract its first three columns.",
+        "required_variables": [
+          {
+            "name": "page_url",
+            "description": "The page URL that contains a table."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to table page",
+            "type": "navigate_to_url",
+            "url": "{page_url}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for first table",
+            "type": "wait_for_element",
+            "selector": "table",
+            "timeout_ms": 12000
+          },
+          {
+            "id": "s3",
+            "name": "Extract first table rows",
+            "type": "extract_structured_data",
+            "scope_selector": "table",
+            "item_selector": "tr",
+            "extraction_type": "table_rows",
+            "limit": 12,
+            "fields": [
+              {
+                "name": "column_1",
+                "selector": "th:nth-child(1), td:nth-child(1)"
+              },
+              {
+                "name": "column_2",
+                "selector": "th:nth-child(2), td:nth-child(2)"
+              },
+              {
+                "name": "column_3",
+                "selector": "th:nth-child(3), td:nth-child(3)"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

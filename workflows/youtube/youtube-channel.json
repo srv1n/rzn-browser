@@ -1,0 +1,119 @@
+{
+  "system_id": "youtube",
+  "id": "youtube_channel_v1",
+  "name": "YouTube Channel Browse",
+  "description": "List a channel's videos (sorted latest / popular / oldest) or its playlists. Given a channel handle like `@fireship` or a full channel URL, navigates to the right tab, applies the sort chip, and extracts the grid.",
+  "domain": "youtube.com",
+  "version": "1.0.0",
+  "last_updated": "2026-04-24T00:00:00Z",
+  "help": {
+    "summary": "Browse a YouTube channel's Videos or Playlists tab with a chosen sort.",
+    "parameters": [
+      {
+        "name": "channel",
+        "required": true,
+        "shape": "handle like @fireship, or full channel URL",
+        "description": "Channel identifier. Accepts: `@handle`, `handle` (leading @ auto-added), a /@handle URL, a /channel/UC... URL, or a /c/name URL. The extractor resolves it to the correct canonical path for the chosen mode.",
+        "example": "@fireship"
+      },
+      {
+        "name": "mode",
+        "required": false,
+        "shape": "enum: latest | popular | oldest | playlists",
+        "description": "What to return. `latest` (default) / `popular` / `oldest` return recent videos sorted accordingly. `playlists` returns the channel's Playlists tab.",
+        "example": "popular"
+      },
+      {
+        "name": "limit",
+        "required": false,
+        "shape": "integer (1-60)",
+        "description": "Max items to return. Defaults to 30 for videos, 30 for playlists. Hard cap 60 because only the first grid page is loaded (no infinite scroll).",
+        "example": "10"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Last 10 videos from Fireship",
+        "command": "rzn-browser run youtube channel --param channel=\"@fireship\" --param mode=latest --param limit=10"
+      },
+      {
+        "description": "Top 5 most popular videos on a channel",
+        "command": "rzn-browser run youtube channel --param channel=\"@fireship\" --param mode=popular --param limit=5"
+      },
+      {
+        "description": "All playlists on the channel",
+        "command": "rzn-browser run youtube channel --param channel=\"@fireship\" --param mode=playlists"
+      }
+    ],
+    "returns": "{ channel:{ handle, title, subscribers, url }, mode, returned_count, items:[...] }. For video modes items are { video_id, title, url, duration, views, published }. For playlists mode items are { playlist_id, title, url, video_count }.",
+    "notes": [
+      "Sort chips (Latest/Popular/Oldest) are clicked client-side. If YouTube A/B tests the chip UI away, the workflow falls back to Latest and sets `sort_applied: false` in the response so callers can detect drift. YouTube occasionally ignores a Popular-sort request in automated sessions and returns the Latest ordering even when `aria-selected` flips to Popular — if strict popular ranking matters, re-run or cross-check against view_count.",
+      "Only the first grid page is returned. For deep backlogs ask for a dedicated paginating workflow.",
+      "Shorts tab is intentionally not a mode. If needed, pass the full `/@handle/shorts` URL as `channel` — the resolver will respect the explicit path.",
+      "For a video's comments/recommendations use `youtube video`. For playlist contents use `youtube playlist`."
+    ]
+  },
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Dedicated-tab channel browser. Resolves the channel URL, opens the right tab, applies sort, extracts the grid.",
+    "sequences": [
+      {
+        "name": "youtube_channel",
+        "description": "Resolve channel -> open /@handle/videos (or /playlists) -> apply sort chip -> extract grid.",
+        "required_variables": [
+          { "name": "channel", "description": "Channel handle or URL" }
+        ],
+        "optional_variables": [
+          { "name": "mode", "description": "latest | popular | oldest | playlists" },
+          { "name": "limit", "description": "Max items (default 30)" }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Open YouTube homepage (seeds cookies)",
+            "type": "navigate_to_url",
+            "url": "https://www.youtube.com/",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s2",
+            "name": "Resolve channel input and redirect to the right tab",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 20000,
+            "args": ["{channel}", "{mode}"],
+            "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const raw=cleanArg(arg0);if(!raw)throw new Error('channel is required');const mRaw=cleanArg(arg1).toLowerCase();const mode=['latest','popular','oldest','playlists'].includes(mRaw)?mRaw:'latest';const tab=(mode==='playlists')?'playlists':'videos';let base='';if(/^https?:\\/\\//i.test(raw)){try{const u=new URL(raw);base=u.origin+u.pathname.replace(/\\/(videos|playlists|shorts|about|home|featured|streams|community|posts)\\/?$/,'');}catch{throw new Error('bad channel URL: '+raw);}}else if(raw.startsWith('@')){base='https://www.youtube.com/'+raw;}else if(/^UC[A-Za-z0-9_-]{10,}/.test(raw)){base='https://www.youtube.com/channel/'+raw;}else{base='https://www.youtube.com/@'+raw;}const target=base.replace(/\\/$/,'')+'/'+tab;setTimeout(()=>window.location.assign(target),0);return{redirected:true,target,mode,tab};"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for channel shell",
+            "type": "wait_for_element",
+            "selector": "ytd-browse[page-subtype=\"channels\"], #page-header, ytd-c4-tabbed-header-renderer, yt-page-header-view-model",
+            "timeout_ms": 25000
+          },
+          {
+            "id": "s4",
+            "name": "Dismiss popups",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s5",
+            "name": "Wait for grid (videos) or playlist lockups",
+            "type": "wait_for_element",
+            "selector": "ytd-rich-item-renderer, yt-lockup-view-model, ytd-channel-sub-menu-renderer",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s6",
+            "name": "Apply sort chip (videos modes) and extract",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 45000,
+            "args": ["{mode}", "{limit}"],
+            "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const mRaw=cleanArg(arg0).toLowerCase();const mode=['latest','popular','oldest','playlists'].includes(mRaw)?mRaw:'latest';const n=parseInt(cleanArg(arg1),10);const limit=Number.isFinite(n)&&n>0?Math.min(n,60):30;const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const abs=(h)=>{if(!h)return'';try{return new URL(h,location.origin).toString();}catch{return String(h);}};const dedupDur=(s)=>{const t=norm(s);if(!t)return'';const half=t.length/2;if(t.length%2===0&&t.slice(0,half)===t.slice(half))return t.slice(0,half);const parts=t.split(' ');if(parts.length>=2&&parts[0]===parts[1])return parts[0];return parts[0]||t;};const visible=(el)=>!!(el&&el instanceof Element&&el.getBoundingClientRect().width>0&&getComputedStyle(el).display!=='none');const header={title:norm(document.querySelector('yt-dynamic-text-view-model h1, .page-header-view-model-wiz__page-title')?.textContent||document.querySelector('#channel-name #text, ytd-channel-name #text')?.textContent||''),url:location.href};const metaText=norm(document.querySelector('yt-content-metadata-view-model, #channel-header-container #metadata')?.textContent||'');const handleMatch=metaText.match(/@[A-Za-z0-9._-]+/);const subsMatch=metaText.match(/([\\d.,KMB]+)\\s*subscribers?/i);header.handle=handleMatch?handleMatch[0]:'';header.subscribers=subsMatch?subsMatch[0]:'';let sort_applied=true;if(mode==='popular'||mode==='oldest'){const wanted=mode==='popular'?'popular':'oldest';const btns=Array.from(document.querySelectorAll('button[role=\"tab\"]')).filter(visible);const btn=btns.find(b=>norm(b.textContent||'').toLowerCase()===wanted);if(btn){btn.scrollIntoView({block:'center'});const fire=(t)=>btn.dispatchEvent(new MouseEvent(t,{bubbles:true,cancelable:true,view:window,button:0}));fire('pointerdown');fire('mousedown');btn.click();fire('mouseup');fire('pointerup');const before=document.querySelector('ytd-rich-item-renderer #video-title')?.textContent||'';for(let i=0;i<20;i++){await sleep(300);if(btn.getAttribute('aria-selected')==='true'){const cur=document.querySelector('ytd-rich-item-renderer #video-title')?.textContent||'';if(cur&&cur!==before)break;}}await sleep(1200);sort_applied=btn.getAttribute('aria-selected')==='true';}else{sort_applied=false;}}await sleep(500);const items=[];if(mode==='playlists'){const lockups=Array.from(document.querySelectorAll('yt-lockup-view-model'));for(const el of lockups){if(items.length>=limit)break;const outer=el.querySelector('[class*=\"content-id-\"]');let pid=null;if(outer){const m=outer.className.match(/content-id-([A-Za-z0-9_-]{6,})/);pid=m?m[1]:null;}if(!pid||!/^(PL|RD|OL|UU|LL|FL)/.test(pid))continue;const title=norm(el.querySelector('a.ytLockupMetadataViewModelTitle, [class*=\"Title\"]')?.textContent||'');const video_count=norm(el.querySelector('yt-thumbnail-badge-view-model, yt-thumbnail-bottom-overlay-view-model')?.textContent||'');if(!title)continue;items.push({playlist_id:pid,title,url:'https://www.youtube.com/playlist?list='+pid,video_count});}}else{const cards=Array.from(document.querySelectorAll('ytd-rich-item-renderer'));for(const el of cards){if(items.length>=limit)break;const a=el.querySelector('a#video-title-link, a.yt-simple-endpoint[href*=\"/watch\"]');const href=a?.getAttribute('href');const url=abs(href);let video_id=null;try{video_id=new URL(url,location.origin).searchParams.get('v');}catch{}if(!video_id)continue;const title=norm(el.querySelector('#video-title, h3')?.textContent||a?.getAttribute('title')||'');const metaLines=Array.from(el.querySelectorAll('#metadata-line span, .inline-metadata-item')).map(s=>norm(s.textContent));const views=metaLines.find(x=>/view/i.test(x))||metaLines[0]||'';const published=metaLines.find(x=>/ago|streamed|premiered|scheduled/i.test(x))||metaLines[1]||'';const duration=dedupDur(el.querySelector('ytd-thumbnail-overlay-time-status-renderer, yt-thumbnail-badge-view-model')?.textContent||'');items.push({video_id,title,url,duration,views,published});}}return{channel:header,mode,sort_applied,returned_count:items.length,items};"
+          }
+        ]
+      }
+    ]
+  }
+}

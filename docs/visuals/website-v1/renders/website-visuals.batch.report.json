@@ -1,0 +1,30 @@
+{
+  "failures": [],
+  "results": [
+    {
+      "asset_id": "rzn_browser_local_chrome_og_v1",
+      "preview_dir": "/Users/sarav/Downloads/side/rzn/rzn-browser/docs/visuals/website-v1/renders/rzn_browser_local_chrome_og_v1",
+      "qa_report": "/Users/sarav/Downloads/side/rzn/rzn-browser/docs/visuals/website-v1/renders/rzn_browser_local_chrome_og_v1/qa.report.json",
+      "status": "pass"
+    },
+    {
+      "asset_id": "rzn_browser_compete_matrix_v1",
+      "preview_dir": "/Users/sarav/Downloads/side/rzn/rzn-browser/docs/visuals/website-v1/renders/rzn_browser_compete_matrix_v1",
+      "qa_report": "/Users/sarav/Downloads/side/rzn/rzn-browser/docs/visuals/website-v1/renders/rzn_browser_compete_matrix_v1/qa.report.json",
+      "status": "pass"
+    },
+    {
+      "asset_id": "rzn_browser_choose_rzn_decision_v1",
+      "preview_dir": "/Users/sarav/Downloads/side/rzn/rzn-browser/docs/visuals/website-v1/renders/rzn_browser_choose_rzn_decision_v1",
+      "qa_report": "/Users/sarav/Downloads/side/rzn/rzn-browser/docs/visuals/website-v1/renders/rzn_browser_choose_rzn_decision_v1/qa.report.json",
+      "status": "pass"
+    },
+    {
+      "asset_id": "rzn_browser_modes_matrix_v1",
+      "preview_dir": "/Users/sarav/Downloads/side/rzn/rzn-browser/docs/visuals/website-v1/renders/rzn_browser_modes_matrix_v1",
+      "qa_report": "/Users/sarav/Downloads/side/rzn/rzn-browser/docs/visuals/website-v1/renders/rzn_browser_modes_matrix_v1/qa.report.json",
+      "status": "pass"
+    }
+  ],
+  "status": "ok"
+}

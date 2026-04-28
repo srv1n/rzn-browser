@@ -1,0 +1,100 @@
+{
+  "system_id": "x",
+  "id": "x_profile_posts",
+  "name": "X: Profile Posts",
+  "description": "Open one X handle's profile timeline in a fresh tab and return up to 20 posts from the Posts tab. Use for a quick read of what an author has posted recently. Do not use when you also need replies, or posts within a specific date range (use `x_search_posts` with a date window).",
+  "domain": "x.com",
+  "version": "1.1.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigates a fresh tab to https://x.com/{handle}, scrolls to accumulate ~20 post cards, then returns a structured digest.",
+    "sequences": [
+      {
+        "name": "x_profile_posts",
+        "description": "Open profile -> scroll -> extract post cards.",
+        "required_variables": [
+          {
+            "name": "handle",
+            "description": "X handle without the leading @"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Open the profile Posts tab in a fresh tab",
+            "type": "navigate_to_url",
+            "url": "https://x.com/{handle}"
+          },
+          {
+            "id": "s2",
+            "name": "Allow the profile page to hydrate",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          },
+          {
+            "id": "s3",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for post cards",
+            "type": "wait_for_element",
+            "selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s5",
+            "name": "Scroll until roughly 20 posts are visible",
+            "type": "infinite_scroll",
+            "max_scrolls": 8,
+            "scroll_delay": 1500,
+            "item_selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
+            "target_count": 20
+          },
+          {
+            "id": "s6",
+            "name": "Extract profile posts",
+            "type": "extract_structured_data",
+            "item_selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
+            "limit": 20,
+            "fields": [
+              { "name": "author", "selector": "div[data-testid='User-Name']" },
+              { "name": "text", "selector": "div[data-testid='tweetText'], div[lang]" },
+              { "name": "posted_at", "selector": "time", "attribute": "datetime" },
+              { "name": "post_url", "selector": "a[href*='/status/']", "attribute": "href" },
+              { "name": "reply_count", "selector": "button[data-testid='reply'], [data-testid='reply']" },
+              { "name": "repost_count", "selector": "button[data-testid='retweet'], button[data-testid='unretweet'], [data-testid='retweet'], [data-testid='unretweet']" },
+              { "name": "like_count", "selector": "button[data-testid='like'], button[data-testid='unlike'], [data-testid='like'], [data-testid='unlike']" },
+              { "name": "view_count", "selector": "a[href*='/analytics']" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Return up to 20 posts from one X handle's profile timeline.",
+    "parameters": [
+      {
+        "name": "handle",
+        "required": true,
+        "shape": "string",
+        "description": "X handle without the leading @.",
+        "example": "elonmusk"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run x profile-posts --param handle=\"elonmusk\"",
+        "description": "Return up to 20 of @elonmusk's most recent posts."
+      }
+    ],
+    "returns": "Array of post cards with author, text, posted_at, post_url, reply_count, repost_count, like_count, view_count.",
+    "notes": [
+      "Read-only.",
+      "For date-windowed results use `x_search_posts` instead.",
+      "Opens a fresh tab for parallel-safe execution."
+    ]
+  }
+}

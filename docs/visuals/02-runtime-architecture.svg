@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900" role="img" aria-label="RZN Browser — Runtime Architecture">
+  <defs>
+    
+    <pattern id="dotPattern" width="12" height="12" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="0.7" fill="#d7cfbf" opacity="0.48"/>
+      <circle cx="8" cy="6" r="0.7" fill="#d7cfbf" opacity="0.35"/>
+      <circle cx="5" cy="10" r="0.6" fill="#d7cfbf" opacity="0.28"/>
+    </pattern>
+  
+    
+    <pattern id="paperSpeckle" width="34" height="34" patternUnits="userSpaceOnUse">
+      <circle cx="6" cy="8" r="0.55" fill="#d8d0c0" opacity="0.18"/>
+      <circle cx="18" cy="14" r="0.45" fill="#d8d0c0" opacity="0.14"/>
+      <circle cx="26" cy="22" r="0.5" fill="#d8d0c0" opacity="0.11"/>
+    </pattern>
+  
+  </defs>
+  <rect x="0" y="0" width="1600" height="900" fill="#fbfaf4"/>
+<rect x="0" y="0" width="1600" height="900" fill="url(#paperSpeckle)" opacity="0.55"/>
+<text text-anchor="start" font-family="Georgia, Times New Roman, serif" font-size="40" font-weight="700" fill="#22211d"><tspan x="84" y="92">RZN Browser — Runtime Architecture</tspan></text>
+<text text-anchor="start" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="16" font-weight="500" fill="#676258"><tspan x="84" y="132">Everything stays local. CDP is a small fallback branch, not the main control path.</tspan></text>
+
+    <path d="M 64 170 H 1536 Q 1560 170 1560 194 V 786 Q 1560 810 1536 810 H 64 Q 40 810 40 786 V 194 Q 40 170 64 170 Z" fill="url(#dotPattern)"/>
+    
+    <path d="M 64 170 H 1536 Q 1560 170 1560 194 V 786 Q 1560 810 1536 810 H 64 Q 40 810 40 786 V 194 Q 40 170 64 170 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.2287330930586905 -0.8950757018756121)"/>
+    <path d="M 64 170 H 1536 Q 1560 170 1560 194 V 786 Q 1560 810 1536 810 H 64 Q 40 810 40 786 V 194 Q 40 170 64 170 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.04940467192791398 0.8658917414490134)"/>
+  
+  
+<text text-anchor="start" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="26" font-weight="700" fill="#22211d"><tspan x="76" y="220">User machine</tspan></text>
+
+    <path d="M 118 320 H 262 Q 280 320 280 338 V 392 Q 280 410 262 410 H 118 Q 100 410 100 392 V 338 Q 100 320 118 320 Z" fill="#f8f7f2"/>
+    
+    <path d="M 118 320 H 262 Q 280 320 280 338 V 392 Q 280 410 262 410 H 118 Q 100 410 100 392 V 338 Q 100 320 118 320 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.020856687566265464 0.05390353482216592)"/>
+    <path d="M 118 320 H 262 Q 280 320 280 338 V 392 Q 280 410 262 410 H 118 Q 100 410 100 392 V 338 Q 100 320 118 320 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.194613415421918 0.1622837447561324)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="22" font-weight="700" fill="#22211d"><tspan x="190" y="372.04">CLI</tspan></text>
+
+    <path d="M 118 450 H 262 Q 280 450 280 468 V 522 Q 280 540 262 540 H 118 Q 100 540 100 522 V 468 Q 100 450 118 450 Z" fill="#f8f7f2"/>
+    
+    <path d="M 118 450 H 262 Q 280 450 280 468 V 522 Q 280 540 262 540 H 118 Q 100 540 100 522 V 468 Q 100 450 118 450 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.12187580117024477 -0.09534769286401568)"/>
+    <path d="M 118 450 H 262 Q 280 450 280 468 V 522 Q 280 540 262 540 H 118 Q 100 540 100 522 V 468 Q 100 450 118 450 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.3900887436233461 -0.2117049269378185)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="22" font-weight="700" fill="#22211d"><tspan x="190" y="502.04">Script</tspan></text>
+
+    <path d="M 118 580 H 262 Q 280 580 280 598 V 652 Q 280 670 262 670 H 118 Q 100 670 100 652 V 598 Q 100 580 118 580 Z" fill="#f8f7f2"/>
+    
+    <path d="M 118 580 H 262 Q 280 580 280 598 V 652 Q 280 670 262 670 H 118 Q 100 670 100 652 V 598 Q 100 580 118 580 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.31006100890226673 0.6047028673812748)"/>
+    <path d="M 118 580 H 262 Q 280 580 280 598 V 652 Q 280 670 262 670 H 118 Q 100 670 100 652 V 598 Q 100 580 118 580 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.4493888155091553 -0.8119491511490197)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="20" font-weight="700" fill="#22211d"><tspan x="190" y="631.4">Desktop app</tspan></text>
+
+    <path d="M 402 440 H 558 Q 580 440 580 462 V 538 Q 580 560 558 560 H 402 Q 380 560 380 538 V 462 Q 380 440 402 440 Z" fill="#f4faeb"/>
+    
+    <path d="M 402 440 H 558 Q 580 440 580 462 V 538 Q 580 560 558 560 H 402 Q 380 560 380 538 V 462 Q 380 440 402 440 Z" fill="none" stroke="#8ac24c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.6318256448954344 0.015925546037033222)"/>
+    <path d="M 402 440 H 558 Q 580 440 580 462 V 538 Q 580 560 558 560 H 402 Q 380 560 380 538 V 462 Q 380 440 402 440 Z" fill="none" stroke="#8ac24c" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.2419408618938178 0.07413820303045215)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="22" font-weight="800" fill="#22211d"><tspan x="480" y="492.45">RZN</tspan><tspan x="480" y="515.55">runtime</tspan></text>
+
+    <path d="M 662 440 H 818 Q 840 440 840 462 V 538 Q 840 560 818 560 H 662 Q 640 560 640 538 V 462 Q 640 440 662 440 Z" fill="#f2eee7"/>
+    
+    <path d="M 662 440 H 818 Q 840 440 840 462 V 538 Q 840 560 818 560 H 662 Q 640 560 640 538 V 462 Q 640 440 662 440 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.6353547375183553 -0.7690067995805293)"/>
+    <path d="M 662 440 H 818 Q 840 440 840 462 V 538 Q 840 560 818 560 H 662 Q 640 560 640 538 V 462 Q 640 440 662 440 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.15646680076606567 -0.7417300129774957)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="22" font-weight="700" fill="#22211d"><tspan x="740" y="492.45">Native</tspan><tspan x="740" y="515.55">host</tspan></text>
+
+    <path d="M 922 440 H 1078 Q 1100 440 1100 462 V 538 Q 1100 560 1078 560 H 922 Q 900 560 900 538 V 462 Q 900 440 922 440 Z" fill="#f2eee7"/>
+    
+    <path d="M 922 440 H 1078 Q 1100 440 1100 462 V 538 Q 1100 560 1078 560 H 922 Q 900 560 900 538 V 462 Q 900 440 922 440 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.08670765515416856 0.37492282935418186)"/>
+    <path d="M 922 440 H 1078 Q 1100 440 1100 462 V 538 Q 1100 560 1078 560 H 922 Q 900 560 900 538 V 462 Q 900 440 922 440 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.6853829237166792 0.4164758494589479)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="22" font-weight="700" fill="#22211d"><tspan x="1000" y="492.45">Chrome</tspan><tspan x="1000" y="515.55">extension</tspan></text>
+
+    <path d="M 1202 320 H 1338 Q 1360 320 1360 342 V 398 Q 1360 420 1338 420 H 1202 Q 1180 420 1180 398 V 342 Q 1180 320 1202 320 Z" fill="#f8f7f2"/>
+    
+    <path d="M 1202 320 H 1338 Q 1360 320 1360 342 V 398 Q 1360 420 1338 420 H 1202 Q 1180 420 1180 398 V 342 Q 1180 320 1202 320 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.47283898042514927 -0.6127066440414637)"/>
+    <path d="M 1202 320 H 1338 Q 1360 320 1360 342 V 398 Q 1360 420 1338 420 H 1202 Q 1180 420 1180 398 V 342 Q 1180 320 1202 320 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.18891151431016617 0.32115475824102757)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="21" font-weight="700" fill="#22211d"><tspan x="1270" y="362.975">Content</tspan><tspan x="1270" y="385.02500000000003">script</tspan></text>
+
+    <path d="M 1422 320 H 1528 Q 1550 320 1550 342 V 398 Q 1550 420 1528 420 H 1422 Q 1400 420 1400 398 V 342 Q 1400 320 1422 320 Z" fill="#c8d9f5"/>
+    
+    <path d="M 1422 320 H 1528 Q 1550 320 1550 342 V 398 Q 1550 420 1528 420 H 1422 Q 1400 420 1400 398 V 342 Q 1400 320 1422 320 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.6080092105083167 -0.33713650368154047)"/>
+    <path d="M 1422 320 H 1528 Q 1550 320 1550 342 V 398 Q 1550 420 1528 420 H 1422 Q 1400 420 1400 398 V 342 Q 1400 320 1422 320 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.23090219255536792 0.09936935598962005)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="21" font-weight="700" fill="#22211d"><tspan x="1475" y="362.975">Page</tspan><tspan x="1475" y="385.02500000000003">DOM</tspan></text>
+
+    <path d="M 1198 600 H 1342 Q 1360 600 1360 618 V 672 Q 1360 690 1342 690 H 1198 Q 1180 690 1180 672 V 618 Q 1180 600 1198 600 Z" fill="#fbfaf4"/>
+    
+    <path d="M 1198 600 H 1342 Q 1360 600 1360 618 V 672 Q 1360 690 1342 690 H 1198 Q 1180 690 1180 672 V 618 Q 1180 600 1198 600 Z" fill="none" stroke="#9a9388" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.29747523176483803 -0.8494249759241939)"/>
+    <path d="M 1198 600 H 1342 Q 1360 600 1360 618 V 672 Q 1360 690 1342 690 H 1198 Q 1180 690 1180 672 V 618 Q 1180 600 1198 600 Z" fill="none" stroke="#9a9388" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.8531738755758852 -0.12245337087661023)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="17" font-weight="600" fill="#454039"><tspan x="1270" y="640.075">CDP frame</tspan><tspan x="1270" y="657.9250000000001">router</tspan></text>
+
+    <path d="M 1418 580 H 1532 Q 1550 580 1550 598 V 692 Q 1550 710 1532 710 H 1418 Q 1400 710 1400 692 V 598 Q 1400 580 1418 580 Z" fill="#fbfaf4"/>
+    
+    <path d="M 1418 580 H 1532 Q 1550 580 1550 598 V 692 Q 1550 710 1532 710 H 1418 Q 1400 710 1400 692 V 598 Q 1400 580 1418 580 Z" fill="none" stroke="#9a9388" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.6558338526170701 0.4766435099299998)"/>
+    <path d="M 1418 580 H 1532 Q 1550 580 1550 598 V 692 Q 1550 710 1532 710 H 1418 Q 1400 710 1400 692 V 598 Q 1400 580 1418 580 Z" fill="none" stroke="#9a9388" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.07309495699591939 0.2574295469094069)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="15" font-weight="600" fill="#454039"><tspan x="1475" y="631.75">Cross-origin</tspan><tspan x="1475" y="649">iframe /</tspan><tspan x="1475" y="666.25">trusted input</tspan></text>
+
+    <path d="M 280 365 L 330 365 L 330 480 L 380 480" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.8822056420147418 0.5463202639482915)"/>
+    <path d="M 280 365 L 330 365 L 330 480 L 380 480" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.7197204470168799 -0.038087569177150726)"/>
+  
+    
+    <path d="M 369 486.05 L 380 480" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(-0.5078921208623797 0.2036233968101443)"/>
+    <path d="M 369 486.05 L 380 480" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(0.698950800485909 -0.6305850368924439)"/>
+  
+    
+    <path d="M 369 473.95 L 380 480" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(0.8873132443986834 0.7626302457880229)"/>
+    <path d="M 369 473.95 L 380 480" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(-0.3214981711003929 0.7876080532092601)"/>
+  
+  
+
+    <path d="M 280 495 L 330 495 L 330 500 L 380 500" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.8293683816678822 0.8264528129249812)"/>
+    <path d="M 280 495 L 330 495 L 330 500 L 380 500" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.5049165699630976 -0.3578709793277085)"/>
+  
+    
+    <path d="M 369 506.05 L 380 500" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.06226644744165244 -0.06910281602758916) translate(0.8903353416826577 -0.6077334660105407)"/>
+    <path d="M 369 506.05 L 380 500" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.06226644744165244 -0.06910281602758916) translate(-0.5055344440508633 -0.6831120197195559)"/>
+  
+    
+    <path d="M 369 493.95 L 380 500" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.06226644744165244 -0.06910281602758916) translate(0.6732670201454313 0.6998147224076093)"/>
+    <path d="M 369 493.95 L 380 500" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.06226644744165244 -0.06910281602758916) translate(-0.00036958535201847553 0.3076206031255425)"/>
+  
+  
+
+    <path d="M 280 625 L 330 625 L 330 520 L 380 520" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.5528015915304423 0.8662438710685819)"/>
+    <path d="M 280 625 L 330 625 L 330 520 L 380 520" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.7177449464332313 -0.7905569437891246)"/>
+  
+    
+    <path d="M 369 526.05 L 380 520" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.48262151135131715 0.1743030540179461)"/>
+    <path d="M 369 526.05 L 380 520" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.17000733660534018 -0.7878602801822127)"/>
+  
+    
+    <path d="M 369 513.95 L 380 520" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.7656414009165019 0.3845087078399957)"/>
+    <path d="M 369 513.95 L 380 520" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.3231255968101322 -0.22309220640454439) translate(-0.5726111995987595 0.7711698846425862)"/>
+  
+  
+
+    <path d="M 580 500 L 640 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.5230219577439129 -0.5968674743548036)"/>
+    <path d="M 580 500 L 640 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.40075263669714334 0.05151018630713222)"/>
+  
+    
+    <path d="M 629 506.05 L 640 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.4002417416777463 0.22289590006694204)"/>
+    <path d="M 629 506.05 L 640 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.48911559535190474 0.6508833857718855)"/>
+  
+    
+    <path d="M 629 493.95 L 640 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.49374351776205005 -0.08290150417014952)"/>
+    <path d="M 629 493.95 L 640 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.4134098104666918 0.6059536585584283)"/>
+  
+  
+
+    <path d="M 840 500 L 900 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.3975739260669797 -0.6353495562449099)"/>
+    <path d="M 840 500 L 900 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.4644148634746671 -0.16188631136901677)"/>
+  
+    
+    <path d="M 889 506.05 L 900 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.15926352960523216 0.26449134631548077) translate(0.12710483553819352 -0.06610969933681188)"/>
+    <path d="M 889 506.05 L 900 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.15926352960523216 0.26449134631548077) translate(0.35399860376492154 0.11060841106809682)"/>
+  
+    
+    <path d="M 889 493.95 L 900 500" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.15926352960523216 0.26449134631548077) translate(0.8614102135878056 -0.07966032908298071)"/>
+    <path d="M 889 493.95 L 900 500" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.15926352960523216 0.26449134631548077) translate(0.4638391591608525 0.18692188477143656)"/>
+  
+  
+
+    <path d="M 1100 480 L 1140 480 L 1140 370 L 1180 370" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.37737387428060176 -0.464083584677428)"/>
+    <path d="M 1100 480 L 1140 480 L 1140 370 L 1180 370" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.4801385368220509 0.06725685708224771)"/>
+  
+    
+    <path d="M 1169 376.05 L 1180 370" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.222195124393329 -0.024818570003844798) translate(-0.82762340772897 0.5812615206465125)"/>
+    <path d="M 1169 376.05 L 1180 370" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.222195124393329 -0.024818570003844798) translate(-0.2734831990208477 0.19053682652302084)"/>
+  
+    
+    <path d="M 1169 363.95 L 1180 370" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.222195124393329 -0.024818570003844798) translate(-0.3216571829281747 -0.7903653074987232)"/>
+    <path d="M 1169 363.95 L 1180 370" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.222195124393329 -0.024818570003844798) translate(-0.8618648253846913 0.6531933741644026)"/>
+  
+  
+
+    <path d="M 1360 370 L 1400 370" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.23798846472054713 0.0899558928329498)"/>
+    <path d="M 1360 370 L 1400 370" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.851516152638942 0.12031703079119327)"/>
+  
+    
+    <path d="M 1389 376.05 L 1400 370" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.10632679362315683 0.3228649070020765) translate(-0.16600624769926076 -0.6396647205110639)"/>
+    <path d="M 1389 376.05 L 1400 370" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.10632679362315683 0.3228649070020765) translate(0.7613477630540729 -0.6911845535505563)"/>
+  
+    
+    <path d="M 1389 363.95 L 1400 370" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.10632679362315683 0.3228649070020765) translate(0.2898151500150562 0.8089870301540941)"/>
+    <path d="M 1389 363.95 L 1400 370" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.10632679362315683 0.3228649070020765) translate(0.158647868782282 0.14537016679532833)"/>
+  
+  
+
+    <path d="M 1100 520 L 1140 520 L 1140 645 L 1180 645" fill="none" stroke="#9a9388" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.18071496100164952 0.07963749719783664)"/>
+    <path d="M 1100 520 L 1140 520 L 1140 645 L 1180 645" fill="none" stroke="#9a9388" stroke-width="0.992" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.6508464739657939 0.04829739821143453)"/>
+  
+    
+    <path d="M 1169 651.05 L 1180 645" fill="none" stroke="#9a9388" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.3437771006021648 -0.08145147494506089) translate(0.2865052634384483 -0.3399153233505785)"/>
+    <path d="M 1169 651.05 L 1180 645" fill="none" stroke="#9a9388" stroke-width="0.992" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.3437771006021648 -0.08145147494506089) translate(0.3424954303074629 0.5248324924148619)"/>
+  
+    
+    <path d="M 1169 638.95 L 1180 645" fill="none" stroke="#9a9388" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.3437771006021648 -0.08145147494506089) translate(-0.015832880744710565 0.03204119908623393)"/>
+    <path d="M 1169 638.95 L 1180 645" fill="none" stroke="#9a9388" stroke-width="0.992" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.3437771006021648 -0.08145147494506089) translate(-0.6056453038472682 0.33937438717111956)"/>
+  
+  
+
+    <path d="M 1360 645 L 1400 645" fill="none" stroke="#9a9388" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.8339714408386499 0.3917543908115476)"/>
+    <path d="M 1360 645 L 1400 645" fill="none" stroke="#9a9388" stroke-width="0.992" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.12005549445748331 0.2500654909294099)"/>
+  
+    
+    <path d="M 1389 651.05 L 1400 645" fill="none" stroke="#9a9388" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.14240434470120816 -0.11159960667137056) translate(0.6038438798859717 0.8702745640184731)"/>
+    <path d="M 1389 651.05 L 1400 645" fill="none" stroke="#9a9388" stroke-width="0.992" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.14240434470120816 -0.11159960667137056) translate(-0.5399360088631511 -0.6230362529866398)"/>
+  
+    
+    <path d="M 1389 638.95 L 1400 645" fill="none" stroke="#9a9388" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.14240434470120816 -0.11159960667137056) translate(0.8579577722121031 0.5133797407150268)"/>
+    <path d="M 1389 638.95 L 1400 645" fill="none" stroke="#9a9388" stroke-width="0.992" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.14240434470120816 -0.11159960667137056) translate(-0.8698374163359404 0.5100795712787659)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="15" font-weight="700" fill="#22211d"><tspan x="1240" y="295">Same-origin DOM path</tspan></text>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="14" font-weight="600" fill="#676258"><tspan x="1240" y="720">CDP fallback (short attach)</tspan></text>
+<text text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="17" font-weight="500" fill="#454039"><tspan x="800" y="855">The runtime stays local, and CDP is used as a fallback path for the parts the normal DOM path cannot reach.</tspan></text>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="13" font-weight="600" fill="#676258"><tspan x="480" y="415">entry</tspan></text>
+<rect x="590" y="466" width="40" height="22" rx="10" ry="10" fill="#fbfaf4" opacity="1"/>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="13" font-weight="600" fill="#676258"><tspan x="610" y="480">IPC</tspan></text>
+<rect x="836" y="466" width="70" height="22" rx="10" ry="10" fill="#fbfaf4" opacity="1"/>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="13" font-weight="600" fill="#676258"><tspan x="870" y="480">native msg</tspan></text>
+</svg>

@@ -1,0 +1,50 @@
+#!/bin/bash
+
+if [ -z "${RZN_BUILD_SIGNATURE:-}" ]; then
+    RZN_BUILD_SIGNATURE="$(date -u +"%Y%m%dT%H%M%SZ")"
+fi
+export RZN_BUILD_SIGNATURE
+echo "Using RZN_BUILD_SIGNATURE=${RZN_BUILD_SIGNATURE}"
+
+# Clean dist directory
+rm -rf dist
+mkdir -p dist
+
+# Build background script
+echo "Building background script..."
+bun x vite build --config vite.config.background.ts
+
+# Build content script
+echo "Building content script..."
+bun x vite build --config vite.config.content.ts
+
+# Build shadow DOM instrumentation
+echo "Building shadow DOM instrumentation..."
+bun x vite build --config vite.config.shadow-dom.ts
+
+echo "Building page bridge (MAIN world)..."
+bun x vite build --config vite.config.pagebridge.ts
+
+echo "Building popup..."
+bun x vite build --config vite.config.popup.ts
+
+# Rename the built files to expected names
+echo "Renaming built files..."
+if [ -f "dist/background.iife.js" ]; then
+    mv dist/background.iife.js dist/background.js
+fi
+if [ -f "dist/contentScript.iife.js" ]; then
+    mv dist/contentScript.iife.js dist/contentScript.js
+fi
+if [ -f "dist/shadow-dom-instrumentation.iife.js" ]; then
+    mv dist/shadow-dom-instrumentation.iife.js dist/shadow-dom-instrumentation.js
+fi
+if [ -f "dist/pageBridge.iife.js" ]; then
+    mv dist/pageBridge.iife.js dist/pageBridge.js
+fi
+
+# Run extension manifest generator
+echo "Generating manifests..."
+cd .. && bun scripts/build-ext.ts
+
+echo "Build complete!"

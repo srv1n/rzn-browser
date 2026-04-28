@@ -1,0 +1,105 @@
+{
+    "system_id": "arxiv",
+    "id": "arxiv_search_v1",
+    "name": "arXiv Search and Extract",
+    "description": "Search arXiv for papers and extract metadata including HTML links",
+    "domain": "arxiv.org",
+    "version": "1.0.0",
+    "last_updated": "2025-07-30T00:00:00Z",
+    "browser_automation": {
+        "description": "Search arXiv and extract paper results with HTML links",
+        "sequences": [
+            {
+                "name": "arxiv_search",
+                "description": "Search arXiv and extract results",
+                "required_variables": [
+                    {
+                        "name": "search_query",
+                        "description": "Search terms for arXiv"
+                    }
+                ],
+                "steps": [
+                    {
+                        "id": "s1",
+                        "name": "Navigate to arXiv",
+                        "type": "navigate_to_url",
+                        "url": "https://arxiv.org"
+                    },
+                    {
+                        "id": "s2",
+                        "name": "Wait for page load",
+                        "type": "wait_for_timeout",
+                        "timeout_ms": 2000
+                    },
+                    {
+                        "id": "s3",
+                        "name": "Fill search box",
+                        "type": "fill_input_field",
+                        "selector": "form.mini-search input[name='query'], input[name='query']",
+                        "value": "{search_query}",
+                        "clear_first": true
+                    },
+                    {
+                        "id": "s3b",
+                        "name": "Submit search form",
+                        "type": "submit_input",
+                        "selector": "form.mini-search input[name='query'], input[name='query']",
+                        "text": "{search_query}"
+                    },
+                    {
+                        "id": "s4",
+                        "name": "Wait for results",
+                        "type": "wait_for_element",
+                        "selector": "ol.breathe-horizontal li.arxiv-result",
+                        "timeout_ms": 10000
+                    },
+                    {
+                        "id": "s5",
+                        "name": "Additional wait for content",
+                        "type": "wait_for_timeout",
+                        "timeout_ms": 2000
+                    },
+                    {
+                        "id": "s6",
+                        "name": "Extract search results",
+                        "type": "extract_structured_data",
+                        "item_selector": "ol.breathe-horizontal li.arxiv-result",
+                        "fields": [
+                            {
+                                "name": "title",
+                                "selector": "p.title"
+                            },
+                            {
+                                "name": "authors",
+                                "selector": "p.authors a",
+                                "multiple": true
+                            },
+                            {
+                                "name": "abstract",
+                                "selector": "span.abstract-full"
+                            },
+                            {
+                                "name": "arxiv_id",
+                                "selector": "p.list-title a"
+                            },
+                            {
+                                "name": "paper_url",
+                                "selector": "p.list-title a",
+                                "attribute": "href"
+                            },
+                            {
+                                "name": "pdf_link",
+                                "selector": "span a[href*='/pdf/']",
+                                "attribute": "href"
+                            },
+                            {
+                                "name": "categories",
+                                "selector": "span.primary-subject"
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

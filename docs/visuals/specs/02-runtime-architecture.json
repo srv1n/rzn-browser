@@ -1,0 +1,322 @@
+{
+  "meta": {
+    "slug": "02-runtime-architecture",
+    "title": "RZN Browser — Runtime Architecture",
+    "subtitle": "Everything stays local. CDP is a small fallback branch, not the main control path.",
+    "width": 1600,
+    "height": 900
+  },
+  "containers": [
+    {
+      "id": "machine",
+      "x": 40,
+      "y": 170,
+      "w": 1520,
+      "h": 640,
+      "r": 24,
+      "title": "User machine",
+      "fill": "dots",
+      "stroke": "#22211d",
+      "titleX": 76,
+      "titleY": 220
+    }
+  ],
+  "nodes": [
+    {
+      "id": "cli",
+      "x": 100,
+      "y": 320,
+      "w": 180,
+      "h": 90,
+      "r": 18,
+      "label": ["CLI"],
+      "fill": "#f8f7f2",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 22,
+      "weight": 700,
+      "textColor": "#22211d"
+    },
+    {
+      "id": "script",
+      "x": 100,
+      "y": 450,
+      "w": 180,
+      "h": 90,
+      "r": 18,
+      "label": ["Script"],
+      "fill": "#f8f7f2",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 22,
+      "weight": 700,
+      "textColor": "#22211d"
+    },
+    {
+      "id": "desktop",
+      "x": 100,
+      "y": 580,
+      "w": 180,
+      "h": 90,
+      "r": 18,
+      "label": ["Desktop app"],
+      "fill": "#f8f7f2",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 20,
+      "weight": 700,
+      "textColor": "#22211d"
+    },
+    {
+      "id": "runtime",
+      "x": 380,
+      "y": 440,
+      "w": 200,
+      "h": 120,
+      "r": 22,
+      "label": ["RZN", "runtime"],
+      "fill": "#f4faeb",
+      "stroke": "#8ac24c",
+      "font": "mono",
+      "fontSize": 22,
+      "weight": 800,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    },
+    {
+      "id": "native",
+      "x": 640,
+      "y": 440,
+      "w": 200,
+      "h": 120,
+      "r": 22,
+      "label": ["Native", "host"],
+      "fill": "#f2eee7",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 22,
+      "weight": 700,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    },
+    {
+      "id": "ext",
+      "x": 900,
+      "y": 440,
+      "w": 200,
+      "h": 120,
+      "r": 22,
+      "label": ["Chrome", "extension"],
+      "fill": "#f2eee7",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 22,
+      "weight": 700,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    },
+    {
+      "id": "content",
+      "x": 1180,
+      "y": 320,
+      "w": 180,
+      "h": 100,
+      "r": 22,
+      "label": ["Content", "script"],
+      "fill": "#f8f7f2",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 21,
+      "weight": 700,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    },
+    {
+      "id": "dom",
+      "x": 1400,
+      "y": 320,
+      "w": 150,
+      "h": 100,
+      "r": 22,
+      "label": ["Page", "DOM"],
+      "fill": "#c8d9f5",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 21,
+      "weight": 700,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    },
+    {
+      "id": "cdp",
+      "x": 1180,
+      "y": 600,
+      "w": 180,
+      "h": 90,
+      "r": 18,
+      "label": ["CDP frame", "router"],
+      "fill": "#fbfaf4",
+      "stroke": "#9a9388",
+      "font": "mono",
+      "fontSize": 17,
+      "weight": 600,
+      "textColor": "#454039",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    },
+    {
+      "id": "iframe",
+      "x": 1400,
+      "y": 580,
+      "w": 150,
+      "h": 130,
+      "r": 18,
+      "label": ["Cross-origin", "iframe /", "trusted input"],
+      "fill": "#fbfaf4",
+      "stroke": "#9a9388",
+      "font": "mono",
+      "fontSize": 15,
+      "weight": 600,
+      "textColor": "#454039",
+      "baselineShift": 4,
+      "lineGap": 1.15
+    }
+  ],
+  "texts": [
+    {
+      "x": 1240,
+      "y": 295,
+      "lines": ["Same-origin DOM path"],
+      "font": "mono",
+      "fontSize": 15,
+      "weight": 700,
+      "color": "#22211d",
+      "anchor": "middle"
+    },
+    {
+      "x": 1240,
+      "y": 720,
+      "lines": ["CDP fallback (short attach)"],
+      "font": "mono",
+      "fontSize": 14,
+      "weight": 600,
+      "color": "#676258",
+      "anchor": "middle"
+    },
+    {
+      "x": 800,
+      "y": 855,
+      "lines": ["The runtime stays local, and CDP is used as a fallback path for the parts the normal DOM path cannot reach."],
+      "font": "body",
+      "fontSize": 17,
+      "weight": 500,
+      "color": "#454039",
+      "anchor": "middle"
+    },
+    {
+      "x": 480,
+      "y": 415,
+      "lines": ["entry"],
+      "font": "mono",
+      "fontSize": 13,
+      "weight": 600,
+      "color": "#676258",
+      "anchor": "middle"
+    },
+    {
+      "x": 610,
+      "y": 480,
+      "lines": ["IPC"],
+      "font": "mono",
+      "fontSize": 13,
+      "weight": 600,
+      "color": "#676258",
+      "anchor": "middle",
+      "backplate": {
+        "x": 590,
+        "y": 466,
+        "w": 40,
+        "h": 22,
+        "fill": "#fbfaf4"
+      }
+    },
+    {
+      "x": 870,
+      "y": 480,
+      "lines": ["native msg"],
+      "font": "mono",
+      "fontSize": 13,
+      "weight": 600,
+      "color": "#676258",
+      "anchor": "middle",
+      "backplate": {
+        "x": 836,
+        "y": 466,
+        "w": 70,
+        "h": 22,
+        "fill": "#fbfaf4"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "points": [[280, 365], [330, 365], [330, 480], [380, 480]],
+      "stroke": "#22211d",
+      "width": 2,
+      "arrow": true
+    },
+    {
+      "points": [[280, 495], [330, 495], [330, 500], [380, 500]],
+      "stroke": "#22211d",
+      "width": 2,
+      "arrow": true
+    },
+    {
+      "points": [[280, 625], [330, 625], [330, 520], [380, 520]],
+      "stroke": "#22211d",
+      "width": 2,
+      "arrow": true
+    },
+    {
+      "points": [[580, 500], [640, 500]],
+      "stroke": "#22211d",
+      "width": 2.2,
+      "arrow": true
+    },
+    {
+      "points": [[840, 500], [900, 500]],
+      "stroke": "#22211d",
+      "width": 2.2,
+      "arrow": true
+    },
+    {
+      "points": [[1100, 480], [1140, 480], [1140, 370], [1180, 370]],
+      "stroke": "#22211d",
+      "width": 2.2,
+      "arrow": true
+    },
+    {
+      "points": [[1360, 370], [1400, 370]],
+      "stroke": "#22211d",
+      "width": 2.2,
+      "arrow": true
+    },
+    {
+      "points": [[1100, 520], [1140, 520], [1140, 645], [1180, 645]],
+      "stroke": "#9a9388",
+      "width": 1.6,
+      "arrow": true
+    },
+    {
+      "points": [[1360, 645], [1400, 645]],
+      "stroke": "#9a9388",
+      "width": 1.6,
+      "arrow": true
+    }
+  ]
+}

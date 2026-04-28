@@ -1,0 +1,151 @@
+{
+  "system_id": "x",
+  "id": "x_reply_post",
+  "name": "X: Reply To Post",
+  "description": "Open one X post URL in a fresh tab, draft a reply in the inline composer, pause for human approval, then send. Use when you want to publicly reply to a specific post. Do not use for DMs (use `x_reply_dm_thread` or `x_send_dm`) or top-level posts (`x_create_post`).",
+  "domain": "x.com",
+  "version": "1.1.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Opens the post in a fresh tab, activates the inline reply textbox with a trusted click, types the reply, asserts Reply is enabled, pauses at the review gate, and sends on continue.",
+    "sequences": [
+      {
+        "name": "x_reply_post",
+        "description": "Open post -> activate inline reply -> type reply -> verify enabled -> pause for review -> send.",
+        "required_variables": [
+          {
+            "name": "post_url",
+            "description": "Full X post URL to reply to"
+          },
+          {
+            "name": "reply_text",
+            "description": "Reply text to send"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open the post in a fresh tab",
+            "type": "navigate_to_url",
+            "url": "{post_url}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the post page to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1800
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the inline reply textbox on the post page",
+            "type": "wait_for_element",
+            "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s4",
+            "name": "Activate the inline reply textbox with a trusted click",
+            "type": "click_element",
+            "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']",
+            "use_cdp": true,
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s5",
+            "name": "Allow the inline reply caret to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 400
+          },
+          {
+            "id": "s6",
+            "name": "Type the reply text",
+            "type": "type_text",
+            "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']",
+            "text": "{reply_text}",
+            "use_native_input": false,
+            "delay_ms": 35,
+            "typing_speed": "medium",
+            "timeout_ms": 120000
+          },
+          {
+            "id": "s7",
+            "name": "Confirm the reply is accepted by the composer",
+            "type": "assert_selector_state",
+            "selector": "button[data-testid='tweetButton'], button[data-testid='tweetButtonInline']",
+            "condition": "enabled",
+            "timeout_ms": 5000
+          },
+          {
+            "id": "s8",
+            "name": "Pause for review before sending the reply",
+            "type": "request_user_intervention",
+            "message": "Reply draft is ready. Click Continue only if you want to send it.",
+            "instructions": "If you do not want to send this reply, stop the workflow instead of waiting for the timeout.",
+            "approval_mode": "ask_user",
+            "continue_on_timeout": false,
+            "timeout_ms": 2147483647
+          },
+          {
+            "id": "s9",
+            "name": "Click the Reply button",
+            "type": "click_element",
+            "selector": "button[data-testid='tweetButton'], button[data-testid='tweetButtonInline']",
+            "use_cdp": true,
+            "timeout_ms": 10000
+          },
+          {
+            "id": "s10",
+            "name": "Allow the reply send to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1200
+          },
+          {
+            "id": "s11",
+            "name": "Read the final page state",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 10000,
+            "script": "const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const composer = document.querySelector(\"div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']\"); const button = document.querySelector(\"button[data-testid='tweetButton'], button[data-testid='tweetButtonInline']\"); return { url: location.href, composer_text: composer ? normalize(composer.textContent || '') : null, reply_button_present: !!button, reply_button_disabled: button ? (!!button.getAttribute('disabled') || button.getAttribute('aria-disabled') === 'true') : null };"
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Reply to one X post after human approval at an in-page review gate.",
+    "parameters": [
+      {
+        "name": "post_url",
+        "required": true,
+        "shape": "url",
+        "description": "Full X post URL to reply to.",
+        "example": "https://x.com/elonmusk/status/2046981493197586714"
+      },
+      {
+        "name": "reply_text",
+        "required": true,
+        "shape": "text",
+        "description": "Reply body (supports plain text).",
+        "example": "I love your content, cheers"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run x reply-post --param post_url=\"https://x.com/elonmusk/status/2046981493197586714\" --param reply_text=\"I love your content, cheers\"",
+        "description": "Draft and send a reply after confirming at the review gate."
+      }
+    ],
+    "returns": "{ url, composer_text, reply_button_present, reply_button_disabled } post-send.",
+    "notes": [
+      "Mutating. Pauses at the in-page review gate with approval_mode=ask_user.",
+      "Uses a trusted CDP click on the composer so X's rich-text editor actually receives the input.",
+      "Opens a fresh tab — safe for parallel runs."
+    ]
+  }
+}

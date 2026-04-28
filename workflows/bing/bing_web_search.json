@@ -1,0 +1,83 @@
+{
+  "system_id": "bing",
+  "id": "bing_web_search",
+  "name": "Bing: Web Search",
+  "description": "Run a Bing web search in a fresh tab and return up to 10 organic result cards (title, url, source, snippet). Use for general-purpose web lookups. Do not use for images (`bing_images_search`), news (`bing_news_search`), or videos (`bing_videos_search`).",
+  "domain": "bing.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigates a fresh tab directly to /search?q=..., waits for the organic results list, and extracts the first 10 cards.",
+    "sequences": [
+      {
+        "name": "bing_web_search",
+        "description": "Open Bing search -> wait for results -> extract the first 10 organic cards.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "Full-text search query"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Bing web search",
+            "type": "navigate_to_url",
+            "url": "https://www.bing.com/search?q={search_query}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s2",
+            "name": "Allow results to hydrate",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the organic results list",
+            "type": "wait_for_element",
+            "selector": "ol#b_results > li.b_algo",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s4",
+            "name": "Extract the first 10 organic results",
+            "type": "extract_structured_data",
+            "item_selector": "ol#b_results > li.b_algo",
+            "max_items": 10,
+            "fields": [
+              { "name": "title", "selector": "h2 a" },
+              { "name": "url", "selector": "h2 a", "attribute": "href" },
+              { "name": "source", "selector": "cite" },
+              { "name": "snippet", "selector": "div.b_caption p, p.b_lineclamp2, p.b_lineclamp3, p.b_lineclamp4, p" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Return up to 10 organic web results from Bing for one search query.",
+    "parameters": [
+      {
+        "name": "search_query",
+        "required": true,
+        "shape": "text",
+        "description": "Any Bing-compatible search query.",
+        "example": "claude code release notes"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run bing web-search --param search_query=\"claude code release notes\"",
+        "description": "Plain web lookup, returns title / url / source / snippet for each of the first 10 organic results."
+      }
+    ],
+    "returns": "Array of { title, url, source, snippet }.",
+    "notes": [
+      "Read-only: no logins, cookies, or mutations.",
+      "Organic only — sponsored (`li.b_ad`) results are skipped by the item selector.",
+      "Opens a fresh tab; safe to run in parallel with the other bing workflows."
+    ]
+  }
+}

@@ -1,0 +1,24 @@
+[package]
+name = "rzn-native-host"
+version = "0.2.5"
+edition = "2021"
+license = "AGPL-3.0-only"
+
+[dependencies]
+rzn-broker-endpoint = { path = "../rzn_broker_endpoint" }
+rzn_contracts = { path = "../rzn_contracts" }
+
+anyhow = "1.0"
+interprocess = { version = "2.0", features = ["tokio"] }
+dirs = "5.0.1"
+libc = "0.2"
+
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+uuid = { version = "1.0", features = ["v4"] }
+tracing-subscriber = { version = "0.3.17", features = ["env-filter", "registry", "fmt", "json"] }
+futures-util = "0.3"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+url = "2.5"

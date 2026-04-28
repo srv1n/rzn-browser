@@ -1,0 +1,4 @@
+interface:
+  display_name: "RZN Workflow Builder"
+  short_description: "Build and validate RZN browser workflows with the local runtime."
+  default_prompt: "Use $rzn-workflow-builder to bootstrap RZN Browser, discover a workflow with llm-auto, and turn it into a validated workflow JSON."

@@ -1,0 +1,161 @@
+{
+  "system_id": "google",
+  "id": "google_maps_directions_v2",
+  "name": "Google Maps Directions",
+  "description": "Get a route between two locations on Google Maps and extract distance/duration plus the step-by-step instructions, with a viewport screenshot.",
+  "domain": "google.com",
+  "version": "2.1.0",
+  "last_updated": "2026-04-24T00:00:00Z",
+  "browser_automation": {
+    "description": "Hits google.com/maps/dir/?api=1&origin=...&destination=...&travelmode=... and reads the directions panel.",
+    "sequences": [
+      {
+        "name": "google_maps_directions_extract",
+        "description": "Open a Maps route, extract distance + duration + ordered steps, and capture a screenshot.",
+        "required_variables": [
+          {
+            "name": "origin",
+            "description": "Starting location. Free text (address, place name, lat,lng)."
+          },
+          {
+            "name": "destination",
+            "description": "Ending location. Free text (address, place name, lat,lng)."
+          }
+        ],
+        "optional_variables": [
+          {
+            "name": "mode",
+            "description": "Travel mode: driving (default), walking, bicycling, transit"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Google Maps directions",
+            "type": "navigate_to_url",
+            "url": "https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}&travelmode={mode}&hl=en",
+            "wait": "domcontentloaded",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss common popups",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the directions panel",
+            "type": "wait_for_element",
+            "selector": "#section-directions-trip-0, [data-trip-index='0'], .MespJc, [role='main']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s4",
+            "name": "Settle: let route paint",
+            "type": "wait_for_timeout",
+            "timeout_ms": 3000
+          },
+          {
+            "id": "s5",
+            "name": "Extract route summary",
+            "type": "extract_structured_data",
+            "extraction_type": "summary",
+            "item_selector": "body",
+            "limit": 1,
+            "fields": [
+              {
+                "name": "distance",
+                "selector": "div.ivN21e > div",
+                "post_processing": ["collapse_whitespace", "regex:(\\\\d[\\\\d,.]*\\\\s*(?:km|mi|mile|miles|m|ft))"]
+              },
+              {
+                "name": "duration",
+                "selector": "div.Fk3sm",
+                "post_processing": ["collapse_whitespace", "regex:(\\\\d+\\\\s*(?:day|d|hr|hour|h|min)(?:\\\\s*\\\\d+\\\\s*min)?)"]
+              },
+              {
+                "name": "summary",
+                "selector": "h1.VuCHmb",
+                "post_processing": ["collapse_whitespace"]
+              }
+            ]
+          },
+          {
+            "id": "s6",
+            "name": "Open route details (steps panel)",
+            "type": "click_element",
+            "selector": "button.TIQqpf[aria-labelledby^='ucc-']:not([jsaction])"
+          },
+          {
+            "id": "s7",
+            "name": "Wait for the step-by-step list",
+            "type": "wait_for_element",
+            "selector": "div.gHCNqf[data-stepindex], div.S0JAMb div.gHCNqf",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s8",
+            "name": "Extract route steps",
+            "type": "extract_structured_data",
+            "extraction_type": "steps",
+            "item_selector": "div.gHCNqf[data-stepindex]",
+            "limit": 30,
+            "fields": [
+              { "name": "step_index", "selector": "*", "attribute": "data-stepindex" },
+              { "name": "instruction", "selector": ".j3isMd", "post_processing": ["collapse_whitespace"] },
+              { "name": "distance", "selector": ".V2xD3e", "post_processing": ["collapse_whitespace"] }
+            ]
+          },
+          {
+            "id": "s9",
+            "name": "Capture viewport screenshot",
+            "type": "take_screenshot",
+            "format": "png",
+            "full_page": false
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Get a Google Maps route summary + step-by-step directions between two places, plus a screenshot.",
+    "parameters": [
+      {
+        "name": "origin",
+        "required": true,
+        "shape": "text",
+        "description": "Starting location: address, place name, or 'lat,lng'.",
+        "example": "Times Square, New York"
+      },
+      {
+        "name": "destination",
+        "required": true,
+        "shape": "text",
+        "description": "Ending location: address, place name, or 'lat,lng'.",
+        "example": "Central Park, New York"
+      },
+      {
+        "name": "mode",
+        "required": false,
+        "shape": "enum:driving|walking|bicycling|transit",
+        "description": "Travel mode. Defaults to driving when omitted.",
+        "example": "walking"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run google maps-directions --param origin=\"Times Square, New York\" --param destination=\"Central Park, New York\"",
+        "description": "Default driving directions."
+      },
+      {
+        "command": "rzn-browser run google maps-directions --param origin=\"SFO\" --param destination=\"Salesforce Tower, San Francisco\" --param mode=transit",
+        "description": "Transit route from SFO."
+      }
+    ],
+    "returns": "Two arrays: a single-row 'summary' { distance, duration, summary } and 'steps' (up to 30) of { step_index, instruction, distance }. Screenshot under test-results/workflow-artifacts/google-maps-directions/.",
+    "notes": [
+      "If 'mode' is omitted, the placeholder {mode} ends up in the URL as the literal string '{mode}', which Maps treats as no mode → defaults to driving. That's intentional.",
+      "Steps panel only opens after clicking the route card; if click fails, the steps array will be empty but summary will still be populated."
+    ]
+  }
+}

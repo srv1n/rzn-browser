@@ -1,0 +1,130 @@
+{
+  "system_id": "google",
+  "id": "google_maps_v2",
+  "name": "Google Maps Places Search",
+  "description": "Search Google Maps for places matching a query and extract the top result cards plus a viewport screenshot of the map.",
+  "domain": "google.com",
+  "version": "2.1.0",
+  "last_updated": "2026-04-24T00:00:00Z",
+  "browser_automation": {
+    "description": "Hits google.com/maps/search/?api=1&query=... and reads the place result rail (div.Nv2PK cards).",
+    "sequences": [
+      {
+        "name": "google_maps_search_extract",
+        "description": "Run a Maps places search, extract the top 5 result cards, and capture a screenshot of the map with pins.",
+        "required_variables": [
+          {
+            "name": "query",
+            "description": "Place search query, e.g. 'pizza near Central Park', 'coffee shops in Berlin'. Aliases: search_query, q."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Google Maps search",
+            "type": "navigate_to_url",
+            "url": "https://www.google.com/maps/search/?api=1&query={query}&hl=en",
+            "wait": "domcontentloaded",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss common popups",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for place result cards",
+            "type": "wait_for_element",
+            "selector": "div.Nv2PK, a.hfpxzc, [role='main']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s4",
+            "name": "Settle: let map pins render",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s5",
+            "name": "Extract place cards (top 5)",
+            "type": "extract_structured_data",
+            "extraction_type": "places",
+            "item_selector": "div.Nv2PK",
+            "limit": 5,
+            "fields": [
+              { "name": "name", "selector": ".qBF1Pd, .fontHeadlineSmall, [role='heading']" },
+              { "name": "rating", "selector": ".MW4etd, .yi40Hd" },
+              {
+                "name": "reviews",
+                "selector": ".UY7F9, span[aria-label*='review']",
+                "post_processing": ["collapse_whitespace", "regex:([\\d,]+)"]
+              },
+              {
+                "name": "price_range",
+                "selector": ".W4Efsd .AJB7ye > span:nth-child(3) > span:nth-child(2)",
+                "post_processing": ["collapse_whitespace"]
+              },
+              {
+                "name": "category",
+                "selector": ".W4Efsd .W4Efsd > span:first-child span",
+                "post_processing": ["collapse_whitespace"]
+              },
+              {
+                "name": "address",
+                "selector": ".W4Efsd .W4Efsd > span:last-child span:last-child",
+                "post_processing": ["collapse_whitespace"]
+              },
+              {
+                "name": "description",
+                "selector": "div.W4Efsd > div.W4Efsd:nth-child(2):not(:last-child)",
+                "post_processing": ["collapse_whitespace"]
+              },
+              {
+                "name": "status",
+                "selector": "div.W4Efsd > div.W4Efsd:last-child",
+                "post_processing": ["collapse_whitespace"]
+              },
+              { "name": "url", "selector": "a.hfpxzc, a[href*='/maps/place'], a[href*='google.com/maps/place']", "attribute": "href" }
+            ]
+          },
+          {
+            "id": "s6",
+            "name": "Capture viewport map screenshot",
+            "type": "take_screenshot",
+            "format": "png",
+            "full_page": false
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Search Google Maps for places and return the top 5 cards plus a map screenshot.",
+    "parameters": [
+      {
+        "name": "query",
+        "required": true,
+        "shape": "text",
+        "description": "Place search query, free text. Aliases search_query and q work too.",
+        "example": "pizza near Central Park"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run google maps --param query=\"pizza near Central Park\"",
+        "description": "Find pizza spots near Central Park."
+      },
+      {
+        "command": "rzn-browser run google maps --param search_query=\"coffee shops in Berlin Mitte\"",
+        "description": "Use the search_query alias with a neighborhood scope."
+      }
+    ],
+    "returns": "Array of up to 5 places: { name, rating, reviews, price_range, category, address, description, status, url }. Screenshot is written to test-results/workflow-artifacts/google-maps/. For directions between two places, use google/maps-directions instead.",
+    "notes": [
+      "Set hl=en in the URL — without an explicit locale, results vary with Maps' geo guess.",
+      "rating/reviews can be empty for places without enough reviews.",
+      "url points at the Maps place page (google.com/maps/place/...), not the place's own website."
+    ]
+  }
+}

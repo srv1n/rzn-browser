@@ -1,0 +1,121 @@
+{
+  "system_id": "x",
+  "id": "x_like_post",
+  "name": "X: Like Post",
+  "description": "Open one X post URL in a fresh tab, pause for human approval, then click the one-way Like control. Use to register approval of a specific post. Do not use to unlike (this workflow refuses to click Unlike) or to reply/quote (use `x_reply_post` / `x_create_post`).",
+  "domain": "x.com",
+  "version": "1.1.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Opens the post in a fresh tab, waits for the like control, pauses at an in-page review gate, then clicks Like and verifies the button toggled to Unlike.",
+    "sequences": [
+      {
+        "name": "x_like_post",
+        "description": "Open post -> confirm like surface -> pause for review -> click Like -> verify liked.",
+        "required_variables": [
+          {
+            "name": "post_url",
+            "description": "Full X post URL to like"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open the target post in a fresh tab",
+            "type": "navigate_to_url",
+            "url": "{post_url}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the post page to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1800
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the post article",
+            "type": "wait_for_element",
+            "selector": "main article[data-testid='tweet'], main article[role='article'], main article",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s4",
+            "name": "Wait for the like control to appear",
+            "type": "wait_for_element",
+            "selector": "button[data-testid='like'], button[data-testid='unlike'], [data-testid='like'], [data-testid='unlike']",
+            "timeout_ms": 10000
+          },
+          {
+            "id": "s5",
+            "name": "Pause for review before liking the post",
+            "type": "request_user_intervention",
+            "message": "Review the target post. Click Continue only if you want this workflow to like it.",
+            "instructions": "This workflow clicks only the one-way Like control. If the post is already liked or you do not want to proceed, stop the workflow instead of waiting for the timeout.",
+            "approval_mode": "ask_user",
+            "continue_on_timeout": false,
+            "timeout_ms": 2147483647
+          },
+          {
+            "id": "s6",
+            "name": "Click the one-way Like control",
+            "type": "click_element",
+            "selector": "button[data-testid='like'], [data-testid='like']",
+            "timeout_ms": 10000
+          },
+          {
+            "id": "s7",
+            "name": "Allow the like mutation to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 700
+          },
+          {
+            "id": "s8",
+            "name": "Verify the post is now liked",
+            "type": "assert_selector_state",
+            "selector": "button[data-testid='unlike'], [data-testid='unlike']",
+            "condition": "visible",
+            "timeout_ms": 5000
+          },
+          {
+            "id": "s9",
+            "name": "Read the final like state",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 10000,
+            "script": "const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const button = document.querySelector(\"button[data-testid='like'], button[data-testid='unlike'], [data-testid='like'], [data-testid='unlike']\"); return { url: location.href, like_state: button ? (button.getAttribute('data-testid') || null) : null, like_label: button ? normalize(button.textContent || '') : null };"
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Like one X post after human approval at an in-page review gate.",
+    "parameters": [
+      {
+        "name": "post_url",
+        "required": true,
+        "shape": "url",
+        "description": "Full X post URL to like.",
+        "example": "https://x.com/elonmusk/status/2046981493197586714"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run x like-post --param post_url=\"https://x.com/elonmusk/status/2046981493197586714\"",
+        "description": "Like one specific post after confirming at the review gate."
+      }
+    ],
+    "returns": "{ url, like_state, like_label } — after a successful like, like_state is \"unlike\".",
+    "notes": [
+      "Mutating: requires explicit Continue at the review gate (approval_mode=ask_user, continue_on_timeout=false).",
+      "Will not click Unlike. If the post is already liked the assertion still succeeds because the Unlike control is already visible.",
+      "Opens a fresh tab so parallel runs don't collide."
+    ]
+  }
+}

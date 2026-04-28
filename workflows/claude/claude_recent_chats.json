@@ -1,0 +1,84 @@
+{
+  "system_id": "claude",
+  "id": "claude_recent_chats",
+  "name": "Claude: Recent Chats",
+  "description": "Open Claude in a dedicated tab and return the visible recent chat list from the sidebar.",
+  "domain": "claude.ai",
+  "version": "1.1.0",
+  "help": {
+    "summary": "List recent Claude conversations from the sidebar.",
+    "parameters": [
+      {
+        "name": "limit",
+        "required": false,
+        "shape": "integer",
+        "description": "Maximum number of threads to return. Defaults to 10.",
+        "example": "10"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Return the 10 most recently surfaced threads",
+        "command": "rzn-browser run claude recent-chats"
+      },
+      {
+        "description": "Return only the top 5 threads",
+        "command": "rzn-browser run claude recent-chats --param limit=\"5\""
+      }
+    ],
+    "returns": "thread_id, title, thread_url, sidebar_order, and section_label for each visible thread.",
+    "notes": [
+      "Requires a logged-in Claude session in the active Chrome profile.",
+      "Day filtering was removed in v1.1.0 because Claude no longer exposes per-thread timestamps in the sidebar DOM."
+    ]
+  },
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Dedicated-tab Claude sidebar reader.",
+    "sequences": [
+      {
+        "name": "claude_recent_chats",
+        "description": "Open Claude home -> wait for the sidebar -> return visible recent chats.",
+        "required_variables": [],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open Claude home in a dedicated tab",
+            "type": "navigate_to_url",
+            "url": "https://claude.ai/",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the shell to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2200
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the Claude shell or chat list",
+            "type": "wait_for_element",
+            "selector": "aside, nav, a[href*='/chat/'], textarea, [contenteditable='true'], main",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s4",
+            "name": "Read recent Claude chats",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 120000,
+            "args": [
+              "{limit}"
+            ],
+            "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const parseNumber = (value, fallback) => { const parsed = Number.parseInt(cleanArg(value), 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback; }; const limit = parseNumber(arg0, 10); const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const isVisible = (node) => !!(node && node instanceof Element && getComputedStyle(node).visibility !== 'hidden' && getComputedStyle(node).display !== 'none' && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0); const normalizeUrl = (raw) => { if (!raw) return ''; try { return new URL(raw, window.location.origin).toString(); } catch { return String(raw); } }; const threadIdFromHref = (raw) => { const url = normalizeUrl(raw); if (!url) return ''; try { const match = new URL(url).pathname.match(/\\/chat\\/([^/?#]+)/); return match ? match[1] : ''; } catch { return ''; } }; const cleanSectionLabel = (node) => { if (!node) return ''; const clone = node.cloneNode(true); clone.querySelectorAll(\"button, [role='button'], svg, [aria-hidden='true']\").forEach((child) => child.remove()); return normalize(clone.innerText || clone.textContent || '').replace(/\\s*(hide|show)\\s*$/i, '').trim(); }; const sectionLabelFor = (anchor) => { const scopes = [anchor.closest('section'), anchor.closest('nav'), anchor.closest('aside'), anchor.parentElement, anchor.parentElement?.parentElement].filter(Boolean); for (const scope of scopes) { const heading = scope.querySelector('h1, h2, h3, h4, h5, h6, [role=\"heading\"]'); const label = cleanSectionLabel(heading); if (label) return label; } return ''; }; const anchors = Array.from(document.querySelectorAll(\"a[href*='/chat/']\")).filter(isVisible); const entries = []; const seen = new Set(); anchors.forEach((anchor, index) => { const href = normalizeUrl(anchor.getAttribute('href') || anchor.href); const threadId = threadIdFromHref(href); if (!threadId || seen.has(threadId)) return; seen.add(threadId); const text = normalize(anchor.innerText || anchor.textContent || ''); const title = text.split('\\n').map(normalize).filter(Boolean)[0] || threadId; const sectionLabel = sectionLabelFor(anchor) || null; entries.push({ thread_id: threadId, title, thread_url: href, section_label: sectionLabel, sidebar_order: index }); }); const returned = entries.slice(0, limit); const authRequired = entries.length === 0 && /log in|sign in|continue with google|continue with email/i.test(normalize(document.body.innerText || '').toLowerCase()); return { url: window.location.href, title: document.title, total_available: entries.length, returned_count: returned.length, filters: { limit }, auth_required: authRequired, threads: returned };"
+          }
+        ]
+      }
+    ]
+  }
+}

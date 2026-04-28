@@ -1,0 +1,54 @@
+node_modules/
+dist/
+
+com.example.rustapp.json
+google_search.json
+.DS_Store
+
+.cursor
+.cursor/*
+.claude/
+.playwright-cli/
+.tmp/
+.tmp_cssparser_test/
+.beads/
+docs/index/
+
+google.md
+claude.md
+target/
+com.rzn.browser.broker.json
+pnpm-lock.yaml
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets (dev signing keys, etc.)
+.secrets/
+
+# Log files
+~/rzn_build.log
+~/rzn_build.log.old
+~/rzn_build.log.*
+logs/*.log
+logs/archive/
+*.log
+!workflows/*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Playwright artifacts (extension e2e uses launchPersistentContext)
+extension/.pw-user-data/
+extension/.pw-user-data-*/
+extension/test-results/
+test-results/
+
+# Generated debug artifacts (do not commit)
+workflows/generated/
+output/
+
+# Chrome Web Store submission drafts (assets, screenshots, copy — not for git)
+chrome-store-submission/

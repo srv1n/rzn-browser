@@ -1,0 +1,120 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RZN Browser Social Profile Schema",
+  "schema_version": "rzn.browser.social.profile.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "connector_id",
+    "display_name",
+    "channel",
+    "auth_model",
+    "catalog_path",
+    "default_approval_mode",
+    "supported_approval_modes",
+    "operations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "rzn.browser.social.profile.v1"
+    },
+    "connector_id": {
+      "type": "string"
+    },
+    "display_name": {
+      "type": "string"
+    },
+    "channel": {
+      "const": "browser"
+    },
+    "auth_model": {
+      "type": "string",
+      "enum": ["browser_session_reuse"]
+    },
+    "catalog_path": {
+      "type": "string"
+    },
+    "default_approval_mode": {
+      "$ref": "#/definitions/approval_mode"
+    },
+    "supported_approval_modes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/approval_mode"
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "operations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "daily_scroll",
+        "open_post",
+        "like_post",
+        "reply_post",
+        "create_post",
+        "open_inbox",
+        "open_dm_thread",
+        "send_dm",
+        "reply_dm"
+      ],
+      "properties": {
+        "daily_scroll": { "$ref": "#/definitions/operation" },
+        "open_post": { "$ref": "#/definitions/operation" },
+        "like_post": { "$ref": "#/definitions/operation" },
+        "reply_post": { "$ref": "#/definitions/operation" },
+        "create_post": { "$ref": "#/definitions/operation" },
+        "open_inbox": { "$ref": "#/definitions/operation" },
+        "open_dm_thread": { "$ref": "#/definitions/operation" },
+        "send_dm": { "$ref": "#/definitions/operation" },
+        "reply_dm": { "$ref": "#/definitions/operation" }
+      }
+    }
+  },
+  "definitions": {
+    "approval_mode": {
+      "type": "string",
+      "enum": ["ask_user", "notify", "auto_continue", "noop"]
+    },
+    "operation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "card_id",
+        "workflow_id",
+        "workflow_path",
+        "mutating",
+        "approval_required",
+        "required_args"
+      ],
+      "properties": {
+        "card_id": {
+          "type": "string"
+        },
+        "workflow_id": {
+          "type": "string"
+        },
+        "workflow_path": {
+          "type": "string"
+        },
+        "mutating": {
+          "type": "boolean"
+        },
+        "approval_required": {
+          "type": "boolean"
+        },
+        "required_args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "system_id": "browser_automation",
+  "id": "browser_search_google_v1",
+  "name": "Search Google",
+  "description": "Search Google and extract organic search results as a curated browser-system quick start.",
+  "version": "1.0.0",
+  "last_updated": "2026-03-11T00:00:00Z",
+  "browser_automation": {
+    "description": "Search workflow packaged with the browser plugin examples.",
+    "sequences": [
+      {
+        "name": "search_google",
+        "description": "Submit a search query and extract organic results.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "The term to search for."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Google homepage",
+            "type": "navigate_to_url",
+            "url": "https://www.google.com"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for search box",
+            "type": "wait_for_element",
+            "selector": "textarea[name='q'], input[name='q']",
+            "timeout_ms": 8000
+          },
+          {
+            "id": "s3",
+            "name": "Submit search query",
+            "type": "submit_input",
+            "selector": "textarea[name='q'], input[name='q']",
+            "text": "{search_query}"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for results container",
+            "type": "wait_for_element",
+            "selector": "#search, #rso",
+            "timeout_ms": 12000
+          },
+          {
+            "id": "s5",
+            "name": "Dismiss common popups",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s6",
+            "name": "Extract search results",
+            "type": "extract_structured_data",
+            "item_selector": "#search .g, #rso .g, .MjjYud, .tF2Cxc, [data-sokoban-container]",
+            "extraction_type": "search_results",
+            "limit": 10,
+            "fields": [
+              {
+                "name": "title",
+                "selector": "h3"
+              },
+              {
+                "name": "url",
+                "selector": "a",
+                "attribute": "href"
+              },
+              {
+                "name": "snippet",
+                "selector": ".VwiC3b, [data-content-feature], .yXK7lf"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

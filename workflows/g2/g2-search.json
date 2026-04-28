@@ -1,0 +1,89 @@
+{
+  "system_id": "g2",
+  "id": "g2_search",
+  "name": "G2: Product Search",
+  "description": "Search G2 by keyword and return a deduplicated list of product candidates with name, URL, rating summary, and review count. Use when you need to discover product slugs to feed into g2/product-details-reviews.",
+  "domain": "g2.com",
+  "version": "2.0.0",
+  "last_updated": "2026-04-25T00:00:00Z",
+  "help": {
+    "summary": "Discover G2 products by keyword. Returns one row per unique product (deduplicated by URL).",
+    "parameters": [
+      {
+        "name": "search_query",
+        "required": true,
+        "shape": "free-text",
+        "description": "Keyword or product name. Single-word category terms (\"crm\", \"erp\") may redirect to G2's category index page; product names (\"intercom\", \"slack\") hit the search results page.",
+        "example": "intercom"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Find products matching a name",
+        "command": "rzn-browser run g2 search --param search_query=\"intercom\""
+      },
+      {
+        "description": "Find products in a category (G2 may redirect to /categories/<slug>)",
+        "command": "rzn-browser run g2 search --param search_query=\"crm\""
+      }
+    ],
+    "returns": "Object: { query, count, results: [{ product_name, product_url, rating, review_count }] }. Feed product_url into g2/product-details-reviews.",
+    "notes": [
+      "Dedup is by canonical product reviews URL (.../products/<slug>/reviews). Multiple anchors per card (image, name, rating) collapse to one row.",
+      "G2 sometimes redirects /search?query=<single-word-category> to /categories/<slug>. The selector works on both surfaces.",
+      "G2 has occasional bot detection on this surface; if results come back empty, open the search URL manually once to clear any challenge before re-running."
+    ]
+  },
+  "browser_automation": {
+    "description": "Search G2 by keyword and extract deduplicated product cards via JS.",
+    "sequences": [
+      {
+        "name": "g2_search",
+        "description": "Navigate -> wait for product anchors -> JS-dedupe by URL.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "Search keyword"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to G2 search",
+            "type": "navigate_to_url",
+            "url": "https://www.g2.com/search?query={search_query}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for product anchors",
+            "type": "wait_for_element",
+            "selector": "a[href*='/products/'][href*='/reviews']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s3",
+            "name": "Allow rating widgets to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1500
+          },
+          {
+            "id": "s4",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s5",
+            "name": "Extract deduped product list",
+            "type": "execute_javascript",
+            "world": "main",
+            "return_value": true,
+            "args": [
+              "{search_query}"
+            ],
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const query = cleanArg(arg0); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const anchors = Array.from(document.querySelectorAll(\"a[href*='/products/'][href*='/reviews']\")); const byProduct = new Map(); for (const a of anchors) { const url = a.href.replace(/#.*$/, '').replace(/\\?.*$/, ''); const slugMatch = url.match(/\\/products\\/([^/]+)\\/reviews/); if (!slugMatch) continue; const slug = slugMatch[1]; const text = norm(a.textContent); if (!byProduct.has(slug)) { byProduct.set(slug, { product_url: url, slug, candidates: [] }); } byProduct.get(slug).candidates.push(text); } const results = Array.from(byProduct.values()).map((entry) => { const named = entry.candidates.find((t) => t && !/^\\d/.test(t) && t.length > 1); const ratingText = entry.candidates.find((t) => /\\d(\\.\\d+)?\\/5|\\(\\d/.test(t)) || ''; const ratingMatch = ratingText.match(/(\\d(?:\\.\\d+)?)\\s*\\/\\s*5/); const reviewMatch = ratingText.match(/\\(([\\d,]+)\\)/); return { product_name: named || entry.slug.replace(/-/g, ' '), product_url: entry.product_url, rating: ratingMatch ? ratingMatch[1] : 'N/A', review_count: reviewMatch ? reviewMatch[1].replace(/,/g, '') : 'N/A' }; }); return { query: query || null, count: results.length, results };"
+          }
+        ]
+      }
+    ]
+  }
+}

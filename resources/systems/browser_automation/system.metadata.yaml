@@ -1,0 +1,256 @@
+version: 1
+
+system:
+  id: browser_automation
+  display_name: Browser Automation
+  what_it_does: "Drive a connected browser session, extract structured page data, and run signed workflow examples through the rzn-browser plugin."
+  use_cases:
+    - "Verify the native-host and browser-extension bridge by opening a page and reading page state."
+    - "Extract structured data such as tables, search results, and content cards from live pages."
+    - "Run deterministic packaged workflows instead of authoring raw browser step JSON."
+    - "Execute authenticated browser flows when a user-signed-in profile is already available."
+
+capability_groups:
+  - id: navigate_and_extract
+    name: "Navigate and extract"
+    description: "Open pages, capture lightweight page state, and read structured content."
+    tool_ids:
+      - "browser.session_open"
+      - "browser.snapshot"
+      - "browser.poll_events"
+
+  - id: interact_with_page
+    name: "Interact with page"
+    description: "Click, type, submit, and perform deterministic actions inside an active browser session."
+    tool_ids:
+      - "browser.execute_step"
+      - "browser.session_close"
+    step_types:
+      - "click_element"
+      - "fill_input_field"
+      - "submit_input"
+      - "press_special_key"
+      - "select_option_in_dropdown"
+      - "upload_file"
+      - "wait_for_element"
+      - "wait_for_navigation"
+
+  - id: workflow_execution
+    name: "Workflow execution"
+    description: "Run packaged browser workflows for repeatable tasks and smoke tests."
+    example_paths:
+      - "examples/browser_automation/search_google.json"
+      - "examples/browser_automation/packaged_google_search_v2.json"
+
+  - id: session_or_account_actions
+    name: "Session and account actions"
+    description: "Use an already-connected browser profile when a workflow depends on logged-in browser state."
+    requirements:
+      requires_connected_browser: true
+      may_require_human_login: true
+      may_require_profile_selector: true
+
+setup_steps:
+  - id: plugin_installed
+    kind: install
+    label: "Install browser plugin"
+    description: "Install the signed browser automation package."
+  - id: native_host
+    kind: runtime
+    label: "Install native host"
+    description: "Make the browser native host available to the extension."
+  - id: extension_connected
+    kind: connectivity
+    label: "Connect browser extension"
+    description: "Verify the extension and native host can talk."
+
+context_parameters:
+  - id: session_id
+    label: "Session ID"
+    kind: string
+    required: false
+  - id: page_url
+    label: "Page URL"
+    kind: url
+    required: false
+    default: "https://example.com"
+  - id: base_url
+    label: "Base URL"
+    kind: url
+    required: false
+  - id: search_query
+    label: "Search query"
+    kind: string
+    required: false
+    default: "openai"
+  - id: profile_name
+    label: "Browser profile"
+    kind: string
+    required: false
+
+quick_starts:
+  - id: open_page_and_get_title
+    title: "Open page and get title"
+    description: "Navigate to a page and read its document title as a minimal proof of life."
+    runner: workflow
+    workflow_path: "examples/browser_automation/open_page_get_title.json"
+    args:
+      page_url: "https://example.com"
+
+  - id: search_google
+    title: "Search Google"
+    description: "Run a safe read-only Google search demo that extracts organic results."
+    runner: workflow
+    workflow_path: "examples/browser_automation/search_google.json"
+    args:
+      search_query: "openai"
+
+  - id: extract_first_table
+    title: "Extract first table from page"
+    description: "Open a page with a table and extract the first table into structured rows."
+    runner: workflow
+    workflow_path: "examples/browser_automation/extract_first_table.json"
+    args:
+      page_url: "https://www.w3schools.com/html/html_tables.asp"
+
+  - id: run_packaged_workflow
+    title: "Run packaged workflow"
+    description: "Execute the packaged production Google Search workflow that ships with the browser bundle examples."
+    runner: workflow
+    workflow_path: "examples/browser_automation/packaged_google_search_v2.json"
+    args:
+      search_query: "openai"
+
+result_handling:
+  tools:
+    browser.session_open:
+      human_view:
+        renderer: "status_card"
+        fields:
+          - key: "session_id"
+            label: "Session ID"
+          - key: "result.current_url"
+            label: "Current URL"
+      llm_view:
+        include:
+          - "ok"
+          - "session_id"
+          - "result.current_url"
+      index_view:
+        mode: "none"
+      debug_view:
+        mode: "raw_json"
+
+    browser.session_close:
+      human_view:
+        renderer: "status_card"
+        fields:
+          - key: "session_id"
+            label: "Session ID"
+      llm_view:
+        include:
+          - "ok"
+          - "session_id"
+      index_view:
+        mode: "none"
+      debug_view:
+        mode: "raw_json"
+
+    browser.snapshot:
+      human_view:
+        renderer: "document_summary"
+        title: "result.dom_snapshot.metadata.title"
+        subtitle: "result.current_url"
+        fields:
+          - key: "result.dom_snapshot.metadata.viewport.width"
+            label: "Viewport Width"
+          - key: "result.dom_snapshot.metadata.viewport.height"
+            label: "Viewport Height"
+      llm_view:
+        include:
+          - "ok"
+          - "session_id"
+          - "result.current_url"
+          - "result.dom_snapshot.metadata.title"
+          - "result.dom_snapshot.metadata.url"
+          - "result.dom_snapshot.metadata.viewport"
+      index_view:
+        mode: "none"
+      debug_view:
+        mode: "raw_json"
+
+    browser.poll_events:
+      human_view:
+        renderer: "list"
+        items_path: "events[]"
+      llm_view:
+        include:
+          - "ok"
+          - "session_id"
+          - "events"
+        max_items: 20
+      index_view:
+        mode: "none"
+      debug_view:
+        mode: "raw_json"
+
+    browser.execute_step:
+      default:
+        human_view:
+          renderer: "status_card"
+          fields:
+            - key: "session_id"
+              label: "Session ID"
+            - key: "ok"
+              label: "Success"
+        llm_view:
+          include:
+            - "ok"
+            - "session_id"
+            - "result"
+        index_view:
+          mode: "none"
+        debug_view:
+          mode: "raw_json"
+      step_variants:
+        extract_structured_data:
+          match:
+            step_type: "extract_structured_data"
+          human_view:
+            renderer: "table"
+            rows_path: "result[]"
+          llm_view:
+            include:
+              - "ok"
+              - "session_id"
+              - "result"
+            max_items: 25
+          index_view:
+            mode: "records"
+            record_type: "browser_extract"
+            records_path: "result[]"
+            fields:
+              title: "title"
+              source_url: "url"
+              body_text: "snippet"
+            bm25_text:
+              template: "{{title}}\n\n{{body_text}}"
+            embedding_text:
+              template: "{{title}}\n\n{{body_text}}"
+          debug_view:
+            mode: "raw_json"
+        get_element_text:
+          match:
+            step_type: "get_element_text"
+          human_view:
+            renderer: "summary"
+            primary_text: "result.text"
+          llm_view:
+            include:
+              - "ok"
+              - "session_id"
+              - "result.text"
+          index_view:
+            mode: "none"
+          debug_view:
+            mode: "raw_json"

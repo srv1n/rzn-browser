@@ -1,0 +1,117 @@
+{
+  "browser_automation": {
+    "description": "Current-tab ChatGPT continuation flow. It opens an existing thread, defaults to Pro with Extended effort unless overridden, sends another user message, and returns the immediate post-send state.",
+    "sequences": [
+      {
+        "description": "Open thread -> default/select model and effort -> type prompt -> send -> return chat state.",
+        "name": "chatgpt_continue_chat",
+        "required_variables": [
+          {
+            "description": "ChatGPT conversation id from /c/<chat_id>",
+            "name": "chat_id"
+          },
+          {
+            "description": "Prompt text to send into the existing conversation",
+            "name": "message_text"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open the target ChatGPT conversation in the current tab",
+            "timeout_ms": 60000,
+            "type": "navigate_to_url",
+            "url": "https://chatgpt.com/c/{chat_id}"
+          },
+          {
+            "id": "s1",
+            "name": "Allow the route to settle",
+            "timeout_ms": 1800,
+            "type": "wait_for_timeout"
+          },
+          {
+            "id": "s2",
+            "name": "Give the thread shell another moment",
+            "timeout_ms": 700,
+            "type": "wait_for_timeout"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the ChatGPT composer",
+            "selector": "#prompt-textarea, textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], textarea[placeholder*='Ask anything' i], textarea[aria-label*='message' i], textarea[aria-label*='chatgpt' i], form textarea, div[role='textbox'][contenteditable='true'], div[role='textbox'][contenteditable='plaintext-only'], [contenteditable='true'][data-testid*='composer'], [contenteditable='plaintext-only'][data-testid*='composer'], div.ProseMirror[contenteditable='true'], div.ProseMirror[contenteditable='plaintext-only']",
+            "timeout_ms": 30000,
+            "type": "wait_for_element"
+          },
+          {
+            "args": [
+              "{chat_id}",
+              "{message_text}",
+              "{model_slug}|||{model_effort}"
+            ],
+            "id": "s4",
+            "name": "Default/select model and effort, send the next prompt, and return post-send state",
+            "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const expectedChatId = cleanArg(arg0); const message = cleanArg(arg1); const [modelArgRaw, effortArgRaw] = String(arg2 == null ? '' : arg2).split('|||'); const requestedModel = cleanArg(modelArgRaw); const desiredModel = requestedModel || 'Pro'; const requestedEffort = cleanArg(effortArgRaw); const desiredEffort = requestedEffort || (/\\bpro\\b/i.test(desiredModel) ? 'Extended' : ''); if (!message) { throw new Error('message_text is required'); } const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const interactiveSelector = \"button, [role='button'], [role='option'], [role='menuitemradio'], [role='menuitem'], [data-testid], label\"; const isVisible = (node) => { if (!node || !(node instanceof Element)) return false; const style = window.getComputedStyle(node); if (style.visibility === 'hidden' || style.display === 'none') return false; const rect = node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; }; const labelOf = (node) => normalize([node.getAttribute('aria-label') || '', node.getAttribute('title') || '', node.getAttribute('data-testid') || '', node.textContent || ''].join(' ')); const isNoiseLabel = (label) => /share|login|log in|sign up|sidebar|history|search chats|temporary chat|new chat|new conversation|cookie preferences|developer mode/.test(label); const chatIdFromLocation = () => { const match = window.location.pathname.match(/^\\/c\\/([^/?#]+)/); return match ? match[1] : null; }; const click = async (node) => { node.scrollIntoView({ block: 'center', inline: 'center' }); node.click(); await sleep(350); }; const findComposer = () => Array.from(document.querySelectorAll(\"#prompt-textarea, textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], textarea[placeholder*='Ask anything' i], textarea[aria-label*='message' i], textarea[aria-label*='chatgpt' i], form textarea, div[role='textbox'][contenteditable='true'], div[role='textbox'][contenteditable='plaintext-only'], [contenteditable='true'][data-testid*='composer'], [contenteditable='plaintext-only'][data-testid*='composer'], div.ProseMirror[contenteditable='true'], div.ProseMirror[contenteditable='plaintext-only']\")).find(isVisible) || null; const setComposerText = (node, text) => { node.focus(); if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) { const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), 'value')?.set || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set; if (setter) setter.call(node, text); else node.value = text; node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); node.dispatchEvent(new Event('change', { bubbles: true })); return; } node.textContent = text; node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); }; const findSendButton = (composer) => { const form = composer ? composer.closest('form') : null; const scopes = [form, composer?.parentElement, document].filter(Boolean); for (const scope of scopes) { const candidates = Array.from(scope.querySelectorAll(\"button, [role='button']\")).filter(isVisible).filter((node) => { const label = labelOf(node).toLowerCase(); const disabled = node.matches(':disabled') || node.getAttribute('aria-disabled') === 'true'; if (disabled) return false; return /send|submit/.test(label); }); if (candidates.length) return candidates[0]; } return null; }; const labelMatchesModel = (label, wanted) => { const normalizedLabel = normalize(label).toLowerCase(); const normalizedWanted = normalize(wanted).toLowerCase(); if (!normalizedLabel || !normalizedWanted) return false; if (normalizedWanted === 'pro') return /\\bpro\\b/.test(normalizedLabel); return normalizedLabel.includes(normalizedWanted); }; const labelMatchesEffort = (label, wanted) => { const normalizedLabel = normalize(label).toLowerCase(); const normalizedWanted = normalize(wanted).toLowerCase(); if (!normalizedLabel || !normalizedWanted) return false; if (normalizedWanted === 'extended') return /\\bextended\\b/.test(normalizedLabel); if (normalizedWanted === 'standard') return /\\bstandard\\b/.test(normalizedLabel); return normalizedLabel.includes(normalizedWanted); }; const extractEffortFromLabel = (label) => { const normalizedLabel = normalize(label).toLowerCase(); if (/\\bextended\\b/.test(normalizedLabel)) return 'Extended'; if (/\\bstandard\\b/.test(normalizedLabel)) return 'Standard'; return null; }; const distanceTo = (node, anchor) => { if (!anchor || !(anchor instanceof Element)) return 0; const a = anchor.getBoundingClientRect(); const b = node.getBoundingClientRect(); const ax = a.left + (a.width / 2); const ay = a.top + (a.height / 2); const bx = b.left + (b.width / 2); const by = b.top + (b.height / 2); return Math.hypot(ax - bx, ay - by); }; const sortByAnchor = (nodes, anchor) => [...nodes].sort((left, right) => distanceTo(left, anchor) - distanceTo(right, anchor)); const collectInteractive = (scope = document) => Array.from(scope.querySelectorAll(interactiveSelector)).filter(isVisible); const findCurrentModelChip = () => { const composer = findComposer(); const form = composer ? composer.closest('form') : null; const scopes = [form, composer?.parentElement, document].filter(Boolean); for (const scope of scopes) { const matches = sortByAnchor(collectInteractive(scope).filter((node) => { const label = labelOf(node).toLowerCase(); if (!label || isNoiseLabel(label) || /configure/.test(label)) return false; return /extended pro|standard pro|\\bpro\\b|instant|thinking|latest|model|gpt|o1|o3|o4|4o|4\\.1|mini|reason/.test(label); }), composer); if (matches.length) return matches[0]; } return null; }; const openModelMenu = async () => { const composer = findComposer(); const form = composer ? composer.closest('form') : null; const scopes = [form, composer?.parentElement, document].filter(Boolean); for (const scope of scopes) { const matches = sortByAnchor(collectInteractive(scope).filter((node) => { const label = labelOf(node).toLowerCase(); if (isNoiseLabel(label) || /configure/.test(label)) return false; if (/extended pro|standard pro|\\bpro\\b|instant|thinking|latest|model|gpt|o1|o3|o4|4\\.1|mini|reason/.test(label)) return true; return node.getAttribute('aria-haspopup') === 'menu'; }), composer); if (matches.length) { await click(matches[0]); await sleep(500); return matches[0]; } } throw new Error('requested model but no model picker was found'); }; const findModelOption = () => sortByAnchor(collectInteractive(document).filter((node) => { const label = labelOf(node).toLowerCase(); if (!label || isNoiseLabel(label) || /configure/.test(label)) return false; return labelMatchesModel(label, desiredModel); }), findComposer())[0] || null; const findEffortOption = () => sortByAnchor(collectInteractive(document).filter((node) => { const label = labelOf(node).toLowerCase(); if (!label || isNoiseLabel(label)) return false; if (/pro thinking effort/.test(label)) return false; return labelMatchesEffort(label, desiredEffort); }), findComposer())[0] || null; const trySelectModel = async () => { let currentChip = findCurrentModelChip(); let selectedModel = currentChip ? labelOf(currentChip) : null; let selectedEffort = extractEffortFromLabel(selectedModel); let modelChanged = false; let effortChanged = false; let modelStrategy = requestedModel ? 'requested_explicitly' : 'defaulted_to_pro'; let effortStrategy = desiredEffort ? (requestedEffort ? 'requested_explicitly' : 'defaulted_for_pro') : 'skipped'; if (!labelMatchesModel(selectedModel, desiredModel)) { let option = findModelOption(); if (!option) { await openModelMenu(); option = findModelOption(); } if (!option) throw new Error(`requested model '${desiredModel}' but no matching option was found`); const optionLabel = labelOf(option); await click(option); await sleep(700); modelChanged = true; currentChip = findCurrentModelChip(); selectedModel = currentChip ? labelOf(currentChip) : optionLabel; } if (desiredEffort && /\\bpro\\b/i.test(desiredModel)) { currentChip = findCurrentModelChip(); selectedModel = currentChip ? labelOf(currentChip) : selectedModel; selectedEffort = extractEffortFromLabel(selectedModel); if (!labelMatchesEffort(selectedModel, desiredEffort)) { let option = findEffortOption(); if (!option) { const trigger = currentChip || await openModelMenu(); if (trigger) { await click(trigger); await sleep(500); } option = findEffortOption(); } if (!option) throw new Error(`requested model effort '${desiredEffort}' but no matching option was found`); const optionLabel = labelOf(option); await click(option); await sleep(700); effortChanged = true; currentChip = findCurrentModelChip(); selectedModel = currentChip ? labelOf(currentChip) : (selectedModel || optionLabel); selectedEffort = extractEffortFromLabel(selectedModel) || optionLabel; } } currentChip = findCurrentModelChip(); selectedModel = currentChip ? labelOf(currentChip) : selectedModel; selectedEffort = extractEffortFromLabel(selectedModel) || selectedEffort; return { requested_model: desiredModel, requested_effort: desiredEffort || null, selected_model: selectedModel, selected_effort: selectedEffort, changed: modelChanged || effortChanged, model_changed: modelChanged, effort_changed: effortChanged, strategy: { model: modelStrategy, effort: effortStrategy } }; }; const bodyText = normalize(document.body?.innerText || ''); const authRequired = /log in|sign up|continue with google|continue with apple|continue with email|welcome back|create your account/i.test(bodyText.toLowerCase()); const currentChatId = chatIdFromLocation(); if (authRequired) { return { url: window.location.href, title: document.title, chat_id: currentChatId, auth_required: true, model_selection: null, message_sent: null, composer_present: false }; } if (expectedChatId && currentChatId && currentChatId !== expectedChatId) throw new Error(`expected chat_id ${expectedChatId} but opened ${currentChatId}`); const modelSelection = await trySelectModel(); let composer = findComposer(); if (!composer) throw new Error('ChatGPT composer not found'); setComposerText(composer, message); await sleep(250); composer = findComposer() || composer; const sendButton = findSendButton(composer); if (!sendButton) throw new Error('ChatGPT send button not found'); await click(sendButton); const deadline = Date.now() + 45000; while (Date.now() < deadline) { const refreshedComposer = findComposer(); const sameChat = !expectedChatId || chatIdFromLocation() === expectedChatId; const buttons = Array.from(document.querySelectorAll('button, [role=\"button\"]')).filter(isVisible).map((node) => labelOf(node).toLowerCase()); const stopVisible = buttons.some((label) => /stop generating|stop|continue generating|resume/.test(label)); if (sameChat && (stopVisible || refreshedComposer)) break; await sleep(750); } return { url: window.location.href, title: document.title, chat_id: chatIdFromLocation(), auth_required: false, model_selection: modelSelection, message_sent: message, composer_present: !!findComposer() };",
+            "timeout_ms": 180000,
+            "type": "execute_javascript",
+            "world": "main"
+          }
+        ]
+      }
+    ],
+    "use_current_tab": true
+  },
+  "description": "Open an existing ChatGPT conversation, default to Pro with Extended effort unless overridden, send another prompt, and return post-send thread state.",
+  "domain": "chatgpt.com",
+  "help": {
+    "examples": [
+      {
+        "command": "rzn-browser run chatgpt continue-chat-v1 --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param message_text=\"Turn that into a checklist.\"",
+        "description": "Basic run with the defaults"
+      },
+      {
+        "command": "rzn-browser run chatgpt continue-chat-v1 --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param message_text=\"Turn that into a checklist.\" --param model_slug=\"Pro\" --param model_effort=\"Extended\"",
+        "description": "Explicit model and effort"
+      }
+    ],
+    "notes": [
+      "Uses the current authenticated ChatGPT tab.",
+      "Defaults to Pro with Extended effort when those controls are available."
+    ],
+    "parameters": [
+      {
+        "description": "ChatGPT conversation id from /c/<chat_id>",
+        "example": "01234567-89ab-cdef-0123-456789abcdef",
+        "name": "chat_id",
+        "required": true,
+        "shape": "string id"
+      },
+      {
+        "description": "Prompt text to send into the existing conversation",
+        "example": "Turn that into a checklist.",
+        "name": "message_text",
+        "required": true,
+        "shape": "text"
+      },
+      {
+        "description": "Optional reasoning effort label to select before sending",
+        "example": "Extended",
+        "name": "model_effort",
+        "required": false,
+        "shape": "string"
+      },
+      {
+        "description": "Optional model label to select before sending",
+        "example": "Pro",
+        "name": "model_slug",
+        "required": false,
+        "shape": "string"
+      }
+    ],
+    "returns": "Resolved chat id, selected model info, and immediate post-send thread state.",
+    "summary": "Open an existing ChatGPT conversation, send another prompt, and return the immediate post-send state."
+  },
+  "id": "chatgpt_continue_chat_v1",
+  "name": "ChatGPT: Continue Chat",
+  "system_id": "chatgpt",
+  "version": "1.1.0"
+}

@@ -1,0 +1,81 @@
+{
+  "system_id": "apple_ads",
+  "id": "apple_ads_keyword_suggest",
+  "name": "Apple Ads: Keyword Suggest",
+  "description": "Fetch Apple Ads keyword suggestions (with popularity signals) from the authenticated portal's internal endpoint `/cm/api/v2/keywords/recommendation`. Uses a same-origin request inside the browser session, so auth cookies are handled by the browser — no cookie scraping, no DOM parsing. Requires the user to be signed in to app-ads.apple.com.",
+  "domain": "app-ads.apple.com",
+  "version": "2.0.0",
+  "last_updated": "2026-04-25T00:00:00Z",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigate to an ad group page (primes auth/CSRF context), then issue a same-origin GET to the keyword recommendation endpoint and return the JSON body.",
+    "sequences": [
+      {
+        "name": "apple_ads_keyword_suggest",
+        "description": "Prime auth on the ad group page, then call /cm/api/v2/keywords/recommendation.",
+        "required_variables": [
+          { "name": "org_id", "description": "Apple Ads organization id (from the URL path /cm/app/{org_id}/...)." },
+          { "name": "campaign_id", "description": "Campaign id from the URL." },
+          { "name": "adgroup_id", "description": "Ad group id from the URL." },
+          { "name": "adam_id", "description": "App adamId (App Store ID) associated with the keyword suggestion context." },
+          { "name": "query", "description": "Seed keyword text to request suggestions for." }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to the ad group keywords tab (ensures auth context)",
+            "type": "navigate_to_url",
+            "url": "https://app-ads.apple.com/cm/app/{org_id}/report/campaign/{campaign_id}/adgroup/{adgroup_id}?tab=0",
+            "wait": "domcontentloaded",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s2",
+            "name": "Short wait for hydration",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s3",
+            "name": "Same-origin keyword recommendation request",
+            "type": "same_origin_request",
+            "method": "GET",
+            "path": "/cm/api/v2/keywords/recommendation",
+            "query": {
+              "adamId": "{adam_id}",
+              "text": "{query}",
+              "adgroupId": "{adgroup_id}"
+            },
+            "headers": {
+              "Accept": "application/json, text/plain, */*",
+              "X-Requested-With": "XMLHttpRequest"
+            },
+            "response_format": "json",
+            "max_bytes": 500000,
+            "timeout_ms": 20000
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Fetch Apple Ads keyword suggestions with popularity signals for a seed keyword.",
+    "parameters": [
+      { "name": "org_id", "required": true, "shape": "text", "description": "Apple Ads org id from the portal URL.", "example": "123456" },
+      { "name": "campaign_id", "required": true, "shape": "text", "description": "Campaign id from the portal URL.", "example": "555000111" },
+      { "name": "adgroup_id", "required": true, "shape": "text", "description": "Ad group id from the portal URL.", "example": "777000222" },
+      { "name": "adam_id", "required": true, "shape": "text", "description": "App adamId (App Store ID) used as the context app for suggestions.", "example": "1232780281" },
+      { "name": "query", "required": true, "shape": "text", "description": "Seed keyword to request suggestions for.", "example": "notes app" }
+    ],
+    "examples": [
+      { "command": "rzn-browser run apple-ads keyword-suggest --param org_id=\"123456\" --param campaign_id=\"555000111\" --param adgroup_id=\"777000222\" --param adam_id=\"1232780281\" --param query=\"notes app\"", "description": "Ask the portal for keyword recs on 'notes app' in the context of the given ad group." }
+    ],
+    "returns": "JSON body from /cm/api/v2/keywords/recommendation — typically an object with a `recommendations` array where each item has `keyword`, `matchType`, `popularity`, and bid hints. Exact shape is owned by Apple's portal API.",
+    "notes": [
+      "Requires an authenticated app-ads.apple.com session in the browser.",
+      "If the request returns 401/403, the portal auth expired — open a portal tab and re-auth.",
+      "The priming navigation to ?tab=0 is what makes XSRF cookies available to the same-origin step.",
+      "Prefer this workflow over DOM scraping; the portal's keyword UI is shadow-DOM heavy and brittle."
+    ]
+  }
+}

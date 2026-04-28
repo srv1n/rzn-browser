@@ -1,0 +1,78 @@
+{
+  "system_id": "etsy",
+  "id": "etsy_search",
+  "name": "Etsy Search",
+  "description": "Search Etsy listings by keyword and extract listing candidates.",
+  "domain": "etsy.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "description": "Search-only workflow for Etsy listing discovery.",
+    "sequences": [
+      {
+        "name": "etsy_search",
+        "description": "Run Etsy search and extract listing cards.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "Search keyword, e.g. leather wallet."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Etsy search",
+            "type": "navigate_to_url",
+            "url": "https://www.etsy.com/search?q={search_query}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for hydration",
+            "type": "wait_for_timeout",
+            "timeout_ms": 5000
+          },
+          {
+            "id": "s3",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for listing links",
+            "type": "wait_for_element",
+            "selector": "li[data-listing-id], article[data-listing-id], .v2-listing-card",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s5",
+            "name": "Extract listing candidates",
+            "type": "extract_structured_data",
+            "item_selector": "li[data-listing-id], article[data-listing-id], .v2-listing-card",
+            "fields": [
+              {
+                "name": "listing_title",
+                "selector": "h3, [data-testing-id='listing-card-title'], [class*='title']"
+              },
+              {
+                "name": "listing_url",
+                "selector": "a[href*='/listing/']",
+                "attribute": "href"
+              },
+              {
+                "name": "price",
+                "selector": "[class*='currency-value'], [class*='price']"
+              },
+              {
+                "name": "shop_name",
+                "selector": "[class*='shop-name'], [class*='shop'] a, [class*='seller']"
+              },
+              {
+                "name": "rating_summary",
+                "selector": "[aria-label*='out of 5'], [aria-label*='star'], [class*='rating']"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "system_id": "x",
+  "id": "x_open_inbox",
+  "name": "X: Open Inbox",
+  "description": "Open the authenticated X DM inbox in a fresh tab and return whether the inbox shell, the compose surface, or the X Chat passcode-onboarding gate is present. Use to confirm inbox reachability before calling a DM-send or DM-reply workflow. Do not use to read individual DM threads (use `x_open_dm_thread` for that).",
+  "domain": "x.com",
+  "version": "1.1.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Opens https://x.com/i/chat in a fresh tab and waits for the inbox shell, the DM composer, or the passcode onboarding gate.",
+    "sequences": [
+      {
+        "name": "x_open_inbox",
+        "description": "Open the X Chat inbox in a fresh tab and snapshot its state.",
+        "required_variables": [],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open the X Chat inbox in a fresh tab",
+            "type": "navigate_to_url",
+            "url": "https://x.com/i/chat",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow inbox navigation to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1800
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the inbox shell or onboarding gate",
+            "type": "wait_for_element",
+            "selector": "main [data-testid='DmScrollerContainer'], main [href*='/messages/'], main [href*='/i/chat/'], main div[role='textbox'][data-testid='dmComposerTextInput'], button[data-testid='pin-onboarding-setup-now'], a[data-testid='NewDM_Button']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s4",
+            "name": "Read the inbox or onboarding state",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 10000,
+            "script": "return { url: location.href, thread_link_count: document.querySelectorAll(\"main a[href*='/messages/'], main a[href*='/i/chat/']\").length, composer_present: !!document.querySelector(\"div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput']\"), pin_onboarding_present: !!document.querySelector(\"button[data-testid='pin-onboarding-setup-now']\"), new_dm_button_present: !!document.querySelector(\"a[data-testid='NewDM_Button']\") };"
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Open the X DM inbox in a fresh tab and report whether the inbox shell or the passcode onboarding gate is showing.",
+    "parameters": [],
+    "examples": [
+      {
+        "command": "rzn-browser run x open-inbox",
+        "description": "Check inbox reachability."
+      }
+    ],
+    "returns": "{ url, thread_link_count, composer_present, pin_onboarding_present, new_dm_button_present }.",
+    "notes": [
+      "If `pin_onboarding_present` is true, finish the X Chat passcode setup manually before using DM-send or DM-reply workflows.",
+      "Read-only: never sends a message.",
+      "Opens a fresh tab so other workflows can run in parallel against the same browser session."
+    ]
+  }
+}

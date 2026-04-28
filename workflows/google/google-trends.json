@@ -1,0 +1,87 @@
+{
+  "system_id": "google",
+  "id": "google_trends_v1",
+  "name": "Google Trends Explore",
+  "description": "Open Google Trends Explore page for a topic and dump the visible page text (best-effort).",
+  "domain": "trends.google.com",
+  "version": "1.1.0",
+  "last_updated": "2026-04-24T00:00:00Z",
+  "browser_automation": {
+    "description": "Trends is heavily client-rendered with shadow DOM and lazy charts; this workflow opens the page and returns its visible text. No structured chart extraction.",
+    "sequences": [
+      {
+        "name": "google_trends_open",
+        "description": "Open the Trends explore page and return visible body text.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "Topic or keyword to explore. Aliases: query, q."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Google Trends Explore",
+            "type": "navigate_to_url",
+            "url": "https://trends.google.com/trends/explore?q={search_query}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for Trends to load (long — Trends is slow)",
+            "type": "wait_for_timeout",
+            "timeout_ms": 12000
+          },
+          {
+            "id": "s3",
+            "name": "Dismiss common popups",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for body",
+            "type": "wait_for_element",
+            "selector": "body",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s5",
+            "name": "Extract visible body text",
+            "type": "extract_structured_data",
+            "extraction_type": "trends_text",
+            "item_selector": "body",
+            "fields": [
+              { "name": "text", "selector": "*" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Open Google Trends Explore for a topic and return visible page text.",
+    "parameters": [
+      {
+        "name": "search_query",
+        "required": true,
+        "shape": "text",
+        "description": "Topic to explore. Aliases query and q work too.",
+        "example": "machine learning"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run google trends --param search_query=\"machine learning\"",
+        "description": "Trends for 'machine learning'."
+      },
+      {
+        "command": "rzn-browser run google trends --param query=\"election 2024\"",
+        "description": "Use the query alias."
+      }
+    ],
+    "returns": "Object with one field text — the inner text of the page, including chart legends and related queries. Numerical chart data is NOT returned — Trends draws charts in canvas.",
+    "notes": [
+      "If you need actual time-series numbers, use the official Google Trends API or scrape the underlying network requests (out of scope for this workflow).",
+      "Trends rate-limits aggressively; retries on 429 will fail until cool-down."
+    ]
+  }
+}

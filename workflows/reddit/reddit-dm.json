@@ -1,0 +1,150 @@
+{
+  "system_id": "reddit",
+  "id": "reddit_dm_v1",
+  "name": "Reddit: Draft DM",
+  "description": "Open a Reddit user's profile, launch the chat widget, and type a message into the shadow-DOM textarea. Leaves the message as a draft for a human to review and send.",
+  "domain": "reddit.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigate to the recipient's profile, close any stale chat sidebar, follow the chat link, verify the open chat is for the right user, pierce shadow DOM for the message textarea, and paste the message with the native setter.",
+    "sequences": [
+      {
+        "name": "reddit_dm",
+        "description": "profile → close stale chat → open chat → verify recipient → find textarea in shadow DOM → type message.",
+        "required_variables": [
+          {
+            "name": "recipient",
+            "description": "Reddit username (without the u/ prefix) to DM."
+          },
+          {
+            "name": "message_body",
+            "description": "URL-encoded message text. The workflow calls decodeURIComponent() before typing, so pass the message URL-encoded to survive shell/JSON escaping."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Open the recipient's profile page",
+            "type": "navigate_to_url",
+            "url": "https://www.reddit.com/user/{recipient}/",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s2",
+            "name": "Wait for the profile shell to render",
+            "type": "wait_for_element",
+            "selector": "main, [data-testid='profile-content'], faceplate-tracker[noun='profile']",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s3",
+            "name": "Close any stale chat sidebar left from a previous session",
+            "type": "execute_javascript",
+            "timeout_ms": 8000,
+            "script": "function walk(root, d) { if (d > 10) return 0; let closed = 0; for (const n of root.querySelectorAll('*')) { if (n.tagName === 'BUTTON') { const label = n.getAttribute('aria-label') || ''; if (/close|minimize|collapse/i.test(label)) { const r = n.getBoundingClientRect(); if (r.width > 0 && r.height > 0) { n.click(); closed++; } } } if (n.shadowRoot) closed += walk(n.shadowRoot, d + 1); } return closed; } return JSON.stringify({ closed: walk(document, 0) });"
+          },
+          {
+            "id": "s4",
+            "name": "Brief pause after closing any stale chat",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s5",
+            "name": "Extract the chat link from the profile and navigate to it",
+            "type": "execute_javascript",
+            "timeout_ms": 10000,
+            "script": "const link = document.querySelector('a[href*=\"chat.reddit.com/user/\"]') || document.querySelector('a[href*=\"/chat/user/\"]'); if (!link) throw new Error('No chat link found on profile — recipient may have DMs disabled'); const chatUrl = link.href; setTimeout(() => { window.location.assign(chatUrl); }, 0); return JSON.stringify({ chat_url: chatUrl });"
+          },
+          {
+            "id": "s6",
+            "name": "Wait for the chat sidebar to hydrate",
+            "type": "wait_for_timeout",
+            "timeout_ms": 12000
+          },
+          {
+            "id": "s7a",
+            "name": "Quick check: room-name already matches? If not, click the recipient's row in the sidebar list",
+            "type": "execute_javascript",
+            "timeout_ms": 8000,
+            "args": [
+              "{recipient}"
+            ],
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const want = cleanArg(arg0); if (!want) throw new Error('recipient is required'); const wantLc = want.toLowerCase(); function collectRooms(root, d, out) { if (d > 10) return; for (const n of root.querySelectorAll('*')) { if (n.classList && n.classList.contains('room-name')) { const t = (n.innerText || '').trim(); if (t) out.push({ text: t, node: n }); } if (n.shadowRoot) collectRooms(n.shadowRoot, d + 1, out); } } const rooms = []; collectRooms(document, 0, rooms); if (!rooms.length) return JSON.stringify({ action: 'none', reason: 'no room-name nodes yet' }); const open = rooms.find(r => r.node.closest('[class*=\"chat-header\"], [class*=\"room-header\"], header')); if (open && open.text.toLowerCase() === wantLc) return JSON.stringify({ action: 'none', already_on: open.text }); const match = rooms.find(r => r.text.toLowerCase() === wantLc); if (!match) { const visible = rooms.slice(0, 5).map(r => r.text); return JSON.stringify({ action: 'none', reason: 'recipient not in visible sidebar', visible_rooms: visible }); } const clickable = match.node.closest('a, [role=\"button\"], li, [data-testid]') || match.node.parentElement; clickable.click(); return JSON.stringify({ action: 'clicked_sidebar_row', text: match.text });"
+          },
+          {
+            "id": "s7b",
+            "name": "Wait for the clicked chat to open",
+            "type": "wait_for_timeout",
+            "timeout_ms": 3000
+          },
+          {
+            "id": "s7c",
+            "name": "Verify the open chat now matches the requested recipient",
+            "type": "execute_javascript",
+            "timeout_ms": 10000,
+            "args": [
+              "{recipient}"
+            ],
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const want = cleanArg(arg0); const wantLc = want.toLowerCase(); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); function findActiveRoom(root, d) { if (d > 10) return ''; for (const n of root.querySelectorAll('*')) { if (!n.classList || !n.classList.contains('room-name')) { if (n.shadowRoot) { const f = findActiveRoom(n.shadowRoot, d + 1); if (f) return f; } continue; } const inHeader = n.closest('[class*=\"chat-header\"], [class*=\"room-header\"], header'); if (inHeader) { const t = (n.innerText || '').trim(); if (t) return t; } if (n.shadowRoot) { const f = findActiveRoom(n.shadowRoot, d + 1); if (f) return f; } } return ''; } let lastSeen = ''; const deadline = Date.now() + 8000; while (Date.now() < deadline) { const name = findActiveRoom(document, 0); if (name) lastSeen = name; if (name && name.toLowerCase() === wantLc) return JSON.stringify({ verified: true, name: name }); await sleep(400); } if (!lastSeen) return JSON.stringify({ verified: false, warning: 'could not find active chat header, proceeding' }); throw new Error('chat did not switch to recipient: currently showing ' + lastSeen + ' (expected ' + want + ')');"
+          },
+          {
+            "id": "s8",
+            "name": "Pierce shadow DOM to find the message textarea, focus it, and cache it on window",
+            "type": "execute_javascript",
+            "timeout_ms": 8000,
+            "script": "function findChatTA(root, d) { if (d > 10) return null; for (const n of root.querySelectorAll('*')) { if (n.tagName === 'TEXTAREA' && n.name === 'message' && n.offsetWidth > 0) return n; if (n.shadowRoot) { const f = findChatTA(n.shadowRoot, d + 1); if (f) return f; } } return null; } const ta = findChatTA(document, 0); if (!ta) throw new Error('chat textarea not found in shadow DOM'); ta.focus(); ta.click(); window.__rzn_chat_ta = ta; return JSON.stringify({ found: true });"
+          },
+          {
+            "id": "s9",
+            "name": "Type the URL-decoded message via paste event, falling back to the native setter",
+            "type": "execute_javascript",
+            "timeout_ms": 10000,
+            "args": [
+              "{message_body}"
+            ],
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const raw = cleanArg(arg0); if (!raw) throw new Error('message_body is required'); const msg = decodeURIComponent(raw); const ta = window.__rzn_chat_ta; if (!ta) throw new Error('chat textarea reference missing — s8 likely did not run'); ta.focus(); ta.click(); try { const dt = new DataTransfer(); dt.setData('text/plain', msg); ta.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true, composed: true })); } catch (e) {} await new Promise(r => setTimeout(r, 200)); if (!ta.value || ta.value.length < msg.length / 2) { const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; setter.call(ta, msg); ta.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: msg })); ta.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: msg })); ta.dispatchEvent(new Event('change', { bubbles: true, composed: true })); } return JSON.stringify({ typed_chars: msg.length, ta_value_length: (ta.value || '').length });"
+          },
+          {
+            "id": "s10",
+            "name": "Brief pause to let the composer reconcile before yielding",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1000
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Draft a DM to a Reddit user via the chat sidebar. Leaves the message in the textarea for a human to send.",
+    "parameters": [
+      {
+        "name": "recipient",
+        "required": true,
+        "shape": "reddit username (no u/ prefix)",
+        "description": "Username of the DM recipient. Must exist, must have DMs enabled, and must not be blocked — otherwise the chat link will be missing on their profile.",
+        "example": "spez"
+      },
+      {
+        "name": "message_body",
+        "required": true,
+        "shape": "url-encoded text",
+        "description": "Message body, URL-encoded. The workflow calls decodeURIComponent() before typing, so pass e.g. encodeURIComponent('Hi there — quick question about…') to survive shell/JSON escaping of special characters.",
+        "example": "Hi%20there%20%E2%80%94%20quick%20question."
+      }
+    ],
+    "examples": [
+      {
+        "description": "Draft a simple DM",
+        "command": "rzn-browser run reddit dm --param recipient=\"spez\" --param message_body=\"Hello%20there\""
+      }
+    ],
+    "returns": "JSON blobs logged per step: chat URL navigated to, whether recipient was verified, and the typed character count.",
+    "notes": [
+      "Draft-only by design — the workflow does not click Send. A human reviewing before sending is the intended contract.",
+      "If the recipient's profile has no chat link (DMs disabled / blocked), the workflow fails at the 'Extract chat link' step with a clear error.",
+      "message_body must be URL-encoded. Do not pass raw text with special characters — decodeURIComponent will mangle it."
+    ]
+  }
+}

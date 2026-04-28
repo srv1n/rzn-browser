@@ -1,0 +1,130 @@
+{
+  "system_id": "pubmed",
+  "id": "pubmed_extract_v1",
+  "name": "PubMed Extract Workflow",
+  "description": "Extract comprehensive paper information from PubMed",
+  "domain": "pubmed.ncbi.nlm.nih.gov",
+  "version": "1.0.0",
+  "last_updated": "2025-07-30T00:00:00Z",
+  "browser_automation": {
+    "description": "Workflow to extract detailed paper information from PubMed",
+    "sequences": [
+      {
+        "name": "pubmed_extract_details",
+        "description": "Extracts comprehensive paper details from a PubMed page",
+        "required_variables": [
+          {
+            "name": "pmid",
+            "description": "The PubMed ID or full URL of the paper"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to paper",
+            "type": "navigate_to_url",
+            "url": "https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for content",
+            "type": "wait_for_timeout",
+            "timeout_ms": 5000
+          },
+          {
+            "id": "s3",
+            "name": "Extract title",
+            "type": "get_element_text",
+            "selector": "h1, .heading-title, .article-title, [data-testid='article-title']"
+          },
+          {
+            "id": "s4",
+            "name": "Extract authors with affiliations",
+            "type": "extract_structured_data",
+            "item_selector": ".authors-list .authors-list-item, .author, [data-testid='author']",
+            "fields": [
+              {
+                "name": "name",
+                "selector": ".full-name, .author-name, a"
+              },
+              {
+                "name": "affiliation",
+                "selector": ".affiliation-name, .affiliation, sup"
+              }
+            ]
+          },
+          {
+            "id": "s5",
+            "name": "Extract abstract",
+            "type": "get_element_text",
+            "selector": "#abstract, .abstract-content, [data-testid='abstract'], .abstract"
+          },
+          {
+            "id": "s6",
+            "name": "Extract keywords",
+            "type": "extract_structured_data",
+            "item_selector": ".keywords .keyword, .mesh-terms a, [data-testid='mesh-term']",
+            "fields": [
+              {
+                "name": "term",
+                "selector": ""
+              }
+            ]
+          },
+          {
+            "id": "s7",
+            "name": "Extract journal",
+            "type": "get_element_text",
+            "selector": ".journal-title, .citation .journal, [data-testid='journal']"
+          },
+          {
+            "id": "s8",
+            "name": "Extract publication date",
+            "type": "get_element_text",
+            "selector": ".citation .cit, .pub-date, [data-testid='publication-date']"
+          },
+          {
+            "id": "s9",
+            "name": "Extract PMID",
+            "type": "get_element_text",
+            "selector": ".id-pmid .id-link, .identifier .pmid, [data-testid='pmid']"
+          },
+          {
+            "id": "s10",
+            "name": "Extract DOI",
+            "type": "get_element_text",
+            "selector": ".id-doi .id-link, .identifier .doi, [data-testid='doi'], a[href*='doi.org']"
+          },
+          {
+            "id": "s11",
+            "name": "Extract PMC ID",
+            "type": "get_element_text",
+            "selector": ".id-pmc .id-link, .identifier .pmc, [data-testid='pmc'], a[href*='pmc']"
+          },
+          {
+            "id": "s12",
+            "name": "Extract full text links",
+            "type": "extract_structured_data",
+            "item_selector": ".full-text-links-list .link-item, .full-text-link, [data-testid='full-text-link']",
+            "fields": [
+              {
+                "name": "source",
+                "selector": ".link-name, .source"
+              },
+              {
+                "name": "url",
+                "selector": "a"
+              }
+            ]
+          },
+          {
+            "id": "s13",
+            "name": "Extract cited by count",
+            "type": "get_element_text",
+            "selector": ".citedby-count, .citations-count, [data-testid='citations']"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "system_id": "instagram",
+  "id": "instagram_post_comment_v1",
+  "name": "Instagram: Post Comment",
+  "description": "Post one text comment on an Instagram post or reel URL. Each call creates a new public comment attributed to the signed-in account, so callers are responsible for deduping — this workflow does NOT check whether the same comment already exists before posting. Use this for low-volume, human-like engagement only; Instagram rate-limits rapid commenting aggressively. Do not use this to reply to a specific comment (reply-threads need a different entry point).",
+  "domain": "instagram.com",
+  "version": "1.0.0",
+  "help": {
+    "summary": "Post one top-level comment on an Instagram post or reel.",
+    "parameters": [
+      {
+        "name": "post_url",
+        "required": true,
+        "shape": "string",
+        "description": "Full Instagram post, reel, or tv URL.",
+        "example": "https://www.instagram.com/p/DXexrK0De7B/"
+      },
+      {
+        "name": "comment_text",
+        "required": true,
+        "shape": "string",
+        "description": "Text body of the comment. Typed character-by-character into the composer textarea. Instagram enforces a 2200-character limit; this workflow rejects longer strings.",
+        "example": "Great shot!"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Post a short comment on a specific post",
+        "command": "rzn-browser run instagram post-comment --param post_url=\"https://www.instagram.com/p/DXexrK0De7B/\" --param comment_text=\"Great shot!\""
+      }
+    ],
+    "returns": "JSON with post_url, comment_text_preview (first 80 chars), and status: one of posted | login_required | not_found | composer_not_found | submit_disabled | submit_button_not_found | click_failed | over_length. On posted, also returns submit_click=true.",
+    "notes": [
+      "Requires a logged-in Instagram session in the active Chrome profile; returns status=login_required if signed out.",
+      "Opens a dedicated workflow tab (use_current_tab=false), so this workflow is safe to run in parallel with other dedicated-tab instagram flows.",
+      "Not idempotent: every call posts a new comment. Dedupe in the caller if needed.",
+      "The composer is a textarea with aria-label 'Add a comment…' and the submit button is labeled 'Post' or 'Share' depending on Instagram's surface. Both labels are handled.",
+      "Over-length guard: strings longer than 2200 characters return over_length without opening the composer."
+    ]
+  },
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Opens a dedicated workflow tab, navigates to one post, focuses the comment composer, types the message with real keystrokes, and clicks the submit button when it becomes enabled.",
+    "sequences": [
+      {
+        "name": "instagram_post_comment",
+        "description": "Post a single top-level comment on one post or reel.",
+        "required_variables": [
+          {
+            "name": "post_url",
+            "description": "Full Instagram post or reel URL"
+          },
+          {
+            "name": "comment_text",
+            "description": "Comment body text"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Open the Instagram post",
+            "type": "navigate_to_url",
+            "url": "{post_url}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s2",
+            "name": "Allow the post page to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 3000
+          },
+          {
+            "id": "s3",
+            "name": "Allow the post page extra time to hydrate",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1500
+          },
+          {
+            "id": "s4",
+            "name": "Type the comment and submit",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 45000,
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\nconst normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();\nconst postUrl = cleanArg('{post_url}');\nconst commentText = cleanArg('{comment_text}');\nconst preview = commentText.slice(0, 80);\nif (!commentText) throw new Error('comment_text is required');\nif (commentText.length > 2200) return { post_url: postUrl, comment_text_preview: preview, status: 'over_length', length: commentText.length };\nconst bodyText = normalize(document.body?.innerText || '');\nif (/login|log in|sign up/i.test(document.title) || document.querySelector('input[name=\"username\"], input[name=\"enc_password\"]')) return { post_url: postUrl, comment_text_preview: preview, status: 'login_required', url: location.href };\nif (/sorry, this page isn't available|page isn't available|user not found/i.test(bodyText)) return { post_url: postUrl, comment_text_preview: preview, status: 'not_found', url: location.href };\nconst article = document.querySelector('article') || document.querySelector('main');\nlet composer = article?.querySelector(\"textarea[aria-label^='Add a comment'], textarea[placeholder^='Add a comment']\") || document.querySelector(\"textarea[aria-label^='Add a comment'], textarea[placeholder^='Add a comment']\");\nif (!composer) {\n  const toggle = Array.from((article || document).querySelectorAll('span, div, button, [role=\"button\"]')).find((node) => /^add a comment/i.test(normalize(node.textContent || '')));\n  if (toggle) { toggle.click(); await sleep(500); composer = article?.querySelector(\"textarea[aria-label^='Add a comment'], textarea[placeholder^='Add a comment']\") || document.querySelector(\"textarea[aria-label^='Add a comment'], textarea[placeholder^='Add a comment']\"); }\n}\nif (!composer) return { post_url: postUrl, comment_text_preview: preview, status: 'composer_not_found', url: location.href };\ncomposer.focus();\nconst valueSetter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;\nvalueSetter.call(composer, '');\ncomposer.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: null, inputType: 'deleteContentBackward' }));\nawait sleep(120);\nlet typed = '';\nfor (const ch of commentText) {\n  typed += ch;\n  composer.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));\n  valueSetter.call(composer, typed);\n  composer.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: ch, inputType: 'insertText' }));\n  composer.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));\n  if (typed.length % 40 === 0) await sleep(25);\n}\ncomposer.dispatchEvent(new Event('change', { bubbles: true }));\nawait sleep(600);\nconst isVisible = (node) => { if (!(node instanceof Element)) return false; const rect = node.getBoundingClientRect(); if (rect.width <= 0 || rect.height <= 0) return false; const style = window.getComputedStyle(node); return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0'; };\nconst form = composer.closest('form') || article;\nconst submitCandidates = Array.from((form || article || document).querySelectorAll('button, [role=\"button\"]')).filter(isVisible).filter((node) => /^(post|share)$/i.test(normalize(node.textContent || '')));\nconst submit = submitCandidates.find((node) => !(node.getAttribute('aria-disabled') === 'true' || node.disabled)) || submitCandidates[0];\nif (!submit) return { post_url: postUrl, comment_text_preview: preview, status: 'submit_button_not_found', url: location.href };\nif (submit.getAttribute('aria-disabled') === 'true' || submit.disabled) return { post_url: postUrl, comment_text_preview: preview, status: 'submit_disabled', submit_label: normalize(submit.textContent || ''), url: location.href };\nsubmit.scrollIntoView({ block: 'center', inline: 'center' });\ntry { submit.focus?.({ preventScroll: true }); } catch {}\ntry { submit.click(); } catch {}\nfor (const type of ['pointerdown','mousedown','pointerup','mouseup','click']) {\n  try {\n    const Ctor = type.startsWith('pointer') && typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent;\n    submit.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, composed: true, view: window, button: 0, buttons: 1, pointerType: 'mouse' }));\n  } catch {}\n}\nawait sleep(1500);\nconst composerAfter = document.querySelector(\"textarea[aria-label^='Add a comment'], textarea[placeholder^='Add a comment']\");\nconst cleared = !composerAfter || !composerAfter.value;\nif (cleared) return { post_url: postUrl, comment_text_preview: preview, status: 'posted', submit_click: true, submit_label: normalize(submit.textContent || ''), url: location.href };\nreturn { post_url: postUrl, comment_text_preview: preview, status: 'click_failed', submit_click: true, submit_label: normalize(submit.textContent || ''), composer_value_after: composerAfter?.value?.slice(0, 80), url: location.href };"
+          }
+        ]
+      }
+    ]
+  }
+}

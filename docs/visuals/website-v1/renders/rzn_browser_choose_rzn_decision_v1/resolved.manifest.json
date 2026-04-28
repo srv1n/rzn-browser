@@ -1,0 +1,95 @@
+{
+  "asset": {
+    "height": 900,
+    "kind": "decision_diagram",
+    "template_id": "editorial.decision_tree.v1",
+    "width": 1400
+  },
+  "constraints": {
+    "overflow_policy": "fail",
+    "slots": {
+      "eyebrow": {
+        "max_chars": 18,
+        "max_lines": 1
+      },
+      "proof.branches.label": {
+        "max_chars": 14,
+        "max_lines": 1
+      },
+      "proof.branches.value": {
+        "max_chars": 76,
+        "max_lines": 5
+      },
+      "proof.question": {
+        "max_chars": 42,
+        "max_lines": 2
+      },
+      "subtitle": {
+        "max_chars": 96,
+        "max_lines": 3
+      },
+      "title": {
+        "max_chars": 44,
+        "max_lines": 2
+      }
+    },
+    "thumbnail_legibility": true
+  },
+  "copy": {
+    "eyebrow": "Decision guide",
+    "subtitle": "If you need a hosted browser fleet, use something else. RZN wins when the real session matters.",
+    "title": "Choose RZN when local Chrome is the point"
+  },
+  "meta": {
+    "id": "rzn_browser_choose_rzn_decision_v1",
+    "locale": "en_US",
+    "page_url": "https://github.com/srv1n/rzn-browser#why-it-exists",
+    "repo": "rzn-browser"
+  },
+  "outputs": [
+    {
+      "format": "png",
+      "path": "rzn_browser_choose_rzn_decision_v1.png"
+    },
+    {
+      "format": "svg",
+      "path": "rzn_browser_choose_rzn_decision_v1.svg"
+    }
+  ],
+  "proof": {
+    "branches": [
+      {
+        "label": "Real session",
+        "value": "Use RZN when cookies, tabs, and extensions need to stay put."
+      },
+      {
+        "label": "Repeatable",
+        "value": "Start with workflows when the task should run the same way every time."
+      },
+      {
+        "label": "Goal-based",
+        "value": "Use llm-auto when the browser must adapt instead of following fixed steps."
+      },
+      {
+        "label": "Cloud scale",
+        "value": "Pick a cloud platform when the job is hosted browser infrastructure."
+      }
+    ],
+    "kind": "decision_tree",
+    "question": "What are you actually trying to automate?"
+  },
+  "qa": {
+    "fail_on_warn": true,
+    "required_checks": [
+      "no_overflow",
+      "no_overlap",
+      "grid_alignment",
+      "font_lock",
+      "thumbnail_legibility"
+    ]
+  },
+  "schema": "clipper.website_visual.manifest.v0.1",
+  "theme": {
+    "theme_ref": "builtin:editorial_midnight_v1"
+  }
+}

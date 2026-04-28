@@ -1,0 +1,83 @@
+{
+  "system_id": "x",
+  "id": "x_open_dm_thread",
+  "name": "X: Open DM Thread",
+  "description": "Open one X DM thread URL in a fresh tab and return whether the thread composer surface or the passcode-onboarding gate is present. Use for read-only inspection of a specific thread. Do not use to send a reply (use `x_reply_dm_thread`) or to list all threads (use `x_open_inbox`).",
+  "domain": "x.com",
+  "version": "1.1.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigates a fresh tab to the thread URL and waits for either the DM composer, a thread link, or the passcode onboarding gate.",
+    "sequences": [
+      {
+        "name": "x_open_dm_thread",
+        "description": "Open DM thread URL -> snapshot composer/onboarding state.",
+        "required_variables": [
+          {
+            "name": "thread_url",
+            "description": "Full X DM thread URL"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open the DM thread in a fresh tab",
+            "type": "navigate_to_url",
+            "url": "{thread_url}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow thread navigation to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1800
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the DM composer, thread surface, or onboarding gate",
+            "type": "wait_for_element",
+            "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], main [href*='/messages/'], main [href*='/i/chat/'], button[data-testid='pin-onboarding-setup-now']",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s4",
+            "name": "Read the opened thread or onboarding state",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 10000,
+            "script": "return { url: location.href, composer_present: !!document.querySelector(\"div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput']\"), thread_link_count: document.querySelectorAll(\"main a[href*='/messages/'], main a[href*='/i/chat/']\").length, pin_onboarding_present: !!document.querySelector(\"button[data-testid='pin-onboarding-setup-now']\") };"
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Open one X DM thread URL read-only and snapshot its surface state.",
+    "parameters": [
+      {
+        "name": "thread_url",
+        "required": true,
+        "shape": "url",
+        "description": "Full X DM thread URL such as https://x.com/messages/123-456.",
+        "example": "https://x.com/messages/123-456"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run x open-dm-thread --param thread_url=\"https://x.com/messages/123-456\"",
+        "description": "Load one thread and return composer state."
+      }
+    ],
+    "returns": "{ url, composer_present, thread_link_count, pin_onboarding_present }.",
+    "notes": [
+      "Read-only: never sends.",
+      "If onboarding is gating access, finish the X Chat passcode setup manually before using reply workflows.",
+      "Opens a fresh tab so parallel runs don't interfere."
+    ]
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "system_id": "bing",
+  "id": "bing_videos_search",
+  "name": "Bing: Videos Search",
+  "description": "Run a Bing Videos search in a fresh tab and return up to 20 video cards (title, url, channel). Use for finding videos across YouTube / Vimeo / MSN and similar sources indexed by Bing. Do not use for reading news articles (`bing_news_search`) or general web results (`bing_web_search`).",
+  "domain": "bing.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigates a fresh tab to /videos/search, waits for the video tile grid, and extracts up to 20 tiles.",
+    "sequences": [
+      {
+        "name": "bing_videos_search",
+        "description": "Open Bing Videos -> wait for tiles -> extract up to 20.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "Video search query"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Bing Videos search",
+            "type": "navigate_to_url",
+            "url": "https://www.bing.com/videos/search?q={search_query}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s2",
+            "name": "Allow results to hydrate",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s3",
+            "name": "Wait for video tiles",
+            "type": "wait_for_element",
+            "selector": "div.mc_vtvc",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s4",
+            "name": "Extract up to 20 video tiles",
+            "type": "extract_structured_data",
+            "item_selector": "div.mc_vtvc",
+            "max_items": 20,
+            "fields": [
+              { "name": "title", "selector": "div.mc_vtvc_title" },
+              { "name": "url", "selector": "a.mc_vtvc_link", "attribute": "href" },
+              { "name": "channel", "selector": ".mc_vtvc_meta_row_channel, .b_footnote" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Return up to 20 video tiles from Bing Videos for one search query.",
+    "parameters": [
+      {
+        "name": "search_query",
+        "required": true,
+        "shape": "text",
+        "description": "Video search query.",
+        "example": "claude code tutorial"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run bing videos-search --param search_query=\"claude code tutorial\"",
+        "description": "Return up to 20 video tiles with title, url, and channel."
+      }
+    ],
+    "returns": "Array of { title, url, channel }.",
+    "notes": [
+      "Read-only.",
+      "Bing's video grid hosts YouTube / Vimeo / MSN / native video hotlinks — follow the `url` to the real source.",
+      "Opens a fresh tab."
+    ]
+  }
+}

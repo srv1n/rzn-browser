@@ -1,0 +1,119 @@
+{
+  "system_id": "youtube",
+  "id": "youtube_search_v1",
+  "name": "YouTube Search",
+  "description": "Search YouTube and extract results. Supports the videos, playlists, channels, live, and movies filter pills. Returns up to `limit` items with the canonical id, title, channel, duration, views, and age.",
+  "domain": "youtube.com",
+  "version": "2.0.0",
+  "last_updated": "2026-04-24T00:00:00Z",
+  "help": {
+    "summary": "Run a YouTube search and return the top `limit` results for the chosen filter.",
+    "parameters": [
+      {
+        "name": "search_query",
+        "required": true,
+        "shape": "text",
+        "description": "Query text. Same string you would type into the YouTube search box.",
+        "example": "rust programming tutorial"
+      },
+      {
+        "name": "filter",
+        "required": false,
+        "shape": "enum: videos | playlists | channels | live | movies",
+        "description": "Which YouTube search filter to apply. Defaults to videos. Maps to YouTube's `sp` URL parameter; the extractor scopes to the matching renderer type so the output shape stays consistent within each filter.",
+        "example": "playlists"
+      },
+      {
+        "name": "limit",
+        "required": false,
+        "shape": "integer (1-50)",
+        "description": "Maximum number of results to return. Defaults to 20.",
+        "example": "10"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Default video search",
+        "command": "rzn-browser run youtube search --param search_query=\"rust programming tutorial\""
+      },
+      {
+        "description": "Top 5 playlists matching a query",
+        "command": "rzn-browser run youtube search --param search_query=\"machine learning course\" --param filter=playlists --param limit=5"
+      },
+      {
+        "description": "Channels matching a query",
+        "command": "rzn-browser run youtube search --param search_query=\"fireship\" --param filter=channels --param limit=10"
+      }
+    ],
+    "returns": "Object with { query, filter, url, returned_count, results[] }. For videos/live/movies each result is { video_id, title, channel, channel_url, url, duration, views, published, description }. For playlists: { playlist_id, title, channel, url, video_count }. For channels: { channel_id, handle, title, url, subscribers, description }.",
+    "notes": [
+      "Uses YouTube's built-in filter pills via the sp URL code. The codes have been stable for years but could rot — if a filter suddenly returns zero results, confirm the sp code is still accepted.",
+      "Shorts, shelves, ads, and horizontal carousels are skipped so the output stays clean. To get Shorts specifically, request the live/movies filter or fall back to filter=videos; dedicated shorts support is not implemented.",
+      "`published` and `views` are the human-readable strings YouTube renders (e.g. '2.3m views', '4 years ago'). Parse downstream if you need numeric values.",
+      "Requires a standard browser session. No sign-in required."
+    ]
+  },
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Dedicated-tab YouTube search. Navigates to the homepage to seed cookies, redirects to /results with the chosen sp filter, then extracts results.",
+    "sequences": [
+      {
+        "name": "youtube_search",
+        "description": "Open YouTube -> redirect to /results with chosen filter -> wait for results -> extract.",
+        "required_variables": [
+          { "name": "search_query", "description": "Search query for YouTube" }
+        ],
+        "optional_variables": [
+          { "name": "filter", "description": "Filter: videos | playlists | channels | live | movies" },
+          { "name": "limit", "description": "Max results (1-50). Defaults to 20." }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Open YouTube homepage",
+            "type": "navigate_to_url",
+            "url": "https://www.youtube.com/",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s2",
+            "name": "Redirect to /results with filter",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 20000,
+            "args": ["{search_query}", "{filter}"],
+            "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const q=cleanArg(arg0);if(!q)throw new Error('search_query is required');const f=cleanArg(arg1).toLowerCase();const sp={videos:'EgIQAQ%3D%3D',playlists:'EgIQAw%3D%3D',channels:'EgIQAg%3D%3D',live:'EgJAAQ%3D%3D',movies:'EgIQBA%3D%3D'}[f]||'';const params=new URLSearchParams({search_query:q});const target='https://www.youtube.com/results?'+params.toString()+(sp?('&sp='+sp):'');setTimeout(()=>window.location.assign(target),0);return{redirected:true,target,filter:f||'videos'};"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for results container",
+            "type": "wait_for_element",
+            "selector": "ytd-search ytd-section-list-renderer, ytd-two-column-search-results-renderer",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s4",
+            "name": "Dismiss consent/sign-in popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s5",
+            "name": "Wait for at least one result card",
+            "type": "wait_for_element",
+            "selector": "ytd-video-renderer, ytd-playlist-renderer, yt-lockup-view-model, ytd-channel-renderer, ytd-movie-renderer, ytd-radio-renderer",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s6",
+            "name": "Extract results",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 30000,
+            "args": ["{search_query}", "{filter}", "{limit}"],
+            "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const q=cleanArg(arg0);const fRaw=cleanArg(arg1).toLowerCase();const filter=['videos','playlists','channels','live','movies'].includes(fRaw)?fRaw:'videos';const n=parseInt(cleanArg(arg2),10);const limit=Number.isFinite(n)&&n>0?Math.min(n,50):20;const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const abs=(h)=>{if(!h)return'';try{return new URL(h,location.origin).toString();}catch{return String(h);}};const vidFromUrl=(u)=>{try{const x=new URL(u,location.origin);return x.pathname==='/watch'?x.searchParams.get('v'):null;}catch{return null;}};const listFromUrl=(u)=>{try{return new URL(u,location.origin).searchParams.get('list');}catch{return null;}};const dedupDur=(s)=>{const t=norm(s);if(!t)return'';const half=t.length/2;if(t.length%2===0&&t.slice(0,half)===t.slice(half))return t.slice(0,half);const parts=t.split(' ');if(parts.length>=2&&parts[0]===parts[1])return parts[0];return parts[0]||t;};const cardSelector=(filter==='playlists'||filter==='channels')?'yt-lockup-view-model, ytd-playlist-renderer, ytd-radio-renderer, ytd-channel-renderer':'ytd-video-renderer, ytd-movie-renderer';let lastCount=0,stall=0;for(let i=0;i<8;i++){const cur=document.querySelectorAll(cardSelector).length;if(cur>=limit)break;window.scrollTo({top:document.body.scrollHeight,behavior:'instant'});await sleep(900);if(cur===lastCount){stall++;if(stall>=2)break;}else{stall=0;}lastCount=cur;}window.scrollTo({top:0,behavior:'instant'});await sleep(200);const results=[];if(filter==='videos'||filter==='live'||filter==='movies'){const cards=Array.from(document.querySelectorAll('ytd-video-renderer, ytd-movie-renderer'));for(const el of cards){if(results.length>=limit)break;const a=el.querySelector('a#video-title, a#thumbnail[href*=\"/watch\"]');const href=a?.getAttribute('href');const url=abs(href);const video_id=vidFromUrl(url);if(!video_id)continue;const title=norm(el.querySelector('#video-title')?.textContent||a?.getAttribute('title')||'');const chA=el.querySelector('ytd-channel-name a, #channel-name a');const channel=norm(chA?.textContent||'');const channel_url=chA?abs(chA.getAttribute('href')):'';const metaSpans=Array.from(el.querySelectorAll('#metadata-line span')).map(s=>norm(s.textContent));const views=metaSpans.find(x=>/view/i.test(x))||metaSpans[0]||'';const published=metaSpans.find(x=>/ago|streamed|scheduled|premiered/i.test(x))||metaSpans[1]||'';const duration=dedupDur(el.querySelector('ytd-thumbnail-overlay-time-status-renderer')?.textContent||'');const description=norm(el.querySelector('.metadata-snippet-text, yt-formatted-string.metadata-snippet-text-navigation')?.textContent||'').slice(0,280);results.push({video_id,title,channel,channel_url,url,duration,views,published,description});}}else if(filter==='playlists'){const cards=Array.from(document.querySelectorAll('ytd-playlist-renderer, ytd-radio-renderer, yt-lockup-view-model'));for(const el of cards){if(results.length>=limit)break;const a=el.querySelector('a[href*=\"list=\"]');const href=a?.getAttribute('href');const url=abs(href);const playlist_id=listFromUrl(url);if(!playlist_id)continue;const title=norm(el.querySelector('#video-title, .ytLockupMetadataViewModelTitle, h3, a.ytLockupMetadataViewModelTitle')?.textContent||'');const chLink=el.querySelector('a[href*=\"/@\"], a[href*=\"/channel/\"]');const chTxt=chLink?norm(chLink.textContent):'';const channel=chTxt&&chTxt.toLowerCase()!=='course'&&chTxt.toLowerCase()!=='playlist'?chTxt:norm(el.querySelector('ytd-channel-name a')?.textContent||'');const countEl=el.querySelector('yt-thumbnail-badge-view-model, yt-thumbnail-bottom-overlay-view-model, yt-formatted-string.ytd-playlist-renderer');const video_count=norm(countEl?.textContent||'');if(!title)continue;results.push({playlist_id,title,channel,url,video_count});}}else if(filter==='channels'){const cards=Array.from(document.querySelectorAll('ytd-channel-renderer'));for(const el of cards){if(results.length>=limit)break;const a=el.querySelector('a[href]');const href=a?.getAttribute('href');const url=abs(href);if(!url||!/\\/(@|channel\\/|c\\/|user\\/)/.test(url))continue;const title=norm(el.querySelector('#text, ytd-channel-name #text')?.textContent||el.querySelector('#channel-title')?.textContent||'');const handleEl=el.querySelector('#subscribers, .ytd-channel-renderer #subscribers');let handle=norm(handleEl?.textContent||'');if(!handle.startsWith('@')){const m=url.match(/\\/(@[^/?#]+)/);if(m)handle=m[1];}const videoCountTxt=norm(el.querySelector('#video-count')?.textContent||'');const metaTxt=norm(el.querySelector('ytd-video-meta-block, yt-formatted-string.ytd-channel-renderer')?.textContent||'');const subsMatch=(metaTxt+' '+videoCountTxt).match(/([\\d.,KMB]+)\\s*subscribers?/i);const subscribers=subsMatch?subsMatch[0]:'';const description=norm(el.querySelector('.description')?.textContent||'').slice(0,200);let channel_id=null;const m2=url.match(/\\/channel\\/([^/?#]+)/);if(m2)channel_id=m2[1];results.push({channel_id,handle,title,url,subscribers,description});}}return{query:q,filter,url:location.href,returned_count:results.length,results};"
+          }
+        ]
+      }
+    ]
+  }
+}

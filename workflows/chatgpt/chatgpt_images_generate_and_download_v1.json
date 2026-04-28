@@ -1,0 +1,100 @@
+{
+  "system_id": "chatgpt",
+  "id": "chatgpt_images_generate_and_download_v1",
+  "name": "ChatGPT Images: Generate And Download",
+  "description": "Open ChatGPT Images, send a prompt, wait for the rendered image result in the same live tab, then trigger browser downloads from the result UI or the visible image URLs.",
+  "domain": "chatgpt.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "use_current_tab": true,
+    "description": "Current-tab ChatGPT Images generate-and-download flow.",
+    "sequences": [
+      {
+        "name": "chatgpt_images_generate_and_download",
+        "description": "Open Images -> send prompt -> wait for result in same tab -> trigger download(s).",
+        "required_variables": [
+          {
+            "name": "message_text",
+            "description": "Prompt text to send to ChatGPT Images"
+          },
+          {
+            "name": "download_folder",
+            "description": "Folder name under the browser Downloads directory where the result should be saved"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open ChatGPT Images in the current tab",
+            "type": "navigate_to_url",
+            "url": "https://chatgpt.com/images/",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the Images SPA shell to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1800
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the ChatGPT Images composer",
+            "type": "wait_for_element",
+            "selector": "#prompt-textarea, textarea[placeholder*='Describe' i], textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], form textarea, div[role='textbox'][contenteditable='true']",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s4",
+            "name": "Send the image generation prompt",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 180000,
+            "args": [
+              "{message_text}",
+              "{variation_count}"
+            ],
+            "script": "const clean=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const message=clean(arg0);const parsedCount=Number.parseInt(clean(arg1),10);const variationCount=Number.isFinite(parsedCount)&&parsedCount>0?parsedCount:2;if(!message) throw new Error('message_text is required');const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const normalize=(v)=>(v||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const visible=(n)=>!!(n&&n instanceof Element&&getComputedStyle(n).visibility!=='hidden'&&getComputedStyle(n).display!=='none'&&n.getBoundingClientRect().width>0&&n.getBoundingClientRect().height>0);const composer=()=>Array.from(document.querySelectorAll(\"#prompt-textarea, textarea[placeholder*='Describe' i], textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], form textarea, div[role='textbox'][contenteditable='true'], [contenteditable='true'][data-testid*='composer']\")).find(visible)||null;const setText=(node,text)=>{node.focus();if(node instanceof HTMLTextAreaElement||node instanceof HTMLInputElement){const setter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node),'value')?.set||Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')?.set||Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;if(setter) setter.call(node,text);else node.value=text;node.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));node.dispatchEvent(new Event('change',{bubbles:true}));return;}node.textContent=text;node.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));};const sendBtn=(comp)=>{const form=comp?.closest('form');const scopes=[form,comp?.parentElement,comp?.closest('[role=\"group\"]'),comp?.closest('main')].filter(Boolean);for(const scope of scopes){const candidates=Array.from(scope.querySelectorAll(\"button, [role='button']\")).filter(visible);const preferred=candidates.find((node)=>{const label=normalize([node.getAttribute('aria-label')||'',node.getAttribute('title')||'',node.getAttribute('data-testid')||'',node.textContent||''].join(' ')).toLowerCase();const disabled=node.matches(':disabled')||node.getAttribute('aria-disabled')==='true';if(disabled) return false;if(/share|post\\b|twitter|x\\.com|copy link|export/.test(label)) return false;return /send prompt|send|submit|create image|create images|generate/.test(label);});if(preferred) return preferred;const submit=candidates.find((node)=>!node.matches(':disabled')&&node.getAttribute('type')==='submit');if(submit) return submit;}return null;};const finalPrompt=/\\b(?:exactly|create)\\s+\\d+\\s+(?:distinct\\s+)?(?:image\\s+)?variations?\\b/i.test(normalize(message))?message:`${normalize(message)}\\n\\nGenerate exactly ${variationCount} distinct image variations. Return the final images in this chat.`;let comp=composer();if(!comp) throw new Error('ChatGPT Images composer not found');setText(comp,finalPrompt);await sleep(250);comp=composer()||comp;const btn=sendBtn(comp);if(!btn) throw new Error('ChatGPT Images send button not found');btn.click();return {url:window.location.href,title:document.title,submitted_prompt:finalPrompt,variation_count:variationCount};"
+          },
+          {
+            "id": "s5",
+            "name": "Install same-tab result watcher and download trigger",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 20000,
+            "args": [
+              "{download_folder}",
+              "{variation_count}"
+            ],
+            "script": "const clean=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const downloadFolder=clean(arg0)||`chatgpt_images_${Date.now()}`;const parsedCount=Number.parseInt(clean(arg1),10);const variationCount=Number.isFinite(parsedCount)&&parsedCount>0?parsedCount:2;const normalize=(v)=>(v||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const visible=(n)=>!!(n&&n instanceof Element&&getComputedStyle(n).visibility!=='hidden'&&getComputedStyle(n).display!=='none'&&n.getBoundingClientRect().width>0&&n.getBoundingClientRect().height>0);const imageUrl=(img)=>{const srcset=String(img.getAttribute('srcset')||'').split(',').map((p)=>p.trim()).filter(Boolean);const srcsetUrl=srcset.length?srcset[srcset.length-1].split(/\\s+/)[0]:'';const raw=img.currentSrc||img.src||img.getAttribute('src')||srcsetUrl||'';try{return raw?new URL(raw,window.location.origin).toString():'';}catch{return raw;}};const imageScore=(img)=>{const w=img.naturalWidth||img.width||img.clientWidth||0;const h=img.naturalHeight||img.height||img.clientHeight||0;return w*h;};const labelText=(node)=>normalize([node?.getAttribute?.('aria-label')||'',node?.getAttribute?.('title')||'',node?.getAttribute?.('data-testid')||'',node?.textContent||''].join(' ')).toLowerCase();const goodImage=(img)=>{const url=imageUrl(img);if(!url||/^data:/i.test(url)||/avatar|profile|favicon|icon|emoji|spinner|loading/i.test(url)) return false;const area=imageScore(img);if(area&&area<60000) return false;const label=labelText(img);if(/avatar|profile|icon|logo/.test(label)) return false;return visible(img);};const candidateImages=()=>Array.from(document.querySelectorAll('img')).filter((img)=>img instanceof HTMLImageElement&&goodImage(img)).sort((a,b)=>imageScore(b)-imageScore(a));const streaming=()=>Array.from(document.querySelectorAll('button, [role=\"button\"]')).filter(visible).some((node)=>/stop generating|continue generating|resume|stop creating/i.test(labelText(node)));const createdTextPresent=()=>/image created|created|download|save/.test(normalize(document.body.innerText||'').toLowerCase());const root=document.documentElement;const key='__rznChatgptImageDownloadState';const setStatus=(status)=>{root.setAttribute('data-rzn-chatgpt-download-status', status);state.status=status;};const state=window[key]={...(window[key]||{}),download_folder:downloadFolder,variation_count:variationCount,installed_at:Date.now(),url:window.location.href,title:document.title,status:'pending'};if(state.timer){clearTimeout(state.timer);state.timer=null;}state.error=null;state.running=false;setStatus('pending');const bridge=window.__rznExecuteStep;const schedule=()=>{state.timer=setTimeout(tick, 1500);};const findInlineDownload=(index)=>{const scope=document.querySelector(`[data-rzn-chatgpt-download-card=\"${index}\"]`)||document.querySelector(`img[data-rzn-chatgpt-download-target=\"${index}\"]`)?.parentElement||document.body;const nodes=Array.from(scope.querySelectorAll('button, [role=\"button\"], a')).filter(visible);return nodes.find((node)=>{const label=labelText(node);return /download|save/.test(label)&&!/share|copy link|twitter|x\\.com|export/.test(label);})||null;};const tick=async()=>{if(state.running||state.status==='complete'||state.status==='error') return;state.running=true;try{const readyImages=candidateImages();state.last_seen_image_count=readyImages.length;state.last_streaming=streaming();if(!(readyImages.length>0&&!state.last_streaming&&createdTextPresent())){schedule();return;}const dedupedImages=[];const seenUrls=new Set();for(const img of readyImages){const url=imageUrl(img)||`node:${dedupedImages.length}`;if(seenUrls.has(url)) continue;seenUrls.add(url);dedupedImages.push(img);}const targets=[];const targetLimit=Math.max(1,Math.min(variationCount, dedupedImages.length));for(let i=0;i<targetLimit;i++){const img=dedupedImages[i];img.setAttribute('data-rzn-chatgpt-download-target', String(i+1));const card=img.closest('figure, article, [role=\"group\"], div')||img.parentElement||img;card?.setAttribute?.('data-rzn-chatgpt-download-card', String(i+1));targets.push({index:i+1,url:imageUrl(img),alt:normalize(img.alt||''),width:img.naturalWidth||img.width||img.clientWidth||0,height:img.naturalHeight||img.height||img.clientHeight||0});}state.target_image_count=targets.length;state.target_images=targets;let directResult=null;if(typeof bridge==='function'){try{directResult=await bridge({type:'download_images',selector:'img[data-rzn-chatgpt-download-target]',download_folder:downloadFolder,limit:Math.max(1,targetLimit)});}catch(error){directResult={success:false,error:(error&&error.message)||String(error)};}}state.direct_result=directResult;const directDownloaded=Number(directResult?.downloaded||0);if(directDownloaded>0){state.download_strategy='bridge_direct_download';setStatus('complete');return;}const uiResults=[];for(const target of targets){const imgSel=`img[data-rzn-chatgpt-download-target=\"${target.index}\"]`;const cardSel=`[data-rzn-chatgpt-download-card=\"${target.index}\"]`;try{if(typeof bridge!=='function') throw new Error('window.__rznExecuteStep bridge unavailable');try{await bridge({type:'hover_element',selector:cardSel});await new Promise(r=>setTimeout(r,700));}catch{}let inline=findInlineDownload(target.index);if(inline){inline.setAttribute('data-rzn-chatgpt-active-download', String(target.index));await bridge({type:'click_element',selector:`[data-rzn-chatgpt-active-download=\"${target.index}\"]`});uiResults.push({index:target.index,mode:'inline_button'});await new Promise(r=>setTimeout(r,1800));continue;}await bridge({type:'click_element',selector:imgSel});await new Promise(r=>setTimeout(r,1200));const globalSave=Array.from(document.querySelectorAll('button, [role=\"button\"], a')).filter(visible).find((node)=>{const label=labelText(node);return /download|save/.test(label)&&!/share|copy link|twitter|x\\.com|export/.test(label);});if(!globalSave) throw new Error('Save/download button not found after opening image viewer');globalSave.setAttribute('data-rzn-chatgpt-viewer-save', String(target.index));await bridge({type:'click_element',selector:`[data-rzn-chatgpt-viewer-save=\"${target.index}\"]`});uiResults.push({index:target.index,mode:'viewer_save'});await new Promise(r=>setTimeout(r,1800));try{await bridge({type:'press_special_key',key:'Escape'});}catch{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}));}}catch(error){uiResults.push({index:target.index,error:(error&&error.message)||String(error)});}}state.ui_results=uiResults;const uiSuccesses=uiResults.filter((item)=>!item.error).length;if(uiSuccesses>0){state.download_strategy='ui_fallback';setStatus('complete');return;}state.error='No download strategy succeeded';setStatus('error');}catch(error){state.error=(error&&error.message)||String(error);setStatus('error');}finally{state.running=false;if(state.status==='pending') schedule();}};tick();return {installed:true,status:state.status,download_folder:downloadFolder,variation_count:variationCount};"
+          },
+          {
+            "id": "s6",
+            "name": "Wait for watcher completion",
+            "type": "wait_for_element",
+            "selector": "html[data-rzn-chatgpt-download-status='complete'], html[data-rzn-chatgpt-download-status='error']",
+            "timeout_ms": 600000
+          },
+          {
+            "id": "s7",
+            "name": "Read watcher result",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 20000,
+            "script": "const state=window.__rznChatgptImageDownloadState||null; if(!state) throw new Error('ChatGPT image download watcher state not found'); if(state.status==='error') throw new Error(state.error||'ChatGPT image download watcher failed'); return state;"
+          },
+          {
+            "id": "s8",
+            "name": "Allow browser downloads to start",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          }
+        ]
+      }
+    ]
+  }
+}

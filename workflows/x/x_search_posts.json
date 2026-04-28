@@ -1,0 +1,160 @@
+{
+  "system_id": "x",
+  "id": "x_search_posts",
+  "name": "X: Search Posts",
+  "description": "Search X for posts from one handle, optionally constrained to a date window, and return candidate post cards. Use when you want posts from a single author either recent (latest/top) or within a specific interval. Do not use to read one post (`x_open_post`) or to expand a thread (`x_thread`).",
+  "domain": "x.com",
+  "version": "1.1.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigates a fresh tab directly to the X search URL (consent-overlay-safe), scrolls to accumulate cards, then extracts a structured digest.",
+    "sequences": [
+      {
+        "name": "x_search_posts",
+        "description": "Build a search URL -> scroll -> extract candidate post metadata.",
+        "required_variables": [
+          {
+            "name": "handle",
+            "description": "X handle without the leading @"
+          }
+        ],
+        "optional_variables": [
+          {
+            "name": "since_date",
+            "description": "Inclusive lower-bound in YYYY-MM-DD, empty to skip"
+          },
+          {
+            "name": "until_date",
+            "description": "Exclusive upper-bound in YYYY-MM-DD, empty to skip"
+          },
+          {
+            "name": "timeline_mode",
+            "description": "One of top | latest | live (default latest)"
+          },
+          {
+            "name": "max_posts",
+            "description": "Upper bound on posts to extract (default 40)"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open x.com in a fresh tab so direct search navigation is cookie-safe",
+            "type": "navigate_to_url",
+            "url": "https://x.com/home",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Build the search URL and navigate to it",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 15000,
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const handle = cleanArg('{handle}').replace(/^@+/, ''); const since = cleanArg('{since_date}'); const until = cleanArg('{until_date}'); const rawMode = cleanArg('{timeline_mode}').toLowerCase(); const mode = ['top','latest','live'].includes(rawMode) ? rawMode : 'latest'; const modeFlag = mode === 'top' ? 'top' : (mode === 'live' ? 'live' : 'live'); const parts = ['from:' + handle]; if (since) parts.push('since:' + since); if (until) parts.push('until:' + until); const q = parts.join(' '); const url = 'https://x.com/search?q=' + encodeURIComponent(q) + '&src=typed_query&f=' + modeFlag; setTimeout(() => window.location.assign(url), 0); return { handle, since, until, mode, search_url: url };"
+          },
+          {
+            "id": "s2",
+            "name": "Allow X search to hydrate",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2800
+          },
+          {
+            "id": "s3",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for post cards",
+            "type": "wait_for_element",
+            "selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s5",
+            "name": "Scroll until enough candidate posts are visible",
+            "type": "infinite_scroll",
+            "max_scrolls": 10,
+            "scroll_delay": 1400,
+            "item_selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
+            "target_count": 40
+          },
+          {
+            "id": "s6",
+            "name": "Extract candidate posts",
+            "type": "extract_structured_data",
+            "item_selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
+            "limit": 50,
+            "fields": [
+              { "name": "author", "selector": "div[data-testid='User-Name']" },
+              { "name": "text", "selector": "div[data-testid='tweetText'], div[lang]" },
+              { "name": "posted_at", "selector": "time", "attribute": "datetime" },
+              { "name": "post_url", "selector": "a[href*='/status/']", "attribute": "href" },
+              { "name": "reply_count", "selector": "button[data-testid='reply'], [data-testid='reply']" },
+              { "name": "repost_count", "selector": "button[data-testid='retweet'], button[data-testid='unretweet'], [data-testid='retweet'], [data-testid='unretweet']" },
+              { "name": "like_count", "selector": "button[data-testid='like'], button[data-testid='unlike'], [data-testid='like'], [data-testid='unlike']" },
+              { "name": "view_count", "selector": "a[href*='/analytics']" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Search X for posts from one handle, optionally within a date window, across top/latest/live tabs.",
+    "parameters": [
+      {
+        "name": "handle",
+        "required": true,
+        "shape": "string",
+        "description": "X handle without the leading @.",
+        "example": "elonmusk"
+      },
+      {
+        "name": "since_date",
+        "required": false,
+        "shape": "date (YYYY-MM-DD)",
+        "description": "Inclusive lower-bound date. Omit for no lower bound.",
+        "example": "2026-03-10"
+      },
+      {
+        "name": "until_date",
+        "required": false,
+        "shape": "date (YYYY-MM-DD)",
+        "description": "Exclusive upper-bound date. Omit for no upper bound.",
+        "example": "2026-03-18"
+      },
+      {
+        "name": "timeline_mode",
+        "required": false,
+        "shape": "enum: top | latest | live",
+        "description": "Which X search tab to land on (defaults to latest, which is the most common use case).",
+        "example": "live"
+      },
+      {
+        "name": "max_posts",
+        "required": false,
+        "shape": "integer",
+        "description": "Upper bound on extracted posts (engine-side limit, default ~40).",
+        "example": "40"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run x search-posts --param handle=\"elonmusk\"",
+        "description": "Most-recent posts from @elonmusk with no date window."
+      },
+      {
+        "command": "rzn-browser run x search-posts --param handle=\"felixrieseberg\" --param since_date=\"2026-03-10\" --param until_date=\"2026-03-18\" --param timeline_mode=\"live\"",
+        "description": "Posts from @felixrieseberg between 2026-03-10 and 2026-03-18 on the Live tab."
+      }
+    ],
+    "returns": "Array of post cards (author, text, posted_at, post_url, reply_count, repost_count, like_count, view_count) plus a search_url echo.",
+    "notes": [
+      "Read-only.",
+      "Navigation is done via setTimeout + location.assign from the home page, which avoids the consent-overlay gotcha of typing into the landing search box.",
+      "Empty optional params are detected via the standard cleanArg helper.",
+      "timeline_mode=top uses the Top tab; latest and live both land on the Live tab."
+    ]
+  }
+}

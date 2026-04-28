@@ -1,0 +1,229 @@
+{
+  "system_id": "amazon",
+  "id": "amazon_product_key_facts_reviews_v1",
+  "name": "Amazon Product Key Facts and Reviews",
+  "description": "Open an Amazon product page, extract product key facts, then extract visible user reviews.",
+  "domain": "amazon.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "description": "Product detail extraction workflow with review section traversal.",
+    "sequences": [
+      {
+        "name": "amazon_product_facts_reviews",
+        "description": "Extract product metadata and reviews across multiple pages.",
+        "required_variables": [
+          {
+            "name": "product_url",
+            "description": "Full Amazon product URL (dp/product page)."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to product page",
+            "type": "navigate_to_url",
+            "url": "{product_url}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for product page hydration",
+            "type": "wait_for_timeout",
+            "timeout_ms": 3000
+          },
+          {
+            "id": "s3",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for product title",
+            "type": "wait_for_element",
+            "selector": "#productTitle, h1#title, #title",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s5",
+            "name": "Extract key facts",
+            "type": "extract_structured_data",
+            "item_selector": "body",
+            "fields": [
+              {
+                "name": "title",
+                "selector": "#productTitle, h1#title, #title"
+              },
+              {
+                "name": "price",
+                "selector": "#corePriceDisplay_desktop_feature_div .a-offscreen, .a-price .a-offscreen, #priceblock_ourprice, #priceblock_dealprice, #price_inside_buybox"
+              },
+              {
+                "name": "rating",
+                "selector": "#acrPopover .a-icon-alt, i[data-hook='average-star-rating'] span"
+              },
+              {
+                "name": "rating_count",
+                "selector": "#acrCustomerReviewText"
+              },
+              {
+                "name": "availability",
+                "selector": "#availability span, #availability"
+              },
+              {
+                "name": "brand",
+                "selector": "#bylineInfo, #bylineInfo_feature_div a"
+              },
+              {
+                "name": "first_bullet",
+                "selector": "#feature-bullets li span.a-list-item"
+              },
+              {
+                "name": "asin",
+                "selector": "#ASIN",
+                "attribute": "value"
+              },
+              {
+                "name": "spec_table_text",
+                "selector": "#productDetails_techSpec_section_1, #productDetails_detailBullets_sections1, #detailBullets_feature_div"
+              }
+            ]
+          },
+          {
+            "id": "s6",
+            "name": "Open all reviews page",
+            "type": "click_element",
+            "selector": "a[data-hook='see-all-reviews-link-foot'], a[href*='/product-reviews/'], a[href*='cm_cr_arp_d_viewopt_sr']"
+          },
+          {
+            "id": "s7",
+            "name": "Wait for reviews page content",
+            "type": "wait_for_element",
+            "selector": "[data-hook='review'], .review, #cm-cr-dp-review-list",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s8",
+            "name": "Extract reviews page 1",
+            "type": "extract_structured_data",
+            "item_selector": "[data-hook='review'], .review",
+            "fields": [
+              {
+                "name": "review_title",
+                "selector": "a[data-hook='review-title'] span, [data-hook='review-title']"
+              },
+              {
+                "name": "review_rating",
+                "selector": "i[data-hook='review-star-rating'] .a-icon-alt, i[data-hook='cmps-review-star-rating'] .a-icon-alt"
+              },
+              {
+                "name": "review_date",
+                "selector": "[data-hook='review-date']"
+              },
+              {
+                "name": "review_body",
+                "selector": "[data-hook='review-body'] span, [data-hook='review-collapsed']"
+              },
+              {
+                "name": "verified_purchase",
+                "selector": "[data-hook='avp-badge']"
+              },
+              {
+                "name": "helpful_votes",
+                "selector": "[data-hook='helpful-vote-statement']"
+              }
+            ]
+          },
+          {
+            "id": "s9",
+            "name": "Go to reviews page 2",
+            "type": "click_element",
+            "selector": "ul.a-pagination li.a-last a, li.a-last a, a[aria-label='Go to next page']"
+          },
+          {
+            "id": "s10",
+            "name": "Wait for reviews page 2",
+            "type": "wait_for_element",
+            "selector": "[data-hook='review'], .review, #cm-cr-dp-review-list",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s11",
+            "name": "Extract reviews page 2",
+            "type": "extract_structured_data",
+            "item_selector": "[data-hook='review'], .review",
+            "fields": [
+              {
+                "name": "review_title",
+                "selector": "a[data-hook='review-title'] span, [data-hook='review-title']"
+              },
+              {
+                "name": "review_rating",
+                "selector": "i[data-hook='review-star-rating'] .a-icon-alt, i[data-hook='cmps-review-star-rating'] .a-icon-alt"
+              },
+              {
+                "name": "review_date",
+                "selector": "[data-hook='review-date']"
+              },
+              {
+                "name": "review_body",
+                "selector": "[data-hook='review-body'] span, [data-hook='review-collapsed']"
+              },
+              {
+                "name": "verified_purchase",
+                "selector": "[data-hook='avp-badge']"
+              },
+              {
+                "name": "helpful_votes",
+                "selector": "[data-hook='helpful-vote-statement']"
+              }
+            ]
+          },
+          {
+            "id": "s12",
+            "name": "Go to reviews page 3",
+            "type": "click_element",
+            "selector": "ul.a-pagination li.a-last a, li.a-last a, a[aria-label='Go to next page']"
+          },
+          {
+            "id": "s13",
+            "name": "Wait for reviews page 3",
+            "type": "wait_for_element",
+            "selector": "[data-hook='review'], .review, #cm-cr-dp-review-list",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s14",
+            "name": "Extract reviews page 3",
+            "type": "extract_structured_data",
+            "item_selector": "[data-hook='review'], .review",
+            "fields": [
+              {
+                "name": "review_title",
+                "selector": "a[data-hook='review-title'] span, [data-hook='review-title']"
+              },
+              {
+                "name": "review_rating",
+                "selector": "i[data-hook='review-star-rating'] .a-icon-alt, i[data-hook='cmps-review-star-rating'] .a-icon-alt"
+              },
+              {
+                "name": "review_date",
+                "selector": "[data-hook='review-date']"
+              },
+              {
+                "name": "review_body",
+                "selector": "[data-hook='review-body'] span, [data-hook='review-collapsed']"
+              },
+              {
+                "name": "verified_purchase",
+                "selector": "[data-hook='avp-badge']"
+              },
+              {
+                "name": "helpful_votes",
+                "selector": "[data-hook='helpful-vote-statement']"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

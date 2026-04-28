@@ -1,0 +1,108 @@
+{
+  "system_id": "x",
+  "id": "x_thread",
+  "name": "X: Expand Thread",
+  "description": "Expand a same-author X thread by pivoting from one post URL into conversation-search (`from:<handle> conversation_id:<status_id>`), scrolling the results, and returning every post in order with assets and external links. Use when you have one post URL and want the full authored thread. Do not use for replies from other authors (use `x_search_posts` or `x_open_post` for siblings), or for longform articles (`x_open_article`).",
+  "domain": "x.com",
+  "version": "1.1.0",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Opens the source post URL in a fresh tab, switches to conversation search for the same author + conversation id, scrolls and expands `Show more` links, then returns all same-author thread posts ordered by posted_at.",
+    "sequences": [
+      {
+        "name": "x_thread",
+        "description": "Open post -> redirect into conversation search -> scroll -> extract same-author thread.",
+        "required_variables": [
+          {
+            "name": "post_url",
+            "description": "Full X post URL"
+          },
+          {
+            "name": "handle",
+            "description": "Author handle without the leading @"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open the source post in a fresh tab before switching to conversation search",
+            "type": "navigate_to_url",
+            "url": "{post_url}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the source post page to load",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s2",
+            "name": "Redirect into conversation search",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 15000,
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const requestedHandle = cleanArg('{handle}').replace(/^@+/, ''); const match = cleanArg('{post_url}').match(/\\/status\\/(\\d+)/i); if (!requestedHandle || !match) { return { redirected: false, conversation_id: '', search_url: null }; } const conversationId = match[1]; const query = 'from:' + requestedHandle + ' conversation_id:' + conversationId; const searchUrl = 'https://x.com/search?q=' + encodeURIComponent(query) + '&src=typed_query&f=live'; setTimeout(() => window.location.assign(searchUrl), 0); return { redirected: true, conversation_id: conversationId, search_url: searchUrl };"
+          },
+          {
+            "id": "s3",
+            "name": "Allow the search results to hydrate",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          },
+          {
+            "id": "s4",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s5",
+            "name": "Wait for thread search results",
+            "type": "wait_for_element",
+            "selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s6",
+            "name": "Extract same-author thread and assets from conversation search",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 30000,
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const requestedHandle = cleanArg('{handle}').replace(/^@+/, '').toLowerCase(); const normalizeHandle = (value) => (value || '').replace(/^@+/, '').trim().toLowerCase(); const normalizeUrl = (raw) => { if (!raw) return ''; try { return new URL(raw, window.location.origin).toString(); } catch { return String(raw); } }; const normalizeStatusUrl = (raw) => { const url = normalizeUrl(raw); if (!url) return ''; try { const parsed = new URL(url); const m = parsed.pathname.match(/^\\/([^/]+)\\/status\\/(\\d+)/i); if (!m) return ''; return new URL('/' + m[1] + '/status/' + m[2], parsed.origin).toString(); } catch { return ''; } }; const requestedPostUrl = normalizeStatusUrl(cleanArg('{post_url}')) || normalizeUrl(cleanArg('{post_url}')); const extractStatusId = (raw) => { const url = normalizeStatusUrl(raw); if (!url) return ''; try { return new URL(url).pathname.match(/\\/status\\/(\\d+)/i)?.[1] || ''; } catch { return ''; } }; const requestedStatusId = extractStatusId(requestedPostUrl); const extractHandleFromStatusUrl = (raw) => { const url = normalizeStatusUrl(raw); if (!url) return ''; try { const parts = new URL(url).pathname.split('/').filter(Boolean); return normalizeHandle(parts[0] || ''); } catch { return ''; } }; const unique = (items) => Array.from(new Set(items.filter(Boolean))); const textOf = (nodes) => unique(Array.from(nodes).map(node => (node.textContent || '').trim()).filter(Boolean)).join('\\n\\n').trim(); const getStatusLinks = (article) => unique(Array.from(article.querySelectorAll(\"a[href*='/status/']\")).map(link => normalizeStatusUrl(link.getAttribute('href') || link.href)).filter(Boolean)); const getStatusUrl = (article) => { const links = getStatusLinks(article); if (!links.length) return ''; const timeLink = article.querySelector(\"a[href*='/status/'] time\")?.closest(\"a[href*='/status/']\"); const timeHref = timeLink ? normalizeStatusUrl(timeLink.getAttribute('href') || timeLink.href) : ''; if (timeHref) return timeHref; if (requestedStatusId) { const exact = links.find(link => extractStatusId(link) === requestedStatusId); if (exact) return exact; } if (requestedHandle) { const preferred = links.find(link => extractHandleFromStatusUrl(link) === requestedHandle); if (preferred) return preferred; } return links[0]; }; const getArticleHandle = (article, statusUrl) => { const fromStatus = extractHandleFromStatusUrl(statusUrl); if (fromStatus) return fromStatus; const profileLink = article.querySelector(\"div[data-testid='User-Name'] a[href^='/']\"); if (!profileLink) return requestedHandle; try { const href = normalizeUrl(profileLink.getAttribute('href') || profileLink.href); const parts = new URL(href).pathname.split('/').filter(Boolean); return normalizeHandle(parts[0] || ''); } catch { return requestedHandle; } }; const profilePrefix = requestedHandle ? '/' + requestedHandle : ''; const getExternalLinks = (article) => unique(Array.from(article.querySelectorAll('a[href]')).map(link => normalizeUrl(link.getAttribute('href') || link.href)).filter(link => { if (!link || !/^https?:/i.test(link)) return false; try { const parsed = new URL(link); const sameHost = parsed.hostname === window.location.hostname; if (!sameHost) return true; if (parsed.pathname.includes('/status/')) return false; if (requestedHandle && parsed.pathname.toLowerCase().startsWith(profilePrefix)) return false; return parsed.pathname.includes('/photo/') || parsed.pathname.includes('/video/'); } catch { return false; } })); const getImageUrls = (article) => unique(Array.from(article.querySelectorAll('img')).map(img => img.currentSrc || img.getAttribute('src') || '').filter(src => /^https?:/i.test(src) && !src.includes('profile_images') && !src.includes('emoji'))); const getVideoUrls = (article) => unique([...Array.from(article.querySelectorAll('video')).map(video => video.currentSrc || video.getAttribute('src') || video.poster || ''), ...Array.from(article.querySelectorAll('video source')).map(source => source.getAttribute('src') || '')].filter(src => /^https?:/i.test(src))); const clickExpandables = () => { const isVisible = (node) => { const rect = node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; }; const clickIfExpandable = (node) => { const label = ((node.textContent || '') + ' ' + (node.getAttribute('aria-label') || '')).replace(/\\s+/g, ' ').trim(); const testid = (node.getAttribute('data-testid') || '').trim(); if (testid === 'tweet-text-show-more-link') return true; return /show more|read more/i.test(label); }; for (const control of Array.from(document.querySelectorAll(\"button[data-testid='tweet-text-show-more-link'], [role='button'][data-testid='tweet-text-show-more-link'], button, [role='button']\")).filter(node => isVisible(node) && clickIfExpandable(node))) { try { control.click(); } catch {} } }; const seen = new Map(); const collectVisible = () => { for (const article of Array.from(document.querySelectorAll(\"main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article\"))) { const statusUrl = getStatusUrl(article); if (!statusUrl) continue; const articleHandle = getArticleHandle(article, statusUrl); if (requestedHandle && articleHandle !== requestedHandle) continue; const post = { post_url: statusUrl, author: (article.querySelector(\"div[data-testid='User-Name']\")?.textContent || '').trim(), text: textOf(article.querySelectorAll(\"div[data-testid='tweetText'], div[lang]\")), posted_at: article.querySelector('time')?.getAttribute('datetime') || null, image_urls: getImageUrls(article), video_urls: getVideoUrls(article), external_links: getExternalLinks(article) }; const existing = seen.get(statusUrl); if (!existing || (post.text && post.text.length > (existing.text || '').length) || post.image_urls.length > (existing.image_urls || []).length) { seen.set(statusUrl, post); } } }; window.scrollTo(0, 0); await new Promise(resolve => setTimeout(resolve, 600)); for (let pass = 0; pass < 20; pass += 1) { collectVisible(); clickExpandables(); const before = window.scrollY; window.scrollBy(0, Math.max(window.innerHeight * 0.9, 800)); await new Promise(resolve => setTimeout(resolve, 1200)); if (Math.abs(window.scrollY - before) < 16) break; } collectVisible(); const posts = Array.from(seen.values()).sort((a, b) => { const av = a.posted_at ? Date.parse(a.posted_at) : Number.MAX_SAFE_INTEGER; const bv = b.posted_at ? Date.parse(b.posted_at) : Number.MAX_SAFE_INTEGER; return av - bv; }); return { thread_source_url: normalizeUrl(window.location.href), handle: requestedHandle || extractHandleFromStatusUrl(requestedPostUrl), root_post_url: requestedPostUrl || (posts.length ? posts[0].post_url : normalizeUrl(window.location.href)), total_posts: posts.length, posts, assets: { image_urls: unique(posts.flatMap(post => post.image_urls || [])), video_urls: unique(posts.flatMap(post => post.video_urls || [])) }, links: unique(posts.flatMap(post => post.external_links || [])) };"
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Expand one same-author X thread and return its posts, assets, and external links in order.",
+    "parameters": [
+      {
+        "name": "post_url",
+        "required": true,
+        "shape": "url",
+        "description": "Full X post URL anywhere in the target thread.",
+        "example": "https://x.com/felixrieseberg/status/123"
+      },
+      {
+        "name": "handle",
+        "required": true,
+        "shape": "string",
+        "description": "Author handle without @ — used to filter same-author posts in search results.",
+        "example": "felixrieseberg"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run x thread --param post_url=\"https://x.com/felixrieseberg/status/123\" --param handle=\"felixrieseberg\"",
+        "description": "Expand the same-author thread that contains the given status id."
+      }
+    ],
+    "returns": "{ thread_source_url, handle, root_post_url, total_posts, posts[], assets: { image_urls[], video_urls[] }, links[] } sorted by posted_at ascending.",
+    "notes": [
+      "Read-only.",
+      "Pivots into `from:<handle> conversation_id:<status_id>` live search because the raw conversation-page DOM is less stable.",
+      "Opens a fresh tab; safe for parallel expansion of multiple threads."
+    ]
+  }
+}

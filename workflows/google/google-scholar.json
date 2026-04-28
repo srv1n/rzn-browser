@@ -1,0 +1,91 @@
+{
+  "system_id": "google",
+  "id": "google_scholar_v1",
+  "name": "Google Scholar Search",
+  "description": "Search Google Scholar and extract paper-shaped results: title, authors, snippet, paper URL, and a link to the cited-by page.",
+  "domain": "scholar.google.com",
+  "version": "1.1.0",
+  "last_updated": "2026-04-24T00:00:00Z",
+  "browser_automation": {
+    "description": "Hits scholar.google.com directly. Selectors target the gs_r card layout used for academic results.",
+    "sequences": [
+      {
+        "name": "google_scholar_search_extract",
+        "description": "Run a Scholar query and extract paper cards.",
+        "required_variables": [
+          {
+            "name": "search_query",
+            "description": "Academic search query. Aliases: query, q."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Scholar search",
+            "type": "navigate_to_url",
+            "url": "https://scholar.google.com/scholar?q={search_query}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for the page to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 3000
+          },
+          {
+            "id": "s3",
+            "name": "Dismiss common popups",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s4",
+            "name": "Wait for result cards",
+            "type": "wait_for_element",
+            "selector": "div.gs_r, #gs_res_ccl",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s5",
+            "name": "Extract paper results",
+            "type": "extract_structured_data",
+            "extraction_type": "scholar_results",
+            "item_selector": "div.gs_r.gs_or.gs_scl, div.gs_r",
+            "fields": [
+              { "name": "title", "selector": "h3.gs_rt" },
+              { "name": "url", "selector": "h3.gs_rt a", "attribute": "href" },
+              { "name": "authors", "selector": "div.gs_a" },
+              { "name": "snippet", "selector": "div.gs_rs" },
+              { "name": "cited_by_url", "selector": "a[href*='cites=']", "attribute": "href" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Search Google Scholar and extract paper title/authors/snippet/url + cited-by link.",
+    "parameters": [
+      {
+        "name": "search_query",
+        "required": true,
+        "shape": "text",
+        "description": "Academic search query. Aliases query and q work too.",
+        "example": "transformer attention mechanism"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run google scholar --param search_query=\"transformer attention mechanism\"",
+        "description": "Find papers on transformer attention."
+      },
+      {
+        "command": "rzn-browser run google scholar --param query=\"author:hinton deep learning\"",
+        "description": "Use Scholar's author: operator inline."
+      }
+    ],
+    "returns": "Array of { title, url, authors, snippet, cited_by_url }. authors is the raw 'authors — venue, year — site' line; parse downstream if you need fields.",
+    "notes": [
+      "Scholar aggressively rate-limits scraping; expect intermittent 429s on busy sessions.",
+      "url is the paper's primary link (often direct PDF or publisher page), not a Scholar-internal link."
+    ]
+  }
+}

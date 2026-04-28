@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RZN Diagnostic</title>
+    <style>
+        body { font-family: monospace; padding: 40px; }
+        .test { margin: 20px 0; padding: 10px; background: #f0f0f0; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+    </style>
+</head>
+<body>
+    <h1>RZN Extension Diagnostic</h1>
+    
+    <div class="test" id="test1">
+        <h3>Test 1: Chrome API Available</h3>
+        <div id="result1">Testing...</div>
+    </div>
+    
+    <div class="test" id="test2">
+        <h3>Test 2: Chrome Runtime Available</h3>
+        <div id="result2">Testing...</div>
+    </div>
+    
+    <div class="test" id="test3">
+        <h3>Test 3: Content Script Injected</h3>
+        <div id="result3">Testing...</div>
+    </div>
+    
+    <div class="test" id="test4">
+        <h3>Test 4: Can Send Messages</h3>
+        <div id="result4">Testing...</div>
+    </div>
+    
+    <script>
+        // Test 1: Chrome API
+        if (typeof chrome !== 'undefined') {
+            document.getElementById('result1').innerHTML = '<span class="success">✅ Chrome API is available</span>';
+        } else {
+            document.getElementById('result1').innerHTML = '<span class="error">❌ Chrome API NOT available</span>';
+        }
+        
+        // Test 2: Chrome Runtime
+        if (typeof chrome !== 'undefined' && chrome.runtime) {
+            document.getElementById('result2').innerHTML = '<span class="success">✅ Chrome Runtime is available</span>';
+        } else {
+            document.getElementById('result2').innerHTML = '<span class="error">❌ Chrome Runtime NOT available</span>';
+        }
+        
+        // Test 3: Look for RZN elements (content script adds these)
+        setTimeout(() => {
+            const rznElements = document.querySelectorAll('[data-rzn-idx]');
+            if (rznElements.length > 0) {
+                document.getElementById('result3').innerHTML = '<span class="success">✅ Content script injected (found ' + rznElements.length + ' RZN elements)</span>';
+            } else {
+                // Check console logs
+                document.getElementById('result3').innerHTML = '<span class="info">⚠️ No RZN elements found - check console for [RZN] logs</span>';
+            }
+        }, 1000);
+        
+        // Test 4: Send message
+        if (typeof chrome !== 'undefined' && chrome.runtime) {
+            chrome.runtime.sendMessage({type: 'PING'}, response => {
+                if (chrome.runtime.lastError) {
+                    document.getElementById('result4').innerHTML = '<span class="error">❌ Error: ' + chrome.runtime.lastError.message + '</span>';
+                } else if (response && response.success) {
+                    document.getElementById('result4').innerHTML = '<span class="success">✅ Message sent successfully</span>';
+                } else {
+                    document.getElementById('result4').innerHTML = '<span class="error">❌ No response received</span>';
+                }
+            });
+        } else {
+            document.getElementById('result4').innerHTML = '<span class="error">❌ Cannot test - Chrome Runtime not available</span>';
+        }
+        
+        // Log everything to console
+        console.log('[DIAGNOSTIC] Chrome object:', typeof chrome !== 'undefined' ? chrome : 'undefined');
+        console.log('[DIAGNOSTIC] Chrome runtime:', typeof chrome !== 'undefined' && chrome.runtime ? 'available' : 'not available');
+        
+        // Listen for any console logs from content script
+        const originalLog = console.log;
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            if (args[0] && typeof args[0] === 'string' && args[0].includes('[RZN')) {
+                document.getElementById('result3').innerHTML = '<span class="success">✅ Content script is logging (check console)</span>';
+            }
+        };
+    </script>
+</body>
+</html>

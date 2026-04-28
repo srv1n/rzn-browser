@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 880" width="1600" height="880" font-family="Georgia, 'Times New Roman', serif">
+  <defs>
+    <marker id="tick" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10" fill="none" stroke="#1a1a17" stroke-width="1.2"/>
+    </marker>
+  </defs>
+
+  <rect width="1600" height="880" fill="#F4F1EA"/>
+
+  <!-- Editorial top matter -->
+  <g font-family="'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace">
+    <text x="100" y="80" font-size="11" font-weight="600" letter-spacing="3" fill="#8a8578">RZN  ·  ARCHITECTURE NOTE  ·  01</text>
+  </g>
+  <text x="100" y="140" font-size="54" font-weight="400" fill="#1a1a17" letter-spacing="-1">Your task. Your Chrome.</text>
+  <text x="100" y="200" font-size="54" font-weight="400" fill="#1a1a17" letter-spacing="-1" font-style="italic">One local path between them.</text>
+  <text x="100" y="245" font-size="17" font-weight="400" fill="#544f46" font-family="Georgia, serif">RZN is browser automation for the Chrome session you already use — not a separate browser.</text>
+
+  <!-- Thin rule across the page -->
+  <line x1="100" y1="295" x2="1500" y2="295" stroke="#1a1a17" stroke-width="0.8"/>
+
+  <!-- Zone labels along the rule -->
+  <g font-family="'IBM Plex Mono', ui-monospace, monospace" font-size="10" font-weight="700" letter-spacing="2" fill="#8a8578">
+    <text x="100" y="318">YOU</text>
+    <text x="430" y="318">RZN RUNTIME · LOCAL</text>
+    <text x="1090" y="318">GOOGLE CHROME</text>
+    <text x="1370" y="318">TARGET WEB</text>
+  </g>
+
+  <!-- Zone tick marks -->
+  <g stroke="#1a1a17" stroke-width="0.8">
+    <line x1="100" y1="290" x2="100" y2="300"/>
+    <line x1="430" y1="290" x2="430" y2="300"/>
+    <line x1="1090" y1="290" x2="1090" y2="300"/>
+    <line x1="1370" y1="290" x2="1370" y2="300"/>
+    <line x1="1500" y1="290" x2="1500" y2="300"/>
+  </g>
+
+  <!-- Flow row -->
+  <g transform="translate(0, 450)">
+    <!-- Horizontal baseline -->
+    <line x1="140" y1="0" x2="1460" y2="0" stroke="#1a1a17" stroke-width="0.8"/>
+
+    <!-- Step 01 — User task -->
+    <g transform="translate(180, 0)">
+      <circle cx="0" cy="0" r="11" fill="#F4F1EA" stroke="#1a1a17" stroke-width="1.2"/>
+      <circle cx="0" cy="0" r="3" fill="#1a1a17"/>
+      <text x="0" y="-38" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="10" font-weight="700" letter-spacing="2" fill="#8a8578">01</text>
+      <text x="0" y="-18" text-anchor="middle" font-size="20" font-weight="600" fill="#1a1a17">User task</text>
+      <text x="0" y="42" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">a command, a workflow,</text>
+      <text x="0" y="60" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">or a goal string</text>
+    </g>
+
+    <!-- Step 02 — RZN Runtime -->
+    <g transform="translate(470, 0)">
+      <circle cx="0" cy="0" r="11" fill="#F4F1EA" stroke="#1a1a17" stroke-width="1.2"/>
+      <circle cx="0" cy="0" r="3" fill="#8ac24c"/>
+      <text x="0" y="-38" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="10" font-weight="700" letter-spacing="2" fill="#8a8578">02</text>
+      <text x="0" y="-18" text-anchor="middle" font-size="20" font-weight="600" fill="#1a1a17">RZN Runtime</text>
+      <text x="0" y="42" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">plans the steps,</text>
+      <text x="0" y="60" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">local to your machine</text>
+    </g>
+
+    <!-- Step 03 — Native Host -->
+    <g transform="translate(710, 0)">
+      <circle cx="0" cy="0" r="11" fill="#F4F1EA" stroke="#1a1a17" stroke-width="1.2"/>
+      <circle cx="0" cy="0" r="3" fill="#8ac24c"/>
+      <text x="0" y="-38" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="10" font-weight="700" letter-spacing="2" fill="#8a8578">03</text>
+      <text x="0" y="-18" text-anchor="middle" font-size="20" font-weight="600" fill="#1a1a17">RZN Native Host</text>
+      <text x="0" y="42" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">the bridge between</text>
+      <text x="0" y="60" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">runtime and extension</text>
+    </g>
+
+    <!-- Step 04 — RZN Chrome Extension -->
+    <g transform="translate(970, 0)">
+      <circle cx="0" cy="0" r="11" fill="#F4F1EA" stroke="#1a1a17" stroke-width="1.2"/>
+      <circle cx="0" cy="0" r="3" fill="#8ac24c"/>
+      <text x="0" y="-38" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="10" font-weight="700" letter-spacing="2" fill="#8a8578">04</text>
+      <text x="0" y="-18" text-anchor="middle" font-size="20" font-weight="600" fill="#1a1a17">RZN Chrome Extension</text>
+      <text x="0" y="42" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">the one piece that</text>
+      <text x="0" y="60" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">rides inside Chrome</text>
+    </g>
+
+    <!-- Step 05 — Google Chrome -->
+    <g transform="translate(1230, 0)">
+      <circle cx="0" cy="0" r="11" fill="#F4F1EA" stroke="#4285F4" stroke-width="1.4"/>
+      <circle cx="0" cy="0" r="3" fill="#4285F4"/>
+      <text x="0" y="-38" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="10" font-weight="700" letter-spacing="2" fill="#8a8578">05</text>
+      <text x="0" y="-18" text-anchor="middle" font-size="20" font-weight="600" fill="#1a1a17">Google Chrome</text>
+      <text x="0" y="42" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">your existing profile,</text>
+      <text x="0" y="60" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">cookies, extensions</text>
+    </g>
+
+    <!-- Step 06 — Target Web App -->
+    <g transform="translate(1430, 0)">
+      <circle cx="0" cy="0" r="11" fill="#F4F1EA" stroke="#1a1a17" stroke-width="1.2"/>
+      <circle cx="0" cy="0" r="3" fill="#1a1a17"/>
+      <text x="0" y="-38" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="10" font-weight="700" letter-spacing="2" fill="#8a8578">06</text>
+      <text x="0" y="-18" text-anchor="middle" font-size="20" font-weight="600" fill="#1a1a17">Target Web App</text>
+      <text x="0" y="42" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">the page being</text>
+      <text x="0" y="60" text-anchor="middle" font-size="13" font-weight="400" fill="#544f46" font-style="italic">automated</text>
+    </g>
+  </g>
+
+  <!-- Edge hint arrows on the baseline -->
+  <g stroke="#1a1a17" stroke-width="1" fill="none" marker-end="url(#tick)">
+    <line x1="305" y1="450" x2="335" y2="450"/>
+    <line x1="565" y1="450" x2="595" y2="450"/>
+    <line x1="805" y1="450" x2="835" y2="450"/>
+    <line x1="1075" y1="450" x2="1105" y2="450"/>
+    <line x1="1325" y1="450" x2="1355" y2="450"/>
+  </g>
+
+  <!-- Thin rule + pull quotes -->
+  <line x1="100" y1="640" x2="1500" y2="640" stroke="#1a1a17" stroke-width="0.5" stroke-dasharray="2 4"/>
+
+  <g transform="translate(100, 680)" font-family="Georgia, serif">
+    <text x="0" y="0" font-size="13" font-weight="700" letter-spacing="2" fill="#8a8578" font-family="'IBM Plex Mono', monospace">KEEP IN MIND</text>
+
+    <text x="0" y="32" font-size="17" fill="#1a1a17">• <tspan font-style="italic">RZN</tspan> is not a browser. It is the runtime that talks to your browser.</text>
+    <text x="0" y="58" font-size="17" fill="#1a1a17">• The Chrome session you already use stays exactly as it is — same profile, same cookies.</text>
+    <text x="0" y="84" font-size="17" fill="#1a1a17">• Workflow mode and agent mode share the same execution stack and the same browser.</text>
+  </g>
+
+  <!-- Bottom meta -->
+  <g transform="translate(100, 830)" font-family="'IBM Plex Mono', monospace" font-size="11" fill="#8a8578" letter-spacing="1.5">
+    <text x="0" y="0">RZN BROWSER AUTOMATION  ·  PRODUCT OVERVIEW</text>
+    <text x="1400" y="0" text-anchor="end">LOCAL RUNTIME  ·  REAL BROWSER SESSION</text>
+  </g>
+</svg>

@@ -1,0 +1,177 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="880" viewBox="0 0 1600 880" role="img" aria-label="RZN Browser — Workflow Mode vs Agent Mode">
+  <defs>
+    
+    <pattern id="dotPattern" width="12" height="12" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="0.7" fill="#d7cfbf" opacity="0.48"/>
+      <circle cx="8" cy="6" r="0.7" fill="#d7cfbf" opacity="0.35"/>
+      <circle cx="5" cy="10" r="0.6" fill="#d7cfbf" opacity="0.28"/>
+    </pattern>
+  
+    
+    <pattern id="paperSpeckle" width="34" height="34" patternUnits="userSpaceOnUse">
+      <circle cx="6" cy="8" r="0.55" fill="#d8d0c0" opacity="0.18"/>
+      <circle cx="18" cy="14" r="0.45" fill="#d8d0c0" opacity="0.14"/>
+      <circle cx="26" cy="22" r="0.5" fill="#d8d0c0" opacity="0.11"/>
+    </pattern>
+  
+  </defs>
+  <rect x="0" y="0" width="1600" height="880" fill="#fbfaf4"/>
+<rect x="0" y="0" width="1600" height="880" fill="url(#paperSpeckle)" opacity="0.55"/>
+<text text-anchor="start" font-family="Georgia, Times New Roman, serif" font-size="40" font-weight="700" fill="#22211d"><tspan x="84" y="92">RZN Browser — Workflow Mode vs Agent Mode</tspan></text>
+<text text-anchor="start" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="16" font-weight="500" fill="#676258"><tspan x="84" y="132">Two entry points. One execution stack. One browser.</tspan></text>
+
+    <path d="M 102 220 H 278 Q 300 220 300 242 V 308 Q 300 330 278 330 H 102 Q 80 330 80 308 V 242 Q 80 220 102 220 Z" fill="#c8d9f5"/>
+    
+    <path d="M 102 220 H 278 Q 300 220 300 242 V 308 Q 300 330 278 330 H 102 Q 80 330 80 308 V 242 Q 80 220 102 220 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.2287330930586905 -0.8950757018756121)"/>
+    <path d="M 102 220 H 278 Q 300 220 300 242 V 308 Q 300 330 278 330 H 102 Q 80 330 80 308 V 242 Q 80 220 102 220 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.04940467192791398 0.8658917414490134)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="21" font-weight="700" fill="#22211d"><tspan x="190" y="267.975">JSON</tspan><tspan x="190" y="290.02500000000003">workflow</tspan></text>
+
+    <path d="M 102 560 H 278 Q 300 560 300 582 V 648 Q 300 670 278 670 H 102 Q 80 670 80 648 V 582 Q 80 560 102 560 Z" fill="#f4faeb"/>
+    
+    <path d="M 102 560 H 278 Q 300 560 300 582 V 648 Q 300 670 278 670 H 102 Q 80 670 80 648 V 582 Q 80 560 102 560 Z" fill="none" stroke="#8ac24c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.020856687566265464 0.05390353482216592)"/>
+    <path d="M 102 560 H 278 Q 300 560 300 582 V 648 Q 300 670 278 670 H 102 Q 80 670 80 648 V 582 Q 80 560 102 560 Z" fill="none" stroke="#8ac24c" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.194613415421918 0.1622837447561324)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="21" font-weight="700" fill="#22211d"><tspan x="190" y="607.975">Goal</tspan><tspan x="190" y="630.025">string</tspan></text>
+
+    <path d="M 422 560 H 578 Q 600 560 600 582 V 648 Q 600 670 578 670 H 422 Q 400 670 400 648 V 582 Q 400 560 422 560 Z" fill="#f4faeb"/>
+    
+    <path d="M 422 560 H 578 Q 600 560 600 582 V 648 Q 600 670 578 670 H 422 Q 400 670 400 648 V 582 Q 400 560 422 560 Z" fill="none" stroke="#8ac24c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.12187580117024477 -0.09534769286401568)"/>
+    <path d="M 422 560 H 578 Q 600 560 600 582 V 648 Q 600 670 578 670 H 422 Q 400 670 400 648 V 582 Q 400 560 422 560 Z" fill="none" stroke="#8ac24c" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.3900887436233461 -0.2117049269378185)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="23" font-weight="800" fill="#22211d"><tspan x="500" y="622.36">Planner</tspan></text>
+
+    <path d="M 722 380 H 898 Q 920 380 920 402 V 478 Q 920 500 898 500 H 722 Q 700 500 700 478 V 402 Q 700 380 722 380 Z" fill="#f2eee7"/>
+    
+    <path d="M 722 380 H 898 Q 920 380 920 402 V 478 Q 920 500 898 500 H 722 Q 700 500 700 478 V 402 Q 700 380 722 380 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.31006100890226673 0.6047028673812748)"/>
+    <path d="M 722 380 H 898 Q 920 380 920 402 V 478 Q 920 500 898 500 H 722 Q 700 500 700 478 V 402 Q 700 380 722 380 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.4493888155091553 -0.8119491511490197)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="22" font-weight="800" fill="#22211d"><tspan x="810" y="432.45">Step</tspan><tspan x="810" y="455.55">runner</tspan></text>
+
+    <path d="M 1012 380 H 1188 Q 1210 380 1210 402 V 478 Q 1210 500 1188 500 H 1012 Q 990 500 990 478 V 402 Q 990 380 1012 380 Z" fill="#f2eee7"/>
+    
+    <path d="M 1012 380 H 1188 Q 1210 380 1210 402 V 478 Q 1210 500 1188 500 H 1012 Q 990 500 990 478 V 402 Q 990 380 1012 380 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.6318256448954344 0.015925546037033222)"/>
+    <path d="M 1012 380 H 1188 Q 1210 380 1210 402 V 478 Q 1210 500 1188 500 H 1012 Q 990 500 990 478 V 402 Q 990 380 1012 380 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.2419408618938178 0.07413820303045215)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="22" font-weight="700" fill="#22211d"><tspan x="1100" y="432.45">Browser</tspan><tspan x="1100" y="455.55">bridge</tspan></text>
+
+    <path d="M 1302 380 H 1498 Q 1520 380 1520 402 V 478 Q 1520 500 1498 500 H 1302 Q 1280 500 1280 478 V 402 Q 1280 380 1302 380 Z" fill="#ecd1b9"/>
+    
+    <path d="M 1302 380 H 1498 Q 1520 380 1520 402 V 478 Q 1520 500 1498 500 H 1302 Q 1280 500 1280 478 V 402 Q 1280 380 1302 380 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.6353547375183553 -0.7690067995805293)"/>
+    <path d="M 1302 380 H 1498 Q 1520 380 1520 402 V 478 Q 1520 500 1498 500 H 1302 Q 1280 500 1280 478 V 402 Q 1280 380 1302 380 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.15646680076606567 -0.7417300129774957)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="19" font-weight="700" fill="#22211d"><tspan x="1400" y="433.55">Chrome extension</tspan><tspan x="1400" y="454.45">and page</tspan></text>
+
+    <path d="M 992 620 H 1188 Q 1210 620 1210 642 V 708 Q 1210 730 1188 730 H 992 Q 970 730 970 708 V 642 Q 970 620 992 620 Z" fill="#fef7d6"/>
+    
+    <path d="M 992 620 H 1188 Q 1210 620 1210 642 V 708 Q 1210 730 1188 730 H 992 Q 970 730 970 708 V 642 Q 970 620 992 620 Z" fill="none" stroke="#c8a83a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.08670765515416856 0.37492282935418186)"/>
+    <path d="M 992 620 H 1188 Q 1210 620 1210 642 V 708 Q 1210 730 1188 730 H 992 Q 970 730 970 708 V 642 Q 970 620 992 620 Z" fill="none" stroke="#c8a83a" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.6853829237166792 0.4164758494589479)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="20" font-weight="700" fill="#22211d"><tspan x="1090" y="668.5">Result /</tspan><tspan x="1090" y="689.5">snapshot</tspan></text>
+
+    <path d="M 300 275 L 660 275 L 660 430 L 700 430" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.47283898042514927 -0.6127066440414637)"/>
+    <path d="M 300 275 L 660 275 L 660 430 L 700 430" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.18891151431016617 0.32115475824102757)"/>
+  
+    
+    <path d="M 689 436.05 L 700 430" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.09255106961354614 0.034982847212813806) translate(0.8378448892850429 -0.8431754238903523)"/>
+    <path d="M 689 436.05 L 700 430" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.09255106961354614 0.034982847212813806) translate(0.3099653265438974 0.24711735304445026)"/>
+  
+    
+    <path d="M 689 423.95 L 700 430" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.09255106961354614 0.034982847212813806) translate(0.18341443547979008 -0.1799114893656224)"/>
+    <path d="M 689 423.95 L 700 430" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.09255106961354614 0.034982847212813806) translate(0.3808659608010202 -0.08318155193701382)"/>
+  
+  
+
+    <path d="M 300 615 L 400 615" fill="none" stroke="#3f7a18" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.6080092105083167 -0.33713650368154047)"/>
+    <path d="M 300 615 L 400 615" fill="none" stroke="#3f7a18" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.23090219255536792 0.09936935598962005)"/>
+  
+    
+    <path d="M 389 621.05 L 400 615" fill="none" stroke="#3f7a18" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.07027804038953034 0.030970137799158692) translate(-0.754126360360533 -0.08192614023573697)"/>
+    <path d="M 389 621.05 L 400 615" fill="none" stroke="#3f7a18" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.07027804038953034 0.030970137799158692) translate(0.23078682781197124 0.6538392257876694)"/>
+  
+    
+    <path d="M 389 608.95 L 400 615" fill="none" stroke="#3f7a18" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.07027804038953034 0.030970137799158692) translate(0.8047181344125419 0.177544675860554)"/>
+    <path d="M 389 608.95 L 400 615" fill="none" stroke="#3f7a18" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.07027804038953034 0.030970137799158692) translate(-0.7822696086019277 -0.3685529877897352)"/>
+  
+  
+
+    <path d="M 600 615 L 620 615 L 620 460 L 700 460" fill="none" stroke="#3f7a18" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.29747523176483803 -0.8494249759241939)"/>
+    <path d="M 600 615 L 620 615 L 620 460 L 700 460" fill="none" stroke="#3f7a18" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.8531738755758852 -0.12245337087661023)"/>
+  
+    
+    <path d="M 689 466.05 L 700 460" fill="none" stroke="#3f7a18" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.32432222699280827 0.15234892976004633) translate(-0.6682646655477583 0.8340714796911924)"/>
+    <path d="M 689 466.05 L 700 460" fill="none" stroke="#3f7a18" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.32432222699280827 0.15234892976004633) translate(-0.5060540805570781 -0.009259613743051842)"/>
+  
+    
+    <path d="M 689 453.95 L 700 460" fill="none" stroke="#3f7a18" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.32432222699280827 0.15234892976004633) translate(-0.3865366552490741 0.4327196387574076)"/>
+    <path d="M 689 453.95 L 700 460" fill="none" stroke="#3f7a18" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.32432222699280827 0.15234892976004633) translate(0.29839662672020506 0.5837526453193277)"/>
+  
+  
+
+    <path d="M 920 440 L 990 440" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.6558338526170701 0.4766435099299998)"/>
+    <path d="M 920 440 L 990 440" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.07309495699591939 0.2574295469094069)"/>
+  
+    
+    <path d="M 979 446.05 L 990 440" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.0428602360188961 -0.047396382526494585) translate(-0.0648246961645782 0.8765645784325898)"/>
+    <path d="M 979 446.05 L 990 440" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.0428602360188961 -0.047396382526494585) translate(-0.027169184759259224 0.09539787489920859)"/>
+  
+    
+    <path d="M 979 433.95 L 990 440" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.0428602360188961 -0.047396382526494585) translate(-0.8799618962220848 0.26106906021013854)"/>
+    <path d="M 979 433.95 L 990 440" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.0428602360188961 -0.047396382526494585) translate(-0.15775265260599558 0.11956904358230525)"/>
+  
+  
+
+    <path d="M 1210 440 L 1280 440" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.8822056420147418 0.5463202639482915)"/>
+    <path d="M 1210 440 L 1280 440" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.7197204470168799 -0.038087569177150726)"/>
+  
+    
+    <path d="M 1269 446.05 L 1280 440" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(-0.5078921208623797 0.2036233968101443)"/>
+    <path d="M 1269 446.05 L 1280 440" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(0.698950800485909 -0.6305850368924439)"/>
+  
+    
+    <path d="M 1269 433.95 L 1280 440" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(0.8873132443986834 0.7626302457880229)"/>
+    <path d="M 1269 433.95 L 1280 440" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(-0.3214981711003929 0.7876080532092601)"/>
+  
+  
+
+    <path d="M 1400 500 L 1400 580 L 1090 580 L 1090 620" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.8293683816678822 0.8264528129249812)"/>
+    <path d="M 1400 500 L 1400 580 L 1090 580 L 1090 620" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.5049165699630976 -0.3578709793277085)"/>
+  
+    
+    <path d="M 1083.95 609 L 1090 620" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.06226644744165244 -0.06910281602758916) translate(0.8903353416826577 -0.6077334660105407)"/>
+    <path d="M 1083.95 609 L 1090 620" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.06226644744165244 -0.06910281602758916) translate(-0.5055344440508633 -0.6831120197195559)"/>
+  
+    
+    <path d="M 1096.05 609 L 1090 620" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.06226644744165244 -0.06910281602758916) translate(0.6732670201454313 0.6998147224076093)"/>
+    <path d="M 1096.05 609 L 1090 620" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.06226644744165244 -0.06910281602758916) translate(-0.00036958535201847553 0.3076206031255425)"/>
+  
+  
+
+    <path d="M 1090 730 L 1090 790 L 60 790 L 60 510 L 500 510 L 500 560" fill="none" stroke="#3f7a18" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.5528015915304423 0.8662438710685819)"/>
+    <path d="M 1090 730 L 1090 790 L 60 790 L 60 510 L 500 510 L 500 560" fill="none" stroke="#3f7a18" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.7177449464332313 -0.7905569437891246)"/>
+  
+    
+    <path d="M 493.95 549 L 500 560" fill="none" stroke="#3f7a18" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.48262151135131715 0.1743030540179461)"/>
+    <path d="M 493.95 549 L 500 560" fill="none" stroke="#3f7a18" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.17000733660534018 -0.7878602801822127)"/>
+  
+    
+    <path d="M 506.05 549 L 500 560" fill="none" stroke="#3f7a18" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.7656414009165019 0.3845087078399957)"/>
+    <path d="M 506.05 549 L 500 560" fill="none" stroke="#3f7a18" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.3231255968101322 -0.22309220640454439) translate(-0.5726111995987595 0.7711698846425862)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="14" font-weight="700" fill="#22211d"><tspan x="190" y="198">Workflow mode  ·  deterministic</tspan></text>
+<rect x="110" y="524" width="480" height="22" rx="10" ry="10" fill="#fbfaf4" opacity="1"/>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="14" font-weight="700" fill="#3f7a18"><tspan x="350" y="538">Agent mode  ·  goal-driven (llm-auto)</tspan></text>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="15" font-weight="700" fill="#22211d"><tspan x="1100" y="350">Shared execution stack</tspan></text>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="16" font-weight="700" fill="#3f7a18"><tspan x="560" y="770">Feedback loop  ·  result feeds the planner</tspan></text>
+<text text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="17" font-weight="500" fill="#454039"><tspan x="800" y="845">Structured workflows and goal-based planning share the same browser execution layer.</tspan></text>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="13" font-weight="600" fill="#676258"><tspan x="480" y="350">converge</tspan></text>
+</svg>

@@ -1,0 +1,242 @@
+{
+  "meta": {
+    "slug": "04-workflow-vs-agent",
+    "title": "RZN Browser — Workflow Mode vs Agent Mode",
+    "subtitle": "Two entry points. One execution stack. One browser.",
+    "width": 1600,
+    "height": 880
+  },
+  "containers": [],
+  "nodes": [
+    {
+      "id": "workflow",
+      "x": 80,
+      "y": 220,
+      "w": 220,
+      "h": 110,
+      "r": 22,
+      "label": ["JSON", "workflow"],
+      "fill": "#c8d9f5",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 21,
+      "weight": 700,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    },
+    {
+      "id": "goal",
+      "x": 80,
+      "y": 560,
+      "w": 220,
+      "h": 110,
+      "r": 22,
+      "label": ["Goal", "string"],
+      "fill": "#f4faeb",
+      "stroke": "#8ac24c",
+      "font": "mono",
+      "fontSize": 21,
+      "weight": 700,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    },
+    {
+      "id": "planner",
+      "x": 400,
+      "y": 560,
+      "w": 200,
+      "h": 110,
+      "r": 22,
+      "label": ["Planner"],
+      "fill": "#f4faeb",
+      "stroke": "#8ac24c",
+      "font": "mono",
+      "fontSize": 23,
+      "weight": 800,
+      "textColor": "#22211d"
+    },
+    {
+      "id": "runner",
+      "x": 700,
+      "y": 380,
+      "w": 220,
+      "h": 120,
+      "r": 22,
+      "label": ["Step", "runner"],
+      "fill": "#f2eee7",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 22,
+      "weight": 800,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    },
+    {
+      "id": "bridge",
+      "x": 990,
+      "y": 380,
+      "w": 220,
+      "h": 120,
+      "r": 22,
+      "label": ["Browser", "bridge"],
+      "fill": "#f2eee7",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 22,
+      "weight": 700,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    },
+    {
+      "id": "ext",
+      "x": 1280,
+      "y": 380,
+      "w": 240,
+      "h": 120,
+      "r": 22,
+      "label": ["Chrome extension", "and page"],
+      "fill": "#ecd1b9",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 19,
+      "weight": 700,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.1
+    },
+    {
+      "id": "result",
+      "x": 970,
+      "y": 620,
+      "w": 240,
+      "h": 110,
+      "r": 22,
+      "label": ["Result /", "snapshot"],
+      "fill": "#fef7d6",
+      "stroke": "#c8a83a",
+      "font": "mono",
+      "fontSize": 20,
+      "weight": 700,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    }
+  ],
+  "texts": [
+    {
+      "x": 190,
+      "y": 198,
+      "lines": ["Workflow mode  ·  deterministic"],
+      "font": "mono",
+      "fontSize": 14,
+      "weight": 700,
+      "color": "#22211d",
+      "anchor": "middle"
+    },
+    {
+      "x": 350,
+      "y": 538,
+      "lines": ["Agent mode  ·  goal-driven (llm-auto)"],
+      "font": "mono",
+      "fontSize": 14,
+      "weight": 700,
+      "color": "#3f7a18",
+      "anchor": "middle",
+      "backplate": {
+        "x": 110,
+        "y": 524,
+        "w": 480,
+        "h": 22,
+        "fill": "#fbfaf4"
+      }
+    },
+    {
+      "x": 1100,
+      "y": 350,
+      "lines": ["Shared execution stack"],
+      "font": "mono",
+      "fontSize": 15,
+      "weight": 700,
+      "color": "#22211d",
+      "anchor": "middle"
+    },
+    {
+      "x": 560,
+      "y": 770,
+      "lines": ["Feedback loop  ·  result feeds the planner"],
+      "font": "mono",
+      "fontSize": 16,
+      "weight": 700,
+      "color": "#3f7a18",
+      "anchor": "middle"
+    },
+    {
+      "x": 800,
+      "y": 845,
+      "lines": ["Structured workflows and goal-based planning share the same browser execution layer."],
+      "font": "body",
+      "fontSize": 17,
+      "weight": 500,
+      "color": "#454039",
+      "anchor": "middle"
+    },
+    {
+      "x": 480,
+      "y": 350,
+      "lines": ["converge"],
+      "font": "mono",
+      "fontSize": 13,
+      "weight": 600,
+      "color": "#676258",
+      "anchor": "middle"
+    }
+  ],
+  "edges": [
+    {
+      "points": [[300, 275], [660, 275], [660, 430], [700, 430]],
+      "stroke": "#22211d",
+      "width": 2,
+      "arrow": true
+    },
+    {
+      "points": [[300, 615], [400, 615]],
+      "stroke": "#3f7a18",
+      "width": 2,
+      "arrow": true
+    },
+    {
+      "points": [[600, 615], [620, 615], [620, 460], [700, 460]],
+      "stroke": "#3f7a18",
+      "width": 2,
+      "arrow": true
+    },
+    {
+      "points": [[920, 440], [990, 440]],
+      "stroke": "#22211d",
+      "width": 2.2,
+      "arrow": true
+    },
+    {
+      "points": [[1210, 440], [1280, 440]],
+      "stroke": "#22211d",
+      "width": 2.2,
+      "arrow": true
+    },
+    {
+      "points": [[1400, 500], [1400, 580], [1090, 580], [1090, 620]],
+      "stroke": "#22211d",
+      "width": 2,
+      "arrow": true
+    },
+    {
+      "points": [[1090, 730], [1090, 790], [60, 790], [60, 510], [500, 510], [500, 560]],
+      "stroke": "#3f7a18",
+      "width": 2.2,
+      "arrow": true
+    }
+  ]
+}

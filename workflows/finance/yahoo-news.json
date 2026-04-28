@@ -1,0 +1,91 @@
+{
+  "system_id": "finance",
+  "id": "yahoo_news_v1",
+  "name": "Yahoo Finance: News Headlines",
+  "description": "Fetch the latest Yahoo Finance news headlines for a ticker. Returns headline, URL, publisher, and relative timestamp. Pure read; complements finance/stock-price (quote) since news is a separate output contract.",
+  "domain": "finance.yahoo.com",
+  "version": "1.0.0",
+  "last_updated": "2026-04-25T00:00:00Z",
+  "help": {
+    "summary": "Latest Yahoo Finance news headlines for a given ticker.",
+    "parameters": [
+      {
+        "name": "ticker",
+        "required": true,
+        "shape": "Yahoo ticker symbol",
+        "description": "Same ticker grammar as finance/stock-price (AAPL, ^GSPC, BTC-USD, EURUSD=X, BMW.DE, etc.).",
+        "example": "AAPL"
+      },
+      {
+        "name": "limit",
+        "required": false,
+        "shape": "integer",
+        "description": "Maximum number of headlines to return. Default 20; capped at the number Yahoo renders without scrolling (typically 20–25).",
+        "example": "10"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Latest Apple headlines (default 20)",
+        "command": "rzn-browser run finance yahoo-news --param ticker=\"AAPL\""
+      },
+      {
+        "description": "Top 5 S&P 500 headlines",
+        "command": "rzn-browser run finance yahoo-news --param ticker=\"^GSPC\" --param limit=\"5\""
+      }
+    ],
+    "returns": "Object: { ticker, count, headlines: [{ title, url, publisher, age }] }. Pair with finance/stock-price for current quote on the same ticker.",
+    "notes": [
+      "JS-first: reads [data-testid='storyitem']. Yahoo has used this contract for several redesigns.",
+      "Publisher and timestamp fields can come back as 'N/A' on some story types (sponsored content, video-only items)."
+    ]
+  },
+  "browser_automation": {
+    "description": "Workflow to extract latest news headlines from finance.yahoo.com/quote/<ticker>/news.",
+    "sequences": [
+      {
+        "name": "yahoo_news_extract",
+        "description": "Navigate to the news tab for a ticker; read story items via JS.",
+        "required_variables": [
+          {
+            "name": "ticker",
+            "description": "Yahoo Finance ticker symbol"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Yahoo news for ticker",
+            "type": "navigate_to_url",
+            "url": "https://finance.yahoo.com/quote/{ticker}/news"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for story items",
+            "type": "wait_for_element",
+            "selector": "[data-testid='storyitem']",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s3",
+            "name": "Allow late items to render",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1500
+          },
+          {
+            "id": "s4",
+            "name": "Extract news headlines",
+            "type": "execute_javascript",
+            "world": "main",
+            "return_value": true,
+            "args": [
+              "{ticker}",
+              "{limit}"
+            ],
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const ticker = cleanArg(arg0); if (!ticker) throw new Error('ticker is required'); const limitRaw = cleanArg(arg1); const limit = limitRaw && /^[1-9][0-9]*$/.test(limitRaw) ? parseInt(limitRaw, 10) : 20; const norm = (v) => { const t = String(v || '').replace(/\\s+/g, ' ').trim(); return t || 'N/A'; }; const items = Array.from(document.querySelectorAll(\"[data-testid='storyitem']\")); if (!items.length) throw new Error('No story items found for ' + ticker); const headlines = items.slice(0, limit).map((item) => { const link = item.querySelector('a[href]'); const headlineText = item.querySelector('h3, h4, [class*=\"headline\"]')?.textContent || link?.textContent || ''; const publisher = item.querySelector('[class*=\"publisher\"], [class*=\"source\"], [data-testid*=\"publisher\"]')?.textContent || ''; const age = item.querySelector('time, [class*=\"timestamp\"]')?.textContent || ''; return { title: norm(headlineText), url: link?.href || 'N/A', publisher: norm(publisher), age: norm(age) }; }).filter((h) => h.title !== 'N/A'); return { ticker, count: headlines.length, headlines };"
+          }
+        ]
+      }
+    ]
+  }
+}

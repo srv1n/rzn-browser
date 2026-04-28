@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>RZN Form Wizard Fixture</title>
+    <style>
+      body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; }
+      .card { max-width: 720px; margin: 0 auto; border: 1px solid #ddd; border-radius: 12px; padding: 18px; }
+      .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      .row.single { grid-template-columns: 1fr; }
+      label { display: block; font-weight: 600; margin: 10px 0 6px; }
+      input, select { width: 100%; padding: 10px 12px; border: 1px solid #bbb; border-radius: 8px; }
+      .actions { display: flex; gap: 10px; margin-top: 16px; }
+      button { padding: 10px 14px; border-radius: 10px; border: 1px solid #333; background: #111; color: #fff; cursor: pointer; }
+      button.secondary { background: #fff; color: #111; border-color: #bbb; }
+      button[disabled] { opacity: 0.5; cursor: not-allowed; }
+      .hint { color: #555; font-size: 13px; margin-top: 4px; }
+      .stepper { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+      .pill { font-size: 12px; padding: 4px 8px; border-radius: 999px; border: 1px solid #ccc; color: #333; }
+      .pill.active { border-color: #111; background: #111; color: #fff; }
+      .error { margin-top: 8px; padding: 10px 12px; border: 1px solid #f2b8b5; background: #fdecea; border-radius: 10px; color: #7a1c18; }
+      .field-error { color: #7a1c18; font-size: 12px; margin-top: 6px; }
+      .review { background: #f7f7f7; border-radius: 12px; padding: 12px; }
+      .kv { display: grid; grid-template-columns: 160px 1fr; gap: 8px; padding: 6px 0; border-bottom: 1px solid #e1e1e1; }
+      .kv:last-child { border-bottom: 0; }
+      code { background: #eee; padding: 1px 6px; border-radius: 6px; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Signup Wizard</h1>
+      <p class="hint">
+        This is a deterministic local fixture for testing multi-step forms + validation handling.
+        Goal: reach the <code>Review</code> step with no validation errors. Do not press final submit.
+      </p>
+
+      <div id="stepper" class="stepper" aria-label="Wizard steps">
+        <span id="pill-1" class="pill active">1. Account</span>
+        <span id="pill-2" class="pill">2. Profile</span>
+        <span id="pill-3" class="pill">3. Review</span>
+      </div>
+
+      <div id="globalError" role="alert" class="error" style="display:none"></div>
+
+      <form id="wizardForm" novalidate>
+        <section id="step-1" data-step="1">
+          <div class="row">
+            <div>
+              <label for="email">Email</label>
+              <input id="email" name="email" type="email" autocomplete="email" aria-label="Email" placeholder="name@example.com" />
+              <div id="emailErr" class="field-error" aria-live="polite"></div>
+            </div>
+            <div>
+              <label for="password">Password</label>
+              <input id="password" name="password" type="password" autocomplete="new-password" aria-label="Password" placeholder="At least 10 chars" />
+              <div id="passwordErr" class="field-error" aria-live="polite"></div>
+              <div class="hint">Rules: 10+ chars, must include a number.</div>
+            </div>
+          </div>
+
+          <fieldset style="border:0; padding:0; margin: 12px 0 0;">
+            <legend style="font-weight: 600; margin: 10px 0 6px;">Plan</legend>
+            <label style="font-weight: 500; display:flex; gap:10px; align-items:center; margin: 8px 0;">
+              <input id="planFree" name="plan" type="radio" value="free" aria-label="Plan Free" />
+              Free
+            </label>
+            <label style="font-weight: 500; display:flex; gap:10px; align-items:center; margin: 8px 0;">
+              <input id="planPro" name="plan" type="radio" value="pro" aria-label="Plan Pro" />
+              Pro
+            </label>
+            <div id="planErr" class="field-error" aria-live="polite"></div>
+          </fieldset>
+        </section>
+
+        <section id="step-2" data-step="2" style="display:none">
+          <div class="row">
+            <div>
+              <label for="firstName">First name</label>
+              <input id="firstName" name="firstName" type="text" aria-label="First name" placeholder="Ada" />
+              <div id="firstNameErr" class="field-error" aria-live="polite"></div>
+            </div>
+            <div>
+              <label for="lastName">Last name</label>
+              <input id="lastName" name="lastName" type="text" aria-label="Last name" placeholder="Lovelace" />
+              <div id="lastNameErr" class="field-error" aria-live="polite"></div>
+            </div>
+          </div>
+
+          <label for="zip">ZIP</label>
+          <input id="zip" name="zip" inputmode="numeric" aria-label="ZIP" placeholder="94107" />
+          <div id="zipErr" class="field-error" aria-live="polite"></div>
+
+          <label>
+            <input id="terms" name="terms" type="checkbox" aria-label="Accept terms" />
+            I agree to the terms
+          </label>
+          <div id="termsErr" class="field-error" aria-live="polite"></div>
+        </section>
+
+        <section id="step-3" data-step="3" style="display:none">
+          <h2>Review</h2>
+          <p class="hint">If you see this step, the wizard is complete. Do not click Submit.</p>
+          <div class="review" id="reviewBox" aria-label="Review summary"></div>
+        </section>
+
+        <div class="actions">
+          <button id="backBtn" class="secondary" type="button" aria-label="Back" disabled>Back</button>
+          <button id="nextBtn" type="button" aria-label="Next">Next</button>
+          <button id="submitBtn" type="button" aria-label="Submit" style="margin-left:auto" disabled>Submit</button>
+        </div>
+      </form>
+    </div>
+
+    <script>
+      const state = { step: 1 };
+      const $ = (id) => document.getElementById(id);
+
+      function setGlobalError(msg) {
+        const box = $("globalError");
+        if (!msg) {
+          box.style.display = "none";
+          box.textContent = "";
+          return;
+        }
+        box.style.display = "block";
+        box.textContent = msg;
+      }
+
+      function clearErrors() {
+        setGlobalError("");
+        ["emailErr","passwordErr","planErr","firstNameErr","lastNameErr","zipErr","termsErr"].forEach((id) => {
+          const el = $(id);
+          if (el) el.textContent = "";
+        });
+      }
+
+      function showStep(n) {
+        state.step = n;
+        $("step-1").style.display = n === 1 ? "" : "none";
+        $("step-2").style.display = n === 2 ? "" : "none";
+        $("step-3").style.display = n === 3 ? "" : "none";
+        $("backBtn").disabled = n === 1;
+        $("nextBtn").style.display = n === 3 ? "none" : "";
+        $("submitBtn").disabled = n !== 3;
+        $("pill-1").classList.toggle("active", n === 1);
+        $("pill-2").classList.toggle("active", n === 2);
+        $("pill-3").classList.toggle("active", n === 3);
+      }
+
+      function isEmail(v) {
+        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v);
+      }
+
+      function validateStep1() {
+        clearErrors();
+        let ok = true;
+        const email = $("email").value.trim();
+        const password = $("password").value;
+        const plan = document.querySelector("input[name='plan']:checked")?.value || "";
+
+        if (!email) { $("emailErr").textContent = "Email is required."; ok = false; }
+        else if (!isEmail(email)) { $("emailErr").textContent = "Enter a valid email address."; ok = false; }
+
+        if (!password) { $("passwordErr").textContent = "Password is required."; ok = false; }
+        else if (password.length < 10) { $("passwordErr").textContent = "Password must be at least 10 characters."; ok = false; }
+        else if (!/\d/.test(password)) { $("passwordErr").textContent = "Password must include at least one number."; ok = false; }
+
+        if (!plan) { $("planErr").textContent = "Please select a plan."; ok = false; }
+
+        if (!ok) setGlobalError("Fix the highlighted issues to continue.");
+        return ok;
+      }
+
+      function validateStep2() {
+        clearErrors();
+        let ok = true;
+        const first = $("firstName").value.trim();
+        const last = $("lastName").value.trim();
+        const zip = $("zip").value.trim();
+        const terms = $("terms").checked;
+
+        if (!first) { $("firstNameErr").textContent = "First name is required."; ok = false; }
+        if (!last) { $("lastNameErr").textContent = "Last name is required."; ok = false; }
+        if (!zip) { $("zipErr").textContent = "ZIP is required."; ok = false; }
+        else if (!/^\d{5}$/.test(zip)) { $("zipErr").textContent = "ZIP must be 5 digits."; ok = false; }
+        if (!terms) { $("termsErr").textContent = "You must accept the terms to continue."; ok = false; }
+
+        if (!ok) setGlobalError("Fix the highlighted issues to continue.");
+        return ok;
+      }
+
+      function renderReview() {
+        const entries = [
+          ["Email", $("email").value.trim()],
+          ["Plan", (document.querySelector("input[name='plan']:checked")?.value || "")],
+          ["First name", $("firstName").value.trim()],
+          ["Last name", $("lastName").value.trim()],
+          ["ZIP", $("zip").value.trim()],
+          ["Terms", $("terms").checked ? "Accepted" : "Not accepted"],
+        ];
+        $("reviewBox").innerHTML = entries.map(([k,v]) => (
+          `<div class="kv"><div><strong>${k}</strong></div><div>${String(v).replaceAll("<","&lt;")}</div></div>`
+        )).join("");
+      }
+
+      $("nextBtn").addEventListener("click", () => {
+        if (state.step === 1) {
+          if (!validateStep1()) return;
+          showStep(2);
+          return;
+        }
+        if (state.step === 2) {
+          if (!validateStep2()) return;
+          renderReview();
+          showStep(3);
+        }
+      });
+
+      $("backBtn").addEventListener("click", () => {
+        clearErrors();
+        if (state.step === 2) showStep(1);
+        else if (state.step === 3) showStep(2);
+      });
+
+      // Final submit is intentionally disabled for safety; clicking it does nothing.
+      $("submitBtn").addEventListener("click", () => {
+        setGlobalError("This fixture does not allow final submission.");
+      });
+
+      showStep(1);
+
+      // Test hook (read-only). Lets e2e verify the fixture script is running.
+      window.__rznWizard = { getStep: () => state.step };
+    </script>
+  </body>
+</html>

@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RZN Extension Basic Test</title>
+    <style>
+        body { font-family: monospace; padding: 40px; }
+        button { padding: 10px 20px; margin: 10px; cursor: pointer; }
+        #status { padding: 20px; margin: 20px 0; background: #f0f0f0; }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>RZN Extension Basic Test</h1>
+    
+    <div id="status">Press a button to test...</div>
+    
+    <button onclick="testRuntime()">Test Chrome Runtime</button>
+    <button onclick="testMessage()">Send Test Message</button>
+    <button onclick="checkContent()">Check Content Script</button>
+    
+    <script>
+        function updateStatus(msg, isError = false) {
+            const status = document.getElementById('status');
+            status.className = isError ? 'error' : 'success';
+            status.textContent = msg;
+            console.log('[TEST]', msg);
+        }
+        
+        function testRuntime() {
+            if (typeof chrome === 'undefined') {
+                updateStatus('❌ Chrome API not available', true);
+                return;
+            }
+            if (typeof chrome.runtime === 'undefined') {
+                updateStatus('❌ Chrome Runtime not available', true);
+                return;
+            }
+            updateStatus('✅ Chrome Runtime is available');
+        }
+        
+        function testMessage() {
+            if (typeof chrome === 'undefined' || !chrome.runtime) {
+                updateStatus('❌ Cannot send - Chrome Runtime not available', true);
+                return;
+            }
+            
+            chrome.runtime.sendMessage({type: 'PING'}, response => {
+                if (chrome.runtime.lastError) {
+                    updateStatus(`❌ Error: ${chrome.runtime.lastError.message}`, true);
+                } else if (response && response.success) {
+                    updateStatus('✅ Extension responded successfully!');
+                } else {
+                    updateStatus('⚠️ Unexpected response', true);
+                }
+            });
+        }
+        
+        function checkContent() {
+            // Look for RZN console logs
+            const originalLog = console.log;
+            let found = false;
+            console.log = function(...args) {
+                originalLog.apply(console, args);
+                if (args[0] && args[0].includes('[RZN')) {
+                    found = true;
+                    updateStatus('✅ Content script is active');
+                }
+            };
+            
+            // Trigger a console log
+            console.log('[TEST] Checking for RZN logs...');
+            
+            setTimeout(() => {
+                if (!found) {
+                    updateStatus('⚠️ No RZN logs detected - check console', true);
+                }
+                console.log = originalLog;
+            }, 100);
+        }
+        
+        // Auto-test on load
+        window.addEventListener('load', () => {
+            setTimeout(testRuntime, 500);
+        });
+    </script>
+</body>
+</html>

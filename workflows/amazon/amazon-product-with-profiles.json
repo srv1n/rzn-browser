@@ -1,0 +1,56 @@
+{
+  "version": "v3",
+  "metadata": {
+    "name": "Amazon Product Search with Site Profiles",
+    "description": "Amazon product search using deterministic site profile extractors",
+    "site_compatibility": ["amazon.com", "amazon.co.uk", "amazon.ca"],
+    "uses_site_profile": true
+  },
+  "parameters": {
+    "product_query": {
+      "type": "string",
+      "description": "Product search term",
+      "required": true
+    }
+  },
+  "steps": [
+    {
+      "type": "navigate",
+      "url": "https://amazon.com",
+      "wait_for": "networkidle"
+    },
+    {
+      "type": "fill_input_field",
+      "target_spec": {
+        "css": "#twotabsearchtextbox"
+      },
+      "value": "{{product_query}}"
+    },
+    {
+      "type": "click_element",
+      "target_spec": {
+        "css": "#nav-search-submit-button"
+      },
+      "wait_for": "networkidle"
+    },
+    {
+      "type": "extract_structured_data",
+      "target_spec": {
+        "css": "body"
+      },
+      "extraction_type": "search_results",
+      "fields": [
+        {
+          "name": "products",
+          "selector": "[data-component-type=\"s-search-result\"]"
+        }
+      ],
+      "output_variable": "product_results"
+    }
+  ],
+  "output": {
+    "products": "{{product_results}}",
+    "total_products": "{{product_results.length}}",
+    "extraction_method": "site_profile"
+  }
+}

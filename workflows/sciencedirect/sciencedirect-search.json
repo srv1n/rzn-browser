@@ -1,0 +1,87 @@
+{
+  "system_id": "sciencedirect",
+  "id": "sciencedirect_search_v1",
+  "name": "ScienceDirect Search Workflow",
+  "description": "Search ScienceDirect and extract paper metadata from the first results page.",
+  "domain": "sciencedirect.com",
+  "version": "2.0.0",
+  "last_updated": "2026-04-24T00:00:00Z",
+  "help": {
+    "summary": "Search ScienceDirect and return the first page of result metadata (title, authors, journal, date, URL, DOI, article type, open-access status).",
+    "parameters": [
+      {
+        "name": "search_query",
+        "required": true,
+        "shape": "text",
+        "description": "Free-text query for academic papers. Supports standard ScienceDirect search syntax.",
+        "example": "machine learning wrist fracture"
+      }
+    ],
+    "examples": [
+      {
+        "command": "rzn-browser run sciencedirect search --param search_query=\"machine learning\"",
+        "description": "Search for papers about machine learning."
+      },
+      {
+        "command": "rzn-browser run sciencedirect search --param search_query=\"graphene supercapacitor 2024\"",
+        "description": "Narrower topical + year search."
+      }
+    ],
+    "returns": "Array of result items (one SERP page, up to ~25). Each item has: title, url (relative /science/article/pii/... path), authors, journal, date, article_type, access_type (\"Open access\" when present; absent on paywalled), doi.",
+    "notes": [
+      "Only one results page is extracted. Paginate by issuing narrower queries rather than walking pages.",
+      "Abstracts are not rendered on the SRP; use sciencedirect paper-access for the full abstract.",
+      "doi is read from the li[data-doi] attribute, not rendered text.",
+      "The url field is a relative path; prefix with https://www.sciencedirect.com to resolve."
+    ]
+  },
+  "browser_automation": {
+    "description": "Navigates directly to the ScienceDirect search URL and scrapes the first page of results.",
+    "sequences": [
+      {
+        "name": "sciencedirect_search_extract",
+        "description": "Open /search?qs={search_query} and extract paper metadata from li.ResultItem entries.",
+        "required_variables": [
+          { "name": "search_query", "description": "The search term for academic papers." }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to search results",
+            "type": "navigate_to_url",
+            "url": "https://www.sciencedirect.com/search?qs={search_query}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for results container",
+            "type": "wait_for_element",
+            "selector": "#srp-results-list",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s3",
+            "name": "Settle dynamic content",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1500
+          },
+          {
+            "id": "s4",
+            "name": "Extract result metadata",
+            "type": "extract_structured_data",
+            "item_selector": "li.ResultItem",
+            "fields": [
+              { "name": "title", "selector": "h2 a" },
+              { "name": "url", "selector": "h2 a", "attribute": "href" },
+              { "name": "authors", "selector": ".Authors" },
+              { "name": "journal", "selector": ".srctitle-date-fields a" },
+              { "name": "date", "selector": ".srctitle-date-fields > span:last-child" },
+              { "name": "article_type", "selector": ".article-type" },
+              { "name": "access_type", "selector": ".access-label" },
+              { "name": "doi", "selector": "*", "attribute": "data-doi" }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

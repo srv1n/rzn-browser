@@ -1,0 +1,173 @@
+{
+  "system_id": "appstore",
+  "id": "appstore_app_details",
+  "name": "App Store: App Details",
+  "description": "Open one App Store app page and extract title, subtitle, category, description, version info, ratings summary, screenshot sources, and review rows. Accepts either a numeric `app_id` or a full `app_url`. Use `mode` to choose how deep to go on reviews. Read-only.",
+  "domain": "apps.apple.com",
+  "version": "2.0.0",
+  "last_updated": "2026-04-25T00:00:00Z",
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigates to the app page, scrolls to load lazy sections, extracts the metadata/screenshots/reviews visible on the product page, and (in full mode) opens the full Ratings & Reviews page for more review rows.",
+    "sequences": [
+      {
+        "name": "appstore_app_details",
+        "description": "Resolve app URL from app_id or app_url, extract metadata, screenshots, reviews; optional deep review mode.",
+        "required_variables": [],
+        "optional_variables": [
+          { "name": "app_id", "description": "Numeric App Store app id (e.g. 1232780281). Either this or `app_url` must be set." },
+          { "name": "app_url", "description": "Full App Store app URL. Overrides `app_id` if both are given." },
+          { "name": "country", "description": "Two-letter storefront code. Defaults to 'us' when only `app_id` is given." },
+          { "name": "mode", "description": "One of: with-reviews | full. with-reviews (default) = metadata + screenshots + on-page reviews. full = also opens /see-all=reviews for a deeper review batch. (basic is accepted as an alias for with-reviews.)" }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Open the App Store in a fresh tab",
+            "type": "open_new_tab",
+            "url": "https://apps.apple.com/us/"
+          },
+          {
+            "id": "s1b",
+            "name": "Resolve target URL from app_id / app_url / country and redirect",
+            "type": "execute_javascript",
+            "world": "main",
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst app_url = cleanArg('{app_url}');\nconst app_id = cleanArg('{app_id}');\nconst country = (cleanArg('{country}') || 'us').toLowerCase();\nlet target;\nif (app_url) { target = app_url; } else if (app_id) { target = `https://apps.apple.com/${encodeURIComponent(country)}/app/id${encodeURIComponent(app_id)}`; } else { return { error: 'must provide app_id or app_url' }; }\nsetTimeout(() => window.location.assign(target), 0);\nreturn { redirected: true, target };",
+            "return_value": true
+          },
+          {
+            "id": "s2",
+            "name": "Wait for hydration",
+            "type": "wait_for_timeout",
+            "timeout_ms": 4000
+          },
+          {
+            "id": "s3",
+            "name": "Wait for app title",
+            "type": "wait_for_element",
+            "selector": "h1",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s4",
+            "name": "Wait for screenshot media section",
+            "type": "wait_for_element",
+            "selector": "#product_media_phone_, [id^='product_media_']",
+            "timeout_ms": 15000
+          },
+          {
+            "id": "s5",
+            "name": "Wait for ratings/reviews section",
+            "type": "wait_for_element",
+            "selector": "#productRatings, #allProductReviews",
+            "timeout_ms": 20000
+          },
+          {
+            "id": "s6",
+            "name": "Scroll the page to force lazy review content to mount",
+            "type": "execute_javascript",
+            "world": "main",
+            "script": "(async () => { const sleep = (ms) => new Promise(r=>setTimeout(r,ms)); for (let i=0;i<4;i++) { window.scrollBy(0, 1500); await sleep(700); } window.scrollTo(0,0); return { scrolled: 4 }; })()",
+            "return_value": true
+          },
+          {
+            "id": "s7",
+            "name": "Extract core app metadata",
+            "type": "extract_structured_data",
+            "item_selector": "main",
+            "limit": 1,
+            "fields": [
+              { "name": "app_title", "selector": "h1", "post_processing": ["collapse_whitespace"] },
+              { "name": "subtitle", "selector": "h2.product-header__identity, h2", "post_processing": ["collapse_whitespace"] },
+              { "name": "price_or_get_label", "selector": "button.we-button, .app-header__list__item, li.inline-list__item", "post_processing": ["collapse_whitespace"] },
+              { "name": "category", "selector": "dd.information-list__item__definition a, .information-list__item__definition a", "post_processing": ["collapse_whitespace"] },
+              { "name": "description", "selector": ".we-truncate__text, .section__description, p.whats-new__description", "post_processing": ["collapse_whitespace"] },
+              { "name": "latest_version", "selector": "p.whats-new__latest__version, .version-history__item__version-number, #mostRecentVersion h3", "post_processing": ["collapse_whitespace"] },
+              { "name": "rating_count", "selector": "#productRatings .we-customer-ratings__count, #productRatings .we-rating-count, #productRatings [class*='rating-count']", "post_processing": ["collapse_whitespace"] },
+              { "name": "rating_summary_text", "selector": "#productRatings .we-customer-ratings__averages__display, #productRatings .we-star-rating, #productRatings", "post_processing": ["collapse_whitespace"] },
+              { "name": "see_all_reviews_href", "selector": "a[href*='see-all=reviews']", "attribute": "href" }
+            ]
+          },
+          {
+            "id": "s8",
+            "name": "Extract screenshot sources",
+            "type": "extract_structured_data",
+            "item_selector": "#product_media_phone_ img, [id^='product_media_'] img, [id^='product_media_'] source",
+            "limit": 20,
+            "fields": [
+              { "name": "src", "selector": "*", "attribute": "src" },
+              { "name": "srcset", "selector": "*", "attribute": "srcset" },
+              { "name": "alt", "selector": "*", "attribute": "alt" }
+            ]
+          },
+          {
+            "id": "s9",
+            "name": "Extract reviews visible on product page",
+            "type": "extract_structured_data",
+            "item_selector": "#allProductReviews .shelf-grid__list-item:not(.placeholder), #allProductReviews article",
+            "limit": 20,
+            "fields": [
+              { "name": "title", "selector": "h1, h2, h3", "post_processing": ["collapse_whitespace"] },
+              { "name": "author", "selector": ".header-container .multiline-clamp, .content-modal-container .multiline-clamp, .review-header .multiline-clamp, .we-customer-review__user", "post_processing": ["collapse_whitespace"] },
+              { "name": "date", "selector": "time, [datetime], .we-customer-review__date", "attribute": "datetime" },
+              { "name": "date_text", "selector": "time, .we-customer-review__date", "post_processing": ["collapse_whitespace"] },
+              { "name": "body", "selector": ".content, blockquote, .we-clamp, .content-modal-container .content, .we-customer-review__body", "post_processing": ["collapse_whitespace"] },
+              { "name": "rating_aria", "selector": "[aria-label*='out of'], [aria-label*='stars']", "attribute": "aria-label" }
+            ]
+          },
+          {
+            "id": "s10",
+            "name": "[mode=full] Open the full Ratings & Reviews page",
+            "type": "execute_javascript",
+            "world": "main",
+            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst mode = cleanArg('{mode}').toLowerCase() || 'with-reviews';\nif (mode !== 'full') { return { skipped: true, mode }; }\nconst link = document.querySelector(\"a[href*='see-all=reviews']\");\nif (!link) { return { skipped: true, reason: 'no see-all link' }; }\nconst target = link.href;\nsetTimeout(() => window.location.assign(target), 0);\nreturn { redirected: true, target, mode };",
+            "return_value": true
+          },
+          {
+            "id": "s11",
+            "name": "[mode=full] Wait for full review page hydration",
+            "type": "wait_for_timeout",
+            "timeout_ms": 4000
+          },
+          {
+            "id": "s12",
+            "name": "[mode=full] Extract full review rows",
+            "type": "extract_structured_data",
+            "item_selector": "article:has(h1), article:has(h2), article:has(h3), .we-customer-review",
+            "limit": 50,
+            "fields": [
+              { "name": "title", "selector": "h1, h2, h3", "post_processing": ["collapse_whitespace"] },
+              { "name": "author", "selector": ".review-header p, .review-header span, .review-header [class*='truncate'], .we-customer-review__user", "post_processing": ["collapse_whitespace"] },
+              { "name": "date", "selector": "time, [datetime], .we-customer-review__date", "attribute": "datetime" },
+              { "name": "date_text", "selector": "time, .we-customer-review__date", "post_processing": ["collapse_whitespace"] },
+              { "name": "body", "selector": "blockquote, .we-clamp, .we-customer-review__body, .content", "post_processing": ["collapse_whitespace"] },
+              { "name": "rating_aria", "selector": "[aria-label*='out of'], [aria-label*='stars']", "attribute": "aria-label" }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "help": {
+    "summary": "Open one App Store app page; return metadata, screenshots, and reviews.",
+    "parameters": [
+      { "name": "app_id", "required": false, "shape": "text", "description": "Numeric App Store app id. Either this or app_url must be given.", "example": "1232780281" },
+      { "name": "app_url", "required": false, "shape": "url", "description": "Full App Store URL. Overrides app_id when both are set.", "example": "https://apps.apple.com/us/app/notion-notes-tasks-ai/id1232780281" },
+      { "name": "country", "required": false, "shape": "text", "description": "Two-letter storefront code. Used only when constructing the URL from app_id. Defaults to 'us'.", "example": "gb" },
+      { "name": "mode", "required": false, "shape": "enum:with-reviews|full", "description": "with-reviews (default) = metadata + screenshots + on-page reviews; full = also opens /see-all=reviews for a deeper review batch. 'basic' is accepted as an alias of with-reviews.", "example": "full" }
+    ],
+    "examples": [
+      { "command": "rzn-browser run appstore app-details --param app_id=\"1232780281\"", "description": "Notion — US, with the on-page reviews (default mode)." },
+      { "command": "rzn-browser run appstore app-details --param app_url=\"https://apps.apple.com/gb/app/notion/id1232780281\" --param mode=\"full\"", "description": "UK page, deep review mode." },
+      { "command": "rzn-browser run appstore app-details --param app_id=\"1232780281\"", "description": "Default with-reviews mode: metadata + screenshots + on-page reviews." }
+    ],
+    "returns": "Object with app metadata (title/subtitle/category/description/version/ratings), screenshot array (src/srcset/alt), and review array (title/author/date/body/rating_aria). In full mode the full-page review array is additionally included.",
+    "notes": [
+      "Read-only.",
+      "Either app_id or app_url must be supplied; if both are set, app_url wins.",
+      "The product page is React/Svelte-rendered; we rely on IDs (`#productRatings`, `#allProductReviews`, `#product_media_phone_`) which have been stable across Apple's redesigns.",
+      "`rating_aria` carries the '4.5 out of 5 stars' accessibility label — that's the most reliable numeric rating read.",
+      "`mode=full` incurs an extra page navigation and ~4s wait."
+    ]
+  }
+}
