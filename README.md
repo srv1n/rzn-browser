@@ -6,6 +6,10 @@ It runs page actions through a Chrome extension and falls back to CDP for harder
 
 RZN is strongest when you want a local browser tool with built-in workflow packs, not just a blank browser SDK.
 
+<p>
+  <img src="docs/visuals/01-product-overview.png" alt="RZN Browser product overview showing the CLI, runtime, native host, Chrome extension, and target web app" width="100%">
+</p>
+
 ## Workflow Packs
 
 RZN ships with built-in workflow packs. For sites that need authentication, assume you are already signed in and use your normal browser session.
@@ -65,20 +69,18 @@ RZN ships with built-in workflow packs. For sites that need authentication, assu
 
 ## How It Works
 
-```mermaid
-flowchart LR
-  A["workflow / llm-auto / CLI"] --> B["extension + page actions"]
-  B --> C["your real Chrome tab + profile"]
-  B --> D{"page needs something harder?"}
-  D -- "no" --> C
-  D -- "yes, briefly" --> E["short CDP step"]
-  E --> C
-```
+<p>
+  <img src="docs/visuals/02-runtime-architecture.png" alt="RZN Browser runtime architecture showing local entry points, native host, Chrome extension, DOM path, and short CDP fallback path" width="100%">
+</p>
 
 - First path: use the extension and page actions.
 - Second path: use CDP for the cases the first path cannot handle.
 - Use fixed workflows when the task is known.
 - Use `llm-auto` when the task is still fuzzy.
+
+<p>
+  <img src="docs/visuals/04-workflow-vs-agent.png" alt="Workflow mode and agent mode converging on the same browser execution stack" width="100%">
+</p>
 
 ## Get Started in 10 Seconds
 
