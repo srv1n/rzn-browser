@@ -58,7 +58,11 @@ def copy_catalog_payload(root: Path, stage: Path) -> None:
 def build_extension(root: Path, version: str) -> None:
     run(["bun", "install", "--frozen-lockfile"], cwd=root / "extension")
     run(
-        ["bun", "run", "build"],
+        ["bun", "run", "scripts/generate-types.ts"],
+        cwd=root / "extension",
+    )
+    run(
+        ["bash", "build.sh"],
         cwd=root / "extension",
         env={"RZN_BUILD_SIGNATURE": f"v{version}"},
     )
