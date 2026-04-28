@@ -1,6 +1,6 @@
 {
   "name": "rzn-browser-control",
-  "version": "0.2.5",
+  "version": "0.1.0",
   "description": "Chrome extension for browser automation",
   "license": "AGPL-3.0-only",
   "type": "module",

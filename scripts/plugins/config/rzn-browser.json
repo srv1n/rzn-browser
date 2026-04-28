@@ -1,6 +1,6 @@
 {
   "id": "rzn-browser",
-  "version": "0.2.5",
+  "version": "0.1.0",
   "name": "RZN Browser",
   "description": "Browser automation worker + native host",
   "mcp_protocol_version": "2025-06-18",

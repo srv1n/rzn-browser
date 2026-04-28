@@ -4695,7 +4695,7 @@ mod tests {
             "--error",
             "button_not_found",
             "--app-version",
-            "0.2.5",
+            "0.1.0",
             "--platform",
             "macos",
             "--note",
@@ -4713,7 +4713,7 @@ mod tests {
                 assert_eq!(args.version, "2026-04-24.1");
                 assert_eq!(args.step, "search_button");
                 assert_eq!(args.error, "button_not_found");
-                assert_eq!(args.app_version, "0.2.5");
+                assert_eq!(args.app_version, "0.1.0");
                 assert_eq!(args.platform, "macos");
                 assert_eq!(
                     args.note.as_deref(),
@@ -4735,7 +4735,7 @@ mod tests {
             version: "2026-04-24.1".to_string(),
             step: "search_button".to_string(),
             error: "button_not_found".to_string(),
-            app_version: "0.2.5".to_string(),
+            app_version: "0.1.0".to_string(),
             platform: "macos".to_string(),
             note: Some("User-written note.".to_string()),
             dry_run: true,
@@ -4765,7 +4765,7 @@ mod tests {
         assert_eq!(value["flow_version"], "2026-04-24.1");
         assert_eq!(value["failed_stage"], "search_button");
         assert_eq!(value["error"], "button_not_found");
-        assert_eq!(value["app_version"], "0.2.5");
+        assert_eq!(value["app_version"], "0.1.0");
         assert_eq!(value["platform"], "macos");
         assert_eq!(value["note"], "User-written note.");
 
@@ -4815,7 +4815,7 @@ mod tests {
             version: "2026-04-24.1".to_string(),
             step: "search_button".to_string(),
             error: "button_not_found".to_string(),
-            app_version: "0.2.5".to_string(),
+            app_version: "0.1.0".to_string(),
             platform: "macos".to_string(),
         };
 

@@ -2641,8 +2641,8 @@ const actionHandlers = {
           const afterText = element.innerText || element.textContent || '';
           if (!inserted && afterText === beforeText) {
             element.textContent = `${element.textContent || ''}${value}`;
+            dispatchInputEvent(element, value, 'insertText');
           }
-          dispatchInputEvent(element, value, 'insertText');
           return;
         }
         const perCharDelay = delayMs ?? 35;

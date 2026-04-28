@@ -1,6 +1,6 @@
 [package]
 name = "rzn_contracts"
-version = "0.2.5"
+version = "0.1.0"
 edition = "2021"
 description = "Versioned wire contracts for RZN Browser Native (Snapshot/Action/Result/Transcript)"
 license = "AGPL-3.0-only"

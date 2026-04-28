@@ -630,7 +630,7 @@ mod tests {
             version: "1.0.0".to_string(),
             step: "https://example.com?q=private".to_string(),
             error: "element_not_found".to_string(),
-            app_version: "0.2.5".to_string(),
+            app_version: "0.1.0".to_string(),
             platform: "macos".to_string(),
             note: None,
         })
@@ -703,7 +703,7 @@ mod tests {
             version: "2026-04-24.1".to_string(),
             step: "search_button".to_string(),
             error: "button_not_found".to_string(),
-            app_version: "0.2.5".to_string(),
+            app_version: "0.1.0".to_string(),
             platform: "macos".to_string(),
         };
         let draft =
@@ -724,7 +724,7 @@ mod tests {
                 "flow_version": "2026-04-24.1",
                 "failed_stage": "search_button",
                 "error": "button_not_found",
-                "app_version": "0.2.5",
+                "app_version": "0.1.0",
                 "platform": "macos",
                 "note": "user-authored only"
             })

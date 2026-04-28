@@ -1,6 +1,6 @@
 [package]
 name = "rzn_plan"
-version = "0.2.5"
+version = "0.1.0"
 edition = "2021"
 description = "LLM-powered workflow planning and self-healing for Rzn Browser Bridge"
 license = "AGPL-3.0-only"
