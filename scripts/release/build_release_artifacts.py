@@ -56,16 +56,41 @@ def copy_catalog_payload(root: Path, stage: Path) -> None:
 
 
 def build_extension(root: Path, version: str) -> None:
+    extension_dir = root / "extension"
+    build_env = {"RZN_BUILD_SIGNATURE": f"v{version}"}
+
     run(["bun", "install", "--frozen-lockfile"], cwd=root / "extension")
     run(
         ["bun", "run", "scripts/generate-types.ts"],
-        cwd=root / "extension",
+        cwd=extension_dir,
+        env=build_env,
     )
-    run(
-        ["bash", "build.sh"],
-        cwd=root / "extension",
-        env={"RZN_BUILD_SIGNATURE": f"v{version}"},
-    )
+    print(f"[INFO] Using RZN_BUILD_SIGNATURE=v{version}")
+
+    rm_rf(extension_dir / "dist")
+    (extension_dir / "dist").mkdir(parents=True, exist_ok=True)
+
+    vite_configs = [
+        "vite.config.background.ts",
+        "vite.config.content.ts",
+        "vite.config.shadow-dom.ts",
+        "vite.config.pagebridge.ts",
+        "vite.config.popup.ts",
+    ]
+    for config in vite_configs:
+        run(["bun", "x", "vite", "build", "--config", config], cwd=extension_dir, env=build_env)
+
+    for source, dest in {
+        "background.iife.js": "background.js",
+        "contentScript.iife.js": "contentScript.js",
+        "shadow-dom-instrumentation.iife.js": "shadow-dom-instrumentation.js",
+        "pageBridge.iife.js": "pageBridge.js",
+    }.items():
+        source_path = extension_dir / "dist" / source
+        if source_path.exists():
+            source_path.replace(extension_dir / "dist" / dest)
+
+    run(["bun", "scripts/build-ext.ts"], cwd=root, env=build_env)
 
 
 def build_runtime(root: Path, version: str, platform_slug: str) -> Path:
