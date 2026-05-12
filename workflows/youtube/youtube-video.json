@@ -90,6 +90,7 @@
         "kind": "execute_javascript",
         "inputs": {
           "world": "main",
+          "use_cdp": true,
           "args": [
             "{video_id}"
           ],
@@ -134,6 +135,7 @@
         "kind": "execute_javascript",
         "inputs": {
           "world": "main",
+          "use_cdp": true,
           "args": [
             "{include}",
             "{recommendations_limit}",

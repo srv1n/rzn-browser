@@ -70,6 +70,7 @@
         "kind": "execute_javascript",
         "inputs": {
           "world": "main",
+          "use_cdp": true,
           "args": [
             "{playlist_id}"
           ],
@@ -129,6 +130,7 @@
         "kind": "execute_javascript",
         "inputs": {
           "world": "main",
+          "use_cdp": true,
           "args": [
             "{limit}"
           ],

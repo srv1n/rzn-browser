@@ -82,6 +82,7 @@
         "kind": "execute_javascript",
         "inputs": {
           "world": "main",
+          "use_cdp": true,
           "args": [
             "{channel}",
             "{mode}"
@@ -142,6 +143,7 @@
         "kind": "execute_javascript",
         "inputs": {
           "world": "main",
+          "use_cdp": true,
           "args": [
             "{mode}",
             "{limit}"
