@@ -15,6 +15,12 @@ import {
 import { enhancedActionExecutor, EnhancedAction } from './content/actions-enhanced';
 import { TargetSpec, InputRung } from './types/targets';
 import { RZN_BUILD_SIGNATURE } from './buildInfo';
+import {
+  actionResultFailureMessage,
+  actionSuccess,
+  isActionResultFailure,
+  normalizeActionResult,
+} from './actions/actionResult';
 
 // DOM snapshot storage for delta tracking
 let lastDOMSnapshot: ElementStub[] | null = null;
@@ -597,6 +603,13 @@ async function evaluateUserScript(
     const arg0 = __args[0];
     const arg1 = __args[1];
     const arg2 = __args[2];
+    const arg3 = __args[3];
+    const arg4 = __args[4];
+    const arg5 = __args[5];
+    const arg6 = __args[6];
+    const arg7 = __args[7];
+    const arg8 = __args[8];
+    const arg9 = __args[9];
     const previousParams = window.__rzn_params;
     window.__rzn_params = __rzn_params;
     try {
@@ -999,7 +1012,11 @@ const enhancedActionHandlers = {
       }
     } catch {}
 
-    return result.result;
+    return normalizeActionResult('click_element_enhanced', result.result, {
+      duration_ms: result.execution_time_ms,
+      rung_used: result.rung_used,
+      escalated: result.escalated,
+    });
   },
 
   // Enhanced fill with stable element resolution and input escalation
@@ -1041,7 +1058,11 @@ const enhancedActionHandlers = {
       }
     } catch {}
     
-    return { success: true };
+    return actionSuccess({
+      action: 'press_special_key',
+      result: { pressed: true, key },
+      legacy: { key },
+    });
   },
 
   // New first-class press_key action using CDP
@@ -1066,7 +1087,11 @@ const enhancedActionHandlers = {
       }
     } catch {}
     
-    return { success: true };
+    return actionSuccess({
+      action: 'press_key',
+      result: { pressed: true, key },
+      legacy: { key },
+    });
   },
 
   // Enhanced hover with element resolution
@@ -1084,7 +1109,11 @@ const enhancedActionHandlers = {
       throw new Error(result.error || 'Enhanced hover failed');
     }
 
-    return result.result;
+    return normalizeActionResult('hover_element_enhanced', result.result, {
+      duration_ms: result.execution_time_ms,
+      rung_used: result.rung_used,
+      escalated: result.escalated,
+    });
   },
 
   // Enhanced scroll with element resolution
@@ -1102,7 +1131,11 @@ const enhancedActionHandlers = {
       throw new Error(result.error || 'Enhanced scroll failed');
     }
 
-    return result.result;
+    return normalizeActionResult('scroll_element_into_view_enhanced', result.result, {
+      duration_ms: result.execution_time_ms,
+      rung_used: result.rung_used,
+      escalated: result.escalated,
+    });
   },
 
   // Enhanced text extraction
@@ -1120,7 +1153,11 @@ const enhancedActionHandlers = {
       throw new Error(result.error || 'Enhanced text extraction failed');
     }
 
-    return result.result;
+    return normalizeActionResult('get_element_text_enhanced', result.result, {
+      duration_ms: result.execution_time_ms,
+      rung_used: result.rung_used,
+      escalated: result.escalated,
+    });
   },
 
   // Enhanced structured data extraction
@@ -1141,7 +1178,18 @@ const enhancedActionHandlers = {
       throw new Error(result.error || 'Enhanced data extraction failed');
     }
 
-    return result.result;
+    return actionSuccess({
+      action: 'extract_structured_data_enhanced',
+      result: result.result,
+      legacy: {
+        data: result.result,
+        extraction_type: step.extraction_type,
+        item_count: Array.isArray(result.result) ? result.result.length : 0,
+      },
+      duration_ms: result.execution_time_ms,
+      rung_used: result.rung_used,
+      escalated: result.escalated,
+    });
   },
 
   // System information and diagnostics
@@ -1313,6 +1361,18 @@ async function tryEvalViaPageBridge(step: any, executionBackend: string): Promis
   }
 }
 
+function actionFailureResponseFields(result: any): { success: boolean; error_code?: string; error_msg?: string } {
+  if (!isActionResultFailure(result)) {
+    return { success: true };
+  }
+
+  return {
+    success: false,
+    error_code: typeof result.error_code === 'string' ? result.error_code : 'ACTION_FAILED',
+    error_msg: actionResultFailureMessage(result),
+  };
+}
+
 async function tryNativeClickViaPageBridge(
   selector: string,
   timeoutMs: number,
@@ -1422,6 +1482,7 @@ const actionHandlers = {
   },
 
   click_element: async (step: any) => {
+    const startedAt = Date.now();
     const element = await findElementWithRetry(step);
 
     // Native interactive controls are generally more reliable with a single native click.
@@ -1470,7 +1531,12 @@ const actionHandlers = {
           if (step.successCriteria) {
             return await validateWithTimeout(step.successCriteria.validationRules || [], step.timeoutMs || 5000);
           }
-          return true;
+          return actionSuccess({
+            action: 'click_element',
+            result: { clicked: true, selector: selectorForMainWorld, method: 'page_bridge_native_click' },
+            duration_ms: Date.now() - startedAt,
+            legacy: { selector: selectorForMainWorld, method: 'page_bridge_native_click' },
+          });
         }
       }
     }
@@ -1489,7 +1555,12 @@ const actionHandlers = {
       if (step.successCriteria) {
         return await validateWithTimeout(step.successCriteria.validationRules || [], step.timeoutMs || 5000);
       }
-      return true;
+      return actionSuccess({
+        action: 'click_element',
+        result: { clicked: true, selector: step.selector, method: 'native_click' },
+        duration_ms: Date.now() - startedAt,
+        legacy: { selector: step.selector, method: 'native_click' },
+      });
     }
 
     const rect = (() => {
@@ -1546,7 +1617,12 @@ const actionHandlers = {
     if (step.successCriteria) {
       return await validateWithTimeout(step.successCriteria.validationRules || [], step.timeoutMs || 5000);
     }
-    return true;
+    return actionSuccess({
+      action: 'click_element',
+      result: { clicked: true, selector: step.selector, method: pointerOk ? 'pointer_mouse_events' : 'mouse_events' },
+      duration_ms: Date.now() - startedAt,
+      legacy: { selector: step.selector, method: pointerOk ? 'pointer_mouse_events' : 'mouse_events' },
+    });
   },
 
   hover_element: async (step: any) => {
@@ -2538,8 +2614,16 @@ const actionHandlers = {
   },
 
   type_text: async (step: any) => {
+    const startedAt = Date.now();
     const text = String(step.text ?? step.value ?? '');
-    if (!text) return true;
+    if (!text) {
+      return actionSuccess({
+        action: 'type_text',
+        result: { inserted: false, textLength: 0, reason: 'empty_text' },
+        duration_ms: Date.now() - startedAt,
+        legacy: { textLength: 0 },
+      });
+    }
 
     const target = step.selector
       ? await findElementWithRetry(step)
@@ -2701,7 +2785,17 @@ const actionHandlers = {
     if (step.successCriteria) {
       return await validateWithTimeout(step.successCriteria.validationRules || [], step.timeoutMs || 5000);
     }
-    return true;
+    return actionSuccess({
+      action: 'type_text',
+      result: {
+        inserted,
+        textLength: text.length,
+        method: nativeInputReady ? 'native_or_dom' : 'dom',
+        used_cdp: allowCdpTyping,
+      },
+      duration_ms: Date.now() - startedAt,
+      legacy: { textLength: text.length },
+    });
   },
 
   // Generic, robust text submission for search boxes and forms
@@ -3716,6 +3810,7 @@ const actionHandlers = {
   },
 
   extract_structured_data: async (step: any) => {
+    const startedAt = Date.now();
     const { item_selector, fields, extraction_type } = step;
 
     if (!item_selector || !fields) {
@@ -3872,7 +3967,16 @@ const actionHandlers = {
     }
     
     console.log(`[RZN] Total extracted results: ${results.length}`);
-    return results;
+    return actionSuccess({
+      action: 'extract_structured_data',
+      result: results,
+      duration_ms: Date.now() - startedAt,
+      legacy: {
+        data: results,
+        item_count: results.length,
+        extraction_type,
+      },
+    });
   },
 
   // Test/bridge helper: run a validated extraction plan without arbitrary JS execution.
@@ -3978,6 +4082,9 @@ const actionHandlers = {
   },
 
   dismiss_popups: async (step: any) => {
+    const maxDismissals = Math.max(0, Math.min(20, Number(step.max_dismissals ?? 8) || 8));
+    const maxRuntimeMs = Math.max(250, Math.min(10_000, Number(step.timeout_ms ?? step.timeoutMs ?? 2_500) || 2_500));
+    const deadline = Date.now() + maxRuntimeMs;
     const dismissSelectors = [
       // Common dismiss buttons
       'button[class*="close"]', 'button[class*="dismiss"]',
@@ -3991,17 +4098,32 @@ const actionHandlers = {
     ];
     
     let dismissed = 0;
+    let capped = false;
+
+    const shouldStop = () => {
+      const stop = dismissed >= maxDismissals || Date.now() >= deadline;
+      if (stop) capped = true;
+      return stop;
+    };
+
+    const tryClickDismiss = async (el: Element) => {
+      if (shouldStop()) return false;
+      if (el && (el as HTMLElement).offsetParent !== null) {
+        (el as HTMLElement).click();
+        dismissed++;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      return !shouldStop();
+    };
     
     // Try selectors first
     for (const selector of dismissSelectors) {
+      if (shouldStop()) break;
       try {
         const elements = document.querySelectorAll(selector);
         for (const el of elements) {
-          if (el && el.offsetParent !== null) {
-            (el as HTMLElement).click();
-            dismissed++;
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
+          const shouldContinue = await tryClickDismiss(el);
+          if (!shouldContinue) break;
         }
       } catch (e) {
         // Continue with next selector
@@ -4011,17 +4133,32 @@ const actionHandlers = {
     // Also check for buttons with X or × text
     const allButtons = document.querySelectorAll('button');
     for (const button of allButtons) {
+      if (shouldStop()) break;
       const text = button.textContent?.trim();
       if (text === 'X' || text === '×' || text === 'x') {
-        if (button.offsetParent !== null) {
-          (button as HTMLElement).click();
-          dismissed++;
-          await new Promise(resolve => setTimeout(resolve, 100));
+        await tryClickDismiss(button);
+      }
+    }
+
+    // Text-based dismissal scoped to modal/dialog containers. Restricted to
+    // unambiguously-dismissive labels — never "Continue / Accept / Allow / OK"
+    // which can launch OAuth ("Continue with Google") or grant permissions
+    // inside auth/share/consent dialogs.
+    const dismissTextPatterns = /^(got\s*it|dismiss|close|maybe\s+later|no\s+thanks|no,?\s*thanks|not\s+now|skip|i\s+understand|cancel)\s*\.?\s*!?$/i;
+    const modalContainers = document.querySelectorAll('[role="dialog"], [role="alertdialog"], [aria-modal="true"]');
+    for (const modal of modalContainers) {
+      if (shouldStop()) break;
+      const buttons = modal.querySelectorAll('button, [role="button"]');
+      for (const button of buttons) {
+        if (shouldStop()) break;
+        const text = button.textContent?.trim() || '';
+        if (text && dismissTextPatterns.test(text)) {
+          await tryClickDismiss(button);
         }
       }
     }
-    
-    return { dismissed_count: dismissed };
+
+    return { dismissed_count: dismissed, capped, max_dismissals: maxDismissals, max_runtime_ms: maxRuntimeMs };
   },
 
   wait_for_no_popups: async (step: any) => {
@@ -4563,14 +4700,50 @@ const actionHandlers = {
     
     const imageUrls: string[] = [];
     const results: any[] = [];
+
+    const imageUrl = (img: HTMLImageElement): string => {
+      const srcset = String(img.getAttribute('srcset') || '')
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean);
+      const srcsetUrl = srcset.length ? srcset[srcset.length - 1].split(/\s+/)[0] : '';
+      const raw =
+        img.currentSrc ||
+        img.src ||
+        img.getAttribute('src') ||
+        img.getAttribute('data-src') ||
+        img.getAttribute('data-lazy-src') ||
+        srcsetUrl ||
+        '';
+      try {
+        return raw ? new URL(raw, window.location.href).toString() : '';
+      } catch {
+        return raw;
+      }
+    };
+
+    const inferExtension = (url: string): string => {
+      try {
+        const parsed = new URL(url, window.location.href);
+        const last = parsed.pathname.split('/').pop() || '';
+        const ext = (last.match(/\.([a-z0-9]{1,8})$/i)?.[1] || '').toLowerCase();
+        if (ext && !['php', 'asp', 'aspx', 'cgi'].includes(ext)) return ext;
+      } catch {}
+      if (/^data:image\/png/i.test(url)) return 'png';
+      if (/^data:image\/webp/i.test(url)) return 'webp';
+      if (/^data:image\/gif/i.test(url)) return 'gif';
+      return 'jpg';
+    };
     
     // Collect all image URLs
-    for (const img of images) {
+    const seen = new Set<string>();
+    for (const img of Array.from(images)) {
       if (img instanceof HTMLImageElement) {
-        const src = img.src || img.getAttribute('data-src') || img.getAttribute('data-lazy-src');
-        if (src && src.startsWith('http')) {
-          // Skip base64 encoded images and very small images
-          if (!src.startsWith('data:') && !src.includes('1x1')) {
+        const src = imageUrl(img);
+        if (src && /^(https?:|data:|blob:)/i.test(src)) {
+          // Skip tracking pixels and duplicate URLs.
+          if (!src.includes('1x1') && !seen.has(src)) {
+            seen.add(src);
             imageUrls.push(src);
           }
         }
@@ -4585,8 +4758,7 @@ const actionHandlers = {
       const url = imageUrls[i];
       try {
         // Create a unique filename
-        const urlObj = new URL(url);
-        const ext = urlObj.pathname.split('.').pop() || 'jpg';
+        const ext = inferExtension(url);
         const filename = `${downloadFolder}/image_${i + 1}.${ext}`;
         
         // Send download request to background script
@@ -4599,7 +4771,8 @@ const actionHandlers = {
         results.push({
           url: url,
           filename: filename,
-          success: response.success
+          success: response.success,
+          download_id: response.downloadId
         });
       } catch (error) {
         console.error(`Failed to download image ${url}:`, error);
@@ -5528,6 +5701,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           }
 
           const result = await handler(message.payload.step);
+          const actionFailure = actionFailureResponseFields(result);
           const domSnapshot = captureEnhancedDOMSnapshot({
             maxElements: 120,
             highlightElements: false,
@@ -5535,9 +5709,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
           return {
             req_id: message.req_id,
-            success: true,
+            ...actionFailure,
             result: result,
-            validation_passed: typeof result === 'boolean' ? result : true,
+            validation_passed: typeof result === 'boolean' ? result : actionFailure.success,
             current_url: window.location.href,
             dom_snapshot: domSnapshot,
             dom_hash: domSnapshot.hash,
@@ -6083,10 +6257,11 @@ window.addEventListener('message', (event: MessageEvent) => {
           }
 
           const result = await handler(step);
+          const actionFailure = actionFailureResponseFields(result);
           const domSnapshot = captureEnhancedDOMSnapshot({ maxElements: 120, highlightElements: false });
 
           return {
-            success: true,
+            ...actionFailure,
             result,
             current_url: window.location.href,
             dom_snapshot: domSnapshot,
@@ -6124,6 +6299,11 @@ const RZN_DOM_BRIDGE_CONTAINER_ID = '__rzn_page_bridge';
 async function handleDomBridgeRequest(node: HTMLElement) {
   if (!isActiveContentScriptInstance()) return;
   if (node.hasAttribute('data-rzn-resp') || node.hasAttribute('data-rzn-err')) return;
+  // Requests targeted at the page (data-rzn-target='page') belong to pageBridge.js
+  // running in MAIN world. Don't touch them or we race with pageBridge and
+  // erroneously set data-rzn-err: "Unknown bridge request type".
+  const target = node.getAttribute('data-rzn-target');
+  if (target && target !== 'content') return;
   const type = node.getAttribute('data-rzn-type') || '';
 
   let payload: any = {};
@@ -6241,6 +6421,183 @@ function attachDomBridgeObserver(container: HTMLElement) {
   });
   obs.observe(root, { childList: true, subtree: true });
 })();
+
+let lastNativeWakeMs = 0;
+const NATIVE_WAKE_THROTTLE_MS = 10_000;
+const NATIVE_KEEPALIVE_PORT_NAME = 'rzn_content_keepalive';
+const NATIVE_KEEPALIVE_INTERVAL_MS = 15_000;
+const NATIVE_KEEPALIVE_RECONNECT_MS = 1_500;
+let nativeKeepalivePort: chrome.runtime.Port | null = null;
+let nativeKeepaliveTimer: ReturnType<typeof setInterval> | null = null;
+let nativeKeepaliveReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let nativeKeepalivePausedForPageLifecycle = false;
+
+function isTopLevelFrame(): boolean {
+  try {
+    return window.top === window;
+  } catch {
+    return false;
+  }
+}
+
+function nativeWakePayload(reason: string): Record<string, unknown> {
+  return {
+    type: 'RZN_WAKE_NATIVE',
+    reason,
+    build: RZN_BUILD_SIGNATURE,
+    url: window.location.origin,
+  };
+}
+
+function wakeNativeHost(reason: string): void {
+  if (!isTopLevelFrame()) return;
+  const now = Date.now();
+  if (now - lastNativeWakeMs < NATIVE_WAKE_THROTTLE_MS) return;
+  lastNativeWakeMs = now;
+  try {
+    chrome.runtime.sendMessage(nativeWakePayload(reason)).catch(() => {});
+  } catch {}
+}
+
+function clearNativeKeepaliveTimer(): void {
+  if (nativeKeepaliveTimer) {
+    clearInterval(nativeKeepaliveTimer);
+    nativeKeepaliveTimer = null;
+  }
+}
+
+function clearNativeKeepaliveReconnectTimer(): void {
+  if (nativeKeepaliveReconnectTimer) {
+    clearTimeout(nativeKeepaliveReconnectTimer);
+    nativeKeepaliveReconnectTimer = null;
+  }
+}
+
+function runtimeLastErrorMessage(): string | undefined {
+  try {
+    return chrome.runtime?.lastError?.message;
+  } catch {
+    return undefined;
+  }
+}
+
+function scheduleNativeKeepaliveReconnect(): void {
+  if (!isTopLevelFrame()) return;
+  if (nativeKeepalivePausedForPageLifecycle) return;
+  if (nativeKeepaliveReconnectTimer) return;
+  nativeKeepaliveReconnectTimer = setTimeout(() => {
+    nativeKeepaliveReconnectTimer = null;
+    connectNativeKeepalivePort('port_reconnect');
+  }, NATIVE_KEEPALIVE_RECONNECT_MS);
+}
+
+function disconnectNativeKeepalivePort(_reason: string): void {
+  const port = nativeKeepalivePort;
+  nativeKeepalivePort = null;
+  clearNativeKeepaliveTimer();
+  clearNativeKeepaliveReconnectTimer();
+  if (!port) return;
+  try {
+    port.disconnect();
+  } catch {}
+}
+
+function sendNativeKeepalive(reason: string): void {
+  const port = nativeKeepalivePort;
+  if (!port) return;
+  try {
+    port.postMessage({
+      type: 'RZN_CONTENT_KEEPALIVE',
+      reason,
+      build: RZN_BUILD_SIGNATURE,
+      url: window.location.origin,
+      visibilityState: document.visibilityState,
+      ts: Date.now(),
+    });
+  } catch {
+    nativeKeepalivePort = null;
+    clearNativeKeepaliveTimer();
+    scheduleNativeKeepaliveReconnect();
+  }
+}
+
+function connectNativeKeepalivePort(reason: string): void {
+  if (!isTopLevelFrame()) return;
+  if (nativeKeepalivePausedForPageLifecycle) return;
+  if (nativeKeepalivePort) {
+    sendNativeKeepalive(reason);
+    return;
+  }
+
+  try {
+    const port = chrome.runtime.connect({ name: NATIVE_KEEPALIVE_PORT_NAME });
+    nativeKeepalivePort = port;
+
+    port.onDisconnect.addListener(() => {
+      const err = runtimeLastErrorMessage();
+      nativeKeepalivePort = null;
+      clearNativeKeepaliveTimer();
+      if (err?.toLowerCase().includes('back/forward cache')) {
+        nativeKeepalivePausedForPageLifecycle = true;
+        return;
+      }
+      scheduleNativeKeepaliveReconnect();
+    });
+
+    port.onMessage.addListener((message) => {
+      if (message?.type === 'RZN_CONTENT_KEEPALIVE_ACK') {
+        // Ack is intentionally diagnostic-only; the background owns native state.
+      }
+    });
+
+    sendNativeKeepalive(reason);
+    clearNativeKeepaliveTimer();
+    nativeKeepaliveTimer = setInterval(
+      () => sendNativeKeepalive('port_heartbeat'),
+      NATIVE_KEEPALIVE_INTERVAL_MS
+    );
+  } catch {
+    nativeKeepalivePort = null;
+    clearNativeKeepaliveTimer();
+    scheduleNativeKeepaliveReconnect();
+  }
+}
+
+wakeNativeHost('content_script_loaded');
+connectNativeKeepalivePort('content_script_loaded');
+window.addEventListener('focus', () => wakeNativeHost('window_focus'), { passive: true });
+window.addEventListener(
+  'focus',
+  () => connectNativeKeepalivePort('window_focus'),
+  { passive: true }
+);
+document.addEventListener(
+  'visibilitychange',
+  () => {
+    if (document.visibilityState === 'visible') {
+      wakeNativeHost('visibility_visible');
+      connectNativeKeepalivePort('visibility_visible');
+    }
+  },
+  { passive: true }
+);
+window.addEventListener(
+  'pagehide',
+  () => {
+    nativeKeepalivePausedForPageLifecycle = true;
+    disconnectNativeKeepalivePort('pagehide');
+  },
+  { passive: true }
+);
+window.addEventListener(
+  'pageshow',
+  () => {
+    nativeKeepalivePausedForPageLifecycle = false;
+    wakeNativeHost('pageshow');
+    connectNativeKeepalivePort('pageshow');
+  },
+  { passive: true }
+);
 
 // DOM function injection removed - enhanced actions handle element resolution directly
 
