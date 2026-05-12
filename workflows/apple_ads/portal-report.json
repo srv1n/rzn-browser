@@ -1,91 +1,231 @@
 {
-  "system_id": "apple_ads",
-  "id": "apple_ads_portal_report",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "apple_ads/portal_report",
   "name": "Apple Ads: Portal Campaign/Adgroup List",
-  "description": "List Apple Ads campaigns for the signed-in org, or list ad groups inside a specific campaign when `campaign_id` is supplied. Read-only DOM extraction against the authenticated portal. Does NOT return metrics — Apple's portal renders performance numbers in shadow-DOM cells, so for metrics use the portal's data-export API or a same-origin-request workflow.",
-  "domain": "app-ads.apple.com",
   "version": "2.0.0",
-  "last_updated": "2026-04-25T00:00:00Z",
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Navigate to the campaigns report (or a specific campaign's ad groups page) and extract entity links + names from `.campaigns-grid` / `a[href*='/campaign/']` / `a[href*='/adgroup/']`. Apple removed tab-based report switching in early 2026, so the old report_type param is gone.",
-    "sequences": [
-      {
-        "name": "apple_ads_portal_report",
-        "description": "Open the portal report shell and extract campaign or ad-group rows.",
-        "required_variables": [],
-        "optional_variables": [
-          { "name": "org_id", "description": "Apple Ads org id. If omitted, uses the org the portal lands on by default." },
-          { "name": "campaign_id", "description": "If set, drill into this campaign and list its ad groups instead of campaigns." }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Open the portal in a fresh tab",
-            "type": "open_new_tab",
-            "url": "https://app-ads.apple.com/cm/app"
-          },
-          {
-            "id": "s2",
-            "name": "Wait for portal shell",
-            "type": "wait_for_timeout",
-            "timeout_ms": 3000
-          },
-          {
-            "id": "s3",
-            "name": "Navigate to campaigns or campaign-detail view",
-            "type": "execute_javascript",
-            "world": "main",
-            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst org_id = cleanArg('{org_id}');\nconst campaign_id = cleanArg('{campaign_id}');\nlet org = org_id;\nif (!org) {\n  const m = location.pathname.match(/\\/cm\\/app\\/(\\d+)/);\n  org = m ? m[1] : '';\n}\nif (!org) { return { error: 'could not resolve org_id from URL or param' }; }\nlet target;\nif (campaign_id) {\n  target = `https://app-ads.apple.com/cm/app/${org}/report/campaign/${encodeURIComponent(campaign_id)}`;\n} else {\n  target = `https://app-ads.apple.com/cm/app/${org}/report`;\n}\nsetTimeout(() => window.location.assign(target), 0);\nreturn { redirected: true, target, org, campaign_id: campaign_id || null };",
-            "return_value": true
-          },
-          {
-            "id": "s4",
-            "name": "Wait for grid hydration",
-            "type": "wait_for_timeout",
-            "timeout_ms": 4500
-          },
-          {
-            "id": "s4b",
-            "name": "Wait for campaign or ad-group anchor",
-            "type": "wait_for_element",
-            "selector": "a[href*='/campaign/'], a[href*='/adgroup/']",
-            "timeout_ms": 15000
-          },
-          {
-            "id": "s5",
-            "name": "Extract campaign or ad-group rows",
-            "type": "extract_structured_data",
-            "item_selector": ".campaigns-grid a[href*='/campaign/'], .campaigns-grid a[href*='/adgroup/'], a[href*='/adgroup/']",
-            "limit": 200,
-            "fields": [
-              { "name": "name", "selector": "*", "post_processing": ["collapse_whitespace"] },
-              { "name": "href", "selector": "*", "attribute": "href" },
-              { "name": "campaign_id", "selector": "*", "attribute": "href", "post_processing": ["regex_group:campaign/(\\d+):1"] },
-              { "name": "adgroup_id", "selector": "*", "attribute": "href", "post_processing": ["regex_group:adgroup/(\\d+):1"] }
-            ]
-          }
-        ]
+  "system": "apple_ads",
+  "capability": "apple_ads.portal.report",
+  "summary": "List Apple Ads campaigns for the signed-in org, or ad groups inside a specific campaign.",
+  "description": "List Apple Ads campaigns for the signed-in org, or list ad groups inside a specific campaign when `campaign_id` is supplied. Read-only DOM extraction against the authenticated portal. Does NOT return metrics \u2014 Apple's portal renders performance numbers in shadow-DOM cells, so for metrics use the portal's data-export API or a same-origin-request workflow.",
+  "params": {
+    "properties": {
+      "campaign_id": {
+        "kind": "string",
+        "required": false,
+        "description": "Drill into this campaign and list its ad groups instead of listing campaigns."
+      },
+      "org_id": {
+        "kind": "string",
+        "required": false,
+        "description": "Apple Ads org id. If omitted, uses whichever org the portal lands on for the user."
       }
-    ]
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "app-ads.apple.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "app-ads.apple.com"
+      ]
+    },
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "app-ads.apple.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "open_new_tab",
+        "inputs": {
+          "url": "https://app-ads.apple.com/cm/app"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the portal in a fresh tab"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for portal shell",
+      "timeout_ms": 3000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst org_id = cleanArg('{org_id}');\nconst campaign_id = cleanArg('{campaign_id}');\nlet org = org_id;\nif (!org) {\n  const m = location.pathname.match(/\\/cm\\/app\\/(\\d+)/);\n  org = m ? m[1] : '';\n}\nif (!org) { return { error: 'could not resolve org_id from URL or param' }; }\nlet target;\nif (campaign_id) {\n  target = `https://app-ads.apple.com/cm/app/${org}/report/campaign/${encodeURIComponent(campaign_id)}`;\n} else {\n  target = `https://app-ads.apple.com/cm/app/${org}/report`;\n}\nsetTimeout(() => window.location.assign(target), 0);\nreturn { redirected: true, target, org, campaign_id: campaign_id || null };",
+          "return_value": true
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to campaigns or campaign-detail view"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for grid hydration",
+      "timeout_ms": 4500
+    },
+    {
+      "id": "s4b",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "a[href*='/campaign/'], a[href*='/adgroup/']"
+        }
+      },
+      "name": "Wait for campaign or ad-group anchor",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "item_selector": ".campaigns-grid a[href*='/campaign/'], .campaigns-grid a[href*='/adgroup/'], a[href*='/adgroup/']",
+          "limit": 200,
+          "fields": [
+            {
+              "name": "name",
+              "selector": "*",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "href",
+              "selector": "*",
+              "attribute": "href"
+            },
+            {
+              "name": "campaign_id",
+              "selector": "*",
+              "attribute": "href",
+              "post_processing": [
+                "regex_group:campaign/(\\d+):1"
+              ]
+            },
+            {
+              "name": "adgroup_id",
+              "selector": "*",
+              "attribute": "href",
+              "post_processing": [
+                "regex_group:adgroup/(\\d+):1"
+              ]
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract campaign or ad-group rows"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "href": {
+            "type": "string"
+          },
+          "campaign_id": {
+            "type": "string"
+          },
+          "adgroup_id": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
   },
   "help": {
     "summary": "List Apple Ads campaigns for the signed-in org, or ad groups inside a specific campaign.",
-    "parameters": [
-      { "name": "org_id", "required": false, "shape": "text", "description": "Apple Ads org id. If omitted, uses whichever org the portal lands on for the user.", "example": "8847870" },
-      { "name": "campaign_id", "required": false, "shape": "text", "description": "Drill into this campaign and list its ad groups instead of listing campaigns.", "example": "1828148052" }
-    ],
+    "parameters": {
+      "campaign_id": "Drill into this campaign and list its ad groups instead of listing campaigns.",
+      "org_id": "Apple Ads org id. If omitted, uses whichever org the portal lands on for the user."
+    },
     "examples": [
-      { "command": "rzn-browser run apple-ads portal-report", "description": "List campaigns for the signed-in org." },
-      { "command": "rzn-browser run apple-ads portal-report --param campaign_id=\"1828148052\"", "description": "List ad groups inside campaign 1828148052." }
+      {
+        "command": "rzn-browser run apple-ads portal-report",
+        "description": "List campaigns for the signed-in org."
+      },
+      {
+        "command": "rzn-browser run apple-ads portal-report --param campaign_id=\"1828148052\"",
+        "description": "List ad groups inside campaign 1828148052."
+      }
     ],
-    "returns": "Array of { name, href, campaign_id?, adgroup_id? } rows. Each campaign appears multiple times because the portal grid renders the campaign name + each metric cell as its own anchor; dedupe by `campaign_id` or `adgroup_id` downstream.",
+    "returns": [
+      "Array of { name, href, campaign_id?, adgroup_id? } rows. Each campaign appears multiple times because the portal grid renders the campaign name + each metric cell as its own anchor; dedupe by `campaign_id` or `adgroup_id` downstream."
+    ],
     "notes": [
       "Read-only.",
       "Requires an authenticated app-ads.apple.com session.",
-      "Does NOT return spend/impression/tap/install metrics — those are inside shadow DOM cells and aren't reliably extractable. For metrics, hit Apple's reporting API directly via a same-origin-request workflow.",
+      "Does NOT return spend/impression/tap/install metrics \u2014 those are inside shadow DOM cells and aren't reliably extractable. For metrics, hit Apple's reporting API directly via a same-origin-request workflow.",
       "Apple removed tab-based report switching in early 2026; the old `report_type` param has been dropped.",
-      "Each row is repeated per metric anchor (~10× per campaign). Dedupe by campaign_id/adgroup_id downstream — the first occurrence of each id usually carries the entity name, the rest carry metric strings like '$0.00' / '0%'."
+      "Each row is repeated per metric anchor (~10\u00d7 per campaign). Dedupe by campaign_id/adgroup_id downstream \u2014 the first occurrence of each id usually carries the entity name, the rest carry metric strings like '$0.00' / '0%'."
     ]
+  },
+  "metadata": {
+    "migrated_from": "apple_ads/portal-report.json",
+    "legacy_system_id": "apple_ads"
   }
 }

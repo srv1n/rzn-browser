@@ -39,7 +39,7 @@ rzn-browser run bing images-search --param search_query="sunset" 2>&1 \
 ## Design rules
 
 - No `_v1` suffix in filenames — `id` and `version` live inside the JSON.
-- `browser_automation.use_current_tab: false` everywhere so parallel runs don't collide.
+- Dedicated workflow tabs by default, so parallel runs do not collide.
 - Underscore naming (matches the rest of the repo).
 - Every workflow ships a `help` block validated by `rzn-browser workflow validate`.
 

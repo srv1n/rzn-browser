@@ -1,56 +1,216 @@
 {
-  "version": "v3",
-  "metadata": {
-    "name": "Amazon Product Search with Site Profiles",
-    "description": "Amazon product search using deterministic site profile extractors",
-    "site_compatibility": ["amazon.com", "amazon.co.uk", "amazon.ca"],
-    "uses_site_profile": true
+  "schema_version": "rzn.workflow_manifest",
+  "id": "amazon/product_with_profiles",
+  "name": "Amazon Product Search With Profiles",
+  "version": "1.0.0",
+  "system": "amazon",
+  "capability": "amazon.product.with.profiles",
+  "summary": "Search Amazon and return visible product cards for a product query.",
+  "description": "Search Amazon for a product query and extract product cards using the standard browser workflow surface.",
+  "params": {
+    "properties": {
+      "product_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Product search term."
+      }
+    },
+    "additional_params": false
   },
-  "parameters": {
-    "product_query": {
-      "type": "string",
-      "description": "Product search term",
-      "required": true
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "amazon.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "amazon.com"
+      ]
     }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
   },
   "steps": [
     {
-      "type": "navigate",
-      "url": "https://amazon.com",
-      "wait_for": "networkidle"
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.amazon.com"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Amazon"
     },
     {
-      "type": "fill_input_field",
-      "target_spec": {
-        "css": "#twotabsearchtextbox"
-      },
-      "value": "{{product_query}}"
-    },
-    {
-      "type": "click_element",
-      "target_spec": {
-        "css": "#nav-search-submit-button"
-      },
-      "wait_for": "networkidle"
-    },
-    {
-      "type": "extract_structured_data",
-      "target_spec": {
-        "css": "body"
-      },
-      "extraction_type": "search_results",
-      "fields": [
-        {
-          "name": "products",
-          "selector": "[data-component-type=\"s-search-result\"]"
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#twotabsearchtextbox"
         }
-      ],
-      "output_variable": "product_results"
+      },
+      "name": "Wait for search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "value": "{product_query}",
+          "clear_first": true,
+          "simulate_typing": false
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#twotabsearchtextbox"
+        }
+      },
+      "name": "Fill product query"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "click_element",
+        "inputs": {
+          "wait_after_ms": 2500
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#nav-search-submit-button"
+        }
+      },
+      "name": "Submit search"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "[data-component-type='s-search-result']"
+        }
+      },
+      "name": "Wait for product cards",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "extraction_type": "search_results",
+          "item_selector": "[data-component-type='s-search-result']",
+          "fields": [
+            {
+              "name": "title",
+              "selector": "h2 a span, h2 span"
+            },
+            {
+              "name": "product_url",
+              "selector": "h2 a",
+              "attribute": "href"
+            },
+            {
+              "name": "asin",
+              "selector": "[data-asin]",
+              "attribute": "data-asin"
+            },
+            {
+              "name": "price",
+              "selector": ".a-price .a-offscreen, .a-price-whole"
+            },
+            {
+              "name": "rating",
+              "selector": ".a-icon-star-small .a-icon-alt, .a-icon-star .a-icon-alt"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract product cards"
     }
   ],
-  "output": {
-    "products": "{{product_results}}",
-    "total_products": "{{product_results.length}}",
-    "extraction_method": "site_profile"
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "product_url": {
+            "type": "string"
+          },
+          "asin": {
+            "type": "string"
+          },
+          "price": {
+            "type": "string"
+          },
+          "rating": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search Amazon and return visible product cards for a product query.",
+    "parameters": {
+      "product_query": "Product search term."
+    },
+    "examples": [
+      {
+        "description": "Search Amazon for headphones",
+        "command": "rzn-browser run amazon product-with-profiles --param product_query=\"noise cancelling headphones\""
+      }
+    ],
+    "returns": [
+      "Visible Amazon search-result product cards with product titles extracted from the results page."
+    ],
+    "notes": [
+      "Uses a dedicated workflow tab (`use_current_tab=false`) and the authenticated Chrome profile if Amazon account state is needed."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "amazon/amazon-product-with-profiles.json",
+    "legacy_system_id": null
   }
 }

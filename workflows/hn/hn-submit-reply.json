@@ -1,29 +1,233 @@
 {
-  "system_id": "hacker_news",
-  "id": "hn_submit_reply_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "hn/submit_reply",
   "name": "Hacker News: Submit Reply to Comment",
-  "description": "Open the Hacker News reply form for a specific comment ID, draft a reply, pause for explicit operator approval, and submit only after the operator clicks Continue. Hard-fails if the same logged-in account already posted the same reply text on the parent thread. To dry-run, click Stop at the approval gate — the textarea stays filled.",
-  "domain": "news.ycombinator.com",
   "version": "2.0.0",
-  "last_updated": "2026-04-24T00:00:00Z",
+  "system": "hn",
+  "capability": "hn.submit.reply",
+  "summary": "Reply to a specific Hacker News comment with a dedupe guard and an explicit approval gate. Click Stop at the gate to leave a draft instead of submitting.",
+  "description": "Open the Hacker News reply form for a specific comment ID, draft a reply, pause for explicit operator approval, and submit only after the operator clicks Continue. Hard-fails if the same logged-in account already posted the same reply text on the parent thread. To dry-run, click Stop at the approval gate \u2014 the textarea stays filled.",
+  "params": {
+    "properties": {
+      "comment_id": {
+        "kind": "string",
+        "required": true,
+        "description": "Numeric HN comment id to reply to. The id is the value of the `id` query parameter on the comment's permalink (https://news.ycombinator.com/item?id=<comment_id>)."
+      },
+      "comment_text": {
+        "kind": "string",
+        "required": true,
+        "description": "Reply text to post. Should add to the parent, not just repeat it. The workflow refuses to submit if the same account has already posted this exact text on the parent thread."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "news.ycombinator.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "news.ycombinator.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "news.ycombinator.com"
+      ]
+    },
+    {
+      "class": "external_write",
+      "idempotency": "never_retry",
+      "confirmation_required": true,
+      "scopes": [
+        "news.ycombinator.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "news.ycombinator.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://news.ycombinator.com/reply?id={comment_id}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to the reply form"
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Initial page settle",
+      "timeout_ms": 900
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "form textarea[name='text'], textarea[name='text']"
+        }
+      },
+      "name": "Wait for the reply editor",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s2a",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{comment_text}"
+          ],
+          "script": "const cleanArg=(value)=>{const text=String(value==null?'':value).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(text)?'':text;}; const normalize=(value)=>String(value||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim().toLowerCase(); const expected=normalize(cleanArg(arg0)); if(!expected) throw new Error('comment_text is required'); const currentUser=String(document.querySelector('#me')?.textContent||'').trim(); const rows=Array.from(document.querySelectorAll('tr.athing.comtr')); const matches=rows.map((row)=>({ user:String(row.querySelector('.hnuser')?.textContent||'').trim(), text:normalize(row.querySelector('.commtext')?.textContent||'') })).filter((entry)=>entry.user===currentUser&&entry.text===expected); if(matches.length){ throw new Error(`Duplicate HN reply already exists for user ${currentUser||'unknown'}`); } return { current_user: currentUser || null, duplicate_found: false, scanned_comment_count: rows.length };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Fail if the same account already posted the same reply text here",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "value": "{comment_text}",
+          "simulate_typing": false
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "form textarea[name='text'], textarea[name='text']"
+        }
+      },
+      "name": "Fill the reply text"
+    },
+    {
+      "id": "s3b",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const box = document.querySelector(\"form textarea[name='text'], textarea[name='text']\"); const value = box && 'value' in box ? String(box.value || '').trim() : ''; if (!value) { throw new Error('Reply textarea is empty'); } return { draft_length: value.length };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Verify the drafted reply is non-empty",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s3c",
+      "action": {
+        "kind": "request_user_intervention",
+        "inputs": {
+          "message": "HN reply draft is ready. Click Continue only if you want to post it. Click Stop to leave it as a draft.",
+          "instructions": "If the reply adds little, repeats the parent, or reads like spam, click Stop instead of Continue.",
+          "approval_mode": "ask_user",
+          "continue_on_timeout": false
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Pause for approval before submitting the reply",
+      "timeout_ms": 2147483647
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ],
+        "target": {
+          "selector": "form input[type='submit'], input[type='submit'][value*='reply' i]"
+        }
+      },
+      "name": "Submit the reply"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the reply to post",
+      "timeout_ms": 2500
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "draft_length": { "type": "integer" }
+      }
+    },
+    "output_selector": {
+      "step_id": "s3b",
+      "path": "$"
+    }
+  },
   "help": {
     "summary": "Reply to a specific Hacker News comment with a dedupe guard and an explicit approval gate. Click Stop at the gate to leave a draft instead of submitting.",
-    "parameters": [
-      {
-        "name": "comment_id",
-        "required": true,
-        "shape": "numeric string",
-        "description": "Numeric HN comment id to reply to. The id is the value of the `id` query parameter on the comment's permalink (https://news.ycombinator.com/item?id=<comment_id>).",
-        "example": "12345678"
-      },
-      {
-        "name": "comment_text",
-        "required": true,
-        "shape": "text",
-        "description": "Reply text to post. Should add to the parent, not just repeat it. The workflow refuses to submit if the same account has already posted this exact text on the parent thread.",
-        "example": "Agreed on the cold-start point — but Section 5 already accounts for it; the gap is in Section 4."
-      }
-    ],
+    "parameters": {
+      "comment_id": "Numeric HN comment id to reply to. The id is the value of the `id` query parameter on the comment's permalink (https://news.ycombinator.com/item?id=<comment_id>).",
+      "comment_text": "Reply text to post. Should add to the parent, not just repeat it. The workflow refuses to submit if the same account has already posted this exact text on the parent thread."
+    },
     "examples": [
       {
         "description": "Reply to a specific comment",
@@ -31,103 +235,20 @@
       },
       {
         "description": "Dry-run a reply (click Stop at the approval gate to leave the textarea filled without posting)",
-        "command": "rzn-browser run hn submit-reply --param comment_id=\"12345678\" --param comment_text=\"Test draft — DO NOT APPROVE\""
+        "command": "rzn-browser run hn submit-reply --param comment_id=\"12345678\" --param comment_text=\"Test draft \u2014 DO NOT APPROVE\""
       }
     ],
-    "returns": "current_user, scanned_comment_count, and draft_length captured before the gate; on submit, the workflow waits for the post to land but does not return the new reply id (read it from the rendered tree if needed).",
+    "returns": [
+      "current_user, scanned_comment_count, and draft_length captured before the gate; on submit, the workflow waits for the post to land but does not return the new reply id (read it from the rendered tree if needed)."
+    ],
     "notes": [
       "Caller must already be logged into Hacker News in the active browser profile.",
       "Dedupe guard compares normalised whitespace + lowercase against existing comments by the same logged-in user on the parent thread.",
       "The approval gate uses request_user_intervention with no timeout. Click Continue (submit) or Stop (leave as draft)."
     ]
   },
-  "browser_automation": {
-    "description": "Workflow sequence for replying to a specific HN comment with a dedupe guard and an explicit approval gate before submission.",
-    "sequences": [
-      {
-        "name": "hn_submit_reply",
-        "description": "Navigate to reply form -> dedupe check -> fill reply -> verify draft -> approval gate -> submit",
-        "required_variables": [
-          {
-            "name": "comment_id",
-            "description": "The HN comment ID to reply to (numeric)"
-          },
-          {
-            "name": "comment_text",
-            "description": "The reply text to post"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Navigate to the reply form",
-            "type": "navigate_to_url",
-            "url": "https://news.ycombinator.com/reply?id={comment_id}"
-          },
-          {
-            "id": "s1b",
-            "name": "Initial page settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 900
-          },
-          {
-            "id": "s2",
-            "name": "Wait for the reply editor",
-            "type": "wait_for_element",
-            "selector": "form textarea[name='text'], textarea[name='text']",
-            "timeout_ms": 20000
-          },
-          {
-            "id": "s2a",
-            "name": "Fail if the same account already posted the same reply text here",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 10000,
-            "args": [
-              "{comment_text}"
-            ],
-            "script": "const cleanArg=(value)=>{const text=String(value==null?'':value).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(text)?'':text;}; const normalize=(value)=>String(value||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim().toLowerCase(); const expected=normalize(cleanArg(arg0)); if(!expected) throw new Error('comment_text is required'); const currentUser=String(document.querySelector('#me')?.textContent||'').trim(); const rows=Array.from(document.querySelectorAll('tr.athing.comtr')); const matches=rows.map((row)=>({ user:String(row.querySelector('.hnuser')?.textContent||'').trim(), text:normalize(row.querySelector('.commtext')?.textContent||'') })).filter((entry)=>entry.user===currentUser&&entry.text===expected); if(matches.length){ throw new Error(`Duplicate HN reply already exists for user ${currentUser||'unknown'}`); } return { current_user: currentUser || null, duplicate_found: false, scanned_comment_count: rows.length };"
-          },
-          {
-            "id": "s3",
-            "name": "Fill the reply text",
-            "type": "fill_input_field",
-            "selector": "form textarea[name='text'], textarea[name='text']",
-            "value": "{comment_text}",
-            "simulate_typing": false
-          },
-          {
-            "id": "s3b",
-            "name": "Verify the drafted reply is non-empty",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 10000,
-            "script": "const box = document.querySelector(\"form textarea[name='text'], textarea[name='text']\"); const value = box && 'value' in box ? String(box.value || '').trim() : ''; if (!value) { throw new Error('Reply textarea is empty'); } return { draft_length: value.length };"
-          },
-          {
-            "id": "s3c",
-            "name": "Pause for approval before submitting the reply",
-            "type": "request_user_intervention",
-            "message": "HN reply draft is ready. Click Continue only if you want to post it. Click Stop to leave it as a draft.",
-            "instructions": "If the reply adds little, repeats the parent, or reads like spam, click Stop instead of Continue.",
-            "approval_mode": "ask_user",
-            "continue_on_timeout": false,
-            "timeout_ms": 2147483647
-          },
-          {
-            "id": "s4",
-            "name": "Submit the reply",
-            "type": "click_element",
-            "selector": "form input[type='submit'], input[type='submit'][value*='reply' i]"
-          },
-          {
-            "id": "s5",
-            "name": "Wait for the reply to post",
-            "type": "wait_for_timeout",
-            "timeout_ms": 2500
-          }
-        ]
-      }
-    ]
+  "metadata": {
+    "migrated_from": "hn/hn-submit-reply.json",
+    "legacy_system_id": "hacker_news"
   }
 }

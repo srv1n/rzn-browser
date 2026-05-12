@@ -1,140 +1,279 @@
 {
-  "system_id": "x",
-  "id": "x_create_post",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "x/create_post",
   "name": "X: Create Post",
-  "description": "Open the X compose surface in a fresh tab, draft a top-level post, pause for human approval, then send. Use when you want to publish a new post. Do not use to reply to someone (use `x_reply_post`) or to send a DM (use `x_send_dm`).",
-  "domain": "x.com",
   "version": "1.1.0",
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Navigates a fresh tab to /compose/post, activates the textbox with a trusted click, types the post, asserts Post is enabled, pauses at the review gate, and sends on continue.",
-    "sequences": [
-      {
-        "name": "x_create_post",
-        "description": "Open compose route -> activate textbox -> type post -> verify enabled -> pause for review -> send.",
-        "required_variables": [
-          {
-            "name": "post_text",
-            "description": "Post text to send"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s0",
-            "name": "Open the X compose route in a fresh tab",
-            "type": "navigate_to_url",
-            "url": "https://x.com/compose/post",
-            "timeout_ms": 60000
-          },
-          {
-            "id": "s1",
-            "name": "Allow the compose surface to settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1800
-          },
-          {
-            "id": "s2",
-            "name": "Dismiss popups if present",
-            "type": "dismiss_popups"
-          },
-          {
-            "id": "s3",
-            "name": "Wait for the compose textbox",
-            "type": "wait_for_element",
-            "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']",
-            "timeout_ms": 20000
-          },
-          {
-            "id": "s4",
-            "name": "Activate the compose textbox with a trusted click",
-            "type": "click_element",
-            "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']",
-            "use_cdp": true,
-            "timeout_ms": 15000
-          },
-          {
-            "id": "s5",
-            "name": "Allow the compose caret to settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 400
-          },
-          {
-            "id": "s6",
-            "name": "Type the post text",
-            "type": "type_text",
-            "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']",
-            "text": "{post_text}",
-            "use_native_input": false,
-            "delay_ms": 35,
-            "typing_speed": "medium",
-            "timeout_ms": 120000
-          },
-          {
-            "id": "s7",
-            "name": "Confirm the Post button is enabled",
-            "type": "assert_selector_state",
-            "selector": "button[data-testid='tweetButton']",
-            "condition": "enabled",
-            "timeout_ms": 5000
-          },
-          {
-            "id": "s8",
-            "name": "Pause for review before sending the post",
-            "type": "request_user_intervention",
-            "message": "Post draft is ready. Click Continue only if you want to send it.",
-            "instructions": "If you do not want to send this post, stop the workflow instead of waiting for the timeout.",
-            "approval_mode": "ask_user",
-            "continue_on_timeout": false,
-            "timeout_ms": 2147483647
-          },
-          {
-            "id": "s9",
-            "name": "Click the Post button",
-            "type": "click_element",
-            "selector": "button[data-testid='tweetButton']",
-            "use_cdp": true,
-            "timeout_ms": 10000
-          },
-          {
-            "id": "s10",
-            "name": "Allow the post send to settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1200
-          },
-          {
-            "id": "s11",
-            "name": "Read the final compose-page state",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 10000,
-            "script": "return { url: location.href, composer_present: !!document.querySelector(\"div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']\") };"
-          }
-        ]
+  "system": "x",
+  "capability": "x.create.post",
+  "summary": "Create one top-level X post after human approval at an in-page review gate.",
+  "description": "Open the X compose surface in a fresh tab, draft a top-level post, pause for human approval, then send. Use when you want to publish a new post. Do not use to reply to someone (use `x_reply_post`) or to send a DM (use `x_send_dm`).",
+  "params": {
+    "properties": {
+      "post_text": {
+        "kind": "string",
+        "required": true,
+        "description": "Post body (supports plain text)."
       }
-    ]
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "external_write",
+      "idempotency": "never_retry",
+      "confirmation_required": true,
+      "scopes": [
+        "x.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://x.com/compose/post"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the X compose route in a fresh tab",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the compose surface to settle",
+      "timeout_ms": 1800
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']"
+        }
+      },
+      "name": "Wait for the compose textbox",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']"
+        }
+      },
+      "name": "Activate the compose textbox",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the compose caret to settle",
+      "timeout_ms": 400
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "type_text",
+        "inputs": {
+          "use_native_input": false,
+          "delay_ms": 35,
+          "typing_speed": "medium"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']",
+          "text": "{post_text}"
+        }
+      },
+      "name": "Type the post text",
+      "timeout_ms": 120000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "assert_selector_state",
+        "inputs": {
+          "condition": "enabled"
+        },
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "button[data-testid='tweetButton']"
+        }
+      },
+      "name": "Confirm the Post button is enabled",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "request_user_intervention",
+        "inputs": {
+          "message": "Post draft is ready. Click Continue only if you want to send it.",
+          "instructions": "If you do not want to send this post, stop the workflow instead of waiting for the timeout.",
+          "approval_mode": "ask_user",
+          "continue_on_timeout": false
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Pause for review before sending the post",
+      "timeout_ms": 2147483647
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ],
+        "target": {
+          "selector": "button[data-testid='tweetButton']"
+        }
+      },
+      "name": "Click the Post button",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s10",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the post send to settle",
+      "timeout_ms": 1200
+    },
+    {
+      "id": "s11",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "return { url: location.href, composer_present: !!document.querySelector(\"div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']\") };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the final compose-page state",
+      "timeout_ms": 10000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "composer_present": { "type": "boolean" }
+      }
+    },
+    "output_selector": {
+      "step_id": "s11",
+      "path": "$"
+    }
   },
   "help": {
     "summary": "Create one top-level X post after human approval at an in-page review gate.",
-    "parameters": [
-      {
-        "name": "post_text",
-        "required": true,
-        "shape": "text",
-        "description": "Post body (supports plain text).",
-        "example": "Today's a great day"
-      }
-    ],
+    "parameters": {
+      "post_text": "Post body (supports plain text)."
+    },
     "examples": [
       {
         "command": "rzn-browser run x create-post --param post_text=\"Today's a great day\"",
         "description": "Compose and publish one post after confirming at the review gate."
       }
     ],
-    "returns": "{ url, composer_present } post-send.",
+    "returns": [
+      "{ url, composer_present } post-send."
+    ],
     "notes": [
       "Mutating. Pauses at the in-page review gate (approval_mode=ask_user, continue_on_timeout=false).",
       "Opens a fresh tab via the /compose/post modal route.",
-      "Does not handle media/video uploads — text-only posts."
+      "Does not handle media/video uploads \u2014 text-only posts."
     ]
+  },
+  "metadata": {
+    "migrated_from": "x/x_create_post.json",
+    "legacy_system_id": "x"
   }
 }

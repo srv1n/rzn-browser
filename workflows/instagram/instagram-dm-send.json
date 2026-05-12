@@ -1,85 +1,182 @@
 {
-  "system_id": "instagram",
-  "id": "instagram_dm_send_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "instagram/dm_send",
   "name": "Instagram: DM Send",
-  "description": "Send one direct message to one Instagram handle. Opens the New Message modal, resolves the recipient via the typeahead search, selects them, opens the thread, types the message, and presses Enter to send. Each call creates a new message in the thread, so callers are responsible for deduping. Do not use this for multi-recipient broadcasts or replies to a specific earlier message — both need different entry points.",
-  "domain": "instagram.com",
   "version": "1.0.0",
+  "system": "instagram",
+  "capability": "instagram.dm.send",
+  "summary": "Send a single direct message to one Instagram handle.",
+  "description": "Send one direct message to one Instagram handle. Opens the New Message modal, resolves the recipient via the typeahead search, selects them, opens the thread, types the message, and presses Enter to send. Each call creates a new message in the thread, so callers are responsible for deduping. Do not use this for multi-recipient broadcasts or replies to a specific earlier message \u2014 both need different entry points.",
+  "params": {
+    "properties": {
+      "message_text": {
+        "kind": "string",
+        "required": true,
+        "description": "Text body of the message. Typed into the thread composer. Instagram enforces a 1000-character limit per message; this workflow rejects longer strings."
+      },
+      "recipient_handle": {
+        "kind": "string",
+        "required": true,
+        "description": "Instagram handle of the recipient, without the leading @. Case-insensitive; the workflow normalizes to lowercase before matching typeahead rows."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "external_write",
+      "idempotency": "never_retry",
+      "confirmation_required": true,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.instagram.com/direct/new/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the direct-message new-thread entry",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the messages shell hydrate",
+      "timeout_ms": 4000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\nconst normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();\nconst handle = cleanArg('{recipient_handle}').replace(/^@+/, '').trim().toLowerCase();\nconst messageText = cleanArg('{message_text}');\nconst preview = messageText.slice(0, 80);\nif (!handle) throw new Error('recipient_handle is required');\nif (!messageText) throw new Error('message_text is required');\nif (messageText.length > 1000) return { recipient_handle: handle, message_text_preview: preview, status: 'over_length', length: messageText.length };\nif (/login|log in|sign up/i.test(document.title) || document.querySelector('input[name=\"username\"], input[name=\"enc_password\"]')) return { recipient_handle: handle, message_text_preview: preview, status: 'login_required', url: location.href };\nlet dialog = document.querySelector('[role=\"dialog\"]');\nif (!dialog) {\n  const newMsgBtn = Array.from(document.querySelectorAll('button, [role=\"button\"]')).find((node) => node.offsetParent && /^(new message|send message)$/i.test(normalize(node.textContent || '')));\n  if (!newMsgBtn) return { recipient_handle: handle, message_text_preview: preview, status: 'recipient_not_found', reason: 'No New Message button and no dialog', url: location.href };\n  newMsgBtn.click();\n  await sleep(1500);\n  dialog = document.querySelector('[role=\"dialog\"]');\n}\nif (!dialog) return { recipient_handle: handle, message_text_preview: preview, status: 'recipient_not_found', reason: 'Dialog did not open', url: location.href };\nconst queryBox = dialog.querySelector('input[name=\"queryBox\"]');\nif (!(queryBox instanceof HTMLInputElement)) return { recipient_handle: handle, message_text_preview: preview, status: 'recipient_not_found', reason: 'queryBox missing', url: location.href };\nqueryBox.focus();\nconst valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;\nvalueSetter.call(queryBox, '');\nqueryBox.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: null, inputType: 'deleteContentBackward' }));\nawait sleep(150);\nlet typed = '';\nfor (const ch of handle) {\n  typed += ch;\n  queryBox.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));\n  valueSetter.call(queryBox, typed);\n  queryBox.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: ch, inputType: 'insertText' }));\n  queryBox.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));\n  await sleep(95);\n}\nawait sleep(2200);\nconst options = Array.from(dialog.querySelectorAll('[role=\"option\"], label, [role=\"button\"]')).filter((node) => node.offsetParent);\nconst leafTexts = (node) => {\n  const out = [];\n  const walk = (n) => {\n    if (!n) return;\n    if (n.nodeType === 3) { const t = (n.textContent || '').trim(); if (t) out.push(t.toLowerCase()); return; }\n    if (n.nodeType !== 1) return;\n    for (const child of n.childNodes) walk(child);\n  };\n  walk(node);\n  return out;\n};\nconst exactMatch = options.find((node) => {\n  const leaves = leafTexts(node);\n  if (leaves.includes(handle)) return true;\n  const text = normalize(node.textContent || '').toLowerCase();\n  const tokens = text.split(/\\s+/);\n  return tokens.includes(handle);\n});\nif (!exactMatch) return { recipient_handle: handle, message_text_preview: preview, status: 'recipient_not_found', visible_options: options.slice(0, 5).map((node) => normalize(node.textContent || '').slice(0, 120)), url: location.href };\nexactMatch.scrollIntoView({ block: 'center' });\ntry { exactMatch.click(); } catch {}\nawait sleep(700);\nconst chatBtn = Array.from(dialog.querySelectorAll('button, [role=\"button\"]')).find((node) => /^chat$/i.test(normalize(node.textContent || '')));\nif (!chatBtn) return { recipient_handle: handle, message_text_preview: preview, status: 'select_failed', reason: 'No Chat button in dialog', url: location.href };\nif (chatBtn.getAttribute('aria-disabled') === 'true' || chatBtn.disabled) return { recipient_handle: handle, message_text_preview: preview, status: 'chat_button_disabled', reason: 'Recipient selection did not enable Chat', url: location.href };\nchatBtn.click();\nconst deadline = Date.now() + 12000;\nwhile (Date.now() < deadline) {\n  if (/\\/direct\\/t\\//i.test(location.pathname) && !document.querySelector('[role=\"dialog\"]')) break;\n  await sleep(250);\n}\nif (!/\\/direct\\/t\\//i.test(location.pathname)) return { recipient_handle: handle, message_text_preview: preview, status: 'thread_not_opened', url: location.href };\nawait sleep(1200);\nconst composer = document.querySelector('div[contenteditable=\"true\"][aria-label*=\"Message\" i], div[contenteditable=\"true\"][aria-label*=\"message\" i], div[contenteditable=\"true\"][role=\"textbox\"]');\nif (!composer) return { recipient_handle: handle, message_text_preview: preview, status: 'composer_not_found', thread_url: location.href };\ncomposer.focus();\ntry { document.execCommand('insertText', false, messageText); } catch {}\nif (!normalize(composer.textContent || '').length) {\n  let typedMsg = '';\n  for (const ch of messageText) {\n    typedMsg += ch;\n    composer.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));\n    composer.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, data: ch, inputType: 'insertText' }));\n    document.execCommand && document.execCommand('insertText', false, ch);\n    composer.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: ch, inputType: 'insertText' }));\n    composer.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));\n    if (typedMsg.length % 40 === 0) await sleep(15);\n  }\n}\nawait sleep(500);\nconst sendBtn = Array.from(document.querySelectorAll('[role=\"button\"], button')).find((node) => node.offsetParent && /^send$/i.test(normalize(node.getAttribute('aria-label') || node.textContent || '')) && !(node.getAttribute('aria-disabled') === 'true' || node.disabled));\nif (sendBtn) { try { sendBtn.click(); } catch {} }\nelse { composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true })); composer.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true })); composer.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true })); }\nawait sleep(1800);\nconst composerAfter = document.querySelector('div[contenteditable=\"true\"][aria-label*=\"Message\" i], div[contenteditable=\"true\"][role=\"textbox\"]');\nconst cleared = !composerAfter || !normalize(composerAfter.textContent || '').length;\nif (cleared) return { recipient_handle: handle, message_text_preview: preview, status: 'sent', thread_url: location.href };\nreturn { recipient_handle: handle, message_text_preview: preview, status: 'send_failed', composer_text_after: normalize(composerAfter?.textContent || '').slice(0, 80), thread_url: location.href };"
+        },
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ]
+      },
+      "name": "Open the New Message dialog and resolve the recipient",
+      "timeout_ms": 45000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "recipient_handle": { "type": "string" },
+        "message_text_preview": { "type": "string" },
+        "status": {
+          "type": "string",
+          "enum": [
+            "sent",
+            "login_required",
+            "recipient_not_found",
+            "select_failed",
+            "chat_button_disabled",
+            "thread_not_opened",
+            "composer_not_found",
+            "send_failed",
+            "over_length"
+          ]
+        },
+        "thread_url": { "type": "string" },
+        "url": { "type": "string" },
+        "length": { "type": "integer" },
+        "reason": { "type": "string" },
+        "visible_options": { "type": "array", "items": { "type": "string" } },
+        "composer_text_after": { "type": "string" }
+      }
+    },
+    "output_selector": {
+      "step_id": "s3",
+      "path": "$"
+    }
+  },
   "help": {
     "summary": "Send a single direct message to one Instagram handle.",
-    "parameters": [
-      {
-        "name": "recipient_handle",
-        "required": true,
-        "shape": "string",
-        "description": "Instagram handle of the recipient, without the leading @. Case-insensitive; the workflow normalizes to lowercase before matching typeahead rows.",
-        "example": "timbersfc"
-      },
-      {
-        "name": "message_text",
-        "required": true,
-        "shape": "string",
-        "description": "Text body of the message. Typed into the thread composer. Instagram enforces a 1000-character limit per message; this workflow rejects longer strings.",
-        "example": "Hi! Big fan of the club."
-      }
-    ],
+    "parameters": {
+      "message_text": "Text body of the message. Typed into the thread composer. Instagram enforces a 1000-character limit per message; this workflow rejects longer strings.",
+      "recipient_handle": "Instagram handle of the recipient, without the leading @. Case-insensitive; the workflow normalizes to lowercase before matching typeahead rows."
+    },
     "examples": [
       {
         "description": "Send one DM to a public account",
         "command": "rzn-browser run instagram dm-send --param recipient_handle=\"timbersfc\" --param message_text=\"Hi! Big fan of the club.\""
       }
     ],
-    "returns": "JSON with recipient_handle, message_text_preview (first 80 chars), and status: one of sent | login_required | recipient_not_found | select_failed | chat_button_disabled | thread_not_opened | composer_not_found | send_failed | over_length. On sent, also returns thread_url.",
+    "returns": [
+      "JSON with recipient_handle, message_text_preview (first 80 chars), and status: one of sent | login_required | recipient_not_found | select_failed | chat_button_disabled | thread_not_opened | composer_not_found | send_failed | over_length. On sent, also returns thread_url."
+    ],
     "notes": [
       "Requires a logged-in Instagram session in the active Chrome profile; returns status=login_required if signed out.",
       "Opens a dedicated workflow tab (use_current_tab=false), so this workflow is safe to run in parallel with other dedicated-tab instagram flows.",
       "Not idempotent: every call sends a new message. Dedupe in the caller if needed.",
-      "Typeahead matching requires an exact handle in the option row — fuzzy matches on display name alone are intentionally rejected to avoid messaging the wrong person.",
+      "Typeahead matching requires an exact handle in the option row \u2014 fuzzy matches on display name alone are intentionally rejected to avoid messaging the wrong person.",
       "The thread composer is a ProseMirror-style contenteditable; this workflow uses document.execCommand('insertText', false, text) which is the only reliable path to trip Instagram's send-button enable logic.",
       "Rate limiting is an Instagram-side concern: don't loop faster than a real user would. Space batched DMs with a real delay between calls."
     ]
   },
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Opens a dedicated workflow tab, navigates to /direct/new/, opens the New Message dialog, drives the recipient typeahead with real keystrokes, clicks the exact match, clicks Chat to open the thread, types the message via execCommand, and presses Enter to send.",
-    "sequences": [
-      {
-        "name": "instagram_dm_send",
-        "description": "Compose and send one DM to a single handle.",
-        "required_variables": [
-          {
-            "name": "recipient_handle",
-            "description": "Instagram handle of the recipient"
-          },
-          {
-            "name": "message_text",
-            "description": "Message body"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Open the direct-message new-thread entry",
-            "type": "navigate_to_url",
-            "url": "https://www.instagram.com/direct/new/",
-            "timeout_ms": 60000
-          },
-          {
-            "id": "s2",
-            "name": "Let the messages shell hydrate",
-            "type": "wait_for_timeout",
-            "timeout_ms": 4000
-          },
-          {
-            "id": "s3",
-            "name": "Open the New Message dialog and resolve the recipient",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 45000,
-            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\nconst normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();\nconst handle = cleanArg('{recipient_handle}').replace(/^@+/, '').trim().toLowerCase();\nconst messageText = cleanArg('{message_text}');\nconst preview = messageText.slice(0, 80);\nif (!handle) throw new Error('recipient_handle is required');\nif (!messageText) throw new Error('message_text is required');\nif (messageText.length > 1000) return { recipient_handle: handle, message_text_preview: preview, status: 'over_length', length: messageText.length };\nif (/login|log in|sign up/i.test(document.title) || document.querySelector('input[name=\"username\"], input[name=\"enc_password\"]')) return { recipient_handle: handle, message_text_preview: preview, status: 'login_required', url: location.href };\nlet dialog = document.querySelector('[role=\"dialog\"]');\nif (!dialog) {\n  const newMsgBtn = Array.from(document.querySelectorAll('button, [role=\"button\"]')).find((node) => node.offsetParent && /^(new message|send message)$/i.test(normalize(node.textContent || '')));\n  if (!newMsgBtn) return { recipient_handle: handle, message_text_preview: preview, status: 'recipient_not_found', reason: 'No New Message button and no dialog', url: location.href };\n  newMsgBtn.click();\n  await sleep(1500);\n  dialog = document.querySelector('[role=\"dialog\"]');\n}\nif (!dialog) return { recipient_handle: handle, message_text_preview: preview, status: 'recipient_not_found', reason: 'Dialog did not open', url: location.href };\nconst queryBox = dialog.querySelector('input[name=\"queryBox\"]');\nif (!(queryBox instanceof HTMLInputElement)) return { recipient_handle: handle, message_text_preview: preview, status: 'recipient_not_found', reason: 'queryBox missing', url: location.href };\nqueryBox.focus();\nconst valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;\nvalueSetter.call(queryBox, '');\nqueryBox.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: null, inputType: 'deleteContentBackward' }));\nawait sleep(150);\nlet typed = '';\nfor (const ch of handle) {\n  typed += ch;\n  queryBox.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));\n  valueSetter.call(queryBox, typed);\n  queryBox.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: ch, inputType: 'insertText' }));\n  queryBox.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));\n  await sleep(95);\n}\nawait sleep(2200);\nconst options = Array.from(dialog.querySelectorAll('[role=\"option\"], label, [role=\"button\"]')).filter((node) => node.offsetParent);\nconst leafTexts = (node) => {\n  const out = [];\n  const walk = (n) => {\n    if (!n) return;\n    if (n.nodeType === 3) { const t = (n.textContent || '').trim(); if (t) out.push(t.toLowerCase()); return; }\n    if (n.nodeType !== 1) return;\n    for (const child of n.childNodes) walk(child);\n  };\n  walk(node);\n  return out;\n};\nconst exactMatch = options.find((node) => {\n  const leaves = leafTexts(node);\n  if (leaves.includes(handle)) return true;\n  const text = normalize(node.textContent || '').toLowerCase();\n  const tokens = text.split(/\\s+/);\n  return tokens.includes(handle);\n});\nif (!exactMatch) return { recipient_handle: handle, message_text_preview: preview, status: 'recipient_not_found', visible_options: options.slice(0, 5).map((node) => normalize(node.textContent || '').slice(0, 120)), url: location.href };\nexactMatch.scrollIntoView({ block: 'center' });\ntry { exactMatch.click(); } catch {}\nawait sleep(700);\nconst chatBtn = Array.from(dialog.querySelectorAll('button, [role=\"button\"]')).find((node) => /^chat$/i.test(normalize(node.textContent || '')));\nif (!chatBtn) return { recipient_handle: handle, message_text_preview: preview, status: 'select_failed', reason: 'No Chat button in dialog', url: location.href };\nif (chatBtn.getAttribute('aria-disabled') === 'true' || chatBtn.disabled) return { recipient_handle: handle, message_text_preview: preview, status: 'chat_button_disabled', reason: 'Recipient selection did not enable Chat', url: location.href };\nchatBtn.click();\nconst deadline = Date.now() + 12000;\nwhile (Date.now() < deadline) {\n  if (/\\/direct\\/t\\//i.test(location.pathname) && !document.querySelector('[role=\"dialog\"]')) break;\n  await sleep(250);\n}\nif (!/\\/direct\\/t\\//i.test(location.pathname)) return { recipient_handle: handle, message_text_preview: preview, status: 'thread_not_opened', url: location.href };\nawait sleep(1200);\nconst composer = document.querySelector('div[contenteditable=\"true\"][aria-label*=\"Message\" i], div[contenteditable=\"true\"][aria-label*=\"message\" i], div[contenteditable=\"true\"][role=\"textbox\"]');\nif (!composer) return { recipient_handle: handle, message_text_preview: preview, status: 'composer_not_found', thread_url: location.href };\ncomposer.focus();\ntry { document.execCommand('insertText', false, messageText); } catch {}\nif (!normalize(composer.textContent || '').length) {\n  let typedMsg = '';\n  for (const ch of messageText) {\n    typedMsg += ch;\n    composer.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));\n    composer.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, data: ch, inputType: 'insertText' }));\n    document.execCommand && document.execCommand('insertText', false, ch);\n    composer.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: ch, inputType: 'insertText' }));\n    composer.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));\n    if (typedMsg.length % 40 === 0) await sleep(15);\n  }\n}\nawait sleep(500);\nconst sendBtn = Array.from(document.querySelectorAll('[role=\"button\"], button')).find((node) => node.offsetParent && /^send$/i.test(normalize(node.getAttribute('aria-label') || node.textContent || '')) && !(node.getAttribute('aria-disabled') === 'true' || node.disabled));\nif (sendBtn) { try { sendBtn.click(); } catch {} }\nelse { composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true })); composer.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true })); composer.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true })); }\nawait sleep(1800);\nconst composerAfter = document.querySelector('div[contenteditable=\"true\"][aria-label*=\"Message\" i], div[contenteditable=\"true\"][role=\"textbox\"]');\nconst cleared = !composerAfter || !normalize(composerAfter.textContent || '').length;\nif (cleared) return { recipient_handle: handle, message_text_preview: preview, status: 'sent', thread_url: location.href };\nreturn { recipient_handle: handle, message_text_preview: preview, status: 'send_failed', composer_text_after: normalize(composerAfter?.textContent || '').slice(0, 80), thread_url: location.href };"
-          }
-        ]
-      }
-    ]
+  "metadata": {
+    "migrated_from": "instagram/instagram-dm-send.json",
+    "legacy_system_id": "instagram"
   }
 }

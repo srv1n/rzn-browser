@@ -1,29 +1,193 @@
 {
-  "system_id": "youtube",
-  "id": "youtube_playlist_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "youtube/playlist",
   "name": "YouTube Playlist Videos",
-  "description": "Open a YouTube playlist and return the videos it contains with title, channel, duration, and position. Use this to enumerate playlists surfaced by `youtube search` (filter=playlists) or by `youtube channel` (mode=playlists).",
-  "domain": "youtube.com",
   "version": "1.0.0",
-  "last_updated": "2026-04-24T00:00:00Z",
+  "system": "youtube",
+  "capability": "youtube.playlist",
+  "summary": "Return the videos in a playlist, with optional scroll-pagination to reach deeper entries.",
+  "description": "Open a YouTube playlist and return the videos it contains with title, channel, duration, and position. Use this to enumerate playlists surfaced by `youtube search` (filter=playlists) or by `youtube channel` (mode=playlists).",
+  "params": {
+    "properties": {
+      "limit": {
+        "kind": "integer",
+        "required": false,
+        "description": "Max videos to return. Defaults to 50. To reach entries beyond the first lazy-loaded batch (~100), raise this \u2014 the workflow scrolls until the limit is met or the list exhausts. Hard cap 200.",
+        "default": 50,
+        "min": 1,
+        "max": 200
+      },
+      "playlist_id": {
+        "kind": "string",
+        "required": true,
+        "description": "YouTube playlist id \u2014 the `list` query param on a /playlist or /watch URL."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "youtube.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "youtube.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.youtube.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open YouTube homepage (seeds cookies)",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{playlist_id}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const id=cleanArg(arg0);if(!id)throw new Error('playlist_id is required');if(!/^(PL|RD|OL|UU|LL|FL)[A-Za-z0-9_-]{6,}/.test(id))throw new Error('playlist_id does not look like a playlist id: '+id);const target='https://www.youtube.com/playlist?list='+encodeURIComponent(id);setTimeout(()=>window.location.assign(target),0);return{redirected:true,target};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Redirect to /playlist",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "ytd-playlist-video-list-renderer, yt-page-header-view-model, ytd-browse[page-subtype=\"playlist\"]"
+        }
+      },
+      "name": "Wait for playlist shell",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "ytd-playlist-video-renderer"
+        }
+      },
+      "name": "Wait for at least one row",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{limit}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const n=parseInt(cleanArg(arg0),10);const limit=Number.isFinite(n)&&n>0?Math.min(n,200):50;const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const abs=(h)=>{if(!h)return'';try{return new URL(h,location.origin).toString();}catch{return String(h);}};const dedupDur=(s)=>{const t=norm(s);if(!t)return'';const half=t.length/2;if(t.length%2===0&&t.slice(0,half)===t.slice(half))return t.slice(0,half);const parts=t.split(' ');if(parts.length>=2&&parts[0]===parts[1])return parts[0];return parts[0]||t;};const listId=new URL(location.href).searchParams.get('list');let lastCount=0;let stall=0;for(let i=0;i<20;i++){const rows=document.querySelectorAll('ytd-playlist-video-renderer').length;if(rows>=limit)break;window.scrollTo({top:document.body.scrollHeight,behavior:'instant'});await sleep(1200);if(rows===lastCount){stall++;if(stall>=3)break;}else{stall=0;}lastCount=rows;}window.scrollTo({top:0,behavior:'instant'});await sleep(300);const metaBlob=norm(document.querySelector('ytd-playlist-byline-renderer, yt-content-metadata-view-model')?.textContent||'');const vcMatch=metaBlob.match(/([\\d,]+)\\s*videos?/i);const chLink=document.querySelector('yt-page-header-view-model a[href*=\"/@\"], yt-content-metadata-view-model a[href*=\"/@\"], ytd-playlist-header-renderer ytd-channel-name a');let channel=norm(chLink?.textContent||'');if(/^by\\s+/i.test(channel))channel=channel.replace(/^by\\s+/i,'').trim();const pl={playlist_id:listId,title:norm(document.querySelector('yt-dynamic-text-view-model h1, .yt-page-header-view-model-wiz__title, ytd-playlist-header-renderer #text')?.textContent||''),channel,total_videos:vcMatch?vcMatch[0]:metaBlob.slice(0,80),url:location.href};const rows=Array.from(document.querySelectorAll('ytd-playlist-video-renderer'));const videos=[];for(const el of rows){if(videos.length>=limit)break;const a=el.querySelector('a#video-title, a.yt-simple-endpoint[href*=\"/watch\"]');const href=a?.getAttribute('href');const url=abs(href);let video_id=null;try{video_id=new URL(url,location.origin).searchParams.get('v');}catch{}if(!video_id)continue;const title=norm(el.querySelector('#video-title')?.textContent||a?.getAttribute('title')||'');const channel=norm(el.querySelector('ytd-channel-name a, #channel-name a, .yt-simple-endpoint.ytd-video-meta-block')?.textContent||'');const duration=dedupDur(el.querySelector('ytd-thumbnail-overlay-time-status-renderer, #thumbnail-overlay #text')?.textContent||'');const posEl=el.querySelector('#index, ytd-thumbnail-overlay-playing-video-renderer');const pos=norm(posEl?.textContent||'')||String(videos.length+1);videos.push({position:pos,video_id,title,channel,duration,url});}return{playlist:pl,returned_count:videos.length,videos};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll + extract",
+      "timeout_ms": 90000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "playlist": {
+          "type": "object",
+          "properties": {
+            "playlist_id": { "type": "string" },
+            "title": { "type": "string" },
+            "channel": { "type": "string" },
+            "total_videos": { "type": "string" },
+            "url": { "type": "string" }
+          }
+        },
+        "returned_count": { "type": "integer" },
+        "videos": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "position": { "type": "string" },
+              "video_id": { "type": "string" },
+              "title": { "type": "string" },
+              "channel": { "type": "string" },
+              "duration": { "type": "string" },
+              "url": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6",
+      "path": "$"
+    }
+  },
   "help": {
     "summary": "Return the videos in a playlist, with optional scroll-pagination to reach deeper entries.",
-    "parameters": [
-      {
-        "name": "playlist_id",
-        "required": true,
-        "shape": "playlist id (starts with PL, RD, OL, UU, LL, FL)",
-        "description": "YouTube playlist id — the `list` query param on a /playlist or /watch URL.",
-        "example": "PL0vfts4VzfNh4huPTppuH0FZ0-a_qCMe-"
-      },
-      {
-        "name": "limit",
-        "required": false,
-        "shape": "integer (1-200)",
-        "description": "Max videos to return. Defaults to 50. To reach entries beyond the first lazy-loaded batch (~100), raise this — the workflow scrolls until the limit is met or the list exhausts.",
-        "example": "100"
-      }
-    ],
+    "parameters": {
+      "limit": "Max videos to return. Defaults to 50. To reach entries beyond the first lazy-loaded batch (~100), raise this \u2014 the workflow scrolls until the limit is met or the list exhausts.",
+      "playlist_id": "YouTube playlist id \u2014 the `list` query param on a /playlist or /watch URL."
+    },
     "examples": [
       {
         "description": "First 50 videos from a playlist",
@@ -34,73 +198,17 @@
         "command": "rzn-browser run youtube playlist --param playlist_id=\"PLrAXtmRdnEQy6nuLMHjMZOz59Oq8B9nUj\" --param limit=200"
       }
     ],
-    "returns": "{ playlist:{ playlist_id, title, channel, total_videos, url }, returned_count, videos:[ { position, video_id, title, channel, duration, url } ] }.",
+    "returns": [
+      "{ playlist:{ playlist_id, title, channel, total_videos, url }, returned_count, videos:[ { position, video_id, title, channel, duration, url } ] }."
+    ],
     "notes": [
       "Private or unlisted playlists load only if the active browser session has access.",
       "Mix/auto-generated playlists (id starts with RD) are allowed but may not expose every entry in the DOM.",
-      "Channel name is sourced from the playlist sidebar when available. Per-video channel is omitted for single-channel playlists — YouTube doesn't render a separate byline per row in that case."
+      "Channel name is sourced from the playlist sidebar when available. Per-video channel is omitted for single-channel playlists \u2014 YouTube doesn't render a separate byline per row in that case."
     ]
   },
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Dedicated-tab playlist page reader. Scrolls the playlist panel until limit is met.",
-    "sequences": [
-      {
-        "name": "youtube_playlist",
-        "description": "Navigate to /playlist?list=<id>, scroll, extract videos.",
-        "required_variables": [
-          { "name": "playlist_id", "description": "YouTube playlist id" }
-        ],
-        "optional_variables": [
-          { "name": "limit", "description": "Max videos (default 50, cap 200)" }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Open YouTube homepage (seeds cookies)",
-            "type": "navigate_to_url",
-            "url": "https://www.youtube.com/",
-            "timeout_ms": 60000
-          },
-          {
-            "id": "s2",
-            "name": "Redirect to /playlist",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 20000,
-            "args": ["{playlist_id}"],
-            "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const id=cleanArg(arg0);if(!id)throw new Error('playlist_id is required');if(!/^(PL|RD|OL|UU|LL|FL)[A-Za-z0-9_-]{6,}/.test(id))throw new Error('playlist_id does not look like a playlist id: '+id);const target='https://www.youtube.com/playlist?list='+encodeURIComponent(id);setTimeout(()=>window.location.assign(target),0);return{redirected:true,target};"
-          },
-          {
-            "id": "s3",
-            "name": "Wait for playlist shell",
-            "type": "wait_for_element",
-            "selector": "ytd-playlist-video-list-renderer, yt-page-header-view-model, ytd-browse[page-subtype=\"playlist\"]",
-            "timeout_ms": 25000
-          },
-          {
-            "id": "s4",
-            "name": "Dismiss popups",
-            "type": "dismiss_popups"
-          },
-          {
-            "id": "s5",
-            "name": "Wait for at least one row",
-            "type": "wait_for_element",
-            "selector": "ytd-playlist-video-renderer",
-            "timeout_ms": 20000
-          },
-          {
-            "id": "s6",
-            "name": "Scroll + extract",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 90000,
-            "args": ["{limit}"],
-            "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const n=parseInt(cleanArg(arg0),10);const limit=Number.isFinite(n)&&n>0?Math.min(n,200):50;const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const abs=(h)=>{if(!h)return'';try{return new URL(h,location.origin).toString();}catch{return String(h);}};const dedupDur=(s)=>{const t=norm(s);if(!t)return'';const half=t.length/2;if(t.length%2===0&&t.slice(0,half)===t.slice(half))return t.slice(0,half);const parts=t.split(' ');if(parts.length>=2&&parts[0]===parts[1])return parts[0];return parts[0]||t;};const listId=new URL(location.href).searchParams.get('list');let lastCount=0;let stall=0;for(let i=0;i<20;i++){const rows=document.querySelectorAll('ytd-playlist-video-renderer').length;if(rows>=limit)break;window.scrollTo({top:document.body.scrollHeight,behavior:'instant'});await sleep(1200);if(rows===lastCount){stall++;if(stall>=3)break;}else{stall=0;}lastCount=rows;}window.scrollTo({top:0,behavior:'instant'});await sleep(300);const metaBlob=norm(document.querySelector('ytd-playlist-byline-renderer, yt-content-metadata-view-model')?.textContent||'');const vcMatch=metaBlob.match(/([\\d,]+)\\s*videos?/i);const chLink=document.querySelector('yt-page-header-view-model a[href*=\"/@\"], yt-content-metadata-view-model a[href*=\"/@\"], ytd-playlist-header-renderer ytd-channel-name a');let channel=norm(chLink?.textContent||'');if(/^by\\s+/i.test(channel))channel=channel.replace(/^by\\s+/i,'').trim();const pl={playlist_id:listId,title:norm(document.querySelector('yt-dynamic-text-view-model h1, .yt-page-header-view-model-wiz__title, ytd-playlist-header-renderer #text')?.textContent||''),channel,total_videos:vcMatch?vcMatch[0]:metaBlob.slice(0,80),url:location.href};const rows=Array.from(document.querySelectorAll('ytd-playlist-video-renderer'));const videos=[];for(const el of rows){if(videos.length>=limit)break;const a=el.querySelector('a#video-title, a.yt-simple-endpoint[href*=\"/watch\"]');const href=a?.getAttribute('href');const url=abs(href);let video_id=null;try{video_id=new URL(url,location.origin).searchParams.get('v');}catch{}if(!video_id)continue;const title=norm(el.querySelector('#video-title')?.textContent||a?.getAttribute('title')||'');const channel=norm(el.querySelector('ytd-channel-name a, #channel-name a, .yt-simple-endpoint.ytd-video-meta-block')?.textContent||'');const duration=dedupDur(el.querySelector('ytd-thumbnail-overlay-time-status-renderer, #thumbnail-overlay #text')?.textContent||'');const posEl=el.querySelector('#index, ytd-thumbnail-overlay-playing-video-renderer');const pos=norm(posEl?.textContent||'')||String(videos.length+1);videos.push({position:pos,video_id,title,channel,duration,url});}return{playlist:pl,returned_count:videos.length,videos};"
-          }
-        ]
-      }
-    ]
+  "metadata": {
+    "migrated_from": "youtube/youtube-playlist.json",
+    "legacy_system_id": "youtube"
   }
 }

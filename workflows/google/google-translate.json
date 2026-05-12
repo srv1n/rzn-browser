@@ -1,87 +1,166 @@
 {
-  "system_id": "google",
-  "id": "google_translate_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "google/translate",
   "name": "Google Translate",
-  "description": "Translate text using Google's Search translate widget (best-effort). Avoids the full Translate SPA selectors.",
-  "domain": "google.com",
   "version": "1.1.0",
-  "last_updated": "2026-04-24T00:00:00Z",
-  "browser_automation": {
-    "description": "Hits google.com/search?q=translate+TEXT+to+LANG and reads the inline translation widget.",
-    "sequences": [
-      {
-        "name": "google_translate_extract",
-        "description": "Translate input text to a target language and extract the translated string.",
-        "required_variables": [
-          {
-            "name": "text",
-            "description": "Text to translate (URL-encoded automatically)."
-          },
-          {
-            "name": "to_language",
-            "description": "Target language. Either a name (Spanish, Japanese) or an ISO code (es, ja, fr, de)."
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Navigate to Google Search translate widget",
-            "type": "navigate_to_url",
-            "url": "https://www.google.com/search?q=translate%20{text}%20to%20{to_language}"
-          },
-          {
-            "id": "s2",
-            "name": "Wait for results panel",
-            "type": "wait_for_element",
-            "selector": "#search, #rso",
-            "timeout_ms": 20000
-          },
-          {
-            "id": "s3",
-            "name": "Dismiss common popups",
-            "type": "dismiss_popups"
-          },
-          {
-            "id": "s4",
-            "name": "Settle: let translate widget render",
-            "type": "wait_for_timeout",
-            "timeout_ms": 2000
-          },
-          {
-            "id": "s5",
-            "name": "Extract translation (#tw-target-text is the canonical widget output)",
-            "type": "extract_structured_data",
-            "extraction_type": "translation",
-            "item_selector": "body",
-            "limit": 1,
-            "fields": [
-              { "name": "translated_text", "selector": "#tw-target-text, #tw-target-text pre, span[lang='target']" },
-              { "name": "source_text", "selector": "#tw-source-text" },
-              { "name": "search_text", "selector": "#search" }
-            ]
-          }
-        ]
+  "system": "google",
+  "capability": "google.translate",
+  "summary": "Translate a string to a target language using Google's inline translate widget.",
+  "description": "Translate text using Google's Search translate widget (best-effort). Avoids the full Translate SPA selectors.",
+  "params": {
+    "properties": {
+      "text": {
+        "kind": "string",
+        "required": true,
+        "description": "Text to translate. Keep it short \u2014 the widget is meant for phrases/sentences, not paragraphs."
+      },
+      "to_language": {
+        "kind": "string",
+        "required": true,
+        "description": "Target language NAME (Spanish, Japanese, French, German, Italian). Use the full name \u2014 ISO codes (es, ja) often fail to trigger Google's translate widget."
       }
-    ]
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.google.com/search?q=translate%20{text}%20to%20{to_language}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Google Search translate widget"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#search, #rso"
+        }
+      },
+      "name": "Wait for results panel",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss common popups"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Settle: let translate widget render",
+      "timeout_ms": 2000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "extraction_type": "translation",
+          "item_selector": "body",
+          "limit": 1,
+          "fields": [
+            {
+              "name": "translated_text",
+              "selector": "#tw-target-text, #tw-target-text pre, span[lang='target']"
+            },
+            {
+              "name": "source_text",
+              "selector": "#tw-source-text"
+            },
+            {
+              "name": "search_text",
+              "selector": "#search"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract translation (#tw-target-text is the canonical widget output)"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "translated_text": {
+            "type": "string"
+          },
+          "source_text": {
+            "type": "string"
+          },
+          "search_text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
   },
   "help": {
     "summary": "Translate a string to a target language using Google's inline translate widget.",
-    "parameters": [
-      {
-        "name": "text",
-        "required": true,
-        "shape": "text",
-        "description": "Text to translate. Keep it short — the widget is meant for phrases/sentences, not paragraphs.",
-        "example": "good morning"
-      },
-      {
-        "name": "to_language",
-        "required": true,
-        "shape": "text",
-        "description": "Target language NAME (Spanish, Japanese, French, German, Italian). Use the full name — ISO codes (es, ja) often fail to trigger Google's translate widget.",
-        "example": "Spanish"
-      }
-    ],
+    "parameters": {
+      "text": "Text to translate. Keep it short \u2014 the widget is meant for phrases/sentences, not paragraphs.",
+      "to_language": "Target language NAME (Spanish, Japanese, French, German, Italian). Use the full name \u2014 ISO codes (es, ja) often fail to trigger Google's translate widget."
+    },
     "examples": [
       {
         "command": "rzn-browser run google translate --param text=\"good morning\" --param to_language=Spanish",
@@ -92,10 +171,16 @@
         "description": "Translate 'thank you' to Japanese."
       }
     ],
-    "returns": "Object with translated_text (from #tw-target-text), source_text (from #tw-source-text), and search_text (full #search panel as fallback). If translated_text is empty, the widget didn't render — try a language NAME, not a code.",
+    "returns": [
+      "Object with translated_text (from #tw-target-text), source_text (from #tw-source-text), and search_text (full #search panel as fallback). If translated_text is empty, the widget didn't render \u2014 try a language NAME, not a code."
+    ],
     "notes": [
       "Source language is auto-detected by Google.",
-      "For long-form translation or document upload, use the Translate SPA directly — this workflow only targets the Search widget."
+      "For long-form translation or document upload, use the Translate SPA directly \u2014 this workflow only targets the Search widget."
     ]
+  },
+  "metadata": {
+    "migrated_from": "google/google-translate.json",
+    "legacy_system_id": "google"
   }
 }

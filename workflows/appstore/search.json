@@ -1,113 +1,275 @@
 {
-  "system_id": "appstore",
-  "id": "appstore_search",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "appstore/search",
   "name": "App Store: Search",
-  "description": "Search the Apple App Store (iPhone catalog) for a term in a given storefront and return candidate app rows (name, url, app_id, developer, raw card text). Use this for ASO keyword scouting or candidate discovery. Do not use it for full app detail or reviews — use `appstore/app-details` for one app. Read-only.",
-  "domain": "apps.apple.com",
   "version": "2.0.0",
-  "last_updated": "2026-04-25T00:00:00Z",
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Direct navigation to /{country}/iphone/search?term=… (cookie/consent banners on apps.apple.com intercept clicks, so we avoid the landing-page form entirely per the CLAUDE.md playbook).",
-    "sequences": [
-      {
-        "name": "appstore_search",
-        "description": "Open App Store search for {term} in {country} storefront, extract candidate app rows.",
-        "required_variables": [
-          { "name": "term", "description": "Search keyword, e.g. 'notion' or 'password manager'." }
-        ],
-        "optional_variables": [
-          { "name": "country", "description": "Two-letter storefront code. Defaults to 'us' if empty." }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Open the App Store in a fresh tab",
-            "type": "open_new_tab",
-            "url": "https://apps.apple.com/us/"
-          },
-          {
-            "id": "s1b",
-            "name": "Redirect to the search URL (country defaults to us)",
-            "type": "execute_javascript",
-            "world": "main",
-            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst term = cleanArg('{term}');\nconst country = (cleanArg('{country}') || 'us').toLowerCase();\nconst target = `https://apps.apple.com/${encodeURIComponent(country)}/iphone/search?term=${encodeURIComponent(term)}`;\nsetTimeout(() => window.location.assign(target), 0);\nreturn { redirected: true, target, country };",
-            "return_value": true
-          },
-          {
-            "id": "s2",
-            "name": "Allow results to hydrate",
-            "type": "wait_for_timeout",
-            "timeout_ms": 3500
-          },
-          {
-            "id": "s3",
-            "name": "Dismiss popups if present",
-            "type": "dismiss_popups"
-          },
-          {
-            "id": "s4",
-            "name": "Wait for app result anchors",
-            "type": "wait_for_element",
-            "selector": "a[href*='/app/'][href*='id']",
-            "timeout_ms": 20000
-          },
-          {
-            "id": "s5",
-            "name": "Extract app candidate rows",
-            "type": "extract_structured_data",
-            "item_selector": "a[href*='/app/'][href*='id']",
-            "limit": 20,
-            "fields": [
-              {
-                "name": "app_name",
-                "selector": ".multiline-clamp__text, .we-lockup__title, h3, h2, span[dir='auto']",
-                "post_processing": ["collapse_whitespace"]
-              },
-              {
-                "name": "app_url",
-                "selector": "*",
-                "attribute": "href"
-              },
-              {
-                "name": "app_id",
-                "selector": "*",
-                "attribute": "href",
-                "post_processing": ["regex_group:id(\\d+):1"]
-              },
-              {
-                "name": "developer_or_subtitle",
-                "selector": ".multiline-clamp:nth-of-type(2) .multiline-clamp__text, .we-lockup__subtitle, .we-lockup__caption, .we-lockup__kind",
-                "post_processing": ["collapse_whitespace"]
-              },
-              {
-                "name": "card_text",
-                "selector": "*",
-                "post_processing": ["collapse_whitespace"]
-              }
-            ]
-          }
-        ]
+  "system": "appstore",
+  "capability": "appstore.search",
+  "summary": "Search Apple App Store (iPhone) for a term and return candidate app rows.",
+  "description": "Search the Apple App Store (iPhone catalog) for a term in a given storefront and return candidate app rows (name, url, app_id, developer, raw card text). Use this for ASO keyword scouting or candidate discovery. Do not use it for full app detail or reviews \u2014 use `appstore/app-details` for one app. Read-only.",
+  "params": {
+    "properties": {
+      "country": {
+        "kind": "string",
+        "required": false,
+        "default": "us",
+        "description": "Two-letter storefront code."
+      },
+      "term": {
+        "kind": "string",
+        "required": true,
+        "description": "Search keyword."
       }
-    ]
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "apps.apple.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "apps.apple.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "open_new_tab",
+        "inputs": {
+          "url": "https://apps.apple.com/{country}/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the App Store storefront in a fresh tab"
+    },
+    {
+      "id": "s1a",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "input[type='search'], input[placeholder*='Search'], input[name='term'], input.we-search-input__input"
+        }
+      },
+      "name": "Wait for the App Store search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s1c",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{term}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[type='search'], input[placeholder*='Search'], input[name='term'], input.we-search-input__input"
+        }
+      },
+      "name": "Fill the search box"
+    },
+    {
+      "id": "s1d",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[type='search'], input[placeholder*='Search'], input[name='term'], input.we-search-input__input",
+          "text": "{term}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow results to hydrate",
+      "timeout_ms": 3500
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "a[href*='/app/'][href*='id']"
+        }
+      },
+      "name": "Wait for app result anchors",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "item_selector": "a[href*='/app/'][href*='id']",
+          "limit": 20,
+          "fields": [
+            {
+              "name": "app_name",
+              "selector": ".multiline-clamp__text, .we-lockup__title, h3, h2, span[dir='auto']",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "app_url",
+              "selector": "*",
+              "attribute": "href"
+            },
+            {
+              "name": "app_id",
+              "selector": "*",
+              "attribute": "href",
+              "post_processing": [
+                "regex_group:id(\\d+):1"
+              ]
+            },
+            {
+              "name": "developer_or_subtitle",
+              "selector": ".multiline-clamp:nth-of-type(2) .multiline-clamp__text, .we-lockup__subtitle, .we-lockup__caption, .we-lockup__kind",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "card_text",
+              "selector": "*",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract app candidate rows"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "app_name": {
+            "type": "string"
+          },
+          "app_url": {
+            "type": "string"
+          },
+          "app_id": {
+            "type": "string"
+          },
+          "developer_or_subtitle": {
+            "type": "string"
+          },
+          "card_text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
   },
   "help": {
     "summary": "Search Apple App Store (iPhone) for a term and return candidate app rows.",
-    "parameters": [
-      { "name": "term", "required": true, "shape": "text", "description": "Search keyword.", "example": "notion" },
-      { "name": "country", "required": false, "shape": "text", "description": "Two-letter storefront code. Defaults to 'us' if empty.", "example": "gb" }
-    ],
+    "parameters": {
+      "country": "Two-letter storefront code. Defaults to 'us' if empty.",
+      "term": "Search keyword."
+    },
     "examples": [
-      { "command": "rzn-browser run appstore search --param term=\"notion\"", "description": "Default US storefront results for 'notion'." },
-      { "command": "rzn-browser run appstore search --param term=\"budget planner\" --param country=\"gb\"", "description": "UK storefront." }
+      {
+        "command": "rzn-browser run appstore search --param term=\"notion\"",
+        "description": "Default US storefront results for 'notion'."
+      },
+      {
+        "command": "rzn-browser run appstore search --param term=\"budget planner\" --param country=\"gb\"",
+        "description": "UK storefront."
+      }
     ],
-    "returns": "Array of { app_name, app_url, app_id, developer_or_subtitle, card_text }.",
+    "returns": [
+      "Array of { app_name, app_url, app_id, developer_or_subtitle, card_text }."
+    ],
     "notes": [
       "Read-only.",
-      "Uses direct URL navigation (?term=...) because the App Store landing consent banner intercepts form submits.",
-      "`app_id` is parsed from the href via regex — the numeric id after '/id'.",
+      "Drives the storefront's real search input to look like a human rather than hitting `?term=...` directly.",
+      "`app_id` is parsed from the href via regex \u2014 the numeric id after '/id'.",
       "`card_text` is a raw fallback blob; prefer `app_name` + `developer_or_subtitle` for clean data.",
-      "Limit is hardcoded at 20 (one App Store search page has ~10–15 cards visible)."
+      "Limit is hardcoded at 20 (one App Store search page has ~10\u201315 cards visible)."
     ]
+  },
+  "metadata": {
+    "migrated_from": "appstore/search.json",
+    "legacy_system_id": "appstore"
   }
 }

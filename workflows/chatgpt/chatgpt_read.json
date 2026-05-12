@@ -1,0 +1,160 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "chatgpt/read",
+  "name": "ChatGPT: Read (API)",
+  "version": "1.0.0",
+  "system": "chatgpt",
+  "capability": "chatgpt.read",
+  "summary": "Read a ChatGPT chat (latest reply, full transcript, or full mapping with metadata) via the backend-api JSON. One workflow with a `mode` flag.",
+  "description": "Read a ChatGPT conversation by id via the same backend JSON the web app fetches. One workflow with three modes: `latest` returns just the most recent user\u2192assistant exchange (and any planning turns), `transcript` returns user/assistant turns as clean markdown, `full` returns every node in the mapping with raw parts and metadata. Authenticated via the page session \u2014 no DOM scraping, no CDP.",
+  "params": {
+    "properties": {
+      "chat_id": {
+        "kind": "string",
+        "required": true,
+        "description": "ChatGPT conversation id (the part after /c/ in the URL)."
+      },
+      "download_attachments": {
+        "kind": "boolean",
+        "required": false,
+        "description": "If true, auto-download every user-uploaded file attachment via anchor click (saves to the browser Downloads folder). Defaults to true."
+      },
+      "include_system": {
+        "kind": "boolean",
+        "required": false,
+        "description": "Only meaningful when mode=transcript. If true, include system/tool turns in the messages array. Defaults to false."
+      },
+      "mode": {
+        "kind": "string",
+        "required": false,
+        "description": "What to return. `latest` = just the last user message + every assistant turn after it (final reply + any planning turns) + a streaming flag. `transcript` (default) = user/assistant turns as clean markdown. `full` = every node in the mapping with raw parts, metadata, and parent/child refs."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "chatgpt.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "chatgpt.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://chatgpt.com/c/{chat_id}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open ChatGPT to inherit the authenticated session",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the SPA shell + cookies to settle",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{chat_id}",
+            "{mode}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const params=(typeof window!=='undefined'&&window.__rzn_params)||{};const truthy=(v)=>{const t=cleanArg(v).toLowerCase();return t==='true'||t==='1'||t==='yes'||t==='y';};const falsy=(v)=>{const t=cleanArg(v).toLowerCase();return t==='false'||t==='0'||t==='no'||t==='n';};const chatId=cleanArg(arg0);if(!chatId)throw new Error('chat_id is required');const modeRaw=cleanArg(arg1).toLowerCase();const mode=(modeRaw==='latest'||modeRaw==='transcript'||modeRaw==='full')?modeRaw:'transcript';const includeSystem=truthy(params.include_system);const downloadAttachments=!falsy(params.download_attachments);const session=await fetch('/api/auth/session',{credentials:'include'}).then(r=>r.json()).catch(()=>({}));const token=session?.accessToken;if(!token)throw new Error('No accessToken in /api/auth/session \u2014 not logged in?');const headers={'Authorization':'Bearer '+token,'Accept':'application/json'};const conv=await fetch('/backend-api/conversation/'+encodeURIComponent(chatId),{headers}).then(r=>{if(!r.ok)throw new Error('conversation API '+r.status);return r.json();});const mapping=conv.mapping||{};const orderedIds=[];const seen=new Set();const walk=(id)=>{if(!id||seen.has(id))return;seen.add(id);const node=mapping[id];if(!node)return;orderedIds.push(id);for(const c of (node.children||[]))walk(c);};const rootId=Object.entries(mapping).find(([id,n])=>n&&n.parent==null)?.[0];if(rootId)walk(rootId);else for(const id of Object.keys(mapping))walk(id);let nodeIds=orderedIds;if(mode==='latest'){let lastUserIdx=-1;for(let i=orderedIds.length-1;i>=0;i--){const m=mapping[orderedIds[i]]?.message;if(m?.author?.role==='user'){lastUserIdx=i;break;}}nodeIds=lastUserIdx>=0?orderedIds.slice(lastUserIdx):orderedIds.slice(-1);}const messages=[];const attDl=[];const downloadOne=async(att)=>{try{const meta=await fetch('/backend-api/files/'+encodeURIComponent(att.id)+'/download',{headers}).then(r=>{if(!r.ok)throw new Error('download api '+r.status);return r.json();});const a=document.createElement('a');a.href=meta.download_url;a.download=meta.file_name||att.name||att.id;a.style.display='none';document.body.appendChild(a);a.click();await new Promise(r=>setTimeout(r,250));a.remove();attDl.push({file_id:att.id,name:meta.file_name||att.name,size_bytes:meta.file_size_bytes,mime_type:meta.mime_type,status:'triggered'});return true;}catch(err){attDl.push({file_id:att.id,name:att.name,status:'failed',error:String(err&&err.message||err)});return false;}};let userTurns=0,assistantTurns=0,systemTurns=0,toolTurns=0;for(const id of nodeIds){const node=mapping[id];const msg=node?.message;if(!msg||!msg.author?.role){if(mode==='full'){messages.push({id,role:null,parent_id:node?.parent||null,children_ids:node?.children||[],note:'no_message_payload'});}continue;}const role=msg.author.role;if(mode==='transcript'&&!includeSystem&&(role==='system'||role==='tool'))continue;if(mode==='latest'&&role==='system')continue;const parts=Array.isArray(msg.content?.parts)?msg.content.parts:[];const textParts=parts.filter(p=>typeof p==='string');const text=textParts.join('\\n\\n');if(mode==='transcript'&&!text&&!includeSystem)continue;const meta=msg.metadata||{};const attachmentsRaw=Array.isArray(meta.attachments)?meta.attachments:[];const attachments=attachmentsRaw.map(a=>({id:a.id||a.file_id||null,name:a.name||a.file_name||null,mime_type:a.mime_type||a.mimeType||null,size_bytes:typeof a.size==='number'?a.size:(typeof a.file_size_bytes==='number'?a.file_size_bytes:null)}));if(downloadAttachments){for(const att of attachments){if(att.id){const ok=await downloadOne(att);att.downloaded=ok;}}}if(role==='user')userTurns++;else if(role==='assistant')assistantTurns++;else if(role==='system')systemTurns++;else if(role==='tool')toolTurns++;const messageObj={id:msg.id||id,role,create_time:msg.create_time||null,content_type:msg.content?.content_type||null,model_slug:meta.model_slug||null,text,attachments};if(mode==='full'){messageObj.parent_id=node?.parent||null;messageObj.children_ids=node?.children||[];messageObj.parts_raw=parts;messageObj.metadata=meta;}messages.push(messageObj);}let streamingInProgress=false;if(mode==='latest'){for(let i=messages.length-1;i>=0;i--){if(messages[i].role==='assistant'){const node=mapping[messages[i].id];const m=node?.message;if(m&&m.end_turn===false)streamingInProgress=true;break;}}}return{chat_id:chatId,title:conv.title||null,model_slug:conv.default_model_slug||null,create_time:conv.create_time||null,update_time:conv.update_time||null,mode,url:window.location.href,raw_mapping_size:Object.keys(mapping).length,message_count:messages.length,user_turn_count:userTurns,assistant_turn_count:assistantTurns,system_turn_count:systemTurns,tool_turn_count:toolTurns,streaming_in_progress:streamingInProgress,messages,attachments_downloaded:attDl};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Fetch the conversation JSON, slice per mode, optionally trigger attachment downloads",
+      "timeout_ms": 90000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object"
+    },
+    "output_selector": {
+      "step_id": "s2",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Read a ChatGPT chat (latest reply, full transcript, or full mapping with metadata) via the backend-api JSON. One workflow with a `mode` flag.",
+    "parameters": {
+      "chat_id": "ChatGPT conversation id (the part after /c/ in the URL).",
+      "download_attachments": "If true, auto-download every user-uploaded file attachment via anchor click (saves to the browser Downloads folder). Defaults to true.",
+      "include_system": "Only meaningful when mode=transcript. If true, include system/tool turns in the messages array. Defaults to false.",
+      "mode": "What to return. `latest` = just the last user message + every assistant turn after it (final reply + any planning turns) + a streaming flag. `transcript` (default) = user/assistant turns as clean markdown. `full` = every node in the mapping with raw parts, metadata, and parent/child refs."
+    },
+    "examples": [
+      {
+        "description": "Default \u2014 clean markdown transcript with attachments downloaded.",
+        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\""
+      },
+      {
+        "description": "Just the latest assistant response (poll-friendly).",
+        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param mode=\"latest\""
+      },
+      {
+        "description": "Complete mapping including system/tool turns + per-message metadata.",
+        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param mode=\"full\""
+      },
+      {
+        "description": "Transcript without downloading attachments.",
+        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param download_attachments=false"
+      }
+    ],
+    "returns": [
+      "{ chat_id, title, model_slug, create_time, update_time, mode, url, raw_mapping_size, message_count, user_turn_count, assistant_turn_count, system_turn_count, tool_turn_count, streaming_in_progress, messages: [Message], attachments_downloaded: [...] }. Each Message has {id, role, create_time, content_type, model_slug, text, attachments}. In `mode=full` each Message additionally has {parent_id, children_ids, parts_raw, metadata}. Envelope shape is identical across modes \u2014 only the contents of `messages` and the per-mode count fields differ."
+    ],
+    "notes": [
+      "Uses /api/auth/session to read the page session token, then /backend-api/conversation/{chat_id} for the conversation JSON.",
+      "`mode=latest` returns the slice from the most recent user turn to the end of the conversation (so callers see the final assistant reply plus any planning/thinking turns that came before it). The final reply is always `messages[messages.length - 1]` when role=assistant.",
+      "`streaming_in_progress` is true when the latest assistant turn has not finalized (`end_turn !== true`). Re-run with mode=latest after a short delay if needed.",
+      "Attachment auto-download uses the backend file-download API to resolve a signed URL, then triggers a browser anchor-click. Files land in the browser default Downloads folder.",
+      "Image generation outputs are not auto-downloaded here \u2014 use chatgpt_images_download for that."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "chatgpt/chatgpt_read.json",
+    "legacy_system_id": "chatgpt"
+  }
+}

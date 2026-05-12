@@ -1,35 +1,171 @@
 {
-  "system_id": "instagram",
-  "id": "instagram_search_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "instagram/search",
   "name": "Instagram: Search",
-  "description": "Open Instagram, type a query into the nav search rail, and return the visible result rows. Use mode to filter the rows the workflow returns: accounts (handle profile rows), hashtags (/explore/tags/ rows), places (/explore/locations/ rows), or top (all rows in the order Instagram surfaces them). Use this when you want to resolve a handle, hashtag, or place from a partial string without opening individual profiles. Do not use this to open a known handle directly — navigate to https://www.instagram.com/<handle>/ instead.",
-  "domain": "instagram.com",
   "version": "1.0.0",
+  "system": "instagram",
+  "capability": "instagram.search",
+  "summary": "Search Instagram from the nav rail and return accounts, hashtags, or places matching a query.",
+  "description": "Open Instagram, type a query into the nav search rail, and return the visible result rows. Use mode to filter the rows the workflow returns: accounts (handle profile rows), hashtags (/explore/tags/ rows), places (/explore/locations/ rows), or top (all rows in the order Instagram surfaces them). Use this when you want to resolve a handle, hashtag, or place from a partial string without opening individual profiles. Do not use this to open a known handle directly \u2014 navigate to https://www.instagram.com/<handle>/ instead.",
+  "params": {
+    "properties": {
+      "max_results": {
+        "kind": "integer",
+        "required": false,
+        "default": 20,
+        "min": 1,
+        "max": 50,
+        "description": "Maximum number of result rows to return after mode filtering. Defaults to 20. Cap is 50."
+      },
+      "mode": {
+        "kind": "string",
+        "required": false,
+        "default": "top",
+        "enum_values": ["top", "accounts", "hashtags", "places"],
+        "description": "top returns every result row in Instagram's native order (accounts, tags, places, mixed). accounts returns only /handle/ profile rows. hashtags returns only /explore/tags/ rows. places returns only /explore/locations/ rows. Defaults to top."
+      },
+      "query": {
+        "kind": "string",
+        "required": true,
+        "description": "Search string. Typed character-by-character into the nav search input, matching how a human would drive the typeahead."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.instagram.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open Instagram home",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the home shell hydrate",
+      "timeout_ms": 4000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst query = cleanArg('{query}');\nconst rawMode = cleanArg('{mode}').toLowerCase();\nconst mode = ['top','accounts','hashtags','places'].includes(rawMode) ? rawMode : 'top';\nconst maxResults = Math.max(1, Math.min(50, Number(cleanArg('{max_results}')) || 20));\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\nconst normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();\nconst isVisible = (node) => {\n  if (!(node instanceof Element)) return false;\n  const rect = node.getBoundingClientRect();\n  if (rect.width <= 0 || rect.height <= 0) return false;\n  const style = window.getComputedStyle(node);\n  return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';\n};\nif (!query) throw new Error('query is required');\nconst searchTrigger = Array.from(document.querySelectorAll('a,button,[role=\"button\"],[role=\"link\"]')).filter(isVisible).find((node) => /search/i.test(normalize(node.getAttribute('aria-label') || '') + ' ' + normalize(node.textContent || '')));\nif (!searchTrigger) throw new Error('Search nav entry not found \u2014 is the user signed in?');\nsearchTrigger.click();\nawait sleep(1500);\nconst input = document.querySelector(\"input[aria-label='Search input'], input[placeholder='Search']\");\nif (!(input instanceof HTMLInputElement)) return { query, mode, input_accepted: false, results_ready: false, total_results: 0, results: [] };\ninput.focus();\nconst valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;\nvalueSetter.call(input, '');\ninput.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: null, inputType: 'deleteContentBackward' }));\nawait sleep(150);\nlet typed = '';\nfor (const ch of query) {\n  typed += ch;\n  input.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));\n  valueSetter.call(input, typed);\n  input.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: ch, inputType: 'insertText' }));\n  input.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));\n  await sleep(90);\n}\nawait sleep(2200);\nconst classifyHref = (href) => {\n  if (!href) return null;\n  const trimmed = href.replace(/[?#].*$/, '');\n  const tagMatch = trimmed.match(/^\\/explore\\/tags\\/([^/]+)\\/?$/i);\n  if (tagMatch) return { kind: 'hashtag', tag: tagMatch[1].toLowerCase(), target: trimmed };\n  const placeMatch = trimmed.match(/^\\/explore\\/locations\\/([^/]+)(?:\\/([^/]+))?\\/?$/i);\n  if (placeMatch) return { kind: 'place', place_slug: [placeMatch[1], placeMatch[2]].filter(Boolean).join('/'), target: trimmed };\n  const profileMatch = trimmed.match(/^\\/([a-z0-9._]+)\\/?$/i);\n  if (profileMatch && !/^(explore|reels|direct|accounts|stories|p|reel|tv)$/i.test(profileMatch[1])) {\n    return { kind: 'account', handle: profileMatch[1].toLowerCase(), target: trimmed };\n  }\n  return null;\n};\nconst anchors = Array.from(document.querySelectorAll('a[href]')).filter(isVisible);\nconst byHref = new Map();\nlet position = 0;\nfor (const anchor of anchors) {\n  const href = anchor.getAttribute('href') || '';\n  const classified = classifyHref(href);\n  if (!classified) continue;\n  if (byHref.has(classified.target)) continue;\n  const container = anchor.closest('div[role=\"button\"], div') || anchor;\n  const rawText = normalize(anchor.textContent || container.textContent || '');\n  if (!rawText) continue;\n  position += 1;\n  const lines = (container.innerText || anchor.innerText || '').split('\\n').map(normalize).filter(Boolean);\n  const displayName = lines.find((line) => line && !/^verified$|followed by/i.test(line) && line !== classified.handle && line !== classified.tag) || '';\n  byHref.set(classified.target, {\n    ...classified,\n    display_name: displayName,\n    full_text: rawText.slice(0, 200),\n    result_url: new URL(classified.target, window.location.origin).toString(),\n    position\n  });\n}\nconst allResults = Array.from(byHref.values());\nconst filtered = mode === 'top' ? allResults : allResults.filter((row) => row.kind === ({ accounts: 'account', hashtags: 'hashtag', places: 'place' })[mode]);\nreturn {\n  query,\n  mode,\n  input_accepted: input.value === query,\n  results_ready: filtered.length > 0 || allResults.length > 0,\n  total_results: filtered.length,\n  results: filtered.slice(0, maxResults)\n};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the search rail, type the query, collect results",
+      "timeout_ms": 45000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string" },
+        "mode": { "type": "string" },
+        "input_accepted": { "type": "boolean" },
+        "results_ready": { "type": "boolean" },
+        "total_results": { "type": "integer" },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": { "type": "string" },
+              "handle": { "type": "string" },
+              "tag": { "type": "string" },
+              "place_slug": { "type": "string" },
+              "display_name": { "type": "string" },
+              "full_text": { "type": "string" },
+              "result_url": { "type": "string" },
+              "position": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s3",
+      "path": "$"
+    }
+  },
   "help": {
     "summary": "Search Instagram from the nav rail and return accounts, hashtags, or places matching a query.",
-    "parameters": [
-      {
-        "name": "query",
-        "required": true,
-        "shape": "string",
-        "description": "Search string. Typed character-by-character into the nav search input, matching how a human would drive the typeahead.",
-        "example": "timbersfc"
-      },
-      {
-        "name": "mode",
-        "required": false,
-        "shape": "enum(top|accounts|hashtags|places)",
-        "description": "top returns every result row in Instagram's native order (accounts, tags, places, mixed). accounts returns only /handle/ profile rows. hashtags returns only /explore/tags/ rows. places returns only /explore/locations/ rows. Defaults to top.",
-        "example": "accounts"
-      },
-      {
-        "name": "max_results",
-        "required": false,
-        "shape": "integer",
-        "description": "Maximum number of result rows to return after mode filtering. Defaults to 20. Cap is 50.",
-        "example": "10"
-      }
-    ],
+    "parameters": {
+      "max_results": "Maximum number of result rows to return after mode filtering. Defaults to 20. Cap is 50.",
+      "mode": "top returns every result row in Instagram's native order (accounts, tags, places, mixed). accounts returns only /handle/ profile rows. hashtags returns only /explore/tags/ rows. places returns only /explore/locations/ rows. Defaults to top.",
+      "query": "Search string. Typed character-by-character into the nav search input, matching how a human would drive the typeahead."
+    },
     "examples": [
       {
         "description": "Find the top results for a partial query",
@@ -44,7 +180,9 @@
         "command": "rzn-browser run instagram search --param query=\"rctid\" --param mode=\"hashtags\""
       }
     ],
-    "returns": "query (echoed), mode (echoed), input_accepted, total_results, results [{kind (account|hashtag|place|other), handle (accounts only), tag (hashtags only), place_slug (places only), display_name, full_text, result_url, position}].",
+    "returns": [
+      "query (echoed), mode (echoed), input_accepted, total_results, results [{kind (account|hashtag|place|other), handle (accounts only), tag (hashtags only), place_slug (places only), display_name, full_text, result_url, position}]."
+    ],
     "notes": [
       "Requires a logged-in Instagram session in the active Chrome profile; returns results_ready=false if the signed-out home fails to render the search rail.",
       "Opens a dedicated workflow tab (use_current_tab=false), so this workflow is safe to run in parallel with other dedicated-tab instagram flows.",
@@ -52,43 +190,8 @@
       "Rows are deduped by href because Instagram renders each result with both an image link and a text link pointing at the same target."
     ]
   },
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Opens a dedicated workflow tab, navigates to the Instagram home, clicks the search nav entry, types the query with real keystrokes, waits for typeahead results, and returns the deduped result rows filtered by mode.",
-    "sequences": [
-      {
-        "name": "instagram_search",
-        "description": "Drive the Instagram nav search rail and return filtered result rows.",
-        "required_variables": [
-          {
-            "name": "query",
-            "description": "Search string"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Open Instagram home",
-            "type": "navigate_to_url",
-            "url": "https://www.instagram.com/",
-            "timeout_ms": 60000
-          },
-          {
-            "id": "s2",
-            "name": "Let the home shell hydrate",
-            "type": "wait_for_timeout",
-            "timeout_ms": 4000
-          },
-          {
-            "id": "s3",
-            "name": "Open the search rail, type the query, collect results",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 45000,
-            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst query = cleanArg('{query}');\nconst rawMode = cleanArg('{mode}').toLowerCase();\nconst mode = ['top','accounts','hashtags','places'].includes(rawMode) ? rawMode : 'top';\nconst maxResults = Math.max(1, Math.min(50, Number(cleanArg('{max_results}')) || 20));\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\nconst normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();\nconst isVisible = (node) => {\n  if (!(node instanceof Element)) return false;\n  const rect = node.getBoundingClientRect();\n  if (rect.width <= 0 || rect.height <= 0) return false;\n  const style = window.getComputedStyle(node);\n  return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';\n};\nif (!query) throw new Error('query is required');\nconst searchTrigger = Array.from(document.querySelectorAll('a,button,[role=\"button\"],[role=\"link\"]')).filter(isVisible).find((node) => /search/i.test(normalize(node.getAttribute('aria-label') || '') + ' ' + normalize(node.textContent || '')));\nif (!searchTrigger) throw new Error('Search nav entry not found — is the user signed in?');\nsearchTrigger.click();\nawait sleep(1500);\nconst input = document.querySelector(\"input[aria-label='Search input'], input[placeholder='Search']\");\nif (!(input instanceof HTMLInputElement)) return { query, mode, input_accepted: false, results_ready: false, total_results: 0, results: [] };\ninput.focus();\nconst valueSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;\nvalueSetter.call(input, '');\ninput.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: null, inputType: 'deleteContentBackward' }));\nawait sleep(150);\nlet typed = '';\nfor (const ch of query) {\n  typed += ch;\n  input.dispatchEvent(new KeyboardEvent('keydown', { key: ch, bubbles: true }));\n  valueSetter.call(input, typed);\n  input.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, data: ch, inputType: 'insertText' }));\n  input.dispatchEvent(new KeyboardEvent('keyup', { key: ch, bubbles: true }));\n  await sleep(90);\n}\nawait sleep(2200);\nconst classifyHref = (href) => {\n  if (!href) return null;\n  const trimmed = href.replace(/[?#].*$/, '');\n  const tagMatch = trimmed.match(/^\\/explore\\/tags\\/([^/]+)\\/?$/i);\n  if (tagMatch) return { kind: 'hashtag', tag: tagMatch[1].toLowerCase(), target: trimmed };\n  const placeMatch = trimmed.match(/^\\/explore\\/locations\\/([^/]+)(?:\\/([^/]+))?\\/?$/i);\n  if (placeMatch) return { kind: 'place', place_slug: [placeMatch[1], placeMatch[2]].filter(Boolean).join('/'), target: trimmed };\n  const profileMatch = trimmed.match(/^\\/([a-z0-9._]+)\\/?$/i);\n  if (profileMatch && !/^(explore|reels|direct|accounts|stories|p|reel|tv)$/i.test(profileMatch[1])) {\n    return { kind: 'account', handle: profileMatch[1].toLowerCase(), target: trimmed };\n  }\n  return null;\n};\nconst anchors = Array.from(document.querySelectorAll('a[href]')).filter(isVisible);\nconst byHref = new Map();\nlet position = 0;\nfor (const anchor of anchors) {\n  const href = anchor.getAttribute('href') || '';\n  const classified = classifyHref(href);\n  if (!classified) continue;\n  if (byHref.has(classified.target)) continue;\n  const container = anchor.closest('div[role=\"button\"], div') || anchor;\n  const rawText = normalize(anchor.textContent || container.textContent || '');\n  if (!rawText) continue;\n  position += 1;\n  const lines = (container.innerText || anchor.innerText || '').split('\\n').map(normalize).filter(Boolean);\n  const displayName = lines.find((line) => line && !/^verified$|followed by/i.test(line) && line !== classified.handle && line !== classified.tag) || '';\n  byHref.set(classified.target, {\n    ...classified,\n    display_name: displayName,\n    full_text: rawText.slice(0, 200),\n    result_url: new URL(classified.target, window.location.origin).toString(),\n    position\n  });\n}\nconst allResults = Array.from(byHref.values());\nconst filtered = mode === 'top' ? allResults : allResults.filter((row) => row.kind === ({ accounts: 'account', hashtags: 'hashtag', places: 'place' })[mode]);\nreturn {\n  query,\n  mode,\n  input_accepted: input.value === query,\n  results_ready: filtered.length > 0 || allResults.length > 0,\n  total_results: filtered.length,\n  results: filtered.slice(0, maxResults)\n};"
-          }
-        ]
-      }
-    ]
+  "metadata": {
+    "migrated_from": "instagram/instagram-search.json",
+    "legacy_system_id": "instagram"
   }
 }

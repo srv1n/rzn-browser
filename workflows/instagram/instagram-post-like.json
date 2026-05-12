@@ -1,28 +1,173 @@
 {
-  "system_id": "instagram",
-  "id": "instagram_post_like_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "instagram/post_like",
   "name": "Instagram: Post Like",
-  "description": "Like or unlike one Instagram post, reel, or IGTV URL. Idempotent: if the post is already in the target state the workflow returns status=already_liked or status=already_unliked without re-clicking. Use action=like (default) to add a like, action=unlike to remove a prior like. Do not use this for bulk liking — Instagram rate-limits rapid liking from a single session.",
-  "domain": "instagram.com",
   "version": "1.0.0",
+  "system": "instagram",
+  "capability": "instagram.post.like",
+  "summary": "Like or unlike one Instagram post. Idempotent.",
+  "description": "Like or unlike one Instagram post, reel, or IGTV URL. Idempotent: if the post is already in the target state the workflow returns status=already_liked or status=already_unliked without re-clicking. Use action=like (default) to add a like, action=unlike to remove a prior like. Do not use this for bulk liking \u2014 Instagram rate-limits rapid liking from a single session.",
+  "params": {
+    "properties": {
+      "action": {
+        "kind": "string",
+        "required": false,
+        "default": "like",
+        "enum_values": ["like", "unlike"],
+        "description": "like taps the Like heart if the post is not already liked. unlike taps it if the post is currently liked. Defaults to like."
+      },
+      "post_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Full Instagram post, reel, or tv URL."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "external_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": true,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{post_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the Instagram post",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the post page to settle",
+      "timeout_ms": 3000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the post page extra time to hydrate",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\nconst normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();\nconst rawAction = cleanArg('{action}').toLowerCase();\nconst action = rawAction === 'unlike' ? 'unlike' : 'like';\nconst postUrl = cleanArg('{post_url}');\nconst bodyText = normalize(document.body?.innerText || '');\nif (/login|log in|sign up/i.test(document.title) || document.querySelector('input[name=\"username\"], input[name=\"enc_password\"]')) return { post_url: postUrl, action, status: 'login_required', url: location.href };\nif (/sorry, this page isn't available|page isn't available|user not found/i.test(bodyText)) return { post_url: postUrl, action, status: 'not_found', url: location.href };\nconst article = document.querySelector('article') || document.querySelector('main');\nif (!article) return { post_url: postUrl, action, status: 'action_bar_not_found', reason: 'no article', url: location.href };\nconst commentSvg = article.querySelector('svg[aria-label=\"Comment\"]');\nif (!commentSvg) return { post_url: postUrl, action, status: 'action_bar_not_found', reason: 'no Comment svg', url: location.href };\nconst commentBtn = commentSvg.closest('[role=\"button\"], button, a');\nif (!commentBtn) return { post_url: postUrl, action, status: 'action_bar_not_found', reason: 'Comment not clickable', url: location.href };\nlet actionBar = commentBtn.parentElement;\nlet likeSvg = null;\nfor (let depth = 0; depth < 6 && actionBar; depth += 1) {\n  const candidates = actionBar.querySelectorAll('svg[aria-label=\"Like\"], svg[aria-label=\"Unlike\"]');\n  if (candidates.length === 1) { likeSvg = candidates[0]; break; }\n  actionBar = actionBar.parentElement;\n}\nif (!likeSvg) return { post_url: postUrl, action, status: 'action_bar_not_found', reason: 'no unique Like svg near Comment', url: location.href };\nconst beforeLabel = likeSvg.getAttribute('aria-label');\nconst currentState = beforeLabel === 'Unlike' ? 'liked' : 'unliked';\nif (action === 'like' && currentState === 'liked') return { post_url: postUrl, action, status: 'already_liked', before_label: beforeLabel, url: location.href };\nif (action === 'unlike' && currentState === 'unliked') return { post_url: postUrl, action, status: 'already_unliked', before_label: beforeLabel, url: location.href };\nconst likeBtn = likeSvg.closest('[role=\"button\"], button, a') || likeSvg.parentElement;\nif (!likeBtn) return { post_url: postUrl, action, status: 'click_failed', reason: 'Like not clickable', before_label: beforeLabel, url: location.href };\nlikeBtn.scrollIntoView({ block: 'center', inline: 'center' });\ntry { likeBtn.focus?.({ preventScroll: true }); } catch {}\ntry { likeBtn.click(); } catch {}\nfor (const type of ['pointerdown','mousedown','pointerup','mouseup','click']) {\n  try {\n    const Ctor = type.startsWith('pointer') && typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent;\n    likeBtn.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, composed: true, view: window, button: 0, buttons: 1, pointerType: 'mouse' }));\n  } catch {}\n}\nawait sleep(800);\nconst refreshedCandidates = actionBar.querySelectorAll('svg[aria-label=\"Like\"], svg[aria-label=\"Unlike\"]');\nconst refreshedSvg = refreshedCandidates.length === 1 ? refreshedCandidates[0] : null;\nconst afterLabel = refreshedSvg?.getAttribute('aria-label') || null;\nconst newState = afterLabel === 'Unlike' ? 'liked' : afterLabel === 'Like' ? 'unliked' : 'unknown';\nif (action === 'like' && newState === 'liked') return { post_url: postUrl, action, status: 'liked', before_label: beforeLabel, after_label: afterLabel, url: location.href };\nif (action === 'unlike' && newState === 'unliked') return { post_url: postUrl, action, status: 'unliked', before_label: beforeLabel, after_label: afterLabel, url: location.href };\nreturn { post_url: postUrl, action, status: 'click_failed', before_label: beforeLabel, after_label: afterLabel, url: location.href };"
+        },
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ]
+      },
+      "name": "Toggle Like if current state does not match the requested action",
+      "timeout_ms": 30000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "post_url": { "type": "string" },
+        "action": { "type": "string", "enum": ["like", "unlike"] },
+        "status": {
+          "type": "string",
+          "enum": [
+            "liked",
+            "unliked",
+            "already_liked",
+            "already_unliked",
+            "login_required",
+            "not_found",
+            "action_bar_not_found",
+            "click_failed"
+          ]
+        },
+        "before_label": { "type": "string" },
+        "after_label": { "type": "string" },
+        "reason": { "type": "string" },
+        "url": { "type": "string" }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
+  },
   "help": {
     "summary": "Like or unlike one Instagram post. Idempotent.",
-    "parameters": [
-      {
-        "name": "post_url",
-        "required": true,
-        "shape": "string",
-        "description": "Full Instagram post, reel, or tv URL.",
-        "example": "https://www.instagram.com/p/DXexrK0De7B/"
-      },
-      {
-        "name": "action",
-        "required": false,
-        "shape": "enum(like|unlike)",
-        "description": "like taps the Like heart if the post is not already liked. unlike taps it if the post is currently liked. Defaults to like.",
-        "example": "like"
-      }
-    ],
+    "parameters": {
+      "action": "like taps the Like heart if the post is not already liked. unlike taps it if the post is currently liked. Defaults to like.",
+      "post_url": "Full Instagram post, reel, or tv URL."
+    },
     "examples": [
       {
         "description": "Like a post (no-op if already liked)",
@@ -33,57 +178,18 @@
         "command": "rzn-browser run instagram post-like --param post_url=\"https://www.instagram.com/p/DXexrK0De7B/\" --param action=\"unlike\""
       }
     ],
-    "returns": "JSON with post_url, action, and status: one of liked | unliked | already_liked | already_unliked | login_required | not_found | action_bar_not_found | click_failed. Successful state transitions also return before_label and after_label for triage.",
+    "returns": [
+      "JSON with post_url, action, and status: one of liked | unliked | already_liked | already_unliked | login_required | not_found | action_bar_not_found | click_failed. Successful state transitions also return before_label and after_label for triage."
+    ],
     "notes": [
       "Requires a logged-in Instagram session in the active Chrome profile; returns status=login_required if signed out.",
       "Opens a dedicated workflow tab (use_current_tab=false), so this workflow is safe to run in parallel with other dedicated-tab instagram flows.",
-      "The post action bar is resolved by walking up from the unique 'Comment' SVG in the article and finding the sibling Like/Unlike SVG — robust against class-name churn but assumes Instagram keeps the single shared action bar layout.",
+      "The post action bar is resolved by walking up from the unique 'Comment' SVG in the article and finding the sibling Like/Unlike SVG \u2014 robust against class-name churn but assumes Instagram keeps the single shared action bar layout.",
       "Rate limiting is an Instagram-side concern: don't loop faster than a real user would. Space batched likes with a real delay between calls."
     ]
   },
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Opens a dedicated workflow tab, navigates to one post, waits for hydration, and flips (or confirms) the Like state with a single click when the current state doesn't match the requested action.",
-    "sequences": [
-      {
-        "name": "instagram_post_like",
-        "description": "Toggle the Like state of one post to match action, idempotent.",
-        "required_variables": [
-          {
-            "name": "post_url",
-            "description": "Full Instagram post or reel URL"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Open the Instagram post",
-            "type": "navigate_to_url",
-            "url": "{post_url}",
-            "timeout_ms": 60000
-          },
-          {
-            "id": "s2",
-            "name": "Allow the post page to settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 3000
-          },
-          {
-            "id": "s3",
-            "name": "Allow the post page extra time to hydrate",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1500
-          },
-          {
-            "id": "s4",
-            "name": "Toggle Like if current state does not match the requested action",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 30000,
-            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\nconst normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();\nconst rawAction = cleanArg('{action}').toLowerCase();\nconst action = rawAction === 'unlike' ? 'unlike' : 'like';\nconst postUrl = cleanArg('{post_url}');\nconst bodyText = normalize(document.body?.innerText || '');\nif (/login|log in|sign up/i.test(document.title) || document.querySelector('input[name=\"username\"], input[name=\"enc_password\"]')) return { post_url: postUrl, action, status: 'login_required', url: location.href };\nif (/sorry, this page isn't available|page isn't available|user not found/i.test(bodyText)) return { post_url: postUrl, action, status: 'not_found', url: location.href };\nconst article = document.querySelector('article') || document.querySelector('main');\nif (!article) return { post_url: postUrl, action, status: 'action_bar_not_found', reason: 'no article', url: location.href };\nconst commentSvg = article.querySelector('svg[aria-label=\"Comment\"]');\nif (!commentSvg) return { post_url: postUrl, action, status: 'action_bar_not_found', reason: 'no Comment svg', url: location.href };\nconst commentBtn = commentSvg.closest('[role=\"button\"], button, a');\nif (!commentBtn) return { post_url: postUrl, action, status: 'action_bar_not_found', reason: 'Comment not clickable', url: location.href };\nlet actionBar = commentBtn.parentElement;\nlet likeSvg = null;\nfor (let depth = 0; depth < 6 && actionBar; depth += 1) {\n  const candidates = actionBar.querySelectorAll('svg[aria-label=\"Like\"], svg[aria-label=\"Unlike\"]');\n  if (candidates.length === 1) { likeSvg = candidates[0]; break; }\n  actionBar = actionBar.parentElement;\n}\nif (!likeSvg) return { post_url: postUrl, action, status: 'action_bar_not_found', reason: 'no unique Like svg near Comment', url: location.href };\nconst beforeLabel = likeSvg.getAttribute('aria-label');\nconst currentState = beforeLabel === 'Unlike' ? 'liked' : 'unliked';\nif (action === 'like' && currentState === 'liked') return { post_url: postUrl, action, status: 'already_liked', before_label: beforeLabel, url: location.href };\nif (action === 'unlike' && currentState === 'unliked') return { post_url: postUrl, action, status: 'already_unliked', before_label: beforeLabel, url: location.href };\nconst likeBtn = likeSvg.closest('[role=\"button\"], button, a') || likeSvg.parentElement;\nif (!likeBtn) return { post_url: postUrl, action, status: 'click_failed', reason: 'Like not clickable', before_label: beforeLabel, url: location.href };\nlikeBtn.scrollIntoView({ block: 'center', inline: 'center' });\ntry { likeBtn.focus?.({ preventScroll: true }); } catch {}\ntry { likeBtn.click(); } catch {}\nfor (const type of ['pointerdown','mousedown','pointerup','mouseup','click']) {\n  try {\n    const Ctor = type.startsWith('pointer') && typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent;\n    likeBtn.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, composed: true, view: window, button: 0, buttons: 1, pointerType: 'mouse' }));\n  } catch {}\n}\nawait sleep(800);\nconst refreshedCandidates = actionBar.querySelectorAll('svg[aria-label=\"Like\"], svg[aria-label=\"Unlike\"]');\nconst refreshedSvg = refreshedCandidates.length === 1 ? refreshedCandidates[0] : null;\nconst afterLabel = refreshedSvg?.getAttribute('aria-label') || null;\nconst newState = afterLabel === 'Unlike' ? 'liked' : afterLabel === 'Like' ? 'unliked' : 'unknown';\nif (action === 'like' && newState === 'liked') return { post_url: postUrl, action, status: 'liked', before_label: beforeLabel, after_label: afterLabel, url: location.href };\nif (action === 'unlike' && newState === 'unliked') return { post_url: postUrl, action, status: 'unliked', before_label: beforeLabel, after_label: afterLabel, url: location.href };\nreturn { post_url: postUrl, action, status: 'click_failed', before_label: beforeLabel, after_label: afterLabel, url: location.href };"
-          }
-        ]
-      }
-    ]
+  "metadata": {
+    "migrated_from": "instagram/instagram-post-like.json",
+    "legacy_system_id": "instagram"
   }
 }

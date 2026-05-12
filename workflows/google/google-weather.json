@@ -1,80 +1,188 @@
 {
-  "system_id": "google",
-  "id": "google_weather_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "google/weather",
   "name": "Google Weather Lookup",
-  "description": "Look up current weather for a location via Google Search's weather widget.",
-  "domain": "google.com",
   "version": "1.1.0",
-  "last_updated": "2026-04-24T00:00:00Z",
-  "browser_automation": {
-    "description": "Hits google.com/search?q=weather+LOCATION and reads the inline weather widget (#wob_wc).",
-    "sequences": [
-      {
-        "name": "google_weather_extract",
-        "description": "Extract current conditions from the Google Search weather widget.",
-        "required_variables": [
-          {
-            "name": "location",
-            "description": "City or location name (e.g. 'San Francisco', 'Paris, France', 'Tokyo')."
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Navigate to Google Search weather query",
-            "type": "navigate_to_url",
-            "url": "https://www.google.com/search?q=weather+{location}"
-          },
-          {
-            "id": "s2",
-            "name": "Settle: let widget mount",
-            "type": "wait_for_timeout",
-            "timeout_ms": 2500
-          },
-          {
-            "id": "s3",
-            "name": "Dismiss common popups",
-            "type": "dismiss_popups"
-          },
-          {
-            "id": "s4",
-            "name": "Wait for the weather widget",
-            "type": "wait_for_element",
-            "selector": "#wob_wc, #wob_tm, #wob_loc",
-            "timeout_ms": 15000
-          },
-          {
-            "id": "s5",
-            "name": "Extract widget fields (location label sits in a sibling section, others are inside #wob_wc)",
-            "type": "extract_structured_data",
-            "extraction_type": "weather",
-            "item_selector": "body",
-            "limit": 1,
-            "fields": [
-              { "name": "location", "selector": ".BBwThe" },
-              { "name": "time", "selector": "#wob_dts" },
-              { "name": "condition", "selector": "#wob_dc" },
-              { "name": "temperature", "selector": "#wob_tm" },
-              { "name": "precipitation", "selector": "#wob_pp" },
-              { "name": "humidity", "selector": "#wob_hm" },
-              { "name": "wind", "selector": "#wob_ws" }
-            ]
-          }
-        ]
+  "system": "google",
+  "capability": "google.weather",
+  "summary": "Get current weather conditions for a location from Google Search's weather widget.",
+  "description": "Look up current weather for a location via Google Search's weather widget.",
+  "params": {
+    "properties": {
+      "location": {
+        "kind": "string",
+        "required": true,
+        "description": "City or location name. Use 'City, Country' for disambiguation if needed."
       }
-    ]
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.google.com/search?q=weather+{location}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Google Search weather query"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Settle: let widget mount",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss common popups"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#wob_wc, #wob_tm, #wob_loc"
+        }
+      },
+      "name": "Wait for the weather widget",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "extraction_type": "weather",
+          "item_selector": "body",
+          "limit": 1,
+          "fields": [
+            {
+              "name": "location",
+              "selector": ".BBwThe"
+            },
+            {
+              "name": "time",
+              "selector": "#wob_dts"
+            },
+            {
+              "name": "condition",
+              "selector": "#wob_dc"
+            },
+            {
+              "name": "temperature",
+              "selector": "#wob_tm"
+            },
+            {
+              "name": "precipitation",
+              "selector": "#wob_pp"
+            },
+            {
+              "name": "humidity",
+              "selector": "#wob_hm"
+            },
+            {
+              "name": "wind",
+              "selector": "#wob_ws"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract widget fields (location label sits in a sibling section, others are inside #wob_wc)"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string"
+          },
+          "condition": {
+            "type": "string"
+          },
+          "temperature": {
+            "type": "string"
+          },
+          "precipitation": {
+            "type": "string"
+          },
+          "humidity": {
+            "type": "string"
+          },
+          "wind": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
   },
   "help": {
     "summary": "Get current weather conditions for a location from Google Search's weather widget.",
-    "parameters": [
-      {
-        "name": "location",
-        "required": true,
-        "shape": "text",
-        "description": "City or location name. Use 'City, Country' for disambiguation if needed.",
-        "example": "San Francisco, CA"
-      }
-    ],
+    "parameters": {
+      "location": "City or location name. Use 'City, Country' for disambiguation if needed."
+    },
     "examples": [
       {
         "command": "rzn-browser run google weather --param location=\"San Francisco, CA\"",
@@ -85,10 +193,16 @@
         "description": "Paris weather, disambiguated from Paris, TX."
       }
     ],
-    "returns": "Object: { location, time, condition, temperature, precipitation, humidity, wind }. Temperature unit (F vs C) follows the user's regional setting on Google.",
+    "returns": [
+      "Object: { location, time, condition, temperature, precipitation, humidity, wind }. Temperature unit (F vs C) follows the user's regional setting on Google."
+    ],
     "notes": [
-      "The widget toggles F/C based on Google's locale guess for the session — the workflow does not force a unit. Inspect the temperature field's trailing unit if you need to normalize.",
+      "The widget toggles F/C based on Google's locale guess for the session \u2014 the workflow does not force a unit. Inspect the temperature field's trailing unit if you need to normalize.",
       "Forecast (next-day) extraction is not included; this is current conditions only."
     ]
+  },
+  "metadata": {
+    "migrated_from": "google/google-weather.json",
+    "legacy_system_id": "google"
   }
 }

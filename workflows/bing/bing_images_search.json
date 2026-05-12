@@ -1,79 +1,224 @@
 {
-  "system_id": "bing",
-  "id": "bing_images_search",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "bing/images_search",
   "name": "Bing: Images Search",
-  "description": "Run a Bing Images search in a fresh tab and return structured metadata for up to 50 results — the original high-resolution URL (`high_res_url`, from Bing's `m` attribute), the Bing-hosted thumbnail (`thumbnail_url`), the host page (`source_page`), and title. Use when you want the raw image URLs to hand off to wget/curl. Do not use to actually download files in-browser (use `bing_images_download`), or for general web results (`bing_web_search`).",
-  "domain": "bing.com",
   "version": "1.0.0",
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Navigates a fresh tab to /images/search, waits for the image grid, parses each tile's `a.iusc[m]` JSON attribute, and returns the decoded fields.",
-    "sequences": [
-      {
-        "name": "bing_images_search",
-        "description": "Open Bing Images -> wait for grid -> parse a.iusc[m] metadata.",
-        "required_variables": [
-          {
-            "name": "search_query",
-            "description": "Image search query"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Navigate to Bing Images search",
-            "type": "navigate_to_url",
-            "url": "https://www.bing.com/images/search?q={search_query}",
-            "timeout_ms": 60000
-          },
-          {
-            "id": "s2",
-            "name": "Allow the image grid to hydrate",
-            "type": "wait_for_timeout",
-            "timeout_ms": 2500
-          },
-          {
-            "id": "s3",
-            "name": "Wait for the image grid",
-            "type": "wait_for_element",
-            "selector": "a.iusc[m]",
-            "timeout_ms": 15000
-          },
-          {
-            "id": "s4",
-            "name": "Parse a.iusc[m] metadata into high-signal fields",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 15000,
-            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const items = []; for (const node of Array.from(document.querySelectorAll('a.iusc[m]')).slice(0, 50)) { let parsed = null; try { parsed = JSON.parse(node.getAttribute('m') || '{}'); } catch (e) {} if (!parsed) continue; items.push({ title: (parsed.t || '').trim(), high_res_url: parsed.murl || '', thumbnail_url: parsed.turl || '', source_page: parsed.purl || '' }); } return { items_count: items.length, items };"
-          }
-        ]
+  "system": "bing",
+  "capability": "bing.images.search",
+  "summary": "Return up to 50 Bing Images results with high-res URL, thumbnail URL, source page, title, and dimensions.",
+  "description": "Run a Bing Images search in a fresh tab and return structured metadata for up to 50 results \u2014 the original high-resolution URL (`high_res_url`, from Bing's `m` attribute), the Bing-hosted thumbnail (`thumbnail_url`), the host page (`source_page`), and title. Use when you want the raw image URLs to hand off to wget/curl. Do not use to actually download files in-browser (use `bing_images_download`), or for general web results (`bing_web_search`).",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Bing Images search query."
       }
-    ]
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "bing.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "bing.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.bing.com/images"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Bing Images landing",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1a",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#sb_form_q"
+        }
+      },
+      "name": "Wait for the Bing Images search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s1c",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#sb_form_q"
+        }
+      },
+      "name": "Fill the search box"
+    },
+    {
+      "id": "s1d",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#sb_form_q",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the image grid to hydrate",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "a.iusc[m]"
+        }
+      },
+      "name": "Wait for the image grid",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const items = []; for (const node of Array.from(document.querySelectorAll('a.iusc[m]')).slice(0, 50)) { let parsed = null; try { parsed = JSON.parse(node.getAttribute('m') || '{}'); } catch (e) {} if (!parsed) continue; items.push({ title: (parsed.t || '').trim(), high_res_url: parsed.murl || '', thumbnail_url: parsed.turl || '', source_page: parsed.purl || '' }); } return { items_count: items.length, items };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Parse a.iusc[m] metadata into high-signal fields",
+      "timeout_ms": 15000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "items_count": {
+          "type": "integer"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "high_res_url": {
+                "type": "string"
+              },
+              "thumbnail_url": {
+                "type": "string"
+              },
+              "source_page": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
   },
   "help": {
     "summary": "Return up to 50 Bing Images results with high-res URL, thumbnail URL, source page, title, and dimensions.",
-    "parameters": [
-      {
-        "name": "search_query",
-        "required": true,
-        "shape": "text",
-        "description": "Bing Images search query.",
-        "example": "sunset photos"
-      }
-    ],
+    "parameters": {
+      "search_query": "Bing Images search query."
+    },
     "examples": [
       {
         "command": "rzn-browser run bing images-search --param search_query=\"sunset photos\"",
         "description": "Return 50 image metadata entries including original high-res URLs."
       }
     ],
-    "returns": "{ items_count, items[] } where each item has { title, high_res_url, thumbnail_url, source_page }.",
+    "returns": [
+      "{ items_count, items[] } where each item has { title, high_res_url, thumbnail_url, source_page }."
+    ],
     "notes": [
+      "Drives the Images landing's real search input rather than hitting `?q=...` directly.",
       "`high_res_url` is the real URL on the hosting site (pulled from Bing's `m` attribute's `murl`). Hand those off to `wget`/`curl` for actual downloads.",
       "`thumbnail_url` is the Bing-hosted thumbnail (`murl`'s smaller companion `turl`).",
       "If you want Chrome to save files directly inside the authenticated session, use `bing_images_download` instead.",
       "Opens a fresh tab."
     ]
+  },
+  "metadata": {
+    "migrated_from": "bing/bing_images_search.json",
+    "legacy_system_id": "bing"
   }
 }

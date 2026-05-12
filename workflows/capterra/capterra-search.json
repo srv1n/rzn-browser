@@ -1,85 +1,169 @@
 {
-  "system_id": "capterra",
-  "id": "capterra_search",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "capterra/search",
   "name": "Capterra: Product Search",
-  "description": "Search Capterra by keyword and return a deduplicated list of product candidates with rating, review count, and the canonical /p/<id>/<slug>/reviews/ URL. Use to discover product URLs to feed into capterra/product-details-reviews.",
-  "domain": "capterra.com",
   "version": "2.0.0",
-  "last_updated": "2026-04-25T00:00:00Z",
+  "system": "capterra",
+  "capability": "capterra.search",
+  "summary": "Discover Capterra products by keyword. Returns one row per unique product (deduplicated by /p/<id>/<slug>/reviews URL).",
+  "description": "Search Capterra by keyword and return a deduplicated list of product candidates with rating, review count, and the canonical /p/<id>/<slug>/reviews/ URL. Use to discover product URLs to feed into capterra/product-details-reviews.",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Keyword or product name (\"crm\", \"hubspot\", \"help desk\")."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "capterra.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "capterra.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.capterra.com/search/?query={search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Capterra search"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "a[href*='/p/'][href*='/reviews/']"
+        }
+      },
+      "name": "Wait for product anchors",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow cards to settle",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "{search_query}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const query = cleanArg(arg0); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const anchors = Array.from(document.querySelectorAll(\"a[href*='/p/'][href*='/reviews/']\")); const byProduct = new Map(); for (const a of anchors) { const url = a.href.replace(/[?#].*$/, ''); const idMatch = url.match(/\\/p\\/(\\d+)\\/([^/]+)\\/reviews/); if (!idMatch) continue; const productId = idMatch[1]; const slug = idMatch[2]; const text = norm(a.textContent); if (!byProduct.has(productId)) { byProduct.set(productId, { product_id: productId, slug, product_url: url, candidates: [] }); } byProduct.get(productId).candidates.push(text); } const results = Array.from(byProduct.values()).map((entry) => { const ratingText = entry.candidates.find((t) => /\\d(\\.\\d+)?\\s*\\(\\d/.test(t)) || ''; const ratingMatch = ratingText.match(/(\\d(?:\\.\\d+)?)\\s*\\(/); const reviewMatch = ratingText.match(/\\(([\\d,]+)\\)/); const named = entry.candidates.find((t) => t && !/^\\d/.test(t) && !/View all/i.test(t) && t.length > 1); return { product_id: entry.product_id, product_name: named || entry.slug.replace(/-/g, ' '), product_url: entry.product_url, rating: ratingMatch ? ratingMatch[1] : 'N/A', review_count: reviewMatch ? reviewMatch[1].replace(/,/g, '') : 'N/A' }; }); return { query: query || null, count: results.length, results };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract deduped product list"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string" },
+        "count": { "type": "integer" },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "product_id": { "type": "string" },
+              "product_name": { "type": "string" },
+              "product_url": { "type": "string" },
+              "rating": { "type": "string" },
+              "review_count": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
   "help": {
     "summary": "Discover Capterra products by keyword. Returns one row per unique product (deduplicated by /p/<id>/<slug>/reviews URL).",
-    "parameters": [
-      {
-        "name": "search_query",
-        "required": true,
-        "shape": "free-text",
-        "description": "Keyword or product name (\"crm\", \"hubspot\", \"help desk\").",
-        "example": "crm"
-      }
-    ],
+    "parameters": {
+      "search_query": "Keyword or product name (\"crm\", \"hubspot\", \"help desk\")."
+    },
     "examples": [
       {
         "description": "Find CRM products",
         "command": "rzn-browser run capterra search --param search_query=\"crm\""
       }
     ],
-    "returns": "Object: { query, count, results: [{ product_id, product_name, product_url, rating, review_count }] }. Feed product_url into capterra/product-details-reviews.",
+    "returns": [
+      "Object: { query, count, results: [{ product_id, product_name, product_url, rating, review_count }] }. Feed product_url into capterra/product-details-reviews."
+    ],
     "notes": [
-      "Capterra is fronted by Cloudflare. Cold sessions may hit a 'Just a moment...' challenge — open the URL once in the same browser profile to clear it before re-running.",
+      "Capterra is fronted by Cloudflare. Cold sessions may hit a 'Just a moment...' challenge \u2014 open the URL once in the same browser profile to clear it before re-running.",
       "Dedup is by Capterra product id (the numeric segment in /p/<id>/<slug>/reviews/).",
       "Rating + review count are parsed from anchor text matching '4.5 (1234)'."
     ]
   },
-  "browser_automation": {
-    "description": "Search Capterra by keyword and extract deduplicated product cards via JS.",
-    "sequences": [
-      {
-        "name": "capterra_search",
-        "description": "Navigate -> wait for product anchors -> JS-dedupe by product id.",
-        "required_variables": [
-          {
-            "name": "search_query",
-            "description": "Search keyword"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Navigate to Capterra search",
-            "type": "navigate_to_url",
-            "url": "https://www.capterra.com/search/?query={search_query}"
-          },
-          {
-            "id": "s2",
-            "name": "Wait for product anchors",
-            "type": "wait_for_element",
-            "selector": "a[href*='/p/'][href*='/reviews/']",
-            "timeout_ms": 30000
-          },
-          {
-            "id": "s3",
-            "name": "Allow cards to settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1500
-          },
-          {
-            "id": "s4",
-            "name": "Dismiss popups if present",
-            "type": "dismiss_popups"
-          },
-          {
-            "id": "s5",
-            "name": "Extract deduped product list",
-            "type": "execute_javascript",
-            "world": "main",
-            "return_value": true,
-            "args": [
-              "{search_query}"
-            ],
-            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const query = cleanArg(arg0); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const anchors = Array.from(document.querySelectorAll(\"a[href*='/p/'][href*='/reviews/']\")); const byProduct = new Map(); for (const a of anchors) { const url = a.href.replace(/[?#].*$/, ''); const idMatch = url.match(/\\/p\\/(\\d+)\\/([^/]+)\\/reviews/); if (!idMatch) continue; const productId = idMatch[1]; const slug = idMatch[2]; const text = norm(a.textContent); if (!byProduct.has(productId)) { byProduct.set(productId, { product_id: productId, slug, product_url: url, candidates: [] }); } byProduct.get(productId).candidates.push(text); } const results = Array.from(byProduct.values()).map((entry) => { const ratingText = entry.candidates.find((t) => /\\d(\\.\\d+)?\\s*\\(\\d/.test(t)) || ''; const ratingMatch = ratingText.match(/(\\d(?:\\.\\d+)?)\\s*\\(/); const reviewMatch = ratingText.match(/\\(([\\d,]+)\\)/); const named = entry.candidates.find((t) => t && !/^\\d/.test(t) && !/View all/i.test(t) && t.length > 1); return { product_id: entry.product_id, product_name: named || entry.slug.replace(/-/g, ' '), product_url: entry.product_url, rating: ratingMatch ? ratingMatch[1] : 'N/A', review_count: reviewMatch ? reviewMatch[1].replace(/,/g, '') : 'N/A' }; }); return { query: query || null, count: results.length, results };"
-          }
-        ]
-      }
-    ]
+  "metadata": {
+    "migrated_from": "capterra/capterra-search.json",
+    "legacy_system_id": "capterra"
   }
 }

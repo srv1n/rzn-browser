@@ -1,0 +1,420 @@
+{
+  "capability": "chatgpt.send",
+  "description": "Unified ChatGPT send. If chat_id is provided, continues that thread; otherwise starts a fresh chat. Supports 0..N file attachments, model + thinking-effort selection, and a single tool toggle (web search, deep research, image gen, canvas, agent). Replaces the legacy new_chat_send / new_chat_send_attachment / continue_chat / send_current_composer family.",
+  "help": {
+    "examples": [
+      {
+        "command": "rzn-browser run chatgpt send --param message_text=\"Summarize the last three commits.\"",
+        "description": "Start a fresh chat with no attachments and default Pro/Extended."
+      },
+      {
+        "command": "rzn-browser run chatgpt send --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param message_text=\"Add unit tests.\"",
+        "description": "Continue an existing thread."
+      },
+      {
+        "command": "rzn-browser run chatgpt send --param message_text=\"Compare these specs.\" --param attachment_file_paths='[\"/abs/spec_a.pdf\",\"/abs/spec_b.pdf\"]' --param tool=\"search\"",
+        "description": "Fresh chat with two attachments and web search enabled."
+      },
+      {
+        "command": "rzn-browser run chatgpt send --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param message_text=\"Investigate further.\" --param tool=\"deep_research\"",
+        "description": "Continue with deep research on a thread."
+      }
+    ],
+    "notes": [
+      "Single canonical send workflow: continues a thread when chat_id is provided, starts a fresh chat when omitted. Supports 0..N attachments, model + thinking-effort selection, and a tool toggle.",
+      "Model + effort commits use CDP Input.dispatchMouseEvent via click_element use_cdp:true. Synthetic DOM events alone do NOT commit the effort radio (ChatGPT's radix RadioGroup gates state on isTrusted=true). The workflow reopens the menu after each commit and hard-fails on mismatch so silent fallbacks (e.g. Pro Extended degrading to Pro Standard) cannot pass undetected.",
+      "Setting tool=image_gen triggers the inline image-generation toggle on the regular conversation surface; pair with chatgpt_images_download (passing the returned chat_id) when you want the generated images saved locally.",
+      "Multi-file upload uses ChatGPT's existing #upload-files input directly (no need to click the +/photos menu first) and works because that input has multiple=true.",
+      "If a tool is missing from the top-level + menu, the workflow auto-expands the More submenu before failing."
+    ],
+    "parameters": {
+      "attachment_file_paths": "Zero or more absolute file paths to upload. Pass as a JSON array, a comma-separated string, or omit for no attachments.",
+      "chat_id": "If present, continues this existing thread. If absent or empty, starts a fresh chat.",
+      "message_text": "Prompt text to send.",
+      "model_effort": "Thinking-effort label. Pro supports Standard|Extended (default Extended); Thinking supports Light|Standard|Extended|Heavy (default Extended); Instant has no effort.",
+      "model_slug": "Model label to select. Accepts Pro, Thinking, Instant, plus aliases such as pro-extended, extended-pro, heavy, thinking-heavy, fast, and instant.",
+      "tool": "Single tool toggle to enable before sending. Defaults to none."
+    },
+    "returns": [],
+    "summary": "One workflow that sends a message to ChatGPT. New thread when chat_id is empty, continue thread when chat_id is set. Optional attachments (0..N), optional model/effort, optional tool toggle."
+  },
+  "id": "chatgpt/send",
+  "metadata": {
+    "legacy_system_id": "chatgpt",
+    "migrated_from": "chatgpt/chatgpt_send.json"
+  },
+  "name": "ChatGPT: Send",
+  "params": {
+    "additional_params": false,
+    "properties": {
+      "attachment_file_paths": {
+        "description": "Zero or more absolute file paths to upload. Pass as a JSON array, a comma-separated string, or omit for no attachments.",
+        "kind": "array",
+        "required": false
+      },
+      "chat_id": {
+        "description": "If present, continues this existing thread. If absent or empty, starts a fresh chat.",
+        "kind": "string",
+        "required": false
+      },
+      "message_text": {
+        "description": "Prompt text to send.",
+        "kind": "string",
+        "required": true
+      },
+      "model_effort": {
+        "description": "Thinking-effort label. Pro supports Standard|Extended (default Extended); Thinking supports Light|Standard|Extended|Heavy (default Extended); Instant has no effort. Aliases: pro-extended, heavy, etc. Hard-fails if the selection cannot be verified after the click.",
+        "kind": "string",
+        "required": false
+      },
+      "model_slug": {
+        "description": "Model label to select. Accepts Pro, Thinking, Instant, plus aliases (pro-extended, extended-pro, heavy/thinking-heavy, fast/instant). Defaults to Pro when empty. Versioned testids (gpt-5-5-pro, gpt-5-5-thinking, gpt-5-5) are matched by visible label so this survives 5.5→5.6 renames.",
+        "kind": "string",
+        "required": false
+      },
+      "tool": {
+        "description": "Single tool toggle to enable before sending. Defaults to none.",
+        "enum_values": [
+          "search",
+          "deep_research",
+          "image_gen",
+          "canvas",
+          "agent",
+          "none"
+        ],
+        "kind": "string",
+        "required": false
+      }
+    }
+  },
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object"
+    },
+    "output_selector": {
+      "path": "$",
+      "step_id": "s17"
+    }
+  },
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "schema_version": "rzn.workflow_manifest",
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "confirmation_required": false,
+      "idempotency": "safe_retry",
+      "scopes": [
+        "chatgpt.com"
+      ]
+    },
+    {
+      "class": "external_write",
+      "confirmation_required": true,
+      "idempotency": "safe_retry",
+      "scopes": [
+        "chatgpt.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "confirmation_required": false,
+      "idempotency": "safe_retry",
+      "scopes": [
+        "chatgpt.com"
+      ]
+    }
+  ],
+  "steps": [
+    {
+      "action": {
+        "inputs": {
+          "url": "https://chatgpt.com/"
+        },
+        "kind": "navigate_to_url",
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "id": "s0",
+      "name": "Open ChatGPT root in a fresh tab",
+      "timeout_ms": 60000
+    },
+    {
+      "action": {
+        "inputs": {},
+        "kind": "wait_for_timeout",
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "id": "s1",
+      "name": "Allow the SPA shell to settle",
+      "timeout_ms": 1800
+    },
+    {
+      "action": {
+        "inputs": {},
+        "kind": "wait_for_element",
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#prompt-textarea, div.ProseMirror[contenteditable], textarea[placeholder*='Message' i], main article"
+        }
+      },
+      "id": "s2",
+      "name": "Wait for ChatGPT shell (composer or thread article)",
+      "timeout_ms": 30000
+    },
+    {
+      "action": {
+        "inputs": {
+          "args": [
+            "{chat_id}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const norm=(v)=>(v||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const isVisible=(n)=>{if(!n||!(n instanceof Element))return false;const s=getComputedStyle(n);if(s.visibility==='hidden'||s.display==='none')return false;const r=n.getBoundingClientRect();return r.width>0&&r.height>0;};const labelOf=(n)=>norm([n.getAttribute('aria-label')||'',n.getAttribute('title')||'',n.getAttribute('data-testid')||'',n.textContent||''].join(' '));const realClick=(n)=>{n.scrollIntoView({block:'center'});['pointerdown','mousedown','pointerup','mouseup','click'].forEach(evt=>n.dispatchEvent(new (evt.startsWith('pointer')?PointerEvent:MouseEvent)(evt,{bubbles:true,cancelable:true,button:0})));};const chatId=cleanArg(arg0);if(chatId){const target='/c/'+chatId;if(!location.pathname.startsWith(target)){location.assign('https://chatgpt.com'+target);return{triggered:'navigate_to_chat',target};}return{triggered:'already_on_chat'};}const tempActive=new URLSearchParams(location.search).get('temporary-chat')==='true';let toggledTemp=false;if(tempActive){const tempBtn=Array.from(document.querySelectorAll('button, [role=button]')).filter(isVisible).find(b=>/temporary chat/i.test(labelOf(b)));if(tempBtn){realClick(tempBtn);toggledTemp=true;}}const onChatRoute=/^\\/c\\//.test(location.pathname);if(onChatRoute){const newChatLink=Array.from(document.querySelectorAll(\"a[data-testid='create-new-chat-button'], a[href='/'], a[href^='/?model=']\")).filter(isVisible)[0]||Array.from(document.querySelectorAll('button, [role=button]')).filter(isVisible).find(b=>/^new chat\\b|new conversation|start new chat/i.test(labelOf(b)));if(newChatLink){realClick(newChatLink);return{triggered:'clicked_new_chat',toggledTemp};}}return{triggered:onChatRoute?'no_new_chat_btn':'already_fresh',toggledTemp};",
+          "world": "main"
+        },
+        "kind": "execute_javascript",
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ]
+      },
+      "id": "s3",
+      "name": "Fire-and-forget routing: navigate to /c/{chat_id} OR ensure fresh chat (temp off, click new chat)",
+      "timeout_ms": 30000
+    },
+    {
+      "action": {
+        "inputs": {},
+        "kind": "wait_for_timeout",
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "id": "s4",
+      "name": "Wait for the routed page to settle (navigation may have changed URL)",
+      "timeout_ms": 2500
+    },
+    {
+      "action": {
+        "inputs": {},
+        "kind": "wait_for_element",
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#prompt-textarea, div.ProseMirror[contenteditable], textarea[placeholder*='Message' i]"
+        }
+      },
+      "id": "s5",
+      "name": "Wait for composer on the landed page",
+      "timeout_ms": 30000
+    },
+    {
+      "action": {
+        "inputs": {
+          "args": [
+            "{model_slug}",
+            "{model_effort}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;}; const sleep=(ms)=>new Promise(r=>setTimeout(r,ms)); const norm=(v)=>(v||'').replace(/\\xa0/g,' ').replace(/\\s+/g,' ').trim(); const isVisible=(n)=>{if(!n||!(n instanceof Element))return false;const s=getComputedStyle(n);if(s.visibility==='hidden'||s.display==='none')return false;const r=n.getBoundingClientRect();return r.width>0&&r.height>0;}; const realClick=(n)=>{if(!n)return;n.scrollIntoView({block:'center'});['pointerdown','mousedown','pointerup','mouseup','click'].forEach(e=>{const Ev=e.startsWith('pointer')?PointerEvent:MouseEvent;n.dispatchEvent(new Ev(e,{bubbles:true,cancelable:true,button:0,pointerType:'mouse',isPrimary:true,clientX:200,clientY:200}));});}; const closeMenus=async()=>{for(let i=0;i<3;i++){if(!document.querySelector('[role=menu][data-state=open]'))return;document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',keyCode:27,bubbles:true}));await sleep(150);}}; const findPill=()=>{for(const sel of ['button.__composer-pill[aria-haspopup=menu]','button[data-testid=\"model-switcher-dropdown-button\"]']){const list=Array.from(document.querySelectorAll(sel)).filter(isVisible);if(list.length)return list[0];}return null;}; const stampNoop=(id)=>{const old=document.getElementById(id);if(old&&old.hasAttribute('data-rzn-noop'))old.remove();const d=document.createElement('div');d.id=id;d.setAttribute('data-rzn-noop','true');d.style.cssText='position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;pointer-events:auto;';document.body.appendChild(d);return d;}; const ALIAS={'pro':'Pro','gpt-pro':'Pro','pro-extended':'Pro:Extended','extended-pro':'Pro:Extended','thinking':'Thinking','gpt-thinking':'Thinking','thinking-heavy':'Thinking:Heavy','heavy':'Thinking:Heavy','instant':'Instant','fast':'Instant'}; const EFFORT_CANON=['Standard','Extended','Light','Heavy']; const parseInput=(rawModel,rawEffort)=>{let model=null,effort=null;const lower=norm(rawModel).toLowerCase();if(lower){const direct=ALIAS[lower.replace(/[^a-z0-9\\-]/g,'')];if(direct){if(direct.includes(':')){const p=direct.split(':');model=p[0];effort=p[1];}else model=direct;}else{const tokens=lower.split(/[\\s\\-_]+/).filter(Boolean);for(const t of tokens){if(!model){const ma=ALIAS[t];if(ma){if(ma.includes(':')){const p=ma.split(':');model=p[0];if(!effort)effort=p[1];}else model=ma;}}if(!effort){const et=EFFORT_CANON.find(e=>e.toLowerCase()===t);if(et)effort=et;}}if(!model){if(lower.includes('pro'))model='Pro';else if(lower.includes('thinking'))model='Thinking';else if(lower.includes('instant')||lower.includes('fast'))model='Instant';}}}const e=norm(rawEffort);if(e){const lc=e.toLowerCase();const found=EFFORT_CANON.find(x=>x.toLowerCase()===lc);effort=found||(e.charAt(0).toUpperCase()+e.slice(1).toLowerCase());}return{model,effort};}; const rawModel=cleanArg(arg0); const rawEffort=cleanArg(arg1); const parsed=parseInput(rawModel,rawEffort); const desiredModel=parsed.model||(rawModel?null:'Pro'); const desiredEffort=parsed.effort||(rawEffort?null:(desiredModel==='Pro'||desiredModel==='Thinking'?'Extended':null)); window.__rzn_chatgpt_picker={desiredModel,desiredEffort}; await closeMenus(); const pill=findPill(); if(!pill){stampNoop('rzn-target-model');return{ok:false,note:'no_pill',desiredModel,desiredEffort};} realClick(pill); let items=[]; const deadline=Date.now()+4000; while(Date.now()<deadline){items=Array.from(document.querySelectorAll('[role=menuitemradio]')).filter(el=>{const t=el.getAttribute('data-testid');return t&&t.startsWith('model-switcher-gpt-');});if(items.length>=2)break;await sleep(120);} if(!items.length){stampNoop('rzn-target-model');await closeMenus();return{ok:false,note:'menu_did_not_open',desiredModel,desiredEffort};} const checked=items.find(el=>el.getAttribute('aria-checked')==='true'); const currentText=checked?norm(checked.textContent):null; if(!desiredModel){if(checked)checked.id='rzn-target-model';else stampNoop('rzn-target-model');return{ok:true,note:'no_desired_model_use_current',current:currentText};} const target=items.find(el=>{const head=norm(el.textContent).split('•')[0].trim().toLowerCase();return head===desiredModel.toLowerCase();})||items.find(el=>norm(el.textContent).toLowerCase().includes(desiredModel.toLowerCase())); if(!target){stampNoop('rzn-target-model');await closeMenus();throw new Error('model_not_found: '+desiredModel+'; available: '+items.map(i=>norm(i.textContent)).join(' | '));} target.id='rzn-target-model'; return{ok:true,desiredModel,desiredEffort,currentText,target_testid:target.getAttribute('data-testid')};",
+          "world": "main"
+        },
+        "kind": "execute_javascript",
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ]
+      },
+      "id": "s6",
+      "name": "Open model picker, stamp target model radio with id=rzn-target-model (leaves menu open for CDP click)",
+      "timeout_ms": 30000
+    },
+    {
+      "action": {
+        "inputs": {
+          "use_cdp": true
+        },
+        "kind": "click_element",
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ],
+        "target": {
+          "selector": "#rzn-target-model"
+        }
+      },
+      "id": "s7",
+      "name": "Trusted CDP click on the stamped model radio (ChatGPT silently drops synthetic events here)",
+      "timeout_ms": 10000
+    },
+    {
+      "action": {
+        "inputs": {},
+        "kind": "wait_for_timeout",
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "id": "s8",
+      "name": "Let model commit settle before opening effort submenu",
+      "timeout_ms": 700
+    },
+    {
+      "action": {
+        "inputs": {
+          "script": "const sleep=(ms)=>new Promise(r=>setTimeout(r,ms)); const norm=(v)=>(v||'').replace(/\\xa0/g,' ').replace(/\\s+/g,' ').trim(); const isVisible=(n)=>{if(!n||!(n instanceof Element))return false;const s=getComputedStyle(n);if(s.visibility==='hidden'||s.display==='none')return false;const r=n.getBoundingClientRect();return r.width>0&&r.height>0;}; const realClick=(n)=>{if(!n)return;n.scrollIntoView({block:'center'});['pointerdown','mousedown','pointerup','mouseup','click'].forEach(e=>{const Ev=e.startsWith('pointer')?PointerEvent:MouseEvent;n.dispatchEvent(new Ev(e,{bubbles:true,cancelable:true,button:0,pointerType:'mouse',isPrimary:true,clientX:200,clientY:200}));});}; const closeMenus=async()=>{for(let i=0;i<3;i++){if(!document.querySelector('[role=menu][data-state=open]'))return;document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',keyCode:27,bubbles:true}));await sleep(150);}}; const findPill=()=>{for(const sel of ['button.__composer-pill[aria-haspopup=menu]','button[data-testid=\"model-switcher-dropdown-button\"]']){const list=Array.from(document.querySelectorAll(sel)).filter(isVisible);if(list.length)return list[0];}return null;}; const stampNoop=(id)=>{const old=document.getElementById(id);if(old&&old.hasAttribute('data-rzn-noop'))old.remove();const d=document.createElement('div');d.id=id;d.setAttribute('data-rzn-noop','true');d.style.cssText='position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;pointer-events:auto;';document.body.appendChild(d);return d;}; const ctx=window.__rzn_chatgpt_picker||{}; const desiredEffort=ctx.desiredEffort||null; if(!desiredEffort){stampNoop('rzn-target-effort');return{ok:true,note:'no_effort_target'};} await closeMenus(); const pill=findPill(); if(!pill){stampNoop('rzn-target-effort');return{ok:false,note:'no_pill_for_effort'};} realClick(pill); let items=[]; let deadline=Date.now()+4000; while(Date.now()<deadline){items=Array.from(document.querySelectorAll('[role=menuitemradio]')).filter(el=>{const t=el.getAttribute('data-testid');return t&&t.startsWith('model-switcher-gpt-');});if(items.length>=2)break;await sleep(120);} if(!items.length){stampNoop('rzn-target-effort');await closeMenus();return{ok:false,note:'menu_did_not_reopen'};} const checked=items.find(el=>el.getAttribute('aria-checked')==='true'); if(!checked){stampNoop('rzn-target-effort');await closeMenus();return{ok:false,note:'no_checked_model'};} const checkedText=norm(checked.textContent); const m=checkedText.match(/^([^•]+?)(?:\\s*•\\s*(.+))?$/); const currentEffort=m&&m[2]?norm(m[2]):null; if(currentEffort&&currentEffort.toLowerCase()===desiredEffort.toLowerCase()){stampNoop('rzn-target-effort');await closeMenus();return{ok:true,note:'effort_already_matches',currentEffort};} const modelTestid=checked.getAttribute('data-testid'); let trigger=document.querySelector('[data-testid=\"'+modelTestid+'-thinking-effort\"]')||Array.from(document.querySelectorAll('[role=menuitem][aria-haspopup=menu][data-testid*=thinking-effort]')).find(el=>el.getAttribute('data-testid').startsWith(modelTestid)); if(!trigger){stampNoop('rzn-target-effort');await closeMenus();return{ok:false,note:'no_effort_trigger',modelTestid,desiredEffort};} realClick(trigger); let radios=[]; deadline=Date.now()+3000; while(Date.now()<deadline){radios=Array.from(document.querySelectorAll('[role=menuitemradio]')).filter(el=>!el.getAttribute('data-testid')&&isVisible(el));if(radios.length)break;await sleep(120);} if(!radios.length){stampNoop('rzn-target-effort');await closeMenus();return{ok:false,note:'effort_submenu_did_not_open'};} const target=radios.find(el=>norm(el.textContent).toLowerCase()===desiredEffort.toLowerCase()); if(!target){stampNoop('rzn-target-effort');await closeMenus();throw new Error('effort_not_found: '+desiredEffort+' for '+modelTestid+'; available: '+radios.map(r=>norm(r.textContent)).join(' | '));} target.id='rzn-target-effort'; return{ok:true,desiredEffort,target_text:norm(target.textContent)};",
+          "world": "main"
+        },
+        "kind": "execute_javascript",
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ]
+      },
+      "id": "s9",
+      "name": "Open effort submenu and stamp target effort radio with id=rzn-target-effort (or stamp a no-op div when no change needed)",
+      "timeout_ms": 30000
+    },
+    {
+      "action": {
+        "inputs": {
+          "use_cdp": true
+        },
+        "kind": "click_element",
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ],
+        "target": {
+          "selector": "#rzn-target-effort"
+        }
+      },
+      "id": "s10",
+      "name": "Trusted CDP click on the stamped effort radio (or the no-op div when no change needed)",
+      "timeout_ms": 10000
+    },
+    {
+      "action": {
+        "inputs": {},
+        "kind": "wait_for_timeout",
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "id": "s11",
+      "name": "Let effort commit settle before verifying and running tool/upload setup",
+      "timeout_ms": 800
+    },
+    {
+      "action": {
+        "inputs": {
+          "args": [
+            "{tool}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;}; const sleep=(ms)=>new Promise(r=>setTimeout(r,ms)); const norm=(v)=>(v||'').replace(/\\xa0/g,' ').replace(/\\s+/g,' ').trim(); const isVisible=(n)=>{if(!n||!(n instanceof Element))return false;const s=getComputedStyle(n);if(s.visibility==='hidden'||s.display==='none')return false;const r=n.getBoundingClientRect();return r.width>0&&r.height>0;}; const realClick=(n)=>{if(!n)return;n.scrollIntoView({block:'center'});['pointerdown','mousedown','pointerup','mouseup','click'].forEach(e=>{const Ev=e.startsWith('pointer')?PointerEvent:MouseEvent;n.dispatchEvent(new Ev(e,{bubbles:true,cancelable:true,button:0,pointerType:'mouse',isPrimary:true,clientX:200,clientY:200}));});}; const closeMenus=async()=>{for(let i=0;i<3;i++){if(!document.querySelector('[role=menu][data-state=open]'))return;document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',keyCode:27,bubbles:true}));await sleep(150);}}; const findPill=()=>{for(const sel of ['button.__composer-pill[aria-haspopup=menu]','button[data-testid=\"model-switcher-dropdown-button\"]']){const list=Array.from(document.querySelectorAll(sel)).filter(isVisible);if(list.length)return list[0];}return null;}; const ctx=window.__rzn_chatgpt_picker||{}; const desiredModel=ctx.desiredModel||null; const desiredEffort=ctx.desiredEffort||null; const tool=cleanArg(arg0).toLowerCase(); await closeMenus(); const pill=findPill(); let modelSelection={applied:null,model_selected:null,effort_selected:null,note:null}; if(pill && desiredModel){realClick(pill);let items=[];const dl=Date.now()+4000;while(Date.now()<dl){items=Array.from(document.querySelectorAll('[role=menuitemradio]')).filter(el=>{const t=el.getAttribute('data-testid');return t&&t.startsWith('model-switcher-gpt-');});if(items.length>=2)break;await sleep(120);}const checked=items.find(el=>el.getAttribute('aria-checked')==='true');if(checked){const txt=norm(checked.textContent);const m=txt.match(/^([^•]+?)(?:\\s*•\\s*(.+))?$/);if(m){modelSelection.model_selected=norm(m[1]);modelSelection.effort_selected=m[2]?norm(m[2]):null;}}await closeMenus();const okModel=modelSelection.model_selected&&modelSelection.model_selected.toLowerCase()===desiredModel.toLowerCase();const okEffort=!desiredEffort||(modelSelection.effort_selected&&modelSelection.effort_selected.toLowerCase()===desiredEffort.toLowerCase());modelSelection.applied=okModel&&okEffort;if(!okModel||!okEffort){throw new Error('model_selection_verify_failed: wanted '+desiredModel+(desiredEffort?' / '+desiredEffort:'')+'; got '+(modelSelection.model_selected||'?')+(modelSelection.effort_selected?' / '+modelSelection.effort_selected:''));}}else{modelSelection.note='skipped';} const TOOL_LABELS={search:'Web search',web_search:'Web search',deep_research:'Deep research',image_gen:'Create image',create_image:'Create image',canvas:'Canvas',agent:'Agent mode',agent_mode:'Agent mode'}; const selectTool=async()=>{if(!tool||tool==='none')return{selected:null};const wanted=TOOL_LABELS[tool];if(!wanted)return{selected:null,note:'unknown_tool',input:tool};const plus=document.querySelector('#composer-plus-btn');if(!plus)return{selected:null,note:'no_plus_btn'};realClick(plus);await sleep(600);const findRadio=()=>Array.from(document.querySelectorAll('[role=menuitemradio]')).filter(isVisible).find(el=>norm(el.textContent).toLowerCase()===wanted.toLowerCase());let target=findRadio();if(!target){const moreItem=Array.from(document.querySelectorAll('[role=menuitem]')).filter(isVisible).find(el=>/^\\s*more\\b/i.test(el.textContent||''));if(moreItem){realClick(moreItem);await sleep(500);target=findRadio();}}if(!target){await closeMenus();return{selected:null,note:'tool_not_in_menu',wanted};}realClick(target);await sleep(500);return{selected:wanted};}; const stampFileInput=()=>{const input=document.querySelector('#upload-files');if(input){input.id='rzn-chatgpt-upload-input';input.setAttribute('data-rzn-upload-prepared','true');return'#rzn-chatgpt-upload-input';}return null;}; const toolSel=await selectTool(); const uploadSel=stampFileInput(); return{url:location.href,title:document.title,model_selection:modelSelection,tool_selection:toolSel,upload_input_selector:uploadSel,temp_chat_active:new URLSearchParams(location.search).get('temporary-chat')==='true'};",
+          "world": "main"
+        },
+        "kind": "execute_javascript",
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ]
+      },
+      "id": "s12",
+      "name": "Verify model/effort committed, run tool selection, stamp #upload-files for the upload step",
+      "timeout_ms": 30000
+    },
+    {
+      "action": {
+        "inputs": {
+          "file_path": "{attachment_file_paths}"
+        },
+        "kind": "upload_file",
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ],
+        "target": {
+          "selector": "#rzn-chatgpt-upload-input"
+        }
+      },
+      "id": "s13",
+      "name": "Upload 0..N attachments via the prepared #upload-files input (no-op when empty)",
+      "timeout_ms": 60000
+    },
+    {
+      "action": {
+        "inputs": {},
+        "kind": "wait_for_timeout",
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "id": "s14",
+      "name": "Let attachment chips render before we look for the send button",
+      "timeout_ms": 1500
+    },
+    {
+      "action": {
+        "inputs": {
+          "args": [
+            "{message_text}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const norm=(v)=>(v||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const isVisible=(n)=>{if(!n||!(n instanceof Element))return false;const s=getComputedStyle(n);if(s.visibility==='hidden'||s.display==='none')return false;const r=n.getBoundingClientRect();return r.width>0&&r.height>0;};const labelOf=(n)=>norm([n.getAttribute('aria-label')||'',n.getAttribute('title')||'',n.getAttribute('data-testid')||'',n.textContent||''].join(' '));const realClick=(n)=>{n.scrollIntoView({block:'center'});['pointerdown','mousedown','pointerup','mouseup','click'].forEach(evt=>n.dispatchEvent(new (evt.startsWith('pointer')?PointerEvent:MouseEvent)(evt,{bubbles:true,cancelable:true,button:0})));};const message=cleanArg(arg0);if(!message)throw new Error('message_text is required');const findComposer=()=>{const el=document.querySelector('#prompt-textarea');if(el&&isVisible(el))return el;const pm=Array.from(document.querySelectorAll('div.ProseMirror[contenteditable=true], div[role=textbox][contenteditable=true]')).find(isVisible);if(pm)return pm;return Array.from(document.querySelectorAll('textarea')).find(isVisible)||null;};const composer=findComposer();if(!composer)throw new Error('composer not found at submit time, url='+location.href);composer.focus();if(composer instanceof HTMLTextAreaElement||composer instanceof HTMLInputElement){const setter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(composer),'value')?.set;if(setter)setter.call(composer,message);else composer.value=message;composer.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:message}));composer.dispatchEvent(new Event('change',{bubbles:true}));}else{composer.textContent=message;composer.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:message}));}await sleep(500);const findSendBtn=()=>{const all=Array.from(document.querySelectorAll('button[data-testid=\"send-button\"], button[aria-label=\"Send prompt\" i], button[aria-label=\"Send message\" i]')).filter(isVisible);if(all.length)return all[0];const form=composer.closest('form');const scopes=[form,composer.parentElement,document].filter(Boolean);for(const scope of scopes){const candidates=Array.from(scope.querySelectorAll('button, [role=button]')).filter(isVisible).filter(b=>{const lbl=labelOf(b).toLowerCase();return /send prompt|send message|send-button|^send$|submit/i.test(lbl);});if(candidates.length)return candidates[0];}return null;};const isEnabled=(b)=>!(b.matches(':disabled')||b.getAttribute('aria-disabled')==='true');let send=findSendBtn();const sendDeadline=Date.now()+45000;while(Date.now()<sendDeadline){send=findSendBtn();if(send&&isEnabled(send))break;await sleep(400);}if(!send)throw new Error('send button not found within deadline, composer_text='+(composer.textContent||'').slice(0,40)+', url='+location.href);if(!isEnabled(send))throw new Error('send button never became enabled (uploads still pending?), url='+location.href);realClick(send);return{message_typed:true,send_clicked:true,send_label:labelOf(send)||null,url_after_click:location.href};",
+          "world": "main"
+        },
+        "kind": "execute_javascript",
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ]
+      },
+      "id": "s15",
+      "name": "Type the prompt into the ProseMirror composer and click send",
+      "timeout_ms": 60000
+    },
+    {
+      "action": {
+        "inputs": {},
+        "kind": "wait_for_timeout",
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "id": "s16",
+      "name": "Allow ChatGPT to create the conversation route (new chat) or update existing",
+      "timeout_ms": 6000
+    },
+    {
+      "action": {
+        "inputs": {
+          "script": "const m=location.pathname.match(/^\\/c\\/([^/?#]+)/);return{url:location.href,title:document.title,chat_id:m?m[1]:null,temporary_chat_active:new URLSearchParams(location.search).get('temporary-chat')==='true'};",
+          "world": "main"
+        },
+        "kind": "execute_javascript",
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ]
+      },
+      "id": "s17",
+      "name": "Capture the resolved chat_id from the URL",
+      "timeout_ms": 10000
+    }
+  ],
+  "summary": "One workflow that sends a message to ChatGPT. New thread when chat_id is empty, continue thread when chat_id is set. Optional attachments (0..N), optional model/effort, optional tool toggle.",
+  "system": "chatgpt",
+  "version": "1.0.0"
+}

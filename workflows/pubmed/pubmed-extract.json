@@ -1,130 +1,296 @@
 {
-  "system_id": "pubmed",
-  "id": "pubmed_extract_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "pubmed/extract",
   "name": "PubMed Extract Workflow",
-  "description": "Extract comprehensive paper information from PubMed",
-  "domain": "pubmed.ncbi.nlm.nih.gov",
   "version": "1.0.0",
-  "last_updated": "2025-07-30T00:00:00Z",
-  "browser_automation": {
-    "description": "Workflow to extract detailed paper information from PubMed",
-    "sequences": [
-      {
-        "name": "pubmed_extract_details",
-        "description": "Extracts comprehensive paper details from a PubMed page",
-        "required_variables": [
-          {
-            "name": "pmid",
-            "description": "The PubMed ID or full URL of the paper"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Navigate to paper",
-            "type": "navigate_to_url",
-            "url": "https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-          },
-          {
-            "id": "s2",
-            "name": "Wait for content",
-            "type": "wait_for_timeout",
-            "timeout_ms": 5000
-          },
-          {
-            "id": "s3",
-            "name": "Extract title",
-            "type": "get_element_text",
-            "selector": "h1, .heading-title, .article-title, [data-testid='article-title']"
-          },
-          {
-            "id": "s4",
-            "name": "Extract authors with affiliations",
-            "type": "extract_structured_data",
-            "item_selector": ".authors-list .authors-list-item, .author, [data-testid='author']",
-            "fields": [
-              {
-                "name": "name",
-                "selector": ".full-name, .author-name, a"
-              },
-              {
-                "name": "affiliation",
-                "selector": ".affiliation-name, .affiliation, sup"
-              }
-            ]
-          },
-          {
-            "id": "s5",
-            "name": "Extract abstract",
-            "type": "get_element_text",
-            "selector": "#abstract, .abstract-content, [data-testid='abstract'], .abstract"
-          },
-          {
-            "id": "s6",
-            "name": "Extract keywords",
-            "type": "extract_structured_data",
-            "item_selector": ".keywords .keyword, .mesh-terms a, [data-testid='mesh-term']",
-            "fields": [
-              {
-                "name": "term",
-                "selector": ""
-              }
-            ]
-          },
-          {
-            "id": "s7",
-            "name": "Extract journal",
-            "type": "get_element_text",
-            "selector": ".journal-title, .citation .journal, [data-testid='journal']"
-          },
-          {
-            "id": "s8",
-            "name": "Extract publication date",
-            "type": "get_element_text",
-            "selector": ".citation .cit, .pub-date, [data-testid='publication-date']"
-          },
-          {
-            "id": "s9",
-            "name": "Extract PMID",
-            "type": "get_element_text",
-            "selector": ".id-pmid .id-link, .identifier .pmid, [data-testid='pmid']"
-          },
-          {
-            "id": "s10",
-            "name": "Extract DOI",
-            "type": "get_element_text",
-            "selector": ".id-doi .id-link, .identifier .doi, [data-testid='doi'], a[href*='doi.org']"
-          },
-          {
-            "id": "s11",
-            "name": "Extract PMC ID",
-            "type": "get_element_text",
-            "selector": ".id-pmc .id-link, .identifier .pmc, [data-testid='pmc'], a[href*='pmc']"
-          },
-          {
-            "id": "s12",
-            "name": "Extract full text links",
-            "type": "extract_structured_data",
-            "item_selector": ".full-text-links-list .link-item, .full-text-link, [data-testid='full-text-link']",
-            "fields": [
-              {
-                "name": "source",
-                "selector": ".link-name, .source"
-              },
-              {
-                "name": "url",
-                "selector": "a"
-              }
-            ]
-          },
-          {
-            "id": "s13",
-            "name": "Extract cited by count",
-            "type": "get_element_text",
-            "selector": ".citedby-count, .citations-count, [data-testid='citations']"
-          }
-        ]
+  "system": "pubmed",
+  "capability": "pubmed.extract",
+  "summary": "Open a PubMed article page and extract title, authors+affiliations, abstract, journal, dates, identifiers, and full-text links.",
+  "description": "Navigate to https://pubmed.ncbi.nlm.nih.gov/{pmid}/ and walk the article page to extract title, abstract, journal, publication date, PMID, DOI, PMC id, keywords/MeSH terms, authors with affiliations, cited-by count, and the list of full-text links shown on the page. Use to enrich a known PMID. Do not use to search PubMed (use pubmed search).",
+  "params": {
+    "properties": {
+      "pmid": {
+        "kind": "string",
+        "required": true,
+        "description": "Numeric PubMed ID (e.g. 33495757). Bare digits only — do not include 'PMID:' or a full URL."
       }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "pubmed.ncbi.nlm.nih.gov"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "pubmed.ncbi.nlm.nih.gov"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to paper"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for content",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "get_element_text",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "h1, .heading-title, .article-title, [data-testid='article-title']"
+        }
+      },
+      "name": "Extract title"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "name",
+              "selector": ".full-name, .author-name, a"
+            },
+            {
+              "name": "affiliation",
+              "selector": ".affiliation-name, .affiliation, sup"
+            }
+          ],
+          "item_selector": ".authors-list .authors-list-item, .author, [data-testid='author']"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract authors with affiliations"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "get_element_text",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#abstract, .abstract-content, [data-testid='abstract'], .abstract"
+        }
+      },
+      "name": "Extract abstract"
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "term",
+              "selector": ""
+            }
+          ],
+          "item_selector": ".keywords .keyword, .mesh-terms a, [data-testid='mesh-term']"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract keywords"
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "get_element_text",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".journal-title, .citation .journal, [data-testid='journal']"
+        }
+      },
+      "name": "Extract journal"
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "get_element_text",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".citation .cit, .pub-date, [data-testid='publication-date']"
+        }
+      },
+      "name": "Extract publication date"
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "get_element_text",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".id-pmid .id-link, .identifier .pmid, [data-testid='pmid']"
+        }
+      },
+      "name": "Extract PMID"
+    },
+    {
+      "id": "s10",
+      "action": {
+        "kind": "get_element_text",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".id-doi .id-link, .identifier .doi, [data-testid='doi'], a[href*='doi.org']"
+        }
+      },
+      "name": "Extract DOI"
+    },
+    {
+      "id": "s11",
+      "action": {
+        "kind": "get_element_text",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".id-pmc .id-link, .identifier .pmc, [data-testid='pmc'], a[href*='pmc']"
+        }
+      },
+      "name": "Extract PMC ID"
+    },
+    {
+      "id": "s12",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "source",
+              "selector": ".link-name, .source"
+            },
+            {
+              "name": "url",
+              "selector": "a"
+            }
+          ],
+          "item_selector": ".full-text-links-list .link-item, .full-text-link, [data-testid='full-text-link']"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract full text links"
+    },
+    {
+      "id": "s13",
+      "action": {
+        "kind": "get_element_text",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".citedby-count, .citations-count, [data-testid='citations']"
+        }
+      },
+      "name": "Extract cited by count"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s12",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open a PubMed article page and extract title, authors+affiliations, abstract, journal, dates, identifiers, and full-text links.",
+    "parameters": {
+      "pmid": "Numeric PubMed ID (e.g. 33495757). Bare digits only — do not include 'PMID:' or a full URL."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run pubmed extract --param pmid=\"33495757\"",
+        "description": "Fetch the article record for PMID 33495757."
+      }
+    ],
+    "returns": [
+      "Primary output: array of full-text link entries — { source, url } — from the 'Full text links' module. Title, abstract, authors+affiliations, keywords/MeSH, journal, publication date, PMID, DOI, PMC id, and cited-by count are produced by upstream steps (s3..s11, s13) and surface as step-level results rather than the final output."
+    ],
+    "notes": [
+      "Read-only. No login required.",
+      "Selector coverage is broad on purpose because PubMed ships several layout variants — empty fields are common when a particular element is absent on a given record (e.g. no DOI, no PMC).",
+      "Use pubmed search to resolve a query into PMIDs first, then feed PMIDs into this workflow one at a time."
     ]
+  },
+  "metadata": {
+    "migrated_from": "pubmed/pubmed-extract.json",
+    "legacy_system_id": "pubmed"
   }
 }

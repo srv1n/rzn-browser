@@ -1,33 +1,360 @@
 {
-  "system_id": "hacker_news",
-  "id": "hn_submit_comment_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "hn/submit_comment",
   "name": "Hacker News: Submit Root Comment",
-  "description": "Open a Hacker News item (specific URL or first front-page item if item_url is omitted), scroll to read context, draft a root-level comment, pause for explicit operator approval, and submit only after the operator clicks Continue. Hard-fails if the same logged-in account already posted the same comment text on this thread. To dry-run, click Stop at the approval gate — the comment textarea stays filled.",
-  "domain": "news.ycombinator.com",
   "version": "2.0.0",
-  "last_updated": "2026-04-24T00:00:00Z",
+  "system": "hn",
+  "capability": "hn.submit.comment",
+  "summary": "Post a root-level Hacker News comment on a chosen item (or the current top story if no URL is supplied), with a dedupe guard and an explicit approval gate.",
+  "description": "Open a Hacker News item (specific URL or first front-page item if item_url is omitted), scroll to read context, draft a root-level comment, pause for explicit operator approval, and submit only after the operator clicks Continue. Hard-fails if the same logged-in account already posted the same comment text on this thread. To dry-run, click Stop at the approval gate \u2014 the comment textarea stays filled.",
+  "params": {
+    "properties": {
+      "comment_text": {
+        "kind": "string",
+        "required": true,
+        "description": "Root comment to post. Should add context, not repeat the linked content. The workflow refuses to submit if the same account has already posted this exact text on the thread."
+      },
+      "item_url": {
+        "kind": "string",
+        "required": false,
+        "description": "Full URL of the HN item, e.g. https://news.ycombinator.com/item?id=12345678. Omit to comment on whatever is currently the first item on the front page."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "news.ycombinator.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "news.ycombinator.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "news.ycombinator.com"
+      ]
+    },
+    {
+      "class": "external_write",
+      "idempotency": "never_retry",
+      "confirmation_required": true,
+      "scopes": [
+        "news.ycombinator.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "news.ycombinator.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://news.ycombinator.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Land on HN front page (cheap; same origin as any item URL)"
+    },
+    {
+      "id": "s0b",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "tr.athing td.subtext a[href^='item?id='], tr.athing + tr td.subtext a[href^='item?id=']"
+        }
+      },
+      "name": "Wait for the front page item table",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s0c",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{item_url}"
+          ],
+          "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const itemUrl = cleanArg(arg0); let target; let source; if (itemUrl) { try { const u = new URL(itemUrl, 'https://news.ycombinator.com/'); if (!/(^|\\.)ycombinator\\.com$/i.test(u.hostname)) throw new Error('item_url must be on news.ycombinator.com'); target = u.href; source = 'param'; } catch (e) { throw new Error('Invalid item_url: ' + e.message); } } else { const link = document.querySelector(\"tr.athing + tr td.subtext a[href^='item?id='], td.subtext a[href^='item?id=']\"); if (!link) throw new Error('No first front-page item link found'); target = new URL(link.getAttribute('href'), 'https://news.ycombinator.com/').href; source = 'front_page_first'; } if (window.location.href === target) return { redirected: false, target, source }; setTimeout(() => window.location.assign(target), 0); return { redirected: true, target, source };"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Resolve target item URL (use item_url if provided, else first front-page item) and redirect",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "form[action='comment'] textarea[name='text'], textarea[name='text']"
+        }
+      },
+      "name": "Wait for the item page to mount",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Initial reading settle",
+      "timeout_ms": 1200
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll to read (1/3)"
+    },
+    {
+      "id": "s2b",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Reading pause (1/3)",
+      "timeout_ms": 1200
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll to read (2/3)"
+    },
+    {
+      "id": "s3b",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Reading pause (2/3)",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll to read (3/3)"
+    },
+    {
+      "id": "s4b",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Reading pause (3/3)",
+      "timeout_ms": 1400
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "form[action='comment'] textarea[name='text'], textarea[name='text']"
+        }
+      },
+      "name": "Wait for the comment editor",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s5a",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{comment_text}"
+          ],
+          "script": "const cleanArg=(value)=>{const text=String(value==null?'':value).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(text)?'':text;}; const normalize=(value)=>String(value||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim().toLowerCase(); const expected=normalize(cleanArg(arg0)); if(!expected) throw new Error('comment_text is required'); const currentUser=String(document.querySelector('#me')?.textContent||'').trim(); const rows=Array.from(document.querySelectorAll('tr.athing.comtr')); const matches=rows.map((row)=>({ user:String(row.querySelector('.hnuser')?.textContent||'').trim(), text:normalize(row.querySelector('.commtext')?.textContent||'') })).filter((entry)=>entry.user===currentUser&&entry.text===expected); if(matches.length){ throw new Error(`Duplicate HN comment already exists for user ${currentUser||'unknown'}`); } return { current_user: currentUser || null, duplicate_found: false, scanned_comment_count: rows.length };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Fail if the same account already posted the same root comment",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "value": "{comment_text}",
+          "simulate_typing": false
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "form[action='comment'] textarea[name='text'], textarea[name='text']"
+        }
+      },
+      "name": "Fill the comment text"
+    },
+    {
+      "id": "s6b",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const box = document.querySelector(\"form[action='comment'] textarea[name='text'], textarea[name='text']\"); const value = box && 'value' in box ? String(box.value || '').trim() : ''; if (!value) { throw new Error('Comment textarea is empty'); } return { draft_length: value.length };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Verify the drafted comment is non-empty",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s6c",
+      "action": {
+        "kind": "request_user_intervention",
+        "inputs": {
+          "message": "HN root comment draft is ready. Click Continue only if you want to post it. Click Stop to leave it as a draft.",
+          "instructions": "If this feels repetitive, low-context, or too promotional, click Stop instead of Continue.",
+          "approval_mode": "ask_user",
+          "continue_on_timeout": false
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Pause for approval before submitting the comment",
+      "timeout_ms": 2147483647
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ],
+        "target": {
+          "selector": "form[action='comment'] input[type='submit'], input[type='submit'][value*='add' i]"
+        }
+      },
+      "name": "Submit the comment"
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the comment to post",
+      "timeout_ms": 2500
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "draft_length": { "type": "integer" }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6b",
+      "path": "$"
+    }
+  },
   "help": {
     "summary": "Post a root-level Hacker News comment on a chosen item (or the current top story if no URL is supplied), with a dedupe guard and an explicit approval gate.",
-    "parameters": [
-      {
-        "name": "comment_text",
-        "required": true,
-        "shape": "text",
-        "description": "Root comment to post. Should add context, not repeat the linked content. The workflow refuses to submit if the same account has already posted this exact text on the thread.",
-        "example": "The author's Section 4 numbers are missing the cost of cold-start spin-up; once you add that the latency story flips."
-      },
-      {
-        "name": "item_url",
-        "required": false,
-        "shape": "https URL on news.ycombinator.com",
-        "description": "Full URL of the HN item, e.g. https://news.ycombinator.com/item?id=12345678. Omit to comment on whatever is currently the first item on the front page.",
-        "example": "https://news.ycombinator.com/item?id=12345678"
-      }
-    ],
+    "parameters": {
+      "comment_text": "Root comment to post. Should add context, not repeat the linked content. The workflow refuses to submit if the same account has already posted this exact text on the thread.",
+      "item_url": "Full URL of the HN item, e.g. https://news.ycombinator.com/item?id=12345678. Omit to comment on whatever is currently the first item on the front page."
+    },
     "examples": [
       {
         "description": "Comment on a specific HN item",
-        "command": "rzn-browser run hn submit-comment --param item_url=\"https://news.ycombinator.com/item?id=12345678\" --param comment_text=\"Section 4 misses cold-start cost — adding it flips the latency story.\""
+        "command": "rzn-browser run hn submit-comment --param item_url=\"https://news.ycombinator.com/item?id=12345678\" --param comment_text=\"Section 4 misses cold-start cost \u2014 adding it flips the latency story.\""
       },
       {
         "description": "Comment on whatever is currently the top story (no item_url)",
@@ -35,161 +362,21 @@
       },
       {
         "description": "Dry-run on the top story (click Stop at the approval gate to leave the textarea filled without posting)",
-        "command": "rzn-browser run hn submit-comment --param comment_text=\"Test draft — DO NOT APPROVE\""
+        "command": "rzn-browser run hn submit-comment --param comment_text=\"Test draft \u2014 DO NOT APPROVE\""
       }
     ],
-    "returns": "current_user, scanned_comment_count, and draft_length captured before the gate; on submit, the workflow waits for the post to land but does not return the new comment id (read it from the rendered tree if needed).",
+    "returns": [
+      "current_user, scanned_comment_count, and draft_length captured before the gate; on submit, the workflow waits for the post to land but does not return the new comment id (read it from the rendered tree if needed)."
+    ],
     "notes": [
       "Caller must already be logged into Hacker News in the active browser profile.",
       "Dedupe guard compares normalised whitespace + lowercase against existing comments by the same logged-in user on the same thread.",
-      "When item_url is omitted, the workflow reads the first .athing row on news.ycombinator.com/. The 'first item' is whatever HN serves at that moment — this is intentional, not a bug.",
+      "When item_url is omitted, the workflow reads the first .athing row on news.ycombinator.com/. The 'first item' is whatever HN serves at that moment \u2014 this is intentional, not a bug.",
       "The approval gate uses request_user_intervention with no timeout. Click Continue (submit) or Stop (leave as draft)."
     ]
   },
-  "browser_automation": {
-    "description": "Workflow sequence for resolving an HN item, reading context, drafting a root comment, dedupe-checking, and submitting only after an explicit approval gate.",
-    "sequences": [
-      {
-        "name": "hn_submit_comment",
-        "description": "Land on HN -> resolve target item (param or first-on-front-page) -> scroll/read -> dedupe check -> fill comment -> verify draft -> approval gate -> submit",
-        "required_variables": [
-          {
-            "name": "comment_text",
-            "description": "The root comment text to post"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s0",
-            "name": "Land on HN front page (cheap; same origin as any item URL)",
-            "type": "navigate_to_url",
-            "url": "https://news.ycombinator.com/"
-          },
-          {
-            "id": "s0b",
-            "name": "Wait for the front page item table",
-            "type": "wait_for_element",
-            "selector": "tr.athing td.subtext a[href^='item?id='], tr.athing + tr td.subtext a[href^='item?id=']",
-            "timeout_ms": 20000
-          },
-          {
-            "id": "s0c",
-            "name": "Resolve target item URL (use item_url if provided, else first front-page item) and redirect",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 15000,
-            "args": [
-              "{item_url}"
-            ],
-            "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const itemUrl = cleanArg(arg0); let target; let source; if (itemUrl) { try { const u = new URL(itemUrl, 'https://news.ycombinator.com/'); if (!/(^|\\.)ycombinator\\.com$/i.test(u.hostname)) throw new Error('item_url must be on news.ycombinator.com'); target = u.href; source = 'param'; } catch (e) { throw new Error('Invalid item_url: ' + e.message); } } else { const link = document.querySelector(\"tr.athing + tr td.subtext a[href^='item?id='], td.subtext a[href^='item?id=']\"); if (!link) throw new Error('No first front-page item link found'); target = new URL(link.getAttribute('href'), 'https://news.ycombinator.com/').href; source = 'front_page_first'; } if (window.location.href === target) return { redirected: false, target, source }; setTimeout(() => window.location.assign(target), 0); return { redirected: true, target, source };"
-          },
-          {
-            "id": "s1",
-            "name": "Wait for the item page to mount",
-            "type": "wait_for_element",
-            "selector": "form[action='comment'] textarea[name='text'], textarea[name='text']",
-            "timeout_ms": 30000
-          },
-          {
-            "id": "s1b",
-            "name": "Initial reading settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1200
-          },
-          {
-            "id": "s2",
-            "name": "Scroll to read (1/3)",
-            "type": "scroll_window_to",
-            "direction": "down"
-          },
-          {
-            "id": "s2b",
-            "name": "Reading pause (1/3)",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1200
-          },
-          {
-            "id": "s3",
-            "name": "Scroll to read (2/3)",
-            "type": "scroll_window_to",
-            "direction": "down"
-          },
-          {
-            "id": "s3b",
-            "name": "Reading pause (2/3)",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1500
-          },
-          {
-            "id": "s4",
-            "name": "Scroll to read (3/3)",
-            "type": "scroll_window_to",
-            "direction": "down"
-          },
-          {
-            "id": "s4b",
-            "name": "Reading pause (3/3)",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1400
-          },
-          {
-            "id": "s5",
-            "name": "Wait for the comment editor",
-            "type": "wait_for_element",
-            "selector": "form[action='comment'] textarea[name='text'], textarea[name='text']",
-            "timeout_ms": 20000
-          },
-          {
-            "id": "s5a",
-            "name": "Fail if the same account already posted the same root comment",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 10000,
-            "args": [
-              "{comment_text}"
-            ],
-            "script": "const cleanArg=(value)=>{const text=String(value==null?'':value).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(text)?'':text;}; const normalize=(value)=>String(value||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim().toLowerCase(); const expected=normalize(cleanArg(arg0)); if(!expected) throw new Error('comment_text is required'); const currentUser=String(document.querySelector('#me')?.textContent||'').trim(); const rows=Array.from(document.querySelectorAll('tr.athing.comtr')); const matches=rows.map((row)=>({ user:String(row.querySelector('.hnuser')?.textContent||'').trim(), text:normalize(row.querySelector('.commtext')?.textContent||'') })).filter((entry)=>entry.user===currentUser&&entry.text===expected); if(matches.length){ throw new Error(`Duplicate HN comment already exists for user ${currentUser||'unknown'}`); } return { current_user: currentUser || null, duplicate_found: false, scanned_comment_count: rows.length };"
-          },
-          {
-            "id": "s6",
-            "name": "Fill the comment text",
-            "type": "fill_input_field",
-            "selector": "form[action='comment'] textarea[name='text'], textarea[name='text']",
-            "value": "{comment_text}",
-            "simulate_typing": false
-          },
-          {
-            "id": "s6b",
-            "name": "Verify the drafted comment is non-empty",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 10000,
-            "script": "const box = document.querySelector(\"form[action='comment'] textarea[name='text'], textarea[name='text']\"); const value = box && 'value' in box ? String(box.value || '').trim() : ''; if (!value) { throw new Error('Comment textarea is empty'); } return { draft_length: value.length };"
-          },
-          {
-            "id": "s6c",
-            "name": "Pause for approval before submitting the comment",
-            "type": "request_user_intervention",
-            "message": "HN root comment draft is ready. Click Continue only if you want to post it. Click Stop to leave it as a draft.",
-            "instructions": "If this feels repetitive, low-context, or too promotional, click Stop instead of Continue.",
-            "approval_mode": "ask_user",
-            "continue_on_timeout": false,
-            "timeout_ms": 2147483647
-          },
-          {
-            "id": "s7",
-            "name": "Submit the comment",
-            "type": "click_element",
-            "selector": "form[action='comment'] input[type='submit'], input[type='submit'][value*='add' i]"
-          },
-          {
-            "id": "s8",
-            "name": "Wait for the comment to post",
-            "type": "wait_for_timeout",
-            "timeout_ms": 2500
-          }
-        ]
-      }
-    ]
+  "metadata": {
+    "migrated_from": "hn/hn-submit-comment.json",
+    "legacy_system_id": "hacker_news"
   }
 }

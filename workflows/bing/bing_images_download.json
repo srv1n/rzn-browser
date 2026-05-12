@@ -1,89 +1,271 @@
 {
-  "system_id": "bing",
-  "id": "bing_images_download",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "bing/images_download",
   "name": "Bing: Images Download",
-  "description": "Run a Bing Images search in a fresh tab and download the thumbnails through Chrome's download manager into `~/Downloads/<download_folder>/`. Use when you need files locally and want them to flow through the authenticated browser (firewalls, geo-blocks). Do not use to get metadata or original high-res URLs (use `bing_images_search`, then wget the `high_res_url`s).",
-  "domain": "bing.com",
   "version": "1.0.0",
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Navigates a fresh tab to /images/search, waits for the thumbnail grid, and streams matching `th.bing.com` thumbnails through Chrome's download_images action.",
-    "sequences": [
-      {
-        "name": "bing_images_download",
-        "description": "Open Bing Images -> wait for grid -> download thumbnails.",
-        "required_variables": [
-          {
-            "name": "search_query",
-            "description": "Image search query"
-          },
-          {
-            "name": "download_folder",
-            "description": "Subfolder under ~/Downloads to save files into"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Navigate to Bing Images search",
-            "type": "navigate_to_url",
-            "url": "https://www.bing.com/images/search?q={search_query}",
-            "timeout_ms": 60000
-          },
-          {
-            "id": "s2",
-            "name": "Allow the image grid to hydrate",
-            "type": "wait_for_timeout",
-            "timeout_ms": 2500
-          },
-          {
-            "id": "s3",
-            "name": "Wait for thumbnail tiles",
-            "type": "wait_for_element",
-            "selector": "div.img_cont img[src*='th.bing.com']",
-            "timeout_ms": 15000
-          },
-          {
-            "id": "s4",
-            "name": "Download up to 20 thumbnails",
-            "type": "download_images",
-            "selector": "div.img_cont img[src*='th.bing.com']",
-            "download_folder": "{download_folder}",
-            "limit": 20
-          }
-        ]
+  "system": "bing",
+  "capability": "bing.images.download",
+  "summary": "Download up to 20 Bing Images thumbnails through Chrome into ~/Downloads/<folder>/.",
+  "description": "Run a Bing Images search in a fresh tab and download the thumbnails through Chrome's download manager into `~/Downloads/<download_folder>/`. Use when you need files locally and want them to flow through the authenticated browser (firewalls, geo-blocks). Do not use to get metadata or original high-res URLs (use `bing_images_search`, then wget the `high_res_url`s).",
+  "params": {
+    "properties": {
+      "download_folder": {
+        "kind": "string",
+        "required": true,
+        "description": "Subfolder under ~/Downloads to save the thumbnails into."
+      },
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Bing Images search query."
       }
-    ]
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "bing.com"
+      ]
+    },
+    {
+      "class": "download",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "bing.com"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "bing.com",
+        "th.bing.com"
+      ]
+    },
+    {
+      "class": "file_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": []
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "bing.com",
+        "th.bing.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "bing.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.bing.com/images"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Bing Images landing",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1a",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#sb_form_q"
+        }
+      },
+      "name": "Wait for the Bing Images search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s1c",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#sb_form_q"
+        }
+      },
+      "name": "Fill the search box"
+    },
+    {
+      "id": "s1d",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#sb_form_q",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the image grid to hydrate",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "div.img_cont img[src*='th.bing.com']"
+        }
+      },
+      "name": "Wait for thumbnail tiles",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "download_images",
+        "inputs": {
+          "download_folder": "{download_folder}",
+          "limit": 20
+        },
+        "side_effects": [
+          "browser_state",
+          "download",
+          "external_read",
+          "file_write",
+          "network_access"
+        ],
+        "target": {
+          "selector": "div.img_cont img[src*='th.bing.com']"
+        }
+      },
+      "name": "Download up to 20 thumbnails"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": true
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "downloaded": {
+          "type": "integer"
+        },
+        "image_urls": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "downloads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
   },
   "help": {
     "summary": "Download up to 20 Bing Images thumbnails through Chrome into ~/Downloads/<folder>/.",
-    "parameters": [
-      {
-        "name": "search_query",
-        "required": true,
-        "shape": "text",
-        "description": "Bing Images search query.",
-        "example": "cats"
-      },
-      {
-        "name": "download_folder",
-        "required": true,
-        "shape": "path-fragment",
-        "description": "Subfolder under ~/Downloads to save the thumbnails into.",
-        "example": "cats"
-      }
-    ],
+    "parameters": {
+      "download_folder": "Subfolder under ~/Downloads to save the thumbnails into.",
+      "search_query": "Bing Images search query."
+    },
     "examples": [
       {
         "command": "rzn-browser run bing images-download --param search_query=\"cats\" --param download_folder=\"cats\"",
         "description": "Saves up to 20 cat thumbnails to ~/Downloads/cats/."
       }
     ],
-    "returns": "Chrome download manager writes files. Step result reports `downloaded` count.",
+    "returns": [
+      "Object with { downloaded (count), image_urls[] (thumbnail URLs queued), downloads[] (per-file { url, filename, path }) }. Files land in ~/Downloads/<download_folder>/ via the Chrome download manager."
+    ],
     "notes": [
-      "Only thumbnails (Bing-hosted under `th.bing.com`) — the host origin's high-res is not fetched here. For real high-res use `bing_images_search` + wget.",
+      "Drives the Images landing's real search input rather than hitting `?q=...` directly.",
+      "Only thumbnails (Bing-hosted under `th.bing.com`) \u2014 the host origin's high-res is not fetched here. For real high-res use `bing_images_search` + wget.",
       "Chrome may prompt the first time you run against a fresh profile. Subsequent runs reuse the prior choice.",
       "Opens a fresh tab."
     ]
+  },
+  "metadata": {
+    "migrated_from": "bing/bing_images_download.json",
+    "legacy_system_id": "bing"
   }
 }

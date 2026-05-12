@@ -1,155 +1,285 @@
 {
-  "system_id": "google",
-  "id": "google_finance_v2",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "google/finance",
   "name": "Google Finance Quote Lookup",
-  "description": "Open a Google Finance quote page and extract structured fields: price, change, name, exchange, currency, plus key stats and an optional viewport screenshot.",
-  "domain": "google.com",
   "version": "2.1.0",
-  "last_updated": "2026-04-24T00:00:00Z",
-  "browser_automation": {
-    "description": "Loads google.com/finance/quote/<TICKER:EXCHANGE>. Extraction is regex-driven against best-effort selectors because Finance is heavily client-rendered.",
-    "sequences": [
-      {
-        "name": "google_finance_quote_extract",
-        "description": "Open a quote page, extract structured quote fields plus key stats rows, and capture a screenshot.",
-        "required_variables": [
-          {
-            "name": "query",
-            "description": "Ticker with exchange suffix, in TICKER:EXCHANGE format (e.g. AAPL:NASDAQ, GOOGL:NASDAQ, BRK.A:NYSE)."
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Navigate to Google Finance quote page",
-            "type": "navigate_to_url",
-            "url": "https://www.google.com/finance/quote/{query}",
-            "wait": "domcontentloaded",
-            "timeout_ms": 30000
-          },
-          {
-            "id": "s2",
-            "name": "Dismiss common popups",
-            "type": "dismiss_popups"
-          },
-          {
-            "id": "s3",
-            "name": "Settle: let client-rendered quote content load",
-            "type": "wait_for_timeout",
-            "timeout_ms": 2500
-          },
-          {
-            "id": "s4",
-            "name": "Extract quote fields",
-            "type": "extract_structured_data",
-            "extraction_type": "quote",
-            "item_selector": "html",
-            "limit": 1,
-            "fields": [
-              {
-                "name": "ticker",
-                "selector": "link[rel='canonical']",
-                "attribute": "href",
-                "post_processing": ["collapse_whitespace", "regex:quote/([^/?#]+)"]
-              },
-              {
-                "name": "symbol",
-                "selector": "link[rel='canonical']",
-                "attribute": "href",
-                "post_processing": ["regex:quote/([A-Z0-9\\\\-\\\\.]+)"]
-              },
-              {
-                "name": "exchange",
-                "selector": "link[rel='canonical']",
-                "attribute": "href",
-                "post_processing": ["regex:quote/[A-Z0-9\\\\-\\\\.]+:([A-Z0-9\\\\-\\\\.]+)"]
-              },
-              {
-                "name": "name",
-                "selector": "div.IHz7Sd div.gO24Ff, .zzDege",
-                "post_processing": ["collapse_whitespace"]
-              },
-              {
-                "name": "currency",
-                "selector": "div.IHz7Sd div.jZZ2de",
-                "post_processing": ["collapse_whitespace", "regex:([A-Z]{3})[^A-Z]*$"]
-              },
-              {
-                "name": "currency_symbol",
-                "selector": "div.IHz7Sd div.N6SYTe span[jsname='Pdsbrc'] span",
-                "post_processing": ["regex:([\\\\$€£¥₹])"]
-              },
-              {
-                "name": "price",
-                "selector": "div.IHz7Sd div.N6SYTe span[jsname='Pdsbrc'] span, .fxKbKc, .kf1m0",
-                "post_processing": ["collapse_whitespace", "regex:([0-9][0-9,.]*)"]
-              },
-              {
-                "name": "display_price",
-                "selector": "div.IHz7Sd div.N6SYTe span[jsname='Pdsbrc'] span, .fxKbKc, .kf1m0",
-                "post_processing": ["collapse_whitespace", "regex:([\\\\$€£¥₹]?\\\\s*[0-9][0-9,.]*)"]
-              },
-              {
-                "name": "change_pct",
-                "selector": "div.IHz7Sd span[jsname='vY9t3b'] span",
-                "post_processing": ["collapse_whitespace", "regex:([-+]?\\\\d[\\\\d,.]*%)"]
-              },
-              {
-                "name": "change_abs",
-                "selector": "div.IHz7Sd span[jsname='xnruHf'] span",
-                "post_processing": ["collapse_whitespace", "regex:([-+]?\\\\d[\\\\d,.]*)"]
-              },
-              {
-                "name": "market_time",
-                "selector": "div.IHz7Sd div.jZZ2de",
-                "post_processing": ["collapse_whitespace"]
-              },
-              {
-                "name": "market_state",
-                "selector": "div.IHz7Sd div.jZZ2de",
-                "post_processing": ["collapse_whitespace", "regex:^(Closed|Open)"]
-              },
-              {
-                "name": "about",
-                "selector": ".RaUwRb span, .bLLb2d, .Yfwt5",
-                "post_processing": ["collapse_whitespace"]
-              }
-            ]
-          },
-          {
-            "id": "s4b",
-            "name": "Extract key stats rows",
-            "type": "extract_structured_data",
-            "extraction_type": "stats",
-            "item_selector": "div.KxsRFb, .gyFHrc .P6K39c, .eYanAe .P6K39c, table.slpEwd tr",
-            "limit": 50,
-            "fields": [
-              { "name": "label", "selector": ".SwQK7, .mfs7Fc, td:first-child, th:first-child", "post_processing": ["collapse_whitespace"] },
-              { "name": "value", "selector": ".dO6ijd, .QXDnM, td:last-child, th:last-child", "post_processing": ["collapse_whitespace"] }
-            ]
-          },
-          {
-            "id": "s5",
-            "name": "Capture viewport screenshot",
-            "type": "take_screenshot",
-            "format": "png",
-            "full_page": false
-          }
-        ]
+  "system": "google",
+  "capability": "google.finance",
+  "summary": "Look up a stock/ETF/index on Google Finance and return structured quote + key stats + screenshot.",
+  "description": "Open a Google Finance quote page and extract structured fields: price, change, name, exchange, currency, plus key stats and an optional viewport screenshot.",
+  "params": {
+    "properties": {
+      "query": {
+        "kind": "string",
+        "required": true,
+        "description": "Ticker symbol with exchange suffix. Examples: AAPL:NASDAQ, MSFT:NASDAQ, BRK.A:NYSE, .DJI:INDEXDJX, BTC-USD. The colon-suffix is required by Finance's URL routing."
       }
-    ]
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.google.com/finance/quote/{query}",
+          "wait": "domcontentloaded"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Google Finance quote page",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss common popups"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Settle: let client-rendered quote content load",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "extraction_type": "quote",
+          "item_selector": "html",
+          "limit": 1,
+          "fields": [
+            {
+              "name": "ticker",
+              "selector": "link[rel='canonical']",
+              "attribute": "href",
+              "post_processing": [
+                "collapse_whitespace",
+                "regex:quote/([^/?#]+)"
+              ]
+            },
+            {
+              "name": "symbol",
+              "selector": "link[rel='canonical']",
+              "attribute": "href",
+              "post_processing": [
+                "regex:quote/([A-Z0-9\\\\-\\\\.]+)"
+              ]
+            },
+            {
+              "name": "exchange",
+              "selector": "link[rel='canonical']",
+              "attribute": "href",
+              "post_processing": [
+                "regex:quote/[A-Z0-9\\\\-\\\\.]+:([A-Z0-9\\\\-\\\\.]+)"
+              ]
+            },
+            {
+              "name": "name",
+              "selector": "div.IHz7Sd div.gO24Ff, .zzDege",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "currency",
+              "selector": "div.IHz7Sd div.jZZ2de",
+              "post_processing": [
+                "collapse_whitespace",
+                "regex:([A-Z]{3})[^A-Z]*$"
+              ]
+            },
+            {
+              "name": "currency_symbol",
+              "selector": "div.IHz7Sd div.N6SYTe span[jsname='Pdsbrc'] span",
+              "post_processing": [
+                "regex:([\\\\$\u20ac\u00a3\u00a5\u20b9])"
+              ]
+            },
+            {
+              "name": "price",
+              "selector": "div.IHz7Sd div.N6SYTe span[jsname='Pdsbrc'] span, .fxKbKc, .kf1m0",
+              "post_processing": [
+                "collapse_whitespace",
+                "regex:([0-9][0-9,.]*)"
+              ]
+            },
+            {
+              "name": "display_price",
+              "selector": "div.IHz7Sd div.N6SYTe span[jsname='Pdsbrc'] span, .fxKbKc, .kf1m0",
+              "post_processing": [
+                "collapse_whitespace",
+                "regex:([\\\\$\u20ac\u00a3\u00a5\u20b9]?\\\\s*[0-9][0-9,.]*)"
+              ]
+            },
+            {
+              "name": "change_pct",
+              "selector": "div.IHz7Sd span[jsname='vY9t3b'] span",
+              "post_processing": [
+                "collapse_whitespace",
+                "regex:([-+]?\\\\d[\\\\d,.]*%)"
+              ]
+            },
+            {
+              "name": "change_abs",
+              "selector": "div.IHz7Sd span[jsname='xnruHf'] span",
+              "post_processing": [
+                "collapse_whitespace",
+                "regex:([-+]?\\\\d[\\\\d,.]*)"
+              ]
+            },
+            {
+              "name": "market_time",
+              "selector": "div.IHz7Sd div.jZZ2de",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "market_state",
+              "selector": "div.IHz7Sd div.jZZ2de",
+              "post_processing": [
+                "collapse_whitespace",
+                "regex:^(Closed|Open)"
+              ]
+            },
+            {
+              "name": "about",
+              "selector": ".RaUwRb span, .bLLb2d, .Yfwt5",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract quote fields"
+    },
+    {
+      "id": "s4b",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "extraction_type": "stats",
+          "item_selector": "div.KxsRFb, .gyFHrc .P6K39c, .eYanAe .P6K39c, table.slpEwd tr",
+          "limit": 50,
+          "fields": [
+            {
+              "name": "label",
+              "selector": ".SwQK7, .mfs7Fc, td:first-child, th:first-child",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "value",
+              "selector": ".dO6ijd, .QXDnM, td:last-child, th:last-child",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract key stats rows"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "take_screenshot",
+        "inputs": {
+          "format": "png",
+          "full_page": false
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Capture viewport screenshot"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "ticker": { "type": "string" },
+          "symbol": { "type": "string" },
+          "exchange": { "type": "string" },
+          "name": { "type": "string" },
+          "currency": { "type": "string" },
+          "currency_symbol": { "type": "string" },
+          "price": { "type": "string" },
+          "display_price": { "type": "string" },
+          "change_pct": { "type": "string" },
+          "change_abs": { "type": "string" },
+          "market_time": { "type": "string" },
+          "market_state": { "type": "string" },
+          "about": { "type": "string" }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
   },
   "help": {
-    "summary": "Look up a stock/ETF/index on Google Finance and return structured quote + key stats + screenshot.",
-    "parameters": [
-      {
-        "name": "query",
-        "required": true,
-        "shape": "ticker:exchange",
-        "description": "Ticker symbol with exchange suffix. Examples: AAPL:NASDAQ, MSFT:NASDAQ, BRK.A:NYSE, .DJI:INDEXDJX, BTC-USD. The colon-suffix is required by Finance's URL routing.",
-        "example": "AAPL:NASDAQ"
-      }
-    ],
+    "summary": "Look up a stock/ETF/index on Google Finance and return structured quote fields. Key-stats rows and a screenshot are produced as additional step artifacts.",
+    "parameters": {
+      "query": "Ticker symbol with exchange suffix. Examples: AAPL:NASDAQ, MSFT:NASDAQ, BRK.A:NYSE, .DJI:INDEXDJX, BTC-USD. The colon-suffix is required by Finance's URL routing."
+    },
     "examples": [
       {
         "command": "rzn-browser run google finance --param query=\"AAPL:NASDAQ\"",
@@ -160,11 +290,17 @@
         "description": "Dow Jones index."
       }
     ],
-    "returns": "Object with two arrays: a 1-row 'quote' object (ticker, symbol, exchange, name, currency, currency_symbol, price, display_price, change_pct, change_abs, market_time, market_state, about) and a 'stats' array of {label, value} rows. Screenshot is written to test-results/workflow-artifacts/google-finance/.",
+    "returns": [
+      "Single-row array of quote fields: { ticker, symbol, exchange, name, currency, currency_symbol, price, display_price, change_pct, change_abs, market_time, market_state, about }. Step s4b additionally extracts a key-stats array ({label, value} rows) and step s5 captures a viewport screenshot (written under test-results/workflow-artifacts/google-finance/)."
+    ],
     "notes": [
-      "Selector classes are minified Google class names — they rotate occasionally, which is why most fields use multiple selector fallbacks plus regex post-processing.",
+      "Selector classes are minified Google class names \u2014 they rotate occasionally, which is why most fields use multiple selector fallbacks plus regex post-processing.",
       "If a field comes back empty, verify against the live page; the regex captures may need a refresh.",
       "Only a single ticker per run; for batch lookups, call repeatedly."
     ]
+  },
+  "metadata": {
+    "migrated_from": "google/google-finance.json",
+    "legacy_system_id": "google"
   }
 }

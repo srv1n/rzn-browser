@@ -1,89 +1,166 @@
 {
-  "system_id": "reddit",
-  "id": "reddit_search_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "reddit/search",
   "name": "Reddit: Search",
-  "description": "Search Reddit via direct URL navigation (old.reddit.com/search?q=...). Extracts the top N result rows with title, permalink, subreddit, author, score, and comment count.",
-  "domain": "old.reddit.com",
   "version": "1.0.0",
-  "browser_automation": {
-    "description": "Navigate directly to old.reddit.com search results and scrape result rows — avoids the homepage search box and any consent-banner click interception.",
-    "sequences": [
-      {
-        "name": "reddit_search",
-        "description": "Build search URL → navigate → wait for results → extract rows.",
-        "required_variables": [
-          {
-            "name": "search_query",
-            "description": "Search term to send to Reddit. Will be URL-encoded before navigation."
-          }
+  "system": "reddit",
+  "capability": "reddit.search",
+  "summary": "Search Reddit via direct URL and return the top result rows.",
+  "description": "Search Reddit via direct URL navigation (old.reddit.com/search?q=...). Extracts the top N result rows with title, permalink, subreddit, author, score, and comment count.",
+  "params": {
+    "properties": {
+      "limit": {
+        "kind": "integer",
+        "required": false,
+        "description": "How many result rows to return. Defaults to 25. Clamped to [1, 50].",
+        "default": 25
+      },
+      "scope": {
+        "kind": "string",
+        "required": false,
+        "description": "'posts' (default) searches site-wide posts and returns the standard result list. 'subreddits' broadens the search across subreddits (restrict_sr=off).",
+        "enum_values": [
+          "posts",
+          "subreddits"
         ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Open an old.reddit.com tab (bootstrap — a tab must exist before execute_javascript can run)",
-            "type": "navigate_to_url",
-            "url": "https://old.reddit.com/",
-            "timeout_ms": 30000
-          },
-          {
-            "id": "s2",
-            "name": "Navigate directly to old.reddit.com search results (avoids homepage consent banner intercepting a search-box click)",
-            "type": "execute_javascript",
-            "timeout_ms": 5000,
-            "args": [
-              "{search_query}",
-              "{scope}"
-            ],
-            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const q = cleanArg(arg0); if (!q) throw new Error('search_query is required'); const scope = (cleanArg(arg1) || 'posts').toLowerCase(); const params = new URLSearchParams(); params.set('q', q); if (scope === 'subreddits') params.set('restrict_sr', 'off'); const url = 'https://old.reddit.com/search?' + params.toString(); setTimeout(() => { window.location.assign(url); }, 0); return JSON.stringify({ url: url, scope: scope });"
-          },
-          {
-            "id": "s3",
-            "name": "Wait for search results or 'no results' state",
-            "type": "wait_for_element",
-            "selector": ".search-result, .search-result-listing, .contents > p",
-            "timeout_ms": 20000
-          },
-          {
-            "id": "s4",
-            "name": "Extract top search result rows",
-            "type": "execute_javascript",
-            "timeout_ms": 10000,
-            "args": [
-              "{limit}"
-            ],
-            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const limitRaw = cleanArg(arg0); const limit = Math.max(1, Math.min(50, parseInt(limitRaw || '25', 10) || 25)); const rows = Array.from(document.querySelectorAll('.search-result-link, .search-result')).slice(0, limit).map((el) => { const a = el.querySelector('a.search-title, a.title'); const sub = el.querySelector('a.search-subreddit-link, a.subreddit'); const author = el.querySelector('a.author'); const score = el.querySelector('.search-score, .score'); const comments = el.querySelector('a.search-comments, a.comments'); const time = el.querySelector('time'); return { title: a?.textContent?.trim() || null, url: a?.href || null, subreddit: sub?.textContent?.trim() || null, author: author?.textContent?.trim() || null, score: score?.textContent?.trim() || null, comments: comments?.textContent?.trim() || null, timestamp: time?.getAttribute('datetime') || null }; }).filter(r => r.title || r.url); return JSON.stringify({ count: rows.length, results: rows });"
-          }
-        ]
+        "default": "posts"
+      },
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Free-text search query. URL-encoded automatically before navigation."
       }
-    ]
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "old.reddit.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "old.reddit.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://old.reddit.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open an old.reddit.com tab (bootstrap \u2014 a tab must exist before execute_javascript can run)",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "args": [
+            "{search_query}",
+            "{scope}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const q = cleanArg(arg0); if (!q) throw new Error('search_query is required'); const scope = (cleanArg(arg1) || 'posts').toLowerCase(); const params = new URLSearchParams(); params.set('q', q); if (scope === 'subreddits') params.set('restrict_sr', 'off'); const url = 'https://old.reddit.com/search?' + params.toString(); setTimeout(() => { window.location.assign(url); }, 0); return JSON.stringify({ url: url, scope: scope });"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate directly to old.reddit.com search results (avoids homepage consent banner intercepting a search-box click)",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".search-result, .search-result-listing, .contents > p"
+        }
+      },
+      "name": "Wait for search results or 'no results' state",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "args": [
+            "{limit}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const limitRaw = cleanArg(arg0); const limit = Math.max(1, Math.min(50, parseInt(limitRaw || '25', 10) || 25)); const rows = Array.from(document.querySelectorAll('.search-result-link, .search-result')).slice(0, limit).map((el) => { const a = el.querySelector('a.search-title, a.title'); const sub = el.querySelector('a.search-subreddit-link, a.subreddit'); const author = el.querySelector('a.author'); const score = el.querySelector('.search-score, .score'); const comments = el.querySelector('a.search-comments, a.comments'); const time = el.querySelector('time'); return { title: a?.textContent?.trim() || null, url: a?.href || null, subreddit: sub?.textContent?.trim() || null, author: author?.textContent?.trim() || null, score: score?.textContent?.trim() || null, comments: comments?.textContent?.trim() || null, timestamp: time?.getAttribute('datetime') || null }; }).filter(r => r.title || r.url); return JSON.stringify({ count: rows.length, results: rows });"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract top search result rows",
+      "timeout_ms": 10000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "count": { "type": "integer" },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string", "nullable": true },
+              "url": { "type": "string", "nullable": true },
+              "subreddit": { "type": "string", "nullable": true },
+              "author": { "type": "string", "nullable": true },
+              "score": { "type": "string", "nullable": true },
+              "comments": { "type": "string", "nullable": true },
+              "timestamp": { "type": "string", "nullable": true }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
   },
   "help": {
     "summary": "Search Reddit via direct URL and return the top result rows.",
-    "parameters": [
-      {
-        "name": "search_query",
-        "required": true,
-        "shape": "text",
-        "description": "Free-text search query. URL-encoded automatically before navigation.",
-        "example": "rust async runtime comparison"
-      },
-      {
-        "name": "scope",
-        "required": false,
-        "shape": "enum: posts | subreddits",
-        "description": "'posts' (default) searches site-wide posts and returns the standard result list. 'subreddits' broadens the search across subreddits (restrict_sr=off).",
-        "default": "posts",
-        "example": "posts"
-      },
-      {
-        "name": "limit",
-        "required": false,
-        "shape": "integer 1–50",
-        "description": "How many result rows to return. Defaults to 25. Clamped to [1, 50].",
-        "default": "25",
-        "example": "10"
-      }
-    ],
+    "parameters": {
+      "limit": "How many result rows to return. Defaults to 25. Clamped to [1, 50].",
+      "scope": "'posts' (default) searches site-wide posts and returns the standard result list. 'subreddits' broadens the search across subreddits (restrict_sr=off).",
+      "search_query": "Free-text search query. URL-encoded automatically before navigation."
+    },
     "examples": [
       {
         "description": "Search Reddit for a term and return the top 25 results",
@@ -94,10 +171,16 @@
         "command": "rzn-browser run reddit search --param search_query=\"rust async runtime\" --param limit=10"
       }
     ],
-    "returns": "JSON { count, results[] } where each result has title, url, subreddit, author, score, comments, timestamp.",
+    "returns": [
+      "JSON { count, results[] } where each result has title, url, subreddit, author, score, comments, timestamp."
+    ],
     "notes": [
-      "Uses direct URL navigation (old.reddit.com/search?q=…) to avoid the homepage search-form consent-banner click interception landmine.",
+      "Uses direct URL navigation (old.reddit.com/search?q=\u2026) to avoid the homepage search-form consent-banner click interception landmine.",
       "Requires no authentication; works on logged-out sessions too, though rate-limiting is stricter when logged out."
     ]
+  },
+  "metadata": {
+    "migrated_from": "reddit/reddit-search.json",
+    "legacy_system_id": "reddit"
   }
 }

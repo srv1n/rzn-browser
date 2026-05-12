@@ -1,43 +1,235 @@
 {
-  "system_id": "youtube",
-  "id": "youtube_video_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "youtube/video",
   "name": "YouTube Video Detail",
-  "description": "Open a YouTube video and return its metadata, the sidebar recommendations, and the top comments. Uses window.ytInitialPlayerResponse for clean metadata and scrolls the page to populate the lazy-loaded comment + recommendation rails.",
-  "domain": "youtube.com",
   "version": "1.0.0",
-  "last_updated": "2026-04-24T00:00:00Z",
+  "system": "youtube",
+  "capability": "youtube.video",
+  "summary": "Load a watch page and return metadata + recommendations + comments in one shot.",
+  "description": "Open a YouTube video and return its metadata, the sidebar recommendations, and the top comments. Uses window.ytInitialPlayerResponse for clean metadata and scrolls the page to populate the lazy-loaded comment + recommendation rails.",
+  "params": {
+    "properties": {
+      "comments_limit": {
+        "kind": "integer",
+        "required": false,
+        "description": "Max top-level comments to return. Defaults to 20. Higher limits require more scroll rounds and run slower. Hard cap 100.",
+        "default": 20,
+        "min": 1,
+        "max": 100
+      },
+      "include": {
+        "kind": "string",
+        "required": false,
+        "description": "Which sections to return. Defaults to all. `metadata` skips comments + recommendations (fastest). `recommendations` includes metadata + sidebar. `comments` includes metadata + comments.",
+        "enum_values": [
+          "all",
+          "metadata",
+          "recommendations",
+          "comments"
+        ],
+        "default": "all"
+      },
+      "recommendations_limit": {
+        "kind": "integer",
+        "required": false,
+        "description": "Max sidebar recommendations to return. Defaults to 20. Hard cap 50.",
+        "default": 20,
+        "min": 1,
+        "max": 50
+      },
+      "video_id": {
+        "kind": "string",
+        "required": true,
+        "description": "YouTube video id (the `v` query parameter on a /watch URL). Pass the id only, not the full URL."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "youtube.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "youtube.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.youtube.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open YouTube homepage (seeds cookies)",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{video_id}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const id=cleanArg(arg0);if(!id)throw new Error('video_id is required');if(!/^[A-Za-z0-9_-]{6,20}$/.test(id))throw new Error('video_id looks wrong: '+id);const target='https://www.youtube.com/watch?v='+encodeURIComponent(id);setTimeout(()=>window.location.assign(target),0);return{redirected:true,target};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Redirect to /watch?v=<video_id>",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "ytd-watch-metadata h1, #movie_player"
+        }
+      },
+      "name": "Wait for player + metadata",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups (cookie, sign-in, premium nag)"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{include}",
+            "{recommendations_limit}",
+            "{comments_limit}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const includeRaw=cleanArg(arg0).toLowerCase();const include=['all','metadata','recommendations','comments'].includes(includeRaw)?includeRaw:'all';const wantRecs=(include==='all'||include==='recommendations');const wantCmts=(include==='all'||include==='comments');const parseN=(v,d,max)=>{const n=parseInt(cleanArg(v),10);if(!Number.isFinite(n)||n<=0)return d;return Math.min(n,max);};const recLimit=parseN(arg1,20,50);const cmtLimit=parseN(arg2,20,100);const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const abs=(h)=>{if(!h)return'';try{return new URL(h,location.origin).toString();}catch{return String(h);}};const pr=window.ytInitialPlayerResponse||{};const vd=pr.videoDetails||{};const mf=(pr.microformat&&pr.microformat.playerMicroformatRenderer)||{};const playability=(pr.playabilityStatus&&pr.playabilityStatus.status)||null;const metadata={video_id:vd.videoId||null,title:vd.title||norm(document.querySelector('ytd-watch-metadata h1')?.textContent||''),channel:vd.author||norm(document.querySelector('ytd-video-owner-renderer ytd-channel-name a')?.textContent||''),channel_id:vd.channelId||null,channel_url:vd.channelId?('https://www.youtube.com/channel/'+vd.channelId):abs(document.querySelector('ytd-video-owner-renderer ytd-channel-name a')?.getAttribute('href')||''),duration_seconds:Number(vd.lengthSeconds)||null,view_count:Number(vd.viewCount)||null,published:mf.publishDate||null,upload_date:mf.uploadDate||null,category:mf.category||null,keywords:Array.isArray(vd.keywords)?vd.keywords:[],description:vd.shortDescription||'',is_live:!!vd.isLiveContent,is_unlisted:!!(mf.isUnlisted),playability_status:playability};const warnings=[];if(playability&&playability!=='OK')warnings.push('playability:'+playability);let recommendations=[];let comments=[];if(wantRecs||wantCmts){const rounds=wantCmts?6:2;let lastHeight=document.body.scrollHeight;for(let i=0;i<rounds;i++){window.scrollTo({top:Math.max(900+i*1600,lastHeight-300),behavior:'instant'});await sleep(wantCmts?1800:900);const threads=document.querySelectorAll('ytd-comment-thread-renderer').length;const recs=document.querySelectorAll('yt-lockup-view-model').length;if(wantCmts&&threads>=cmtLimit&&(!wantRecs||recs>=recLimit))break;if(!wantCmts&&recs>=recLimit)break;if(document.body.scrollHeight===lastHeight&&i>1)break;lastHeight=document.body.scrollHeight;}}window.scrollTo({top:0,behavior:'instant'});await sleep(200);if(wantRecs){const lockups=Array.from(document.querySelectorAll('yt-lockup-view-model'));for(const el of lockups){if(recommendations.length>=recLimit)break;const outer=el.querySelector('[class*=\"content-id-\"]');let cid=null;if(outer){const m=outer.className.match(/content-id-([A-Za-z0-9_-]{6,})/);cid=m?m[1]:null;}if(!cid)continue;const titleEl=el.querySelector('a.ytLockupMetadataViewModelTitle, [class*=\"Title\"]');const title=norm(titleEl?.textContent||'');if(!title)continue;const thumbBadge=norm(el.querySelector('yt-thumbnail-badge-view-model, yt-thumbnail-bottom-overlay-view-model')?.textContent||'');const metaText=norm(el.querySelector('yt-content-metadata-view-model')?.textContent||'');const isPlaylist=/^(PL|RD|OL|UU|LL|FL)/.test(cid)||/videos?$|^\\d+\\s*videos?$/i.test(thumbBadge);if(isPlaylist){recommendations.push({kind:'playlist',id:cid,title,url:'https://www.youtube.com/playlist?list='+cid,video_count:thumbBadge});}else{const chLink=el.querySelector('a[href*=\"/@\"], a[href*=\"/channel/\"]');let channel=norm(chLink?.textContent||'');const metaParts=metaText.split(/[\u2022\u00b7]/).map(norm).filter(Boolean);const viewsRe=/([\\d.,]+\\s*[KMB]?)\\s*views?/i;let views='';let published='';for(const p of metaParts){if(!views){const m=p.match(viewsRe);if(m){views=m[0];continue;}}if(!published&&/ago|streamed|premiered|scheduled|new$/i.test(p)){published=p.replace(/New$/i,'').trim();}}if(!channel&&metaParts.length){const first=metaParts[0];const vm=first.match(viewsRe);channel=vm?first.slice(0,vm.index).trim():first;}recommendations.push({kind:'video',id:cid,title,channel,url:'https://www.youtube.com/watch?v='+cid,duration:thumbBadge,views,published});}}}if(wantCmts){const threads=Array.from(document.querySelectorAll('ytd-comment-thread-renderer'));for(const el of threads){if(comments.length>=cmtLimit)break;const author=norm(el.querySelector('#author-text span, #author-text')?.textContent||'');const text=norm(el.querySelector('#content-text')?.textContent||'');const likes=norm(el.querySelector('#vote-count-middle')?.textContent||'');const published=norm(el.querySelector('.published-time-text a, a[href*=\"lc=\"], #published-time-text a')?.textContent||'');if(!text&&!author)continue;comments.push({author,text,likes,published});}}return{url:location.href,metadata,recommendations,comments,counts:{recommendations:recommendations.length,comments:comments.length},warnings};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Hydrate rails and extract",
+      "timeout_ms": 120000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "metadata": {
+          "type": "object",
+          "properties": {
+            "video_id": { "type": "string" },
+            "title": { "type": "string" },
+            "channel": { "type": "string" },
+            "channel_id": { "type": "string" },
+            "channel_url": { "type": "string" },
+            "duration_seconds": { "type": "integer" },
+            "view_count": { "type": "integer" },
+            "published": { "type": "string" },
+            "upload_date": { "type": "string" },
+            "category": { "type": "string" },
+            "keywords": { "type": "array", "items": { "type": "string" } },
+            "description": { "type": "string" },
+            "is_live": { "type": "boolean" },
+            "is_unlisted": { "type": "boolean" },
+            "playability_status": { "type": "string" }
+          }
+        },
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": { "type": "string", "enum": ["video", "playlist"] },
+              "id": { "type": "string" },
+              "title": { "type": "string" },
+              "channel": { "type": "string" },
+              "url": { "type": "string" },
+              "duration": { "type": "string" },
+              "views": { "type": "string" },
+              "published": { "type": "string" },
+              "video_count": { "type": "string" }
+            }
+          }
+        },
+        "comments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "author": { "type": "string" },
+              "text": { "type": "string" },
+              "likes": { "type": "string" },
+              "published": { "type": "string" }
+            }
+          }
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "recommendations": { "type": "integer" },
+            "comments": { "type": "integer" }
+          }
+        },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
   "help": {
     "summary": "Load a watch page and return metadata + recommendations + comments in one shot.",
-    "parameters": [
-      {
-        "name": "video_id",
-        "required": true,
-        "shape": "11-char YouTube id",
-        "description": "YouTube video id (the `v` query parameter on a /watch URL). Pass the id only, not the full URL.",
-        "example": "5C_HPTJg5ek"
-      },
-      {
-        "name": "include",
-        "required": false,
-        "shape": "enum: all | metadata | recommendations | comments",
-        "description": "Which sections to return. Defaults to all. `metadata` skips comments + recommendations (fastest). `recommendations` includes metadata + sidebar. `comments` includes metadata + comments.",
-        "example": "metadata"
-      },
-      {
-        "name": "recommendations_limit",
-        "required": false,
-        "shape": "integer (1-50)",
-        "description": "Max sidebar recommendations to return. Defaults to 20.",
-        "example": "10"
-      },
-      {
-        "name": "comments_limit",
-        "required": false,
-        "shape": "integer (1-100)",
-        "description": "Max top-level comments to return. Defaults to 20. Higher limits require more scroll rounds and run slower.",
-        "example": "50"
-      }
-    ],
+    "parameters": {
+      "comments_limit": "Max top-level comments to return. Defaults to 20. Higher limits require more scroll rounds and run slower.",
+      "include": "Which sections to return. Defaults to all. `metadata` skips comments + recommendations (fastest). `recommendations` includes metadata + sidebar. `comments` includes metadata + comments.",
+      "recommendations_limit": "Max sidebar recommendations to return. Defaults to 20.",
+      "video_id": "YouTube video id (the `v` query parameter on a /watch URL). Pass the id only, not the full URL."
+    },
     "examples": [
       {
         "description": "Full pull (metadata + recs + 20 comments)",
@@ -52,70 +244,19 @@
         "command": "rzn-browser run youtube video --param video_id=\"5C_HPTJg5ek\" --param include=comments --param comments_limit=50"
       }
     ],
-    "returns": "{ url, metadata:{ video_id, title, channel, channel_id, channel_url, duration_seconds, view_count, published, category, keywords[], description, is_live, is_unlisted }, recommendations:[ { kind:\"video\"|\"playlist\", id, title, channel?, url, duration?, views?, published?, video_count? } ], comments:[ { author, text, likes, published } ], counts:{ recommendations, comments } }. recommendations and comments are [] when `include` excludes them.",
+    "returns": [
+      "{ url, metadata:{ video_id, title, channel, channel_id, channel_url, duration_seconds, view_count, published, category, keywords[], description, is_live, is_unlisted }, recommendations:[ { kind:\"video\"|\"playlist\", id, title, channel?, url, duration?, views?, published?, video_count? } ], comments:[ { author, text, likes, published } ], counts:{ recommendations, comments } }. recommendations and comments are [] when `include` excludes them."
+    ],
     "notes": [
       "Metadata comes from window.ytInitialPlayerResponse (the same payload the player reads). Fields like view_count and duration_seconds are returned as numbers, not formatted strings.",
       "Age-gated, members-only, or region-blocked videos may still load but ytInitialPlayerResponse can have a `playabilityStatus.status` of `LOGIN_REQUIRED` or `UNPLAYABLE`. When that happens, metadata is returned best-effort from the DOM and a `warning` field is added.",
-      "Comments are lazy-loaded by scroll. We scroll up to 6 rounds; if comments are disabled on the video we return []. Replies and pinned flags are not returned — ask for a dedicated comments workflow if you need those.",
+      "Comments are lazy-loaded by scroll. We scroll up to 6 rounds; if comments are disabled on the video we return []. Replies and pinned flags are not returned \u2014 ask for a dedicated comments workflow if you need those.",
       "Recommendations skip Shorts rails and chapter/mix entries. Playlists in the sidebar are returned with kind=playlist.",
       "For search-then-open flows use `youtube search` first, then feed the `video_id` here."
     ]
   },
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Dedicated-tab video-page reader. Navigates to /watch, pulls the player payload, scrolls to populate comments + recommendations, and extracts.",
-    "sequences": [
-      {
-        "name": "youtube_video",
-        "description": "Open /watch?v=<id>, scroll to hydrate rails, extract metadata/recs/comments.",
-        "required_variables": [
-          { "name": "video_id", "description": "YouTube video id" }
-        ],
-        "optional_variables": [
-          { "name": "include", "description": "all | metadata | recommendations | comments" },
-          { "name": "recommendations_limit", "description": "Max recommendations (default 20)" },
-          { "name": "comments_limit", "description": "Max comments (default 20)" }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Open YouTube homepage (seeds cookies)",
-            "type": "navigate_to_url",
-            "url": "https://www.youtube.com/",
-            "timeout_ms": 60000
-          },
-          {
-            "id": "s2",
-            "name": "Redirect to /watch?v=<video_id>",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 20000,
-            "args": ["{video_id}"],
-            "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const id=cleanArg(arg0);if(!id)throw new Error('video_id is required');if(!/^[A-Za-z0-9_-]{6,20}$/.test(id))throw new Error('video_id looks wrong: '+id);const target='https://www.youtube.com/watch?v='+encodeURIComponent(id);setTimeout(()=>window.location.assign(target),0);return{redirected:true,target};"
-          },
-          {
-            "id": "s3",
-            "name": "Wait for player + metadata",
-            "type": "wait_for_element",
-            "selector": "ytd-watch-metadata h1, #movie_player",
-            "timeout_ms": 30000
-          },
-          {
-            "id": "s4",
-            "name": "Dismiss popups (cookie, sign-in, premium nag)",
-            "type": "dismiss_popups"
-          },
-          {
-            "id": "s5",
-            "name": "Hydrate rails and extract",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 120000,
-            "args": ["{include}", "{recommendations_limit}", "{comments_limit}"],
-            "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const includeRaw=cleanArg(arg0).toLowerCase();const include=['all','metadata','recommendations','comments'].includes(includeRaw)?includeRaw:'all';const wantRecs=(include==='all'||include==='recommendations');const wantCmts=(include==='all'||include==='comments');const parseN=(v,d,max)=>{const n=parseInt(cleanArg(v),10);if(!Number.isFinite(n)||n<=0)return d;return Math.min(n,max);};const recLimit=parseN(arg1,20,50);const cmtLimit=parseN(arg2,20,100);const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const abs=(h)=>{if(!h)return'';try{return new URL(h,location.origin).toString();}catch{return String(h);}};const pr=window.ytInitialPlayerResponse||{};const vd=pr.videoDetails||{};const mf=(pr.microformat&&pr.microformat.playerMicroformatRenderer)||{};const playability=(pr.playabilityStatus&&pr.playabilityStatus.status)||null;const metadata={video_id:vd.videoId||null,title:vd.title||norm(document.querySelector('ytd-watch-metadata h1')?.textContent||''),channel:vd.author||norm(document.querySelector('ytd-video-owner-renderer ytd-channel-name a')?.textContent||''),channel_id:vd.channelId||null,channel_url:vd.channelId?('https://www.youtube.com/channel/'+vd.channelId):abs(document.querySelector('ytd-video-owner-renderer ytd-channel-name a')?.getAttribute('href')||''),duration_seconds:Number(vd.lengthSeconds)||null,view_count:Number(vd.viewCount)||null,published:mf.publishDate||null,upload_date:mf.uploadDate||null,category:mf.category||null,keywords:Array.isArray(vd.keywords)?vd.keywords:[],description:vd.shortDescription||'',is_live:!!vd.isLiveContent,is_unlisted:!!(mf.isUnlisted),playability_status:playability};const warnings=[];if(playability&&playability!=='OK')warnings.push('playability:'+playability);let recommendations=[];let comments=[];if(wantRecs||wantCmts){const rounds=wantCmts?6:2;let lastHeight=document.body.scrollHeight;for(let i=0;i<rounds;i++){window.scrollTo({top:Math.max(900+i*1600,lastHeight-300),behavior:'instant'});await sleep(wantCmts?1800:900);const threads=document.querySelectorAll('ytd-comment-thread-renderer').length;const recs=document.querySelectorAll('yt-lockup-view-model').length;if(wantCmts&&threads>=cmtLimit&&(!wantRecs||recs>=recLimit))break;if(!wantCmts&&recs>=recLimit)break;if(document.body.scrollHeight===lastHeight&&i>1)break;lastHeight=document.body.scrollHeight;}}window.scrollTo({top:0,behavior:'instant'});await sleep(200);if(wantRecs){const lockups=Array.from(document.querySelectorAll('yt-lockup-view-model'));for(const el of lockups){if(recommendations.length>=recLimit)break;const outer=el.querySelector('[class*=\"content-id-\"]');let cid=null;if(outer){const m=outer.className.match(/content-id-([A-Za-z0-9_-]{6,})/);cid=m?m[1]:null;}if(!cid)continue;const titleEl=el.querySelector('a.ytLockupMetadataViewModelTitle, [class*=\"Title\"]');const title=norm(titleEl?.textContent||'');if(!title)continue;const thumbBadge=norm(el.querySelector('yt-thumbnail-badge-view-model, yt-thumbnail-bottom-overlay-view-model')?.textContent||'');const metaText=norm(el.querySelector('yt-content-metadata-view-model')?.textContent||'');const isPlaylist=/^(PL|RD|OL|UU|LL|FL)/.test(cid)||/videos?$|^\\d+\\s*videos?$/i.test(thumbBadge);if(isPlaylist){recommendations.push({kind:'playlist',id:cid,title,url:'https://www.youtube.com/playlist?list='+cid,video_count:thumbBadge});}else{const chLink=el.querySelector('a[href*=\"/@\"], a[href*=\"/channel/\"]');let channel=norm(chLink?.textContent||'');const metaParts=metaText.split(/[•·]/).map(norm).filter(Boolean);const viewsRe=/([\\d.,]+\\s*[KMB]?)\\s*views?/i;let views='';let published='';for(const p of metaParts){if(!views){const m=p.match(viewsRe);if(m){views=m[0];continue;}}if(!published&&/ago|streamed|premiered|scheduled|new$/i.test(p)){published=p.replace(/New$/i,'').trim();}}if(!channel&&metaParts.length){const first=metaParts[0];const vm=first.match(viewsRe);channel=vm?first.slice(0,vm.index).trim():first;}recommendations.push({kind:'video',id:cid,title,channel,url:'https://www.youtube.com/watch?v='+cid,duration:thumbBadge,views,published});}}}if(wantCmts){const threads=Array.from(document.querySelectorAll('ytd-comment-thread-renderer'));for(const el of threads){if(comments.length>=cmtLimit)break;const author=norm(el.querySelector('#author-text span, #author-text')?.textContent||'');const text=norm(el.querySelector('#content-text')?.textContent||'');const likes=norm(el.querySelector('#vote-count-middle')?.textContent||'');const published=norm(el.querySelector('.published-time-text a, a[href*=\"lc=\"], #published-time-text a')?.textContent||'');if(!text&&!author)continue;comments.push({author,text,likes,published});}}return{url:location.href,metadata,recommendations,comments,counts:{recommendations:recommendations.length,comments:comments.length},warnings};"
-          }
-        ]
-      }
-    ]
+  "metadata": {
+    "migrated_from": "youtube/youtube-video.json",
+    "legacy_system_id": "youtube"
   }
 }

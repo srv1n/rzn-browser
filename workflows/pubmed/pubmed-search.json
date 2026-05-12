@@ -1,116 +1,220 @@
 {
-  "system_id": "pubmed",
-  "id": "pubmed_search_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "pubmed/search",
   "name": "PubMed Search Workflow",
-  "description": "Search PubMed and extract paper metadata",
-  "domain": "pubmed.ncbi.nlm.nih.gov",
   "version": "1.0.0",
-  "last_updated": "2025-07-30T00:00:00Z",
+  "system": "pubmed",
+  "capability": "pubmed.search",
+  "summary": "Search PubMed and extract visible paper metadata from the results page.",
+  "description": "Search PubMed and extract paper metadata",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Medical or scientific search term to submit to PubMed."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "pubmed.ncbi.nlm.nih.gov"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "pubmed.ncbi.nlm.nih.gov"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://pubmed.ncbi.nlm.nih.gov/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to PubMed"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for page load",
+      "timeout_ms": 3000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "value": "{search_query}",
+          "simulate_typing": false
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[type='search'], input[type='text'], #term, input[name='term']"
+        }
+      },
+      "name": "Fill search query"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[type='search'], input[type='text'], #term, input[name='term']",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit search"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for results",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "item_selector": "article.full-docsum, .docsum-content, .search-results-chunk article",
+          "fields": [
+            {
+              "name": "title",
+              "selector": "a.docsum-title, a[data-article-id], h3 a"
+            },
+            {
+              "name": "authors",
+              "selector": ".docsum-authors.full-authors, .docsum-authors, .authors, .author-list"
+            },
+            {
+              "name": "journal",
+              "selector": ".docsum-journal-citation.full-journal-citation, .docsum-journal-citation, .journal, .citation"
+            },
+            {
+              "name": "pmid",
+              "selector": ".docsum-pmid, .pmid, [data-article-id]"
+            },
+            {
+              "name": "abstract_snippet",
+              "selector": ".docsum-snippet .full-view-snippet, .docsum-snippet, .abstract-snippet, .snippet"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract paper metadata"
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "get_element_text",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".results-amount, .results-amount-container .results-amount, .result-count, .results-count"
+        }
+      },
+      "name": "Get total results count"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "authors": {
+            "type": "string"
+          },
+          "journal": {
+            "type": "string"
+          },
+          "pmid": {
+            "type": "string"
+          },
+          "abstract_snippet": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6",
+      "path": "$"
+    }
+  },
   "help": {
     "summary": "Search PubMed and extract visible paper metadata from the results page.",
-    "parameters": [
-      {
-        "name": "search_query",
-        "required": true,
-        "shape": "text",
-        "description": "Medical or scientific search term to submit to PubMed.",
-        "example": "metformin cardiovascular outcomes"
-      }
-    ],
+    "parameters": {
+      "search_query": "Medical or scientific search term to submit to PubMed."
+    },
     "examples": [
       {
         "description": "Search PubMed for papers about metformin outcomes",
         "command": "rzn-browser run pubmed search --param search_query=\"metformin cardiovascular outcomes\""
       }
     ],
-    "returns": "Visible result metadata including title, authors, journal, PMID, abstract snippet, and the total result count when present.",
+    "returns": [
+      "Visible result metadata including title, authors, journal, PMID, abstract snippet, and the total result count when present."
+    ],
     "notes": [
       "Uses standard DOM input and submit actions; no CDP is required.",
       "Caller should treat results as the currently visible PubMed search page, not a full PubMed API export."
     ]
   },
-  "browser_automation": {
-    "description": "Workflow to search PubMed and extract research paper metadata",
-    "sequences": [
-      {
-        "name": "pubmed_search_extract",
-        "description": "Performs a PubMed search and extracts paper results",
-        "required_variables": [
-          {
-            "name": "search_query",
-            "description": "The search term for medical/scientific papers"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Navigate to PubMed",
-            "type": "navigate_to_url",
-            "url": "https://pubmed.ncbi.nlm.nih.gov/"
-          },
-          {
-            "id": "s2",
-            "name": "Wait for page load",
-            "type": "wait_for_timeout",
-            "timeout_ms": 3000
-          },
-          {
-            "id": "s3",
-            "name": "Fill search query",
-            "type": "fill_input_field",
-            "selector": "input[type='search'], input[type='text'], #term, input[name='term']",
-            "value": "{search_query}",
-            "simulate_typing": false
-          },
-          {
-            "id": "s4",
-            "name": "Submit search",
-            "type": "submit_input",
-            "selector": "input[type='search'], input[type='text'], #term, input[name='term']",
-            "text": "{search_query}"
-          },
-          {
-            "id": "s5",
-            "name": "Wait for results",
-            "type": "wait_for_timeout",
-            "timeout_ms": 5000
-          },
-          {
-            "id": "s6",
-            "name": "Extract paper metadata",
-            "type": "extract_structured_data",
-            "item_selector": "article.full-docsum, .docsum-content, .search-results-chunk article",
-            "fields": [
-              {
-                "name": "title",
-                "selector": "a.docsum-title, a[data-article-id], h3 a"
-              },
-              {
-                "name": "authors",
-                "selector": ".docsum-authors.full-authors, .docsum-authors, .authors, .author-list"
-              },
-              {
-                "name": "journal",
-                "selector": ".docsum-journal-citation.full-journal-citation, .docsum-journal-citation, .journal, .citation"
-              },
-              {
-                "name": "pmid",
-                "selector": ".docsum-pmid, .pmid, [data-article-id]"
-              },
-              {
-                "name": "abstract_snippet",
-                "selector": ".docsum-snippet .full-view-snippet, .docsum-snippet, .abstract-snippet, .snippet"
-              }
-            ]
-          },
-          {
-            "id": "s7",
-            "name": "Get total results count",
-            "type": "get_element_text",
-            "selector": ".results-amount, .results-amount-container .results-amount, .result-count, .results-count"
-          }
-        ]
-      }
-    ]
+  "metadata": {
+    "migrated_from": "pubmed/pubmed-search.json",
+    "legacy_system_id": "pubmed"
   }
 }

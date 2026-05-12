@@ -1,42 +1,205 @@
 {
-  "system_id": "instagram",
-  "id": "instagram_profile_recent_posts_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "instagram/profile_recent_posts",
   "name": "Instagram: Profile Recent Posts",
-  "description": "Open an Instagram profile, progressively scroll the visible grid, and return recent post/reel URLs in reverse-chronological profile order. Use this as the first step of any account-level export: it only discovers candidate URLs, it does not open each post. Pipe the candidates into instagram post-extract (mode=preflight to filter, mode=full to pull assets).",
-  "domain": "instagram.com",
   "version": "1.2.0",
+  "system": "instagram",
+  "capability": "instagram.profile.recent.posts",
+  "summary": "Discover recent post and reel URLs on an Instagram profile by scrolling the grid.",
+  "description": "Open an Instagram profile, progressively scroll the visible grid, and return recent post/reel URLs in reverse-chronological profile order. Use this as the first step of any account-level export: it only discovers candidate URLs, it does not open each post. Pipe the candidates into instagram post-extract (mode=preflight to filter, mode=full to pull assets).",
+  "params": {
+    "properties": {
+      "handle": {
+        "kind": "string",
+        "required": true,
+        "description": "Instagram handle without the leading @. Accepts the same casing the URL uses."
+      },
+      "max_idle_scrolls": {
+        "kind": "integer",
+        "required": false,
+        "default": 3,
+        "min": 1,
+        "max": 12,
+        "description": "Stop early after this many consecutive scrolls that yield no new candidates or page growth. Defaults to 3. Cap is 12."
+      },
+      "max_scrolls": {
+        "kind": "integer",
+        "required": false,
+        "default": 8,
+        "min": 0,
+        "max": 160,
+        "description": "Maximum downward scroll passes. Higher values reach older posts at the cost of time. Defaults to 8. Cap is 160."
+      },
+      "target_count": {
+        "kind": "integer",
+        "required": false,
+        "default": 36,
+        "min": 1,
+        "max": 500,
+        "description": "How many candidate post URLs to collect before stopping. Defaults to 36 (roughly the initial grid). Cap is 500."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.instagram.com/{handle}/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the Instagram profile",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the profile page to settle",
+      "timeout_ms": 3500
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the profile media grid extra time to hydrate",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const requestedHandle = '{handle}'.replace(/^@+/, '').trim().toLowerCase();\nconst targetCount = Math.max(1, Math.min(500, Number('{target_count}') || 36));\nconst maxScrolls = Math.max(0, Math.min(160, Number('{max_scrolls}') || 8));\nconst maxIdleScrolls = Math.max(1, Math.min(12, Number('{max_idle_scrolls}') || 3));\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\nconst normalizeText = (value) => (value || '').replace(/\\s+/g, ' ').trim();\nconst normalizeUrl = (raw) => {\n  if (!raw) return '';\n  try {\n    return new URL(raw, window.location.origin).toString();\n  } catch {\n    return String(raw);\n  }\n};\nconst parsePostRef = (raw) => {\n  const absolute = normalizeUrl(raw);\n  if (!absolute) return null;\n  let parsed;\n  try {\n    parsed = new URL(absolute);\n  } catch {\n    return null;\n  }\n  const parts = parsed.pathname.split('/').filter(Boolean);\n  const kindIndex = parts.findIndex((part) => /^(p|reel|tv)$/i.test(part));\n  if (kindIndex < 0 || kindIndex + 1 >= parts.length) return null;\n  const kind = parts[kindIndex].toLowerCase();\n  const shortcode = parts[kindIndex + 1];\n  const ownerHandle = kindIndex > 0 ? parts[kindIndex - 1].replace(/^@+/, '').toLowerCase() : '';\n  return {\n    absolute,\n    canonical_url: parsed.origin + '/' + kind + '/' + shortcode + '/',\n    kind,\n    shortcode,\n    owner_handle: ownerHandle\n  };\n};\nconst visibleText = (node) => normalizeText(node?.innerText || node?.textContent || node?.getAttribute?.('aria-label') || '');\nconst hasMediaLinks = () => Array.from(document.querySelectorAll(\"main a[href]\")).some((anchor) => {\n  const ref = parsePostRef(anchor.getAttribute('href') || anchor.href || '');\n  if (!ref) return false;\n  return !requestedHandle || !ref.owner_handle || ref.owner_handle === requestedHandle;\n});\nconst waitForMediaLinks = async () => {\n  const deadline = Date.now() + 6000;\n  while (Date.now() < deadline) {\n    if (hasMediaLinks()) return true;\n    await sleep(350);\n  }\n  return hasMediaLinks();\n};\nconst candidates = new Map();\nconst collect = () => {\n  for (const anchor of Array.from(document.querySelectorAll(\"main a[href]\"))) {\n    const ref = parsePostRef(anchor.getAttribute('href') || anchor.href || '');\n    if (!ref) continue;\n    if (requestedHandle && ref.owner_handle && ref.owner_handle !== requestedHandle) continue;\n    if (candidates.has(ref.canonical_url)) continue;\n    const thumbnail = anchor.querySelector('img');\n    const indicatorText = Array.from(anchor.querySelectorAll('svg[aria-label], [aria-label], span')).map(visibleText).filter(Boolean).join(' | ');\n    const entry = {\n      post_url: ref.canonical_url,\n      shortcode: ref.shortcode,\n      kind_hint: ref.kind,\n      thumbnail_url: normalizeUrl(thumbnail?.currentSrc || thumbnail?.getAttribute?.('src') || ''),\n      alt_text: normalizeText(thumbnail?.getAttribute?.('alt') || ''),\n      indicator_text: indicatorText || null\n    };\n    candidates.set(ref.canonical_url, entry);\n  }\n  return candidates.size;\n};\nwindow.scrollTo(0, 0);\nawait sleep(350);\nconst linksReady = await waitForMediaLinks();\nlet idleScrolls = 0;\nlet lastCount = collect();\nlet executedScrolls = 0;\nfor (let pass = 0; pass < maxScrolls; pass += 1) {\n  if (candidates.size >= targetCount) break;\n  const beforeY = window.scrollY;\n  const beforeHeight = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0);\n  window.scrollBy(0, Math.max(window.innerHeight * 1.1, 960));\n  executedScrolls += 1;\n  await sleep(950);\n  const currentCount = collect();\n  const afterY = window.scrollY;\n  const afterHeight = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0);\n  const countGrew = currentCount > lastCount;\n  const pageAdvanced = Math.abs(afterY - beforeY) >= 16 || afterHeight > beforeHeight;\n  if (countGrew || pageAdvanced) idleScrolls = 0;\n  else idleScrolls += 1;\n  lastCount = currentCount;\n  if (idleScrolls >= maxIdleScrolls) break;\n}\ncollect();\nconst candidateList = Array.from(candidates.values()).slice(0, targetCount);\nreturn {\n  profile_url: normalizeUrl(window.location.href),\n  profile_title: document.title,\n  handle: requestedHandle || normalizeText(location.pathname.split('/').filter(Boolean)[0] || ''),\n  links_ready: linksReady,\n  total_candidates: candidateList.length,\n  scroll_passes: executedScrolls,\n  idle_scroll_termination: idleScrolls >= maxIdleScrolls,\n  candidates: candidateList\n};"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Extract recent post candidates",
+      "timeout_ms": 120000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "profile_url": { "type": "string" },
+        "profile_title": { "type": "string" },
+        "handle": { "type": "string" },
+        "links_ready": { "type": "boolean" },
+        "total_candidates": { "type": "integer" },
+        "scroll_passes": { "type": "integer" },
+        "idle_scroll_termination": { "type": "boolean" },
+        "candidates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "post_url": { "type": "string" },
+              "shortcode": { "type": "string" },
+              "kind_hint": { "type": "string" },
+              "thumbnail_url": { "type": "string" },
+              "alt_text": { "type": "string" },
+              "indicator_text": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
   "help": {
     "summary": "Discover recent post and reel URLs on an Instagram profile by scrolling the grid.",
-    "parameters": [
-      {
-        "name": "handle",
-        "required": true,
-        "shape": "string",
-        "description": "Instagram handle without the leading @. Accepts the same casing the URL uses.",
-        "example": "timbersfc"
-      },
-      {
-        "name": "target_count",
-        "required": false,
-        "shape": "integer",
-        "description": "How many candidate post URLs to collect before stopping. Defaults to 36 (roughly the initial grid). Cap is 500.",
-        "example": "36"
-      },
-      {
-        "name": "max_scrolls",
-        "required": false,
-        "shape": "integer",
-        "description": "Maximum downward scroll passes. Higher values reach older posts at the cost of time. Defaults to 8. Cap is 160.",
-        "example": "30"
-      },
-      {
-        "name": "max_idle_scrolls",
-        "required": false,
-        "shape": "integer",
-        "description": "Stop early after this many consecutive scrolls that yield no new candidates or page growth. Defaults to 3. Cap is 12.",
-        "example": "3"
-      }
-    ],
+    "parameters": {
+      "handle": "Instagram handle without the leading @. Accepts the same casing the URL uses.",
+      "max_idle_scrolls": "Stop early after this many consecutive scrolls that yield no new candidates or page growth. Defaults to 3. Cap is 12.",
+      "max_scrolls": "Maximum downward scroll passes. Higher values reach older posts at the cost of time. Defaults to 8. Cap is 160.",
+      "target_count": "How many candidate post URLs to collect before stopping. Defaults to 36 (roughly the initial grid). Cap is 500."
+    },
     "examples": [
       {
         "description": "Grab the default 36 recent candidates with 8 scroll passes",
@@ -47,7 +210,9 @@
         "command": "rzn-browser run instagram profile-recent-posts --param handle=\"timbersfc\" --param target_count=\"60\" --param max_scrolls=\"30\" --param max_idle_scrolls=\"3\""
       }
     ],
-    "returns": "profile_url, profile_title, handle (echoed), links_ready, total_candidates, scroll_passes, idle_scroll_termination, candidates [{post_url, shortcode, kind_hint (p|reel|tv), thumbnail_url, alt_text, indicator_text}].",
+    "returns": [
+      "profile_url, profile_title, handle (echoed), links_ready, total_candidates, scroll_passes, idle_scroll_termination, candidates [{post_url, shortcode, kind_hint (p|reel|tv), thumbnail_url, alt_text, indicator_text}]."
+    ],
     "notes": [
       "Requires a Chrome session that can view the target profile. Private accounts without a signed-in session will return an empty candidate list.",
       "Candidates preserve the order they appear in the grid (reverse-chronological for public profiles). Pinned posts can appear first.",
@@ -56,66 +221,8 @@
       "Opens a dedicated workflow tab (use_current_tab=false), so this workflow is safe to run in parallel with other dedicated-tab instagram flows."
     ]
   },
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Opens a dedicated workflow tab so parallel instagram runs do not collide. Reuses the signed-in Chrome profile, progressively scrolls the profile grid, and extracts candidate recent post URLs for later per-post expansion.",
-    "sequences": [
-      {
-        "name": "instagram_profile_recent_posts",
-        "description": "Navigate to one Instagram profile, progressively scroll the grid until enough candidates are gathered or repeated idle passes suggest the page is exhausted.",
-        "required_variables": [
-          {
-            "name": "handle",
-            "description": "Instagram handle without the leading @"
-          },
-          {
-            "name": "target_count",
-            "description": "How many candidate posts to collect before stopping, for example 36"
-          },
-          {
-            "name": "max_scrolls",
-            "description": "Maximum number of downward scroll passes to attempt, for example 8"
-          },
-          {
-            "name": "max_idle_scrolls",
-            "description": "How many consecutive no-growth scroll passes to tolerate before stopping, for example 3"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Open the Instagram profile",
-            "type": "navigate_to_url",
-            "url": "https://www.instagram.com/{handle}/",
-            "timeout_ms": 60000
-          },
-          {
-            "id": "s2",
-            "name": "Allow the profile page to settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 3500
-          },
-          {
-            "id": "s3",
-            "name": "Dismiss popups if present",
-            "type": "dismiss_popups"
-          },
-          {
-            "id": "s4",
-            "name": "Allow the profile media grid extra time to hydrate",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1500
-          },
-          {
-            "id": "s5",
-            "name": "Extract recent post candidates",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 120000,
-            "script": "const requestedHandle = '{handle}'.replace(/^@+/, '').trim().toLowerCase();\nconst targetCount = Math.max(1, Math.min(500, Number('{target_count}') || 36));\nconst maxScrolls = Math.max(0, Math.min(160, Number('{max_scrolls}') || 8));\nconst maxIdleScrolls = Math.max(1, Math.min(12, Number('{max_idle_scrolls}') || 3));\nconst sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));\nconst normalizeText = (value) => (value || '').replace(/\\s+/g, ' ').trim();\nconst normalizeUrl = (raw) => {\n  if (!raw) return '';\n  try {\n    return new URL(raw, window.location.origin).toString();\n  } catch {\n    return String(raw);\n  }\n};\nconst parsePostRef = (raw) => {\n  const absolute = normalizeUrl(raw);\n  if (!absolute) return null;\n  let parsed;\n  try {\n    parsed = new URL(absolute);\n  } catch {\n    return null;\n  }\n  const parts = parsed.pathname.split('/').filter(Boolean);\n  const kindIndex = parts.findIndex((part) => /^(p|reel|tv)$/i.test(part));\n  if (kindIndex < 0 || kindIndex + 1 >= parts.length) return null;\n  const kind = parts[kindIndex].toLowerCase();\n  const shortcode = parts[kindIndex + 1];\n  const ownerHandle = kindIndex > 0 ? parts[kindIndex - 1].replace(/^@+/, '').toLowerCase() : '';\n  return {\n    absolute,\n    canonical_url: parsed.origin + '/' + kind + '/' + shortcode + '/',\n    kind,\n    shortcode,\n    owner_handle: ownerHandle\n  };\n};\nconst visibleText = (node) => normalizeText(node?.innerText || node?.textContent || node?.getAttribute?.('aria-label') || '');\nconst hasMediaLinks = () => Array.from(document.querySelectorAll(\"main a[href]\")).some((anchor) => {\n  const ref = parsePostRef(anchor.getAttribute('href') || anchor.href || '');\n  if (!ref) return false;\n  return !requestedHandle || !ref.owner_handle || ref.owner_handle === requestedHandle;\n});\nconst waitForMediaLinks = async () => {\n  const deadline = Date.now() + 6000;\n  while (Date.now() < deadline) {\n    if (hasMediaLinks()) return true;\n    await sleep(350);\n  }\n  return hasMediaLinks();\n};\nconst candidates = new Map();\nconst collect = () => {\n  for (const anchor of Array.from(document.querySelectorAll(\"main a[href]\"))) {\n    const ref = parsePostRef(anchor.getAttribute('href') || anchor.href || '');\n    if (!ref) continue;\n    if (requestedHandle && ref.owner_handle && ref.owner_handle !== requestedHandle) continue;\n    if (candidates.has(ref.canonical_url)) continue;\n    const thumbnail = anchor.querySelector('img');\n    const indicatorText = Array.from(anchor.querySelectorAll('svg[aria-label], [aria-label], span')).map(visibleText).filter(Boolean).join(' | ');\n    const entry = {\n      post_url: ref.canonical_url,\n      shortcode: ref.shortcode,\n      kind_hint: ref.kind,\n      thumbnail_url: normalizeUrl(thumbnail?.currentSrc || thumbnail?.getAttribute?.('src') || ''),\n      alt_text: normalizeText(thumbnail?.getAttribute?.('alt') || ''),\n      indicator_text: indicatorText || null\n    };\n    candidates.set(ref.canonical_url, entry);\n  }\n  return candidates.size;\n};\nwindow.scrollTo(0, 0);\nawait sleep(350);\nconst linksReady = await waitForMediaLinks();\nlet idleScrolls = 0;\nlet lastCount = collect();\nlet executedScrolls = 0;\nfor (let pass = 0; pass < maxScrolls; pass += 1) {\n  if (candidates.size >= targetCount) break;\n  const beforeY = window.scrollY;\n  const beforeHeight = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0);\n  window.scrollBy(0, Math.max(window.innerHeight * 1.1, 960));\n  executedScrolls += 1;\n  await sleep(950);\n  const currentCount = collect();\n  const afterY = window.scrollY;\n  const afterHeight = Math.max(document.body?.scrollHeight || 0, document.documentElement?.scrollHeight || 0);\n  const countGrew = currentCount > lastCount;\n  const pageAdvanced = Math.abs(afterY - beforeY) >= 16 || afterHeight > beforeHeight;\n  if (countGrew || pageAdvanced) idleScrolls = 0;\n  else idleScrolls += 1;\n  lastCount = currentCount;\n  if (idleScrolls >= maxIdleScrolls) break;\n}\ncollect();\nconst candidateList = Array.from(candidates.values()).slice(0, targetCount);\nreturn {\n  profile_url: normalizeUrl(window.location.href),\n  profile_title: document.title,\n  handle: requestedHandle || normalizeText(location.pathname.split('/').filter(Boolean)[0] || ''),\n  links_ready: linksReady,\n  total_candidates: candidateList.length,\n  scroll_passes: executedScrolls,\n  idle_scroll_termination: idleScrolls >= maxIdleScrolls,\n  candidates: candidateList\n};"
-          }
-        ]
-      }
-    ]
+  "metadata": {
+    "migrated_from": "instagram/instagram-profile-recent-posts.json",
+    "legacy_system_id": "instagram"
   }
 }

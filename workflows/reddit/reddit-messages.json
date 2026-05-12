@@ -1,71 +1,166 @@
 {
-  "system_id": "reddit",
-  "id": "reddit_messages_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "reddit/messages",
   "name": "Reddit: Read Messages",
-  "description": "Read Reddit messages. `source=inbox` pulls structured DMs from old.reddit.com's inbox; `source=chats` extracts recent chat threads from reddit.com/chat via shadow-DOM traversal.",
-  "domain": "reddit.com",
   "version": "1.0.0",
-  "browser_automation": {
-    "description": "Navigate to the requested message surface, wait for content, and extract a compact JSON list of messages or conversations.",
-    "sequences": [
-      {
-        "name": "reddit_messages",
-        "description": "Route by `source`: 'inbox' → old.reddit.com/message/inbox (structured DM list), 'chats' → reddit.com/chat (shadow-DOM walk of visible conversation text).",
-        "required_variables": [
-          {
-            "name": "source",
-            "description": "Which message surface to read: 'inbox' for old.reddit.com private messages, 'chats' for reddit.com/chat conversation threads."
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Open a Reddit tab (bootstrap — a tab must exist before execute_javascript can run)",
-            "type": "navigate_to_url",
-            "url": "https://old.reddit.com/",
-            "timeout_ms": 30000
-          },
-          {
-            "id": "s2",
-            "name": "Redirect to the correct message surface based on `source`",
-            "type": "execute_javascript",
-            "timeout_ms": 5000,
-            "args": [
-              "{source}"
-            ],
-            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const source = (cleanArg(arg0) || 'inbox').toLowerCase(); const url = source === 'chats' ? 'https://www.reddit.com/chat/' : 'https://old.reddit.com/message/inbox/'; setTimeout(() => { window.location.assign(url); }, 0); return JSON.stringify({ source: source, url: url });"
-          },
-          {
-            "id": "s3",
-            "name": "Initial page settle (chat hydration needs more time than old-reddit SSR)",
-            "type": "wait_for_timeout",
-            "timeout_ms": 5000
-          },
-          {
-            "id": "s4",
-            "name": "Extract messages: structured DOM rows for inbox, shadow-DOM text walk for chats",
-            "type": "execute_javascript",
-            "timeout_ms": 30000,
-            "args": [
-              "{source}"
-            ],
-            "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const source = (cleanArg(arg0) || 'inbox').toLowerCase(); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); if (source === 'inbox') { const deadline = Date.now() + 15000; while (Date.now() < deadline && !document.querySelector('.message, .nothing')) { await sleep(250); } for (let i = 0; i < 2; i++) { window.scrollBy(0, 2000); await sleep(800); } const rows = Array.from(document.querySelectorAll('.message')).slice(0, 50).map((el) => { const author = el.querySelector('.sender a.author')?.textContent?.trim() || null; const subject = el.querySelector('.subject a')?.textContent?.trim() || null; const time = el.querySelector('.tagline time')?.getAttribute('datetime') || null; const body = el.querySelector('.md p')?.textContent?.trim() || null; const id = el.getAttribute('data-fullname') || null; return { id, author, subject, timestamp: time, body }; }); return JSON.stringify({ source: 'inbox', count: rows.length, messages: rows }); } function walk(root, d, out) { if (d > 12) return; const skip = new Set(['SCRIPT', 'STYLE', 'TITLE', 'LINK', 'META', 'NOSCRIPT', 'SVG', 'PATH']); for (const n of root.querySelectorAll('*')) { if (!skip.has(n.tagName)) { const cls = String(n.className || ''); if (cls.includes('room-name') || cls.includes('last-message')) { const text = (n.innerText || '').trim(); if (text && text.length < 300) { out.push({ cls: cls.includes('room-name') ? 'room' : (cls.includes('last-message-time') ? 'time' : 'message'), text: text }); } } } if (n.shadowRoot) walk(n.shadowRoot, d + 1, out); } } const flat = []; walk(document, 0, flat); const threads = []; let current = null; for (const item of flat) { if (item.cls === 'room') { if (current) threads.push(current); current = { room: item.text, time: null, last_message: null }; } else if (current && item.cls === 'time' && !current.time) { current.time = item.text; } else if (current && item.cls === 'message' && !current.last_message) { current.last_message = item.text; } } if (current) threads.push(current); return JSON.stringify({ source: 'chats', count: threads.length, threads: threads.slice(0, 50) });"
-          }
+  "system": "reddit",
+  "capability": "reddit.messages",
+  "summary": "Read recent Reddit messages from either the DM inbox (old.reddit.com) or reddit.com/chat.",
+  "description": "Read Reddit messages. `source=inbox` pulls structured DMs from old.reddit.com's inbox; `source=chats` extracts recent chat threads from reddit.com/chat via shadow-DOM traversal.",
+  "params": {
+    "properties": {
+      "source": {
+        "kind": "string",
+        "required": true,
+        "description": "'inbox' reads old.reddit.com/message/inbox (private messages/DMs) and returns structured rows (author, subject, timestamp, body, id). 'chats' reads reddit.com/chat and returns a compact shadow-DOM text walk (tag/class/text) of visible conversation lines.",
+        "enum_values": [
+          "inbox",
+          "chats"
         ]
       }
-    ]
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "reddit.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "reddit.com"
+      ]
+    },
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "reddit.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://old.reddit.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open a Reddit tab (bootstrap \u2014 a tab must exist before execute_javascript can run)",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "args": [
+            "{source}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const source = (cleanArg(arg0) || 'inbox').toLowerCase(); const url = source === 'chats' ? 'https://www.reddit.com/chat/' : 'https://old.reddit.com/message/inbox/'; setTimeout(() => { window.location.assign(url); }, 0); return JSON.stringify({ source: source, url: url });"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Redirect to the correct message surface based on `source`",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Initial page settle (chat hydration needs more time than old-reddit SSR)",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "args": [
+            "{source}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const source = (cleanArg(arg0) || 'inbox').toLowerCase(); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); if (source === 'inbox') { const deadline = Date.now() + 15000; while (Date.now() < deadline && !document.querySelector('.message, .nothing')) { await sleep(250); } for (let i = 0; i < 2; i++) { window.scrollBy(0, 2000); await sleep(800); } const rows = Array.from(document.querySelectorAll('.message')).slice(0, 50).map((el) => { const author = el.querySelector('.sender a.author')?.textContent?.trim() || null; const subject = el.querySelector('.subject a')?.textContent?.trim() || null; const time = el.querySelector('.tagline time')?.getAttribute('datetime') || null; const body = el.querySelector('.md p')?.textContent?.trim() || null; const id = el.getAttribute('data-fullname') || null; return { id, author, subject, timestamp: time, body }; }); return JSON.stringify({ source: 'inbox', count: rows.length, messages: rows }); } function walk(root, d, out) { if (d > 12) return; const skip = new Set(['SCRIPT', 'STYLE', 'TITLE', 'LINK', 'META', 'NOSCRIPT', 'SVG', 'PATH']); for (const n of root.querySelectorAll('*')) { if (!skip.has(n.tagName)) { const cls = String(n.className || ''); if (cls.includes('room-name') || cls.includes('last-message')) { const text = (n.innerText || '').trim(); if (text && text.length < 300) { out.push({ cls: cls.includes('room-name') ? 'room' : (cls.includes('last-message-time') ? 'time' : 'message'), text: text }); } } } if (n.shadowRoot) walk(n.shadowRoot, d + 1, out); } } const flat = []; walk(document, 0, flat); const threads = []; let current = null; for (const item of flat) { if (item.cls === 'room') { if (current) threads.push(current); current = { room: item.text, time: null, last_message: null }; } else if (current && item.cls === 'time' && !current.time) { current.time = item.text; } else if (current && item.cls === 'message' && !current.last_message) { current.last_message = item.text; } } if (current) threads.push(current); return JSON.stringify({ source: 'chats', count: threads.length, threads: threads.slice(0, 50) });"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract messages: structured DOM rows for inbox, shadow-DOM text walk for chats",
+      "timeout_ms": 30000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "source": { "type": "string", "enum": ["inbox", "chats"] },
+        "count": { "type": "integer" },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string", "nullable": true },
+              "author": { "type": "string", "nullable": true },
+              "subject": { "type": "string", "nullable": true },
+              "timestamp": { "type": "string", "nullable": true },
+              "body": { "type": "string", "nullable": true }
+            }
+          }
+        },
+        "threads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "room": { "type": "string" },
+              "time": { "type": "string", "nullable": true },
+              "last_message": { "type": "string", "nullable": true }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
   },
   "help": {
     "summary": "Read recent Reddit messages from either the DM inbox (old.reddit.com) or reddit.com/chat.",
-    "parameters": [
-      {
-        "name": "source",
-        "required": true,
-        "shape": "enum: inbox | chats",
-        "description": "'inbox' reads old.reddit.com/message/inbox (private messages/DMs) and returns structured rows (author, subject, timestamp, body, id). 'chats' reads reddit.com/chat and returns a compact shadow-DOM text walk (tag/class/text) of visible conversation lines.",
-        "example": "inbox"
-      }
-    ],
+    "parameters": {
+      "source": "'inbox' reads old.reddit.com/message/inbox (private messages/DMs) and returns structured rows (author, subject, timestamp, body, id). 'chats' reads reddit.com/chat and returns a compact shadow-DOM text walk (tag/class/text) of visible conversation lines."
+    },
     "examples": [
       {
         "description": "Read latest private messages from the old.reddit.com inbox",
@@ -76,10 +171,16 @@
         "command": "rzn-browser run reddit messages --param source=chats"
       }
     ],
-    "returns": "JSON: { source, count, messages } for inbox; { source, count, threads } for chats. Inbox rows: id, author, subject, timestamp, body. Chat threads: room (username or room name), time (relative timestamp shown by reddit), last_message.",
+    "returns": [
+      "JSON: { source, count, messages } for inbox; { source, count, threads } for chats. Inbox rows: id, author, subject, timestamp, body. Chat threads: room (username or room name), time (relative timestamp shown by reddit), last_message."
+    ],
     "notes": [
       "source=inbox requires an authenticated old.reddit.com session.",
-      "source=chats pierces shadow DOM to find conversation rows. Results are paired room/time/last-message triples — the first N=50 threads shown in the chat sidebar."
+      "source=chats pierces shadow DOM to find conversation rows. Results are paired room/time/last-message triples \u2014 the first N=50 threads shown in the chat sidebar."
     ]
+  },
+  "metadata": {
+    "migrated_from": "reddit/reddit-messages.json",
+    "legacy_system_id": "reddit"
   }
 }

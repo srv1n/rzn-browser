@@ -1,89 +1,268 @@
 {
-  "system_id": "amazon",
-  "id": "amazon_search",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "amazon/search",
   "name": "Amazon Product Search",
-  "description": "Search Amazon and extract product listing cards with title, URL, price, and rating metadata.",
-  "domain": "amazon.com",
   "version": "2.0.0",
-  "browser_automation": {
-    "description": "Amazon search extraction workflow tuned for dynamic SERP cards.",
-    "sequences": [
-      {
-        "name": "amazon_search_extract",
-        "description": "Performs Amazon search and extracts visible product cards.",
-        "required_variables": [
-          {
-            "name": "search_query",
-            "description": "Search term to run on Amazon."
-          }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Navigate directly to Amazon search results",
-            "type": "navigate_to_url",
-            "url": "https://www.amazon.com/s?k={search_query}"
-          },
-          {
-            "id": "s2",
-            "name": "Wait for search results hydration",
-            "type": "wait_for_timeout",
-            "timeout_ms": 3500
-          },
-          {
-            "id": "s3",
-            "name": "Dismiss popups if present",
-            "type": "dismiss_popups"
-          },
-          {
-            "id": "s4",
-            "name": "Wait for result cards",
-            "type": "wait_for_element",
-            "selector": "[data-component-type='s-search-result'] h2 a, .s-main-slot [data-component-type='s-search-result'] h2",
-            "timeout_ms": 25000
-          },
-          {
-            "id": "s5",
-            "name": "Extra wait for lazy-loaded data",
-            "type": "wait_for_timeout",
-            "timeout_ms": 2500
-          },
-          {
-            "id": "s6",
-            "name": "Extract search result cards",
-            "type": "extract_structured_data",
-            "item_selector": "[data-component-type='s-search-result']",
-            "fields": [
-              {
-                "name": "title",
-                "selector": "h2 a span, h2 span"
-              },
-              {
-                "name": "product_url",
-                "selector": "h2 a",
-                "attribute": "href"
-              },
-              {
-                "name": "asin",
-                "selector": "[data-asin]",
-                "attribute": "data-asin"
-              },
-              {
-                "name": "price",
-                "selector": ".a-price .a-offscreen, .a-price-whole"
-              },
-              {
-                "name": "rating",
-                "selector": ".a-icon-star-small .a-icon-alt, .a-icon-star .a-icon-alt"
-              },
-              {
-                "name": "review_count",
-                "selector": "a[href*='customerReviews'] span.a-size-base, span.a-size-base.s-underline-text"
-              }
-            ]
-          }
-        ]
+  "system": "amazon",
+  "capability": "amazon.search",
+  "summary": "Search Amazon and extract product listing cards with title, URL, price, and rating metadata.",
+  "description": "Search Amazon and extract product listing cards with title, URL, price, and rating metadata.",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Search term to run on Amazon."
       }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "amazon.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "amazon.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.amazon.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Amazon homepage"
+    },
+    {
+      "id": "s1a",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#twotabsearchtextbox"
+        }
+      },
+      "name": "Wait for the homepage search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s1c",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#twotabsearchtextbox"
+        }
+      },
+      "name": "Fill the homepage search box"
+    },
+    {
+      "id": "s1d",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#twotabsearchtextbox",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for search results hydration",
+      "timeout_ms": 3500
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "[data-component-type='s-search-result'] h2 a, .s-main-slot [data-component-type='s-search-result'] h2"
+        }
+      },
+      "name": "Wait for result cards",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extra wait for lazy-loaded data",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "title",
+              "selector": "h2 a span, h2 span"
+            },
+            {
+              "attribute": "href",
+              "name": "product_url",
+              "selector": "h2 a"
+            },
+            {
+              "attribute": "data-asin",
+              "name": "asin",
+              "selector": "[data-asin]"
+            },
+            {
+              "name": "price",
+              "selector": ".a-price .a-offscreen, .a-price-whole"
+            },
+            {
+              "name": "rating",
+              "selector": ".a-icon-star-small .a-icon-alt, .a-icon-star .a-icon-alt"
+            },
+            {
+              "name": "review_count",
+              "selector": "a[href*='customerReviews'] span.a-size-base, span.a-size-base.s-underline-text"
+            }
+          ],
+          "item_selector": "[data-component-type='s-search-result']"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract search result cards"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "product_url": {
+            "type": "string"
+          },
+          "asin": {
+            "type": "string"
+          },
+          "price": {
+            "type": "string"
+          },
+          "rating": {
+            "type": "string"
+          },
+          "review_count": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search Amazon and extract product listing cards with title, URL, price, and rating metadata.",
+    "parameters": {
+      "search_query": "Search term to run on Amazon."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run amazon search --param search_query=\"usb-c hub\"",
+        "description": "Run a basic Amazon search."
+      }
+    ],
+    "returns": [
+      "Array of search-result cards, each with { title, product_url, asin, price, rating, review_count }."
+    ],
+    "notes": [
+      "Read-only.",
+      "Drives the real homepage search box (`#twotabsearchtextbox`) and submits the form to look like a human rather than a bot hitting `/s?k=...` directly.",
+      "Feed `product_url` into amazon/product-key-facts-reviews for deep extraction."
     ]
+  },
+  "metadata": {
+    "migrated_from": "amazon/amazon-search.json",
+    "legacy_system_id": "amazon"
   }
 }

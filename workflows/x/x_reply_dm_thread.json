@@ -1,167 +1,318 @@
 {
-  "system_id": "x",
-  "id": "x_reply_dm_thread",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "x/reply_dm_thread",
   "name": "X: Reply In DM Thread",
-  "description": "Open one X DM thread URL in a fresh tab, draft a reply, pause for human approval, then send. Use when replying inside an existing thread. Do not use to start a brand-new conversation by handle (use `x_send_dm`).",
-  "domain": "x.com",
   "version": "1.1.0",
-  "browser_automation": {
-    "use_current_tab": false,
-    "description": "Navigates a fresh tab to the thread URL, handles the X Chat passcode gate if shown, activates the composer with a trusted click, types the reply, asserts send is enabled, and pauses at the review gate before sending.",
-    "sequences": [
-      {
-        "name": "x_reply_dm_thread",
-        "description": "Open DM thread -> (onboarding gate) -> activate composer -> type message -> verify send enabled -> pause for review -> send.",
-        "required_variables": [
-          {
-            "name": "thread_url",
-            "description": "Full X DM thread URL"
-          },
-          {
-            "name": "message_text",
-            "description": "Reply text to send"
-          }
-        ],
-        "steps": [
-          {
-            "id": "s0",
-            "name": "Open the DM thread in a fresh tab",
-            "type": "navigate_to_url",
-            "url": "{thread_url}",
-            "timeout_ms": 60000
-          },
-          {
-            "id": "s1",
-            "name": "Allow the thread page to settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1800
-          },
-          {
-            "id": "s2",
-            "name": "Dismiss popups if present",
-            "type": "dismiss_popups"
-          },
-          {
-            "id": "s3",
-            "name": "Wait for the DM composer or X Chat onboarding gate",
-            "type": "wait_for_element",
-            "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true'], button[data-testid='pin-onboarding-setup-now']",
-            "timeout_ms": 20000
-          },
-          {
-            "id": "s4",
-            "name": "Pause if X Chat requires passcode setup",
-            "type": "request_user_intervention",
-            "message": "If X Chat asks you to create a passcode, finish that setup now. Otherwise click Continue immediately.",
-            "instructions": "After the passcode gate is cleared, the workflow will wait for the DM composer and continue typing.",
-            "approval_mode": "ask_user",
-            "continue_on_timeout": false,
-            "timeout_ms": 2147483647
-          },
-          {
-            "id": "s5",
-            "name": "Wait for the DM composer after onboarding is cleared",
-            "type": "wait_for_element",
-            "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']",
-            "timeout_ms": 20000
-          },
-          {
-            "id": "s6",
-            "name": "Activate the DM composer with a trusted click",
-            "type": "click_element",
-            "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']",
-            "use_cdp": true,
-            "timeout_ms": 10000
-          },
-          {
-            "id": "s7",
-            "name": "Allow the DM caret to settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 350
-          },
-          {
-            "id": "s8",
-            "name": "Type the DM reply text",
-            "type": "type_text",
-            "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']",
-            "text": "{message_text}",
-            "use_native_input": false,
-            "delay_ms": 35,
-            "typing_speed": "medium",
-            "timeout_ms": 120000
-          },
-          {
-            "id": "s9",
-            "name": "Confirm the DM send control is enabled",
-            "type": "assert_selector_state",
-            "selector": "button[data-testid='dmComposerSendButton'], div[role='button'][data-testid='dmComposerSendButton'], button[aria-label*='Send' i]",
-            "condition": "enabled",
-            "timeout_ms": 5000
-          },
-          {
-            "id": "s10",
-            "name": "Pause for review before sending the DM reply",
-            "type": "request_user_intervention",
-            "message": "DM reply draft is ready. Click Continue only if you want to send it.",
-            "instructions": "If you do not want to send this DM reply, stop the workflow instead of waiting for the timeout.",
-            "approval_mode": "ask_user",
-            "continue_on_timeout": false,
-            "timeout_ms": 2147483647
-          },
-          {
-            "id": "s11",
-            "name": "Click the DM send control",
-            "type": "click_element",
-            "selector": "button[data-testid='dmComposerSendButton'], div[role='button'][data-testid='dmComposerSendButton'], button[aria-label*='Send' i]",
-            "use_cdp": true,
-            "timeout_ms": 10000
-          },
-          {
-            "id": "s12",
-            "name": "Allow the DM send to settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 900
-          },
-          {
-            "id": "s13",
-            "name": "Read the final DM thread state",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 10000,
-            "script": "const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const composer = document.querySelector(\"div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']\"); return { url: location.href, composer_text: composer ? normalize(composer.textContent || '') : null, send_button_present: !!document.querySelector(\"button[data-testid='dmComposerSendButton'], div[role='button'][data-testid='dmComposerSendButton'], button[aria-label*='Send' i]\"), pin_onboarding_present: !!document.querySelector(\"button[data-testid='pin-onboarding-setup-now']\") };"
-          }
-        ]
+  "system": "x",
+  "capability": "x.reply.dm.thread",
+  "summary": "Reply inside one existing X DM thread after human approval.",
+  "description": "Open one X DM thread URL in a fresh tab, draft a reply, pause for human approval, then send. Use when replying inside an existing thread. Do not use to start a brand-new conversation by handle (use `x_send_dm`).",
+  "params": {
+    "properties": {
+      "message_text": {
+        "kind": "string",
+        "required": true,
+        "description": "Reply body."
+      },
+      "thread_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Full X DM thread URL."
       }
-    ]
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "external_write",
+      "idempotency": "never_retry",
+      "confirmation_required": true,
+      "scopes": [
+        "x.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{thread_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the DM thread in a fresh tab",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the thread page to settle",
+      "timeout_ms": 1800
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true'], button[data-testid='pin-onboarding-setup-now']"
+        }
+      },
+      "name": "Wait for the DM composer or X Chat onboarding gate",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "request_user_intervention",
+        "inputs": {
+          "message": "If X Chat asks you to create a passcode, finish that setup now. Otherwise click Continue immediately.",
+          "instructions": "After the passcode gate is cleared, the workflow will wait for the DM composer and continue typing.",
+          "approval_mode": "ask_user",
+          "continue_on_timeout": false
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Pause if X Chat requires passcode setup",
+      "timeout_ms": 2147483647
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']"
+        }
+      },
+      "name": "Wait for the DM composer after onboarding is cleared",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']"
+        }
+      },
+      "name": "Activate the DM composer",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the DM caret to settle",
+      "timeout_ms": 350
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "type_text",
+        "inputs": {
+          "use_native_input": false,
+          "delay_ms": 35,
+          "typing_speed": "medium"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']",
+          "text": "{message_text}"
+        }
+      },
+      "name": "Type the DM reply text",
+      "timeout_ms": 120000
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "assert_selector_state",
+        "inputs": {
+          "condition": "enabled"
+        },
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "button[data-testid='dmComposerSendButton'], div[role='button'][data-testid='dmComposerSendButton'], button[aria-label*='Send' i]"
+        }
+      },
+      "name": "Confirm the DM send control is enabled",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s10",
+      "action": {
+        "kind": "request_user_intervention",
+        "inputs": {
+          "message": "DM reply draft is ready. Click Continue only if you want to send it.",
+          "instructions": "If you do not want to send this DM reply, stop the workflow instead of waiting for the timeout.",
+          "approval_mode": "ask_user",
+          "continue_on_timeout": false
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Pause for review before sending the DM reply",
+      "timeout_ms": 2147483647
+    },
+    {
+      "id": "s11",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ],
+        "target": {
+          "selector": "button[data-testid='dmComposerSendButton'], div[role='button'][data-testid='dmComposerSendButton'], button[aria-label*='Send' i]"
+        }
+      },
+      "name": "Click the DM send control",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s12",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the DM send to settle",
+      "timeout_ms": 900
+    },
+    {
+      "id": "s13",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const composer = document.querySelector(\"div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], div[role='textbox'][contenteditable='true']\"); return { url: location.href, composer_text: composer ? normalize(composer.textContent || '') : null, send_button_present: !!document.querySelector(\"button[data-testid='dmComposerSendButton'], div[role='button'][data-testid='dmComposerSendButton'], button[aria-label*='Send' i]\"), pin_onboarding_present: !!document.querySelector(\"button[data-testid='pin-onboarding-setup-now']\") };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the final DM thread state",
+      "timeout_ms": 10000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "composer_text": { "type": ["string", "null"] },
+        "send_button_present": { "type": "boolean" },
+        "pin_onboarding_present": { "type": "boolean" }
+      }
+    },
+    "output_selector": {
+      "step_id": "s13",
+      "path": "$"
+    }
   },
   "help": {
     "summary": "Reply inside one existing X DM thread after human approval.",
-    "parameters": [
-      {
-        "name": "thread_url",
-        "required": true,
-        "shape": "url",
-        "description": "Full X DM thread URL.",
-        "example": "https://x.com/messages/123-456"
-      },
-      {
-        "name": "message_text",
-        "required": true,
-        "shape": "text",
-        "description": "Reply body.",
-        "example": "Today's a great day"
-      }
-    ],
+    "parameters": {
+      "message_text": "Reply body.",
+      "thread_url": "Full X DM thread URL."
+    },
     "examples": [
       {
         "command": "rzn-browser run x reply-dm-thread --param thread_url=\"https://x.com/messages/123-456\" --param message_text=\"Today's a great day\"",
         "description": "Reply inside an existing DM thread after confirming at the review gate."
       }
     ],
-    "returns": "{ url, composer_text, send_button_present, pin_onboarding_present } post-send.",
+    "returns": [
+      "{ url, composer_text, send_button_present, pin_onboarding_present } post-send."
+    ],
     "notes": [
       "Mutating. Two gates (passcode + send approval).",
       "Opens a fresh tab so multiple thread replies can be orchestrated in parallel."
     ]
+  },
+  "metadata": {
+    "migrated_from": "x/x_reply_dm_thread.json",
+    "legacy_system_id": "x"
   }
 }

@@ -1,0 +1,136 @@
+{
+  "schema_version": "rzn.workflow_manifest.v2",
+  "system_id": "fixture.local",
+  "workflow_id": "fixture-local-download-artifact-v2",
+  "name": "Fixture: Download Artifact",
+  "description": "Contract fixture for a download capability that returns artifact refs instead of embedding file bytes.",
+  "capabilities": [
+    {
+      "capability_id": "fixture.local.download_artifact",
+      "summary": "Download a deterministic local fixture file and return an artifact reference.",
+      "route": {
+        "kind": "workflow",
+        "workflow_ref": "fixture-local-download-artifact-v2"
+      },
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fixture_url"],
+        "properties": {
+          "fixture_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Local fixture file URL served by the contract harness."
+          },
+          "filename_hint": {
+            "type": "string",
+            "default": "contract-fixture.txt",
+            "description": "Preferred artifact display filename."
+          }
+        }
+      },
+      "effects": ["read", "download", "local_file_write"],
+      "output": {
+        "status_path": "$.ok",
+        "result_path": "$.data",
+        "warning_path": "$.warnings",
+        "artifact_paths": ["$.artifacts[*]"]
+      }
+    }
+  ],
+  "steps": [
+    {
+      "id": "download-fixture",
+      "action": {
+        "type": "download",
+        "url_param": "fixture_url",
+        "filename_hint_param": "filename_hint"
+      }
+    },
+    {
+      "id": "summarize-artifact",
+      "action": {
+        "type": "select_result",
+        "result": {
+          "downloaded": true,
+          "artifact_count": 1
+        }
+      }
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "success-artifact-ref",
+      "params": {
+        "fixture_url": "http://127.0.0.1:0/workflow_contract/contract-fixture.txt",
+        "filename_hint": "contract-fixture.txt"
+      },
+      "expect": {
+        "schema_version": "rzn.run_envelope.v1",
+        "system_id": "fixture.local",
+        "capability_id": "fixture.local.download_artifact",
+        "status": "succeeded",
+        "result": {
+          "downloaded": true,
+          "artifact_count": 1
+        },
+        "warnings": [],
+        "artifacts": [
+          {
+            "kind": "file",
+            "name": "contract-fixture.txt",
+            "media_type": "text/plain",
+            "size_bytes": 36
+          }
+        ]
+      }
+    },
+    {
+      "id": "policy-denied-download",
+      "params": {
+        "fixture_url": "http://127.0.0.1:0/workflow_contract/contract-fixture.txt"
+      },
+      "policy": {
+        "allow_effects": ["read"]
+      },
+      "expect": {
+        "schema_version": "rzn.run_envelope.v1",
+        "system_id": "fixture.local",
+        "capability_id": "fixture.local.download_artifact",
+        "status": "policy_denied",
+        "error": {
+          "code": "effect_not_allowed"
+        }
+      }
+    }
+  ],
+  "help": {
+    "summary": "Download a local fixture file and return a typed artifact reference.",
+    "parameters": [
+      {
+        "name": "fixture_url",
+        "required": true,
+        "shape": "uri",
+        "description": "Local fixture file URL served by the contract harness.",
+        "example": "http://127.0.0.1:4321/workflow_contract/contract-fixture.txt"
+      },
+      {
+        "name": "filename_hint",
+        "required": false,
+        "shape": "string",
+        "description": "Preferred artifact display filename.",
+        "example": "contract-fixture.txt"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Contract harness run",
+        "command": "rzn-browser workflow validate --strict workflows/fixtures/manifest_v2/local_download_artifact.manifest.v2.json"
+      }
+    ],
+    "returns": "RunEnvelopeV1 with a small result object and artifact metadata refs.",
+    "notes": [
+      "The primary result never embeds file bytes, data URLs, or browser download ids."
+    ]
+  }
+}

@@ -1,0 +1,531 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "reddit/submit",
+  "name": "Reddit: Submit",
+  "version": "1.0.0",
+  "system": "reddit",
+  "capability": "reddit.submit",
+  "summary": "Submit a Reddit post in any kind (text/link/image/video/gallery/poll/crosspost) on www.reddit.com. Markdown body, multi-image gallery upload, video, post flair (id or text), NSFW/spoiler/commercial toggles, draft vs submit. Returns a structured outcome (submitted | draft_saved | abandoned | error) instead of throwing on captcha or rate-limits, so publishers can route around soft blocks.",
+  "description": "Unified Reddit post submitter on www.reddit.com (new design). Single workflow for text, link, image, video, gallery, poll, and crosspost \u2014 kind-aware. Supports markdown body, multi-image gallery upload, video, post flair (id or text), NSFW/spoiler/commercial toggles, draft vs submit, and human-paced typing. Detects invisible reCAPTCHA escalation and aborts cleanly with outcome:abandoned/reason:captcha so the publisher can route around it. Requires an authenticated session in the active browser profile.",
+  "params": {
+    "properties": {
+      "attachment_paths": {
+        "kind": "array",
+        "required": false,
+        "description": "Files to upload. Required when kind in {image, video, gallery}. Single file for image/video; 2\u201320 image files for gallery. Reddit accepts: image/jpeg|png|webp|gif and video/mp4|quicktime."
+      },
+      "body_markdown": {
+        "kind": "string",
+        "required": false,
+        "description": "Body content. Required when kind=text (primary body). Optional caption when kind in {link, image, video, gallery, crosspost}; goes into the post's optional body composer. Workflow flips the composer to Markdown mode before filling so headings, lists, code blocks, and emphasis render literally."
+      },
+      "commercial": {
+        "kind": "string",
+        "required": false,
+        "description": "Mark as commercial / brand-affiliated communication. Required by some communities for paid content.",
+        "enum_values": [
+          "yes",
+          "no"
+        ],
+        "default": "no"
+      },
+      "flair_id": {
+        "kind": "string",
+        "required": false,
+        "description": "Canonical flair template id. Preferred over flair_text \u2014 stable, locale-independent, works even when flair display text is internationalized. Use a flair-list workflow (or Reddit's API) to fetch ids per sub."
+      },
+      "flair_text": {
+        "kind": "string",
+        "required": false,
+        "description": "Fallback when flair_id is not known. Matched case-insensitively against each flair item's text (exact, prefix, or substring). Less stable than flair_id; use only when the id catalog is missing."
+      },
+      "kind": {
+        "kind": "string",
+        "required": true,
+        "description": "Post kind. 'text' = self post with markdown body. 'link' = external URL with optional caption. 'image' = single image. 'video' = single video (mp4 / mov). 'gallery' = 2\u201320 images. 'poll' = 2\u20136 text options + optional body. 'crosspost' = re-share an existing reddit post (requires source_post_url).",
+        "enum_values": [
+          "text",
+          "link",
+          "image",
+          "video",
+          "gallery",
+          "poll",
+          "crosspost"
+        ]
+      },
+      "mode": {
+        "kind": "string",
+        "required": false,
+        "description": "submit (default) clicks Post; draft clicks Save Draft and stops. Use draft for review-before-publish flows. NOTE: Reddit disables Save Draft for kind in {image, video, gallery, poll} \u2014 the workflow throws a clear REDDIT_DRAFT_NOT_SUPPORTED error in that case so the publisher can switch to mode=submit.",
+        "enum_values": [
+          "submit",
+          "draft"
+        ],
+        "default": "submit"
+      },
+      "nsfw": {
+        "kind": "string",
+        "required": false,
+        "description": "Mark the post NSFW. Toggled in the flair / tags modal alongside flair selection.",
+        "enum_values": [
+          "yes",
+          "no"
+        ],
+        "default": "no"
+      },
+      "poll_duration_days": {
+        "kind": "string",
+        "required": false,
+        "description": "Poll duration in days. Best-effort: only changes the dropdown when the picker is reachable; Reddit's default is 3 days.",
+        "enum_values": [
+          "1",
+          "2",
+          "3",
+          "7"
+        ],
+        "default": "3"
+      },
+      "poll_options": {
+        "kind": "string",
+        "required": false,
+        "description": "Poll answer options. Required when kind=poll. Reddit allows between 2 and 6 options."
+      },
+      "read_first": {
+        "kind": "string",
+        "required": false,
+        "description": "When 'yes', scrolls the composer 3\u00d7 with reading pauses before clicking submit. Adds ~3.5s of pacing to look less scripted on tightly-gated subs.",
+        "enum_values": [
+          "yes",
+          "no"
+        ],
+        "default": "no"
+      },
+      "source_post_url": {
+        "kind": "string",
+        "required": false,
+        "description": "Source post to re-share. Required when kind=crosspost. Workflow extracts the t3_ id from /comments/<id>/ in the URL and passes it as ?crosspostFullname."
+      },
+      "spoiler": {
+        "kind": "string",
+        "required": false,
+        "description": "Mark the post as a spoiler. Toggled in the flair / tags modal.",
+        "enum_values": [
+          "yes",
+          "no"
+        ],
+        "default": "no"
+      },
+      "subreddit": {
+        "kind": "string",
+        "required": true,
+        "description": "Target community. The workflow opens www.reddit.com/r/<subreddit>/submit/?type=..."
+      },
+      "title": {
+        "kind": "string",
+        "required": true,
+        "description": "Post title. Reddit caps at 300; the workflow throws above that. Typed at human pace into the title field."
+      },
+      "type_speed": {
+        "kind": "string",
+        "required": false,
+        "description": "Per-character typing pace for title and body. fast=8\u201318ms, normal=22\u201355ms, slow=50\u2013130ms. Use slow when posting to gated/anti-bot communities.",
+        "enum_values": [
+          "fast",
+          "normal",
+          "slow"
+        ],
+        "default": "normal"
+      },
+      "url": {
+        "kind": "string",
+        "required": false,
+        "description": "External URL for the link post. Required when kind=link, ignored otherwise."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "www.reddit.com"
+      ]
+    },
+    {
+      "class": "external_write",
+      "idempotency": "never_retry",
+      "confirmation_required": true,
+      "scopes": [
+        "www.reddit.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "www.reddit.com"
+      ]
+    },
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "www.reddit.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "www.reddit.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.reddit.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open www.reddit.com (bootstrap \u2014 execute_javascript needs a live tab)",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{subreddit}",
+            "{kind}",
+            "{source_post_url}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const subreddit = cleanArg(arg0); const kind = (cleanArg(arg1) || 'text').toLowerCase(); const sourcePostUrl = cleanArg(arg2); if (!subreddit) throw new Error('subreddit is required'); if (!['text','link','image','video','gallery','poll','crosspost'].includes(kind)) throw new Error('kind must be one of text|link|image|video|gallery|poll|crosspost'); const typeMap = { text: 'TEXT', link: 'LINK', image: 'IMAGE', video: 'IMAGE', gallery: 'IMAGE', poll: 'POLL', crosspost: 'LINK' }; const params = new URLSearchParams(); params.set('type', typeMap[kind]); if (kind === 'crosspost') { if (!sourcePostUrl) throw new Error('source_post_url is required when kind=crosspost'); const m = sourcePostUrl.match(/\\/comments\\/([a-z0-9]+)/i); if (!m) throw new Error('source_post_url does not look like a Reddit post URL (expected .../comments/<id>/...)'); params.set('crosspostFullname', 't3_' + m[1]); } const target = 'https://www.reddit.com/r/' + encodeURIComponent(subreddit) + '/submit/?' + params.toString(); setTimeout(() => { window.location.assign(target); }, 0); return JSON.stringify({ navigating_to: target, kind: kind, type_param: typeMap[kind] });"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Build the kind-aware submit URL and redirect (?type=TEXT|IMAGE|LINK|POLL plus ?crosspostFullname=t3_<id> when kind=crosspost)",
+      "timeout_ms": 8000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Composer mount settle (React + custom elements + shadow roots \u2014 needs \u22654s)",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{subreddit}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const subreddit = cleanArg(arg0); const collect = () => { const roots = []; const visit = (r) => { roots.push(r); const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT); let n = w.currentNode; while (n) { if (n.shadowRoot) visit(n.shadowRoot); n = w.nextNode(); } }; visit(document); return roots; }; const qDeep = (sel) => { for (const r of collect()) { try { const el = r.querySelector(sel); if (el) return el; } catch(e){} } return null; }; if (/\\/login\\b/i.test(location.pathname)) { throw new Error('Redirected to /login \u2014 session is not authenticated. Sign into reddit.com in this browser profile and retry.'); } if (qDeep('shreddit-login-prompt')) { throw new Error('shreddit-login-prompt visible \u2014 not logged in.'); } if (/communitynotfound|page not found/i.test(document.title)) { throw new Error('subreddit not found: r/' + (subreddit || '<unknown>')); } const visibleCaptcha = (() => { const ifr = document.querySelectorAll('iframe[src*=\"recaptcha/api2/bframe\"], iframe[src*=\"recaptcha/enterprise/bframe\"], iframe[src*=\"hcaptcha\"]'); for (const f of ifr) { const r = f.getBoundingClientRect(); if (r.width > 50 && r.height > 50) return f.src; } const robotEl = qDeep('[class*=\"are-you-a-robot\" i], [data-testid*=\"captcha\" i]:not([style*=\"display: none\"])'); return robotEl ? 'robot-element' : null; })(); if (visibleCaptcha) { return JSON.stringify({ outcome: 'abandoned', reason: 'captcha', detail: visibleCaptcha, url: location.href }); } const composer = qDeep('shreddit-composer#post-composer_bodytext, shreddit-composer#post-composer_optional_bodytext'); const titleHost = qDeep('faceplate-textarea-input[name=\"title\"]'); if (!composer && !titleHost) { throw new Error('post composer did not mount \u2014 page may be blocked or rate-limited (no shreddit-composer or title field present at ' + location.href + ')'); } return JSON.stringify({ outcome: 'ready', url: location.href, has_title: !!titleHost, has_body_composer: !!composer });"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Sanity check: detect logged-out / captcha challenge / community-not-found and short-circuit with a structured outcome",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{title}",
+            "{type_speed}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const title = cleanArg(arg0); const speed = (cleanArg(arg1) || 'normal').toLowerCase(); if (!title) throw new Error('title is required'); if (title.length > 300) throw new Error('title exceeds 300 chars (Reddit limit)'); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const speedMap = { fast: [8, 18], normal: [22, 55], slow: [50, 130] }; const [minMs, maxMs] = speedMap[speed] || speedMap.normal; if (speed === 'fast') { /* still bounded */ } const collect = () => { const roots = []; const visit = (r) => { roots.push(r); const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT); let n = w.currentNode; while (n) { if (n.shadowRoot) visit(n.shadowRoot); n = w.nextNode(); } }; visit(document); return roots; }; const qDeep = (sel) => { for (const r of collect()) { try { const el = r.querySelector(sel); if (el) return el; } catch(e){} } return null; }; let titleHost = null; const deadline = Date.now() + 15000; while (Date.now() < deadline) { titleHost = qDeep('faceplate-textarea-input[name=\"title\"]'); if (titleHost && titleHost.shadowRoot) break; await sleep(250); } if (!titleHost || !titleHost.shadowRoot) throw new Error('title host (faceplate-textarea-input[name=\"title\"]) not found after 15s'); const ta = titleHost.shadowRoot.querySelector('textarea#innerTextArea'); if (!ta) throw new Error('inner #innerTextArea not found inside title shadow root'); ta.focus(); const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; setter.call(ta, ''); ta.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' })); for (let i = 0; i < title.length; i++) { const ch = title[i]; setter.call(ta, ta.value + ch); ta.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch })); const jitter = minMs + Math.random() * (maxMs - minMs); await sleep(jitter); } ta.dispatchEvent(new Event('change', { bubbles: true })); return JSON.stringify({ filled_chars: title.length, title_value: ta.value.slice(0, 80), speed: speed });"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Type the title at human pace into faceplate-textarea-input[name=\"title\"]'s inner shadow textarea (paste-blast avoidance)",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{kind}",
+            "{body_markdown}",
+            "{url}|||{poll_options}|||{poll_duration_days}|||{type_speed}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const kind = (cleanArg(arg0) || 'text').toLowerCase(); const body = cleanArg(arg1); const packed = String(arg2 == null ? '' : arg2).split('|||'); const url = cleanArg(packed[0]); const pollOptionsRaw = cleanArg(packed[1]); const pollDurationRaw = cleanArg(packed[2]); const speed = (cleanArg(packed[3]) || 'normal').toLowerCase(); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const speedMap = { fast: [4, 12], normal: [12, 35], slow: [30, 80] }; const [minMs, maxMs] = speedMap[speed] || speedMap.normal; const collect = () => { const roots = []; const visit = (r) => { roots.push(r); const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT); let n = w.currentNode; while (n) { if (n.shadowRoot) visit(n.shadowRoot); n = w.nextNode(); } }; visit(document); return roots; }; const qDeep = (sel) => { for (const r of collect()) { try { const el = r.querySelector(sel); if (el) return el; } catch(e){} } return null; }; const fillFaceplate = async (host, text) => { if (!host || !host.shadowRoot) throw new Error('faceplate host or its shadow not found'); const ta = host.shadowRoot.querySelector('textarea#innerTextArea'); if (!ta) throw new Error('#innerTextArea missing in faceplate shadow'); ta.focus(); const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; setter.call(ta, ''); for (let i = 0; i < text.length; i++) { setter.call(ta, ta.value + text[i]); ta.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text[i] })); await sleep(minMs + Math.random() * (maxMs - minMs)); } ta.dispatchEvent(new Event('change', { bubbles: true })); return ta.value; }; const fillComposer = async (composer, text) => { if (!composer || !composer.shadowRoot) throw new Error('shreddit-composer or its shadow not found'); const mdBtn = composer.shadowRoot.querySelector('button[aria-label*=\"Switch to Markdown\" i]'); if (mdBtn) { mdBtn.click(); await sleep(900); const confirmModal = composer.shadowRoot.querySelector('confirmation-modal'); if (confirmModal && confirmModal.shadowRoot) { const confirmBtn = confirmModal.shadowRoot.querySelector('button[aria-label*=\"confirm\" i], button[aria-label*=\"continue\" i], button[id*=\"confirm\" i]'); if (confirmBtn) { confirmBtn.click(); await sleep(600); } } } const mdComposer = composer.shadowRoot.querySelector('shreddit-markdown-composer'); let target = null; if (mdComposer) { const inner = mdComposer.shadowRoot ? mdComposer.shadowRoot.querySelector('textarea, [contenteditable=\"true\"]') : null; target = inner || mdComposer.querySelector('textarea, [contenteditable=\"true\"]'); } if (!target) { try { composer.value = ''; composer.value = text; composer.dispatchEvent(new Event('input', { bubbles: true })); composer.dispatchEvent(new Event('change', { bubbles: true })); return { strategy: 'host_value_setter', value_len: (composer.value || '').length }; } catch (e) { throw new Error('markdown composer textarea not found and host.value setter rejected: ' + e.message); } } target.focus(); if (target.tagName === 'TEXTAREA') { const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; setter.call(target, ''); for (let i = 0; i < text.length; i++) { setter.call(target, target.value + text[i]); target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text[i] })); await sleep(minMs + Math.random() * (maxMs - minMs)); } target.dispatchEvent(new Event('change', { bubbles: true })); return { strategy: 'markdown_textarea_paced', value_len: target.value.length }; } else { document.execCommand('selectAll'); document.execCommand('delete'); document.execCommand('insertText', false, text); return { strategy: 'contenteditable_execCommand', value_len: (target.innerText || '').length }; } }; const out = { kind: kind }; if (kind === 'text') { if (!body) throw new Error('body_markdown is required when kind=text'); const composer = qDeep('shreddit-composer#post-composer_bodytext') || qDeep('shreddit-composer[name=\"body\"]'); if (!composer) throw new Error('primary body composer (#post-composer_bodytext) not found'); out.body_fill = await fillComposer(composer, body); } else if (kind === 'link') { if (!url) throw new Error('url is required when kind=link'); if (!/^https?:\\/\\//i.test(url)) throw new Error('url must be absolute (http:// or https://)'); let linkHost = null; const dl = Date.now() + 10000; while (Date.now() < dl) { linkHost = qDeep('faceplate-textarea-input[name=\"link\"]'); if (linkHost && linkHost.shadowRoot) break; await sleep(250); } if (!linkHost) throw new Error('link URL field not found (faceplate-textarea-input[name=\"link\"])'); out.link_filled = await fillFaceplate(linkHost, url); out.link_value = out.link_filled.slice(0, 80); } else if (kind === 'poll') { if (!pollOptionsRaw) throw new Error('poll_options is required when kind=poll (comma-separated, 2\u20136 entries)'); const opts = pollOptionsRaw.split(',').map(s => s.trim()).filter(Boolean); if (opts.length < 2 || opts.length > 6) throw new Error('poll_options must contain between 2 and 6 entries (got ' + opts.length + ')'); const dl = Date.now() + 12000; let optionInputs = []; while (Date.now() < dl) { optionInputs = []; const candidates = []; for (const r of collect()) { try { for (const el of r.querySelectorAll('faceplate-text-input, input[type=\"text\"]')) { const nm = el.getAttribute('name') || ''; const ph = el.getAttribute('placeholder') || ''; if (/option/i.test(nm) || /option/i.test(ph)) candidates.push(el); } } catch(e){} } if (candidates.length >= 2) { optionInputs = candidates; break; } await sleep(300); } if (optionInputs.length < 2) throw new Error('poll option inputs not found \u2014 community may not allow polls'); for (let i = 0; i < opts.length; i++) { if (i >= optionInputs.length) { const addBtn = qDeep('button[aria-label*=\"add option\" i], button[aria-label*=\"add answer\" i]'); if (addBtn) { addBtn.click(); await sleep(500); } } const host = optionInputs[i] || (() => { for (const r of collect()) { for (const el of r.querySelectorAll('faceplate-text-input')) { const nm = el.getAttribute('name') || ''; if (/option/i.test(nm) && !el.dataset.rznFilled) return el; } } return null; })(); if (!host) throw new Error('could not locate input for poll option ' + (i+1)); host.dataset.rznFilled = '1'; if (host.tagName.toLowerCase() === 'faceplate-text-input') { await fillFaceplate(host, opts[i]); } else { host.focus(); const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; setter.call(host, opts[i]); host.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: opts[i] })); host.dispatchEvent(new Event('change', { bubbles: true })); } } if (pollDurationRaw) { const days = pollDurationRaw.replace(/\\D/g, ''); if (days) { const durButton = qDeep('button[aria-label*=\"duration\" i], button[aria-label*=\"length\" i], faceplate-dropdown-menu[name*=\"duration\" i] button'); if (durButton) { durButton.click(); await sleep(700); const opts = collect().flatMap(r => Array.from(r.querySelectorAll('button, [role=\"option\"], li')).filter(el => new RegExp('\\\\b' + days + '\\\\s*day', 'i').test(el.textContent || ''))); if (opts.length) { opts[0].click(); await sleep(400); out.poll_duration = days + 'd'; } } } } if (body) { const optBody = qDeep('shreddit-composer#post-composer_optional_bodytext') || qDeep('shreddit-composer[name=\"optionalBody\"]'); if (optBody) out.body_fill = await fillComposer(optBody, body); } out.poll_options_filled = opts.length; } else if (kind === 'image' || kind === 'video' || kind === 'gallery') { let host = null; let mediaInput = null; const dl = Date.now() + 15000; while (Date.now() < dl) { host = qDeep('r-post-media-input#post-composer_media'); if (host && host.shadowRoot) { mediaInput = host.shadowRoot.querySelector('input[type=\"file\"]'); if (mediaInput) break; } await sleep(300); } if (!mediaInput) { const allInputs = []; for (const r of collect()) { try { for (const el of r.querySelectorAll('input[type=\"file\"]')) allInputs.push({ accept: el.getAttribute('accept') || null, multiple: el.hasAttribute('multiple') }); } catch(e){} } const subMatch = location.pathname.match(/^\\/r\\/([^/]+)/); throw new Error('media file input not found inside r-post-media-input#post-composer_media after 15s. host_present=' + !!host + ' total_file_inputs=' + allInputs.length + ' all_accepts=' + JSON.stringify(allInputs.slice(0, 8)) + ' url=' + location.href + ' \u2014 r/' + (subMatch ? subMatch[1] : '?') + ' may not allow ' + kind); } if (kind === 'video' && !/video/i.test(mediaInput.getAttribute('accept') || '')) { throw new Error('kind=video but the mounted media input only accepts ' + mediaInput.getAttribute('accept') + ' \u2014 community likely does not allow videos'); } if ((kind === 'image' || kind === 'gallery') && !/image/i.test(mediaInput.getAttribute('accept') || '')) { throw new Error('kind=' + kind + ' but the mounted media input only accepts ' + mediaInput.getAttribute('accept') + ' \u2014 community likely does not allow images'); } mediaInput.setAttribute('data-rzn-reddit-upload', '1'); out.media_input_ready = true; out.media_accept = mediaInput.getAttribute('accept'); out.media_multiple = mediaInput.hasAttribute('multiple'); } else if (kind === 'crosspost') { const dl = Date.now() + 12000; let embed = null; while (Date.now() < dl) { embed = qDeep('shreddit-post, [data-testid*=\"crosspost\" i], r-post-crosspost-embed, [class*=\"crosspost\" i]'); if (embed) break; await sleep(400); } out.crosspost_embed_present = !!embed; if (!embed) out.crosspost_embed_warning = 'source-post embed did not render \u2014 verify the source URL is public'; } return JSON.stringify(out);"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Kind-specific surface fill: body (text), link URL (link), poll options (poll). Image/video/gallery wait for media input; crosspost has nothing to fill beyond title.",
+      "timeout_ms": 45000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "upload_file",
+        "inputs": {
+          "file_path": "{attachment_paths}"
+        },
+        "side_effects": [
+          "browser_state",
+          "external_write",
+          "network_access"
+        ],
+        "target": {
+          "selector": "input[data-rzn-reddit-upload=\"1\"]"
+        }
+      },
+      "name": "Upload media files (image/video/gallery only) \u2014 uses the data-rzn-reddit-upload attribute stamped on r-post-media-input#post-composer_media's inner shadow input by s6, so the platform's qsDeep matches exactly one input (avoids the rte-toolbar image button and the rs-message-composer attachment input)",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for upload chips to render and Reddit's media pipeline to finish processing (videos/large images take longer; the submit button stays disabled until processing completes). 7-image galleries typically need 15\u201330s; if the post button never enables, s12 surfaces the upload_still_busy=true diagnostic.",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{kind}",
+            "{body_markdown}",
+            "{type_speed}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const kind = (cleanArg(arg0) || 'text').toLowerCase(); const body = cleanArg(arg1); const speed = (cleanArg(arg2) || 'normal').toLowerCase(); if (!body || kind === 'text' || kind === 'poll') return JSON.stringify({ skipped: true, reason: kind === 'text' ? 'primary body filled in s6' : (kind === 'poll' ? 'poll body filled in s6' : 'no body_markdown') }); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const speedMap = { fast: [4, 12], normal: [12, 35], slow: [30, 80] }; const [minMs, maxMs] = speedMap[speed] || speedMap.normal; const collect = () => { const roots = []; const visit = (r) => { roots.push(r); const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT); let n = w.currentNode; while (n) { if (n.shadowRoot) visit(n.shadowRoot); n = w.nextNode(); } }; visit(document); return roots; }; const qDeep = (sel) => { for (const r of collect()) { try { const el = r.querySelector(sel); if (el) return el; } catch(e){} } return null; }; let composer = null; const dl = Date.now() + 8000; while (Date.now() < dl) { composer = qDeep('shreddit-composer#post-composer_optional_bodytext') || qDeep('shreddit-composer[name=\"optionalBody\"]'); if (composer && composer.shadowRoot) break; await sleep(300); } if (!composer) return JSON.stringify({ skipped: true, reason: 'optional body composer not present for kind=' + kind }); const mdBtn = composer.shadowRoot.querySelector('button[aria-label*=\"Switch to Markdown\" i]'); if (mdBtn) { mdBtn.click(); await sleep(900); } const mdComposer = composer.shadowRoot.querySelector('shreddit-markdown-composer'); const target = mdComposer && mdComposer.shadowRoot ? mdComposer.shadowRoot.querySelector('textarea') : null; if (!target) { try { composer.value = body; composer.dispatchEvent(new Event('input', { bubbles: true })); composer.dispatchEvent(new Event('change', { bubbles: true })); return JSON.stringify({ strategy: 'host_value_setter', value_len: (composer.value || '').length }); } catch (e) { throw new Error('optional body fill failed: ' + e.message); } } target.focus(); const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; setter.call(target, ''); for (let i = 0; i < body.length; i++) { setter.call(target, target.value + body[i]); target.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: body[i] })); await sleep(minMs + Math.random() * (maxMs - minMs)); } target.dispatchEvent(new Event('change', { bubbles: true })); return JSON.stringify({ strategy: 'markdown_textarea_paced', value_len: target.value.length });"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Optional caption for image/video/gallery/link/crosspost \u2014 fills #post-composer_optional_bodytext when body_markdown is set and kind is non-text/non-poll",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s10",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{flair_id}",
+            "{flair_text}",
+            "{nsfw}|||{spoiler}|||{commercial}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const flairId = cleanArg(arg0); const flairText = cleanArg(arg1); const packed = String(arg2 == null ? '' : arg2).split('|||'); const nsfw = (cleanArg(packed[0]) || 'no').toLowerCase() === 'yes'; const spoiler = (cleanArg(packed[1]) || 'no').toLowerCase() === 'yes'; const commercial = (cleanArg(packed[2]) || 'no').toLowerCase() === 'yes'; const wantFlair = !!(flairId || flairText); const wantToggles = nsfw || spoiler || commercial; if (!wantFlair && !wantToggles) return JSON.stringify({ skipped: true, reason: 'no flair / nsfw / spoiler / commercial requested' }); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const collect = () => { const roots = []; const visit = (r) => { roots.push(r); const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT); let n = w.currentNode; while (n) { if (n.shadowRoot) visit(n.shadowRoot); n = w.nextNode(); } }; visit(document); return roots; }; const qDeep = (sel) => { for (const r of collect()) { try { const el = r.querySelector(sel); if (el) return el; } catch(e){} } return null; }; const qDeepAll = (sel) => { const out = []; for (const r of collect()) { try { for (const el of r.querySelectorAll(sel)) out.push(el); } catch(e){} } return out; }; const flairBtn = qDeep('button#reddit-post-flair-button'); if (!flairBtn) throw new Error('flair button (#reddit-post-flair-button) not found \u2014 composer surface may have changed'); const aria = (flairBtn.getAttribute('aria-label') || '').toLowerCase(); if (wantFlair && /not available/i.test(aria)) throw new Error('flair requested but community has none (aria-label: \"Not available for this community\"). Pass flair_id=\"\" flair_text=\"\" or post to a different community.'); flairBtn.click(); await sleep(1500); const modalHost = qDeep('r-post-flairs-modal'); if (!modalHost || !modalHost.shadowRoot) throw new Error('flair modal (r-post-flairs-modal) did not open'); const modalRoot = modalHost.shadowRoot; const result = { flair_picked: null, nsfw_set: null, spoiler_set: null, commercial_set: null }; if (wantFlair) { const items = Array.from(modalRoot.querySelectorAll('button, [role=\"option\"], [role=\"button\"], li')); let pick = null; if (flairId) { pick = items.find(el => (el.getAttribute('data-flair-template-id') === flairId) || (el.getAttribute('data-flair-id') === flairId) || (el.id && el.id.includes(flairId))); } if (!pick && flairText) { const target = flairText.toLowerCase(); pick = items.find(el => { const t = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase(); return t === target || t.startsWith(target) || t.includes(target); }); } if (!pick) { const inputs = modalRoot.querySelectorAll('input[name=\"flairTemplateId\"], input[name=\"flair_template_id\"], faceplate-radio-group'); if (inputs.length && flairId) { for (const ip of inputs) { if (ip.value === flairId) { ip.click(); pick = ip; break; } } } } if (!pick) throw new Error('could not pick flair: id=' + (flairId || '<none>') + ' text=' + (flairText || '<none>') + ' \u2014 neither matched any flair in the modal'); pick.click(); await sleep(400); result.flair_picked = (pick.innerText || pick.textContent || pick.value || '').trim().slice(0, 60); } const setSwitch = async (name, want) => { const sw = modalRoot.querySelector('faceplate-switch-input[name=\"' + name + '\"]'); if (!sw) return null; const current = !!sw.checked; if (current === want) return current; sw.click(); await sleep(250); return sw.checked; }; if (nsfw) result.nsfw_set = await setSwitch('isNsfw', true); if (spoiler) result.spoiler_set = await setSwitch('isSpoiler', true); if (commercial) result.commercial_set = await setSwitch('isCommercialCommunication', true); const applyBtn = modalRoot.querySelector('button#post-flair-modal-apply-button'); if (!applyBtn) throw new Error('apply button (#post-flair-modal-apply-button) not found in flair modal'); applyBtn.click(); await sleep(900); return JSON.stringify(result);"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the flair / tags modal and apply flair_id (or flair_text fallback) plus NSFW / spoiler / commercial toggles. No-op when nothing requested. Throws if flair was requested but the community has no flairs.",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s11",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{read_first}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const readFirst = (cleanArg(arg0) || 'no').toLowerCase(); if (readFirst !== 'yes') return JSON.stringify({ skipped: true }); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const pauses = [900, 1300, 1100]; for (const p of pauses) { window.scrollBy(0, Math.floor(window.innerHeight * 0.4)); await sleep(p); } window.scrollTo({ top: 0, behavior: 'smooth' }); await sleep(800); return JSON.stringify({ scrolled: pauses.length });"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Optional pre-submit read-pass scroll (read_first=yes adds ~5s of pacing \u2014 useful for less-bot-like behavior on tightly-gated subs)",
+      "timeout_ms": 12000
+    },
+    {
+      "id": "s12",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{mode}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const mode = (cleanArg(arg0) || 'submit').toLowerCase(); if (!['submit','draft'].includes(mode)) throw new Error('mode must be submit or draft'); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const collect = () => { const roots = []; const visit = (r) => { roots.push(r); const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT); let n = w.currentNode; while (n) { if (n.shadowRoot) visit(n.shadowRoot); n = w.nextNode(); } }; visit(document); return roots; }; const qDeep = (sel) => { for (const r of collect()) { try { const el = r.querySelector(sel); if (el) return el; } catch(e){} } return null; }; const qDeepAll = (sel) => { const out = []; for (const r of collect()) { try { for (const el of r.querySelectorAll(sel)) out.push(el); } catch(e){} } return out; }; const isEnabled = (b) => !!b && !b.disabled && b.getAttribute('aria-disabled') !== 'true'; const isUploadBusy = () => !!qDeep('shreddit-loading-bar, [class*=\"uploading\" i], [aria-label*=\"uploading\" i]'); const targetId = mode === 'submit' ? 'inner-post-submit-button' : 'inner-save-draft-button'; let btn = null; let lastState = null; const dl = Date.now() + 60000; while (Date.now() < dl) { btn = qDeep('button#' + targetId); if (btn) { lastState = { found: true, disabled: btn.disabled, aria_disabled: btn.getAttribute('aria-disabled'), text: (btn.innerText || '').trim().slice(0, 40), upload_busy: isUploadBusy() }; if (isEnabled(btn)) break; } else { lastState = { found: false, upload_busy: isUploadBusy() }; } await sleep(500); } if (!btn) throw new Error('button #' + targetId + ' not found in r-post-form-submit-button shadow within 60s'); if (!isEnabled(btn)) { if (mode === 'draft') { const postBtn = qDeep('button#inner-post-submit-button'); if (isEnabled(postBtn)) { throw new Error('REDDIT_DRAFT_NOT_SUPPORTED: Reddit disables Save Draft for this post kind (typically image / video / gallery / poll). The Post button is enabled \u2014 re-run with mode=submit, or switch to kind=text/link if you need draft support. URL: ' + location.href); } } const banners = qDeepAll('faceplate-toast, shreddit-banner-error, [role=\"alert\"]:not([id*=\"reddit-post-flair\"])').slice(0, 3).map(e => (e.innerText || '').replace(/\\s+/g,' ').trim()).filter(t => t.length > 2 && t.length < 200); const validation = qDeepAll('faceplate-form-helper-text, [class*=\"helper-text\" i]:not([class*=\"hidden\" i])').slice(0, 4).map(e => (e.innerText || '').replace(/\\s+/g,' ').trim()).filter(t => t.length > 2 && t.length < 160); throw new Error('button #' + targetId + ' is still disabled after 60s. mode=' + mode + '; last_state=' + JSON.stringify(lastState) + '; upload_still_busy=' + isUploadBusy() + '; banners=' + JSON.stringify(banners) + '; validation_helpers=' + JSON.stringify(validation) + '; url=' + location.href); } btn.click(); return JSON.stringify({ clicked: targetId, mode: mode, waited_state: lastState });"
+        },
+        "side_effects": [
+          "browser_state",
+          "external_write",
+          "network_access"
+        ]
+      },
+      "name": "Click Post (mode=submit) or Save Draft (mode=draft). Polls up to 60s for button enablement to cover Reddit's media-processing window for galleries (7-image upload typically takes 30\u201345s). REQUIRES the extension's patched CDP eval timeout (see extension/src/cdp/cdpClient.ts + extension/src/background.ts plumbing); without that patch, this step is capped at the engine's hardcoded 30s Runtime.evaluate ceiling.",
+      "timeout_ms": 65000
+    },
+    {
+      "id": "s13",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{mode}",
+            "{subreddit}",
+            "{title}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const mode = (cleanArg(arg0) || 'submit').toLowerCase(); const subreddit = cleanArg(arg1); const title = cleanArg(arg2); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const collect = () => { const roots = []; const visit = (r) => { roots.push(r); const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT); let n = w.currentNode; while (n) { if (n.shadowRoot) visit(n.shadowRoot); n = w.nextNode(); } }; visit(document); return roots; }; const qDeep = (sel) => { for (const r of collect()) { try { const el = r.querySelector(sel); if (el) return el; } catch(e){} } return null; }; const visibleCaptcha = () => { const ifr = document.querySelectorAll('iframe[src*=\"recaptcha/api2/bframe\"], iframe[src*=\"recaptcha/enterprise/bframe\"], iframe[src*=\"hcaptcha\"]'); for (const f of ifr) { const r = f.getBoundingClientRect(); if (r.width > 50 && r.height > 50) return f.src; } if (qDeep('[class*=\"are-you-a-robot\" i]')) return 'are-you-a-robot'; return null; }; const errorText = () => { const banners = []; for (const r of collect()) { try { for (const el of r.querySelectorAll('faceplate-toast, shreddit-banner-error, [role=\"alert\"]:not([id*=\"reddit-post-flair\"])')) { const t = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim(); if (t && t.length < 240) banners.push(t); } } catch(e){} } return banners.length ? banners[0] : null; }; const findTitleLink = () => { if (!title) return null; const target = title.replace(/\\s+/g, ' ').trim().toLowerCase().slice(0, 100); for (const r of collect()) { try { for (const a of r.querySelectorAll('a[href*=\"/comments/\"]')) { const t = (a.innerText || a.textContent || '').replace(/\\s+/g, ' ').trim().toLowerCase(); if (!t) continue; if (t === target || t.startsWith(target.slice(0, 60)) || target.startsWith(t.slice(0, 60))) { return a.href; } } } catch(e){} } return null; }; if (mode === 'draft') { await sleep(2500); const cap = visibleCaptcha(); if (cap) return JSON.stringify({ outcome: 'abandoned', reason: 'captcha', detail: cap, url: location.href }); const err = errorText(); if (err && /error|failed|unable/i.test(err)) return JSON.stringify({ outcome: 'error', reason: 'banner', detail: err, url: location.href }); return JSON.stringify({ outcome: 'draft_saved', url: location.href }); } const startedAt = location.href; const dl = Date.now() + 30000; let stage = 'waiting'; while (Date.now() < dl) { const cap = visibleCaptcha(); if (cap) return JSON.stringify({ outcome: 'abandoned', reason: 'captcha', detail: cap, url: location.href }); const err = errorText(); if (err && /error|failed|unable|too fast|rate|cooldown|removed|automated|bot/i.test(err)) return JSON.stringify({ outcome: 'error', reason: 'banner', detail: err, url: location.href }); if (/\\/comments\\/[a-z0-9]+/i.test(location.href)) { stage = 'permalink'; break; } if (location.href !== startedAt && !/\\/submit/i.test(location.href)) { stage = 'redirected'; break; } await sleep(500); } if (stage === 'permalink') { const m = location.href.match(/\\/comments\\/([a-z0-9]+)/i); return JSON.stringify({ outcome: 'submitted', post_id: m[1], post_fullname: 't3_' + m[1], url: location.href, subreddit: subreddit || null }); } if (stage === 'redirected') { await sleep(1500); const titleLink = findTitleLink(); if (titleLink) { const m = titleLink.match(/\\/comments\\/([a-z0-9]+)/i); if (m) return JSON.stringify({ outcome: 'submitted', post_id: m[1], post_fullname: 't3_' + m[1], url: titleLink, subreddit: subreddit || null, verified_via: 'feed_title_match' }); } return JSON.stringify({ outcome: 'submitted_no_permalink', url: location.href, subreddit: subreddit || null, note: 'Reddit redirected away from the submit page but the post permalink could not be resolved from the destination feed. Check the user profile to confirm.' }); } const cap = visibleCaptcha(); if (cap) return JSON.stringify({ outcome: 'abandoned', reason: 'captcha', detail: cap, url: location.href }); const err = errorText(); if (err) return JSON.stringify({ outcome: 'error', reason: 'banner', detail: err, url: location.href }); return JSON.stringify({ outcome: 'unknown', reason: 'no_url_change', url: location.href, started_at: startedAt });"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Verify outcome \u2014 accept either /comments/<id>/ permalink redirect OR redirect to /r/<sub>/* with the just-published title visible in the feed; surface captcha + error banners as structured outcomes.",
+      "timeout_ms": 35000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "submitted",
+            "submitted_no_permalink",
+            "draft_saved",
+            "abandoned",
+            "error",
+            "unknown"
+          ]
+        },
+        "post_id": { "type": "string", "nullable": true },
+        "post_fullname": { "type": "string", "nullable": true },
+        "url": { "type": "string" },
+        "subreddit": { "type": "string", "nullable": true },
+        "reason": { "type": "string", "nullable": true },
+        "detail": { "type": "string", "nullable": true },
+        "verified_via": { "type": "string", "nullable": true },
+        "note": { "type": "string", "nullable": true },
+        "started_at": { "type": "string", "nullable": true }
+      }
+    },
+    "output_selector": {
+      "step_id": "s13",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Submit a Reddit post in any kind (text/link/image/video/gallery/poll/crosspost) on www.reddit.com. Markdown body, multi-image gallery upload, video, post flair (id or text), NSFW/spoiler/commercial toggles, draft vs submit. Returns a structured outcome (submitted | draft_saved | abandoned | error) instead of throwing on captcha or rate-limits, so publishers can route around soft blocks.",
+    "parameters": {
+      "attachment_paths": "Files to upload. Required when kind in {image, video, gallery}. Single file for image/video; 2\u201320 image files for gallery. Reddit accepts: image/jpeg|png|webp|gif and video/mp4|quicktime.",
+      "body_markdown": "Body content. Required when kind=text (primary body). Optional caption when kind in {link, image, video, gallery, crosspost}; goes into the post's optional body composer. Workflow flips the composer to Markdown mode before filling so headings, lists, code blocks, and emphasis render literally.",
+      "commercial": "Mark as commercial / brand-affiliated communication. Required by some communities for paid content.",
+      "flair_id": "Canonical flair template id. Preferred over flair_text \u2014 stable, locale-independent, works even when flair display text is internationalized. Use a flair-list workflow (or Reddit's API) to fetch ids per sub.",
+      "flair_text": "Fallback when flair_id is not known. Matched case-insensitively against each flair item's text (exact, prefix, or substring). Less stable than flair_id; use only when the id catalog is missing.",
+      "kind": "Post kind. 'text' = self post with markdown body. 'link' = external URL with optional caption. 'image' = single image. 'video' = single video (mp4 / mov). 'gallery' = 2\u201320 images. 'poll' = 2\u20136 text options + optional body. 'crosspost' = re-share an existing reddit post (requires source_post_url).",
+      "mode": "submit (default) clicks Post; draft clicks Save Draft and stops. Use draft for review-before-publish flows. NOTE: Reddit disables Save Draft for kind in {image, video, gallery, poll} \u2014 the workflow throws a clear REDDIT_DRAFT_NOT_SUPPORTED error in that case so the publisher can switch to mode=submit.",
+      "nsfw": "Mark the post NSFW. Toggled in the flair / tags modal alongside flair selection.",
+      "poll_duration_days": "Poll duration in days. Best-effort: only changes the dropdown when the picker is reachable; Reddit's default is 3 days.",
+      "poll_options": "Poll answer options. Required when kind=poll. Reddit allows between 2 and 6 options.",
+      "read_first": "When 'yes', scrolls the composer 3\u00d7 with reading pauses before clicking submit. Adds ~3.5s of pacing to look less scripted on tightly-gated subs.",
+      "source_post_url": "Source post to re-share. Required when kind=crosspost. Workflow extracts the t3_ id from /comments/<id>/ in the URL and passes it as ?crosspostFullname.",
+      "spoiler": "Mark the post as a spoiler. Toggled in the flair / tags modal.",
+      "subreddit": "Target community. The workflow opens www.reddit.com/r/<subreddit>/submit/?type=...",
+      "title": "Post title. Reddit caps at 300; the workflow throws above that. Typed at human pace into the title field.",
+      "type_speed": "Per-character typing pace for title and body. fast=8\u201318ms, normal=22\u201355ms, slow=50\u2013130ms. Use slow when posting to gated/anti-bot communities.",
+      "url": "External URL for the link post. Required when kind=link, ignored otherwise."
+    },
+    "examples": [
+      {
+        "description": "Plain markdown text post on r/test (drafts, not published)",
+        "command": "rzn-browser run reddit submit --param subreddit=test --param kind=text --param title=\"Hello from rzn\" --param body_markdown=\"## Hi\\n\\nThis is a **markdown** test.\" --param mode=draft"
+      },
+      {
+        "description": "Single-image post with a caption and an NSFW tag",
+        "command": "rzn-browser run reddit submit --param subreddit=test --param kind=image --param title=\"Lab build\" --param attachment_paths=\"/Users/me/photo.jpg\" --param body_markdown=\"Quick caption.\" --param nsfw=yes"
+      },
+      {
+        "description": "5-image gallery on a flaired sub with explicit flair_id",
+        "command": "rzn-browser run reddit submit --param subreddit=PhotoCritique --param kind=gallery --param title=\"Studio set\" --param attachment_paths=\"/p/a.jpg,/p/b.jpg,/p/c.jpg,/p/d.jpg,/p/e.jpg\" --param flair_id=\"abcd1234-\u2026\""
+      },
+      {
+        "description": "Link post with optional body, posted as a draft for human review",
+        "command": "rzn-browser run reddit submit --param subreddit=programming --param kind=link --param title=\"Worth a read\" --param url=\"https://example.com/post\" --param body_markdown=\"Caught my eye because\u2026\" --param mode=draft"
+      },
+      {
+        "description": "Crosspost an existing reddit post into r/productivity with a flair text fallback",
+        "command": "rzn-browser run reddit submit --param subreddit=productivity --param kind=crosspost --param title=\"Saw this earlier \u2014 relevant here\" --param source_post_url=\"https://www.reddit.com/r/getdisciplined/comments/abc123/title/\" --param flair_text=\"Tip\""
+      },
+      {
+        "description": "Poll with 4 options + 7-day duration",
+        "command": "rzn-browser run reddit submit --param subreddit=AskReddit --param kind=poll --param title=\"What do you ship on?\" --param poll_options=\"Mac,Linux,Windows,iPad\" --param poll_duration_days=7"
+      }
+    ],
+    "returns": [
+      "JSON. On success: { outcome: 'submitted', post_id, post_fullname, url, subreddit }. On draft: { outcome: 'draft_saved', url }. On soft block: { outcome: 'abandoned', reason: 'captcha', detail, url } \u2014 publisher should NOT retry, route to a different account or human review. On hard error: { outcome: 'error', reason: 'banner', detail, url } \u2014 read banner text, decide. On indeterminate: { outcome: 'unknown', reason: 'no_url_change', url } \u2014 manual inspection needed."
+    ],
+    "notes": [
+      "www.reddit.com (new design) only \u2014 selectors target shreddit-* / r-post-* / faceplate-* custom elements with shadow-DOM piercing. old.reddit.com is not supported by this workflow (use reddit-comment / reddit-vote which already cover old.reddit).",
+      "Caller must already be signed into reddit.com in the active browser profile.",
+      "Reddit's invisible reCAPTCHA usually scores in the background. When it escalates to a visible challenge, the workflow returns outcome='abandoned' reason='captcha' rather than throwing \u2014 DO NOT retry the same workflow with the same payload, the next attempt will get gated harder. Route to manual or wait.",
+      "kind=image, kind=video, and kind=gallery all use Reddit's combined Images & Video composer (?type=IMAGE) \u2014 the workflow does not enforce file-type-vs-kind beyond Reddit's own accept attribute. A jpg passed under kind=video would still upload but render as an image post.",
+      "kind=crosspost depends on the source post being publicly viewable and crosspostable \u2014 private subs and authors who disabled crossposting will fail at the embed step.",
+      "send_replies (the 'send replies to my inbox' toggle) was removed from new Reddit's submit composer and is intentionally NOT a parameter. Manage default behavior via account settings on reddit.com.",
+      "The Markdown toggle inside <shreddit-composer> is hidden by CSS class but still functional via programmatic click. If Reddit removes the toggle entirely, body fill falls back to setting host.value directly via the composer's public API.",
+      "The flair / tags modal also hosts NSFW/spoiler/commercial toggles. The workflow opens it once and applies all modal-side state in one pass.",
+      "Idempotency: this workflow has SIDE EFFECTS \u2014 every submit call publishes a new post. Do not retry blindly. The publisher should check the outcome envelope and decide.",
+      "Drafts (mode=draft) are supported only for kind=text and kind=link. Reddit's new composer disables the Save Draft button for image/video/gallery/poll posts; the workflow detects that case and throws REDDIT_DRAFT_NOT_SUPPORTED so the publisher can fall back to mode=submit instead of waiting for a state that will never arrive."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "reddit/reddit-submit.json",
+    "legacy_system_id": "reddit"
+  }
+}

@@ -66,7 +66,7 @@ rzn-browser run instagram dm-send --param recipient_handle="timbersfc" --param m
 
 ## Notes And Limits
 
-- Every workflow opens a dedicated workflow tab (`use_current_tab=false`), so multiple instagram runs are safe to invoke in parallel. They share the Chrome profile's cookies, so they ride the same logged-in session.
+- Every workflow opens a dedicated workflow tab, so multiple instagram runs are safe to invoke in parallel. They share the Chrome profile's cookies, so they ride the same logged-in session.
 - Write workflows require a signed-in Instagram session in the active Chrome profile and return `status=login_required` when the profile is signed out.
 - Write workflows are idempotent where idempotency makes sense: `follow-account` / `post-like` no-op if already in the target state; `post-comment` and `dm-send` always create a new public or private artifact, respectively, so the caller is responsible for deduping.
 - Rate limiting is an Instagram-side concern: don't loop faster than a real user would. Space batched writes with a real delay between calls.

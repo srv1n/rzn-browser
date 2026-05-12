@@ -1,90 +1,208 @@
 {
-  "system_id": "sciencedirect_paper",
-  "id": "sciencedirect_paper_access_v1",
+  "schema_version": "rzn.workflow_manifest",
+  "id": "sciencedirect/paper_access",
   "name": "ScienceDirect Paper Access Workflow",
-  "description": "Fetch a ScienceDirect paper's metadata, abstract, and PDF link.",
-  "domain": "sciencedirect.com",
   "version": "2.0.0",
-  "last_updated": "2026-04-24T00:00:00Z",
+  "system": "sciencedirect",
+  "capability": "sciencedirect.paper.access",
+  "summary": "Open a ScienceDirect article page and return title, journal, citation, DOI, abstract, PDF link, and author list.",
+  "description": "Fetch a ScienceDirect paper's metadata, abstract, and PDF link.",
+  "params": {
+    "properties": {
+      "paper_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Absolute URL to a ScienceDirect article (.../science/article/pii/<PII>). Pre-resolve DOIs to a ScienceDirect URL before calling."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "sciencedirect.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "sciencedirect.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{paper_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to paper URL"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "span.title-text"
+        }
+      },
+      "name": "Wait for article title",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Settle dynamic content",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "item_selector": "body",
+          "limit": 1,
+          "fields": [
+            {
+              "name": "title",
+              "selector": "span.title-text"
+            },
+            {
+              "name": "journal",
+              "selector": ".publication-title-link"
+            },
+            {
+              "name": "citation",
+              "selector": ".publication-brand .text-xs"
+            },
+            {
+              "name": "doi",
+              "selector": "a.doi",
+              "attribute": "href"
+            },
+            {
+              "name": "abstract",
+              "selector": "div.abstract.author"
+            },
+            {
+              "name": "pdf_url",
+              "selector": "a.accessbar-utility-link",
+              "attribute": "href"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract paper metadata"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "item_selector": ".author-group a",
+          "fields": [
+            {
+              "name": "name",
+              "selector": "*"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract authors"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "journal": {
+            "type": "string"
+          },
+          "citation": {
+            "type": "string"
+          },
+          "doi": {
+            "type": "string"
+          },
+          "abstract": {
+            "type": "string"
+          },
+          "pdf_url": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
+  },
   "help": {
     "summary": "Open a ScienceDirect article page and return title, journal, citation, DOI, abstract, PDF link, and author list.",
-    "parameters": [
-      {
-        "name": "paper_url",
-        "required": true,
-        "shape": "text",
-        "description": "Absolute URL to a ScienceDirect article (.../science/article/pii/<PII>). Pre-resolve DOIs to a ScienceDirect URL before calling.",
-        "example": "https://www.sciencedirect.com/science/article/pii/S2666389920301896"
-      }
-    ],
+    "parameters": {
+      "paper_url": "Absolute URL to a ScienceDirect article (.../science/article/pii/<PII>). Pre-resolve DOIs to a ScienceDirect URL before calling."
+    },
     "examples": [
       {
         "command": "rzn-browser run sciencedirect paper-access --param paper_url=\"https://www.sciencedirect.com/science/article/pii/S2666389920301896\"",
         "description": "Fetch full metadata for an open-access paper."
       }
     ],
-    "returns": "Two result blocks. Block 1 (one item): title, journal, citation (e.g. 'Volume 1, Issue 9, 11 December 2020, 100141'), doi, abstract, pdf_url. Block 2 (array): one entry per author with a name field.",
+    "returns": [
+      "Primary output (array, one item): { title, journal, citation, doi, abstract, pdf_url }. citation example: 'Volume 1, Issue 9, 11 December 2020, 100141'. The author list (array of { name }) is produced by step s5 and surfaces as a step-level result, not the primary output."
+    ],
     "notes": [
       "pdf_url points to the /pdfft entitlement endpoint; for paywalled articles this redirects to an access-required page rather than a PDF.",
-      "citation bundles volume, issue, date, and page/article number — callers parse if individual fields are needed.",
-      "abstract is pulled from div.abstract.author and may include a leading section title (e.g. 'Summary')."
+      "citation bundles volume, issue, date, and page/article number \u2014 callers parse if individual fields are needed.",
+      "abstract is pulled from div.abstract.author and may include a leading section title (e.g. 'Summary').",
+      "Read-only: no login is performed by this workflow. If the active Chrome profile already carries institutional/entitlement cookies, ScienceDirect may surface gated content; that is a session-state effect, not an explicit auth step here."
     ]
   },
-  "browser_automation": {
-    "description": "Loads the article URL and scrapes metadata + PDF link from the article header.",
-    "sequences": [
-      {
-        "name": "paper_access_extraction",
-        "description": "Extract metadata, abstract, and PDF link from a ScienceDirect article page.",
-        "required_variables": [
-          { "name": "paper_url", "description": "Absolute URL to a ScienceDirect article page." }
-        ],
-        "steps": [
-          {
-            "id": "s1",
-            "name": "Navigate to paper URL",
-            "type": "navigate_to_url",
-            "url": "{paper_url}"
-          },
-          {
-            "id": "s2",
-            "name": "Wait for article title",
-            "type": "wait_for_element",
-            "selector": "span.title-text",
-            "timeout_ms": 15000
-          },
-          {
-            "id": "s3",
-            "name": "Settle dynamic content",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1500
-          },
-          {
-            "id": "s4",
-            "name": "Extract paper metadata",
-            "type": "extract_structured_data",
-            "item_selector": "body",
-            "limit": 1,
-            "fields": [
-              { "name": "title", "selector": "span.title-text" },
-              { "name": "journal", "selector": ".publication-title-link" },
-              { "name": "citation", "selector": ".publication-brand .text-xs" },
-              { "name": "doi", "selector": "a.doi", "attribute": "href" },
-              { "name": "abstract", "selector": "div.abstract.author" },
-              { "name": "pdf_url", "selector": "a.accessbar-utility-link", "attribute": "href" }
-            ]
-          },
-          {
-            "id": "s5",
-            "name": "Extract authors",
-            "type": "extract_structured_data",
-            "item_selector": ".author-group a",
-            "fields": [
-              { "name": "name", "selector": "*" }
-            ]
-          }
-        ]
-      }
-    ]
+  "metadata": {
+    "migrated_from": "sciencedirect/sciencedirect-paper-access.json",
+    "legacy_system_id": "sciencedirect_paper"
   }
 }
