@@ -1,0 +1,137 @@
+{
+  "version": "rzn.local.restart_matrix.v1",
+  "epic": "LRT",
+  "tasks": ["LRT-T-0005", "LRT-T-0007", "LRT-T-0009"],
+  "notes": [
+    "CI-safe scenarios are contract scaffolding until supervisor IPC lands.",
+    "Local full-runtime scenarios must use the existing Chrome extension/native-host path, not a Playwright-managed product substitute."
+  ],
+  "scenarios": [
+    {
+      "id": "cli-stale-endpoint-heal",
+      "task": "LRT-T-0009",
+      "producer": "cli",
+      "churn": "stale_legacy_endpoint",
+      "lane": "ci_contract",
+      "ci_safe": true,
+      "setup": "Seed a dead broker_endpoint_v1.json fixture before runtime.ensure_ready.",
+      "assertions": [
+        "Cached pid/socket is treated as a hint only.",
+        "Live runtime.hello handshake is required before attach.",
+        "Heal/status reports the stale endpoint as pruned or ignored."
+      ]
+    },
+    {
+      "id": "cli-supervisor-restart",
+      "task": "LRT-T-0009",
+      "producer": "cli",
+      "churn": "supervisor_restart",
+      "lane": "local_full_runtime",
+      "ci_safe": false,
+      "setup": "Start a CLI browser run, restart the supervisor before first side-effecting step, then retry.",
+      "assertions": [
+        "CLI reattaches through rzn.local.v1 handshake.",
+        "No manual pid/socket cleanup is required.",
+        "Run resumes or fails explicitly before side effects are replayed."
+      ]
+    },
+    {
+      "id": "mcp-adapter-restart",
+      "task": "LRT-T-0009",
+      "producer": "mcp",
+      "churn": "mcp_adapter_restart",
+      "lane": "ci_contract",
+      "ci_safe": true,
+      "setup": "Model an MCP stdio adapter exit while supervisor session state remains live.",
+      "assertions": [
+        "Supervisor owns session state, not the MCP subprocess.",
+        "Recreated MCP adapter can call browser.snapshot with the same session_id.",
+        "MCP tool names remain browser.session_open, browser.snapshot, browser.execute_step, browser.poll_events, and browser.session_close."
+      ]
+    },
+    {
+      "id": "cloud-redelivery-dedupe",
+      "task": "LRT-T-0005",
+      "producer": "cloud",
+      "churn": "supervisor_restart",
+      "lane": "ci_contract",
+      "ci_safe": true,
+      "setup": "Fake dispatcher redelivers the same command_id with a new lease_id after supervisor restart.",
+      "assertions": [
+        "Supervisor dedupes by command_id before extension dispatch.",
+        "lease_id tracks the attempt but does not become the extension req_id.",
+        "payload.session_id is normalized to the cloud envelope session_id."
+      ]
+    },
+    {
+      "id": "cloud-native-host-restart",
+      "task": "LRT-T-0005",
+      "producer": "cloud",
+      "churn": "native_host_restart",
+      "lane": "local_full_runtime",
+      "ci_safe": false,
+      "setup": "Restart the Chrome-launched native host while a cloud actor poll loop is active.",
+      "assertions": [
+        "Supervisor cloud.status remains the actor authority.",
+        "Native host reconnects as a bridge only.",
+        "Refresh token and command spool remain supervisor-owned."
+      ]
+    },
+    {
+      "id": "reason-app-restart",
+      "task": "LRT-T-0007",
+      "producer": "reason_app",
+      "churn": "app_restart",
+      "lane": "ci_contract",
+      "ci_safe": true,
+      "setup": "Model Reason app closing while the supervisor remains live, then recreate the app client.",
+      "assertions": [
+        "Browser automation is still available to CLI, MCP, and cloud while the app is closed.",
+        "App reconnect calls runtime.ensure_ready instead of spawning a browser plugin worker.",
+        "App-owned non-browser MCP/plugin capabilities are unaffected."
+      ]
+    },
+    {
+      "id": "reason-app-extension-worker-restart",
+      "task": "LRT-T-0007",
+      "producer": "reason_app",
+      "churn": "extension_service_worker_restart",
+      "lane": "local_full_runtime",
+      "ci_safe": false,
+      "setup": "Run the app browser smoke, reload the extension service worker, then run snapshot/execute_step again.",
+      "assertions": [
+        "App calls continue through supervisor-backed browser tools.",
+        "Extension session metadata reloads before command handling.",
+        "No plugin worker selection is required for the default browser path."
+      ]
+    },
+    {
+      "id": "extension-service-worker-restart",
+      "task": "LRT-T-0009",
+      "producer": "extension",
+      "churn": "extension_service_worker_restart",
+      "lane": "local_full_runtime",
+      "ci_safe": false,
+      "setup": "Trigger MV3 service-worker reload during an open browser session.",
+      "assertions": [
+        "Supervisor reports bridge degraded during disconnect.",
+        "Bridge reconnect updates runtime.status.",
+        "Session/tab affinity is restored or a structured NO_WORKFLOW_TAB-style error is returned."
+      ]
+    },
+    {
+      "id": "chrome-restart-reconnect",
+      "task": "LRT-T-0009",
+      "producer": "extension",
+      "churn": "chrome_restart",
+      "lane": "local_full_runtime",
+      "ci_safe": false,
+      "setup": "Quit and reopen Chrome with the installed extension while supervisor remains live.",
+      "assertions": [
+        "Supervisor remains alive and marks extension unavailable while Chrome is closed.",
+        "New native-host bridge registers after Chrome/extension reconnect.",
+        "No stale worker pid or socket cleanup is required."
+      ]
+    }
+  ]
+}

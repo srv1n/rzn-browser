@@ -6,6 +6,8 @@
  */
 
 import { cdpSessionManager } from '../runtime/cdp_session_manager';
+import { getActiveBrowserTabId } from '../browserTabs';
+import { actionSuccess } from './actionResult';
 
 export class UploadFileAction {
   async execute(
@@ -142,22 +144,26 @@ export async function handleUploadFile(step: any): Promise<any> {
   const explicitTabId: number | undefined = step.tabId;
   let targetTabId: number | undefined = explicitTabId;
   if (!targetTabId) {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tabs[0]?.id) {
-      throw new Error("No active tab found");
-    }
-    targetTabId = tabs[0].id;
+    targetTabId = await getActiveBrowserTabId("upload_file_cdp");
   }
 
   const sessionId = String(step.session_id || step.sessionId || "default");
+  const startedAt = Date.now();
   const result = await uploadFileAction.execute(sessionId, targetTabId, String(selector), filePaths);
-  return {
-    success: true,
-    action: "upload_file_cdp",
+  const payload = {
     selector: String(selector),
+    uploaded: !result.skipped,
+    skipped: result.skipped === true,
     file_count: result.file_count,
     files: result.files,
     tabId: targetTabId,
-    timestamp: Date.now(),
   };
+
+  return actionSuccess({
+    action: "upload_file_cdp",
+    result: payload,
+    tabId: targetTabId,
+    duration_ms: Date.now() - startedAt,
+    legacy: payload,
+  });
 }

@@ -51,7 +51,7 @@
     ]
   },
   "browser_automation": {
-    "use_current_tab": true,
+    "use_current_tab": false,
     "description": "Current-tab ChatGPT attachment flow. It reuses the authenticated browser session, resets to a fresh composer, defaults to Pro with Extended effort unless overridden, prepares the file input, uploads a file, sends the prompt, and returns thread metadata.",
     "sequences": [
       {

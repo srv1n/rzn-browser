@@ -187,3 +187,13 @@ Only follow this section when the human explicitly requests a commit/push/releas
 **Notes:**
 - If the human asks for a push and it fails, resolve and retry until it succeeds.
 - Otherwise, keep work local and uncommitted until asked.
+
+<!-- tusker:epic-index:begin -->
+## Tusker V6 knowledge graph
+
+Tusker is the sole repo-local system for planning, task tracking, evidence, knowledge-impact checks, verification, and closeout.
+
+This project uses the V6 layout. Start with `tusker/SKILL.md`, route through the narrowest `tusker/domains/<domain>/INDEX.md`, then read that domain's `CANON.md` before opening task history. Durable truth lives in `tusker/domains/**`; task proof lives in `tusker/epics/**`.
+
+When logging work: pick the epic and primary domain whose summaries best match, and announce both choices. If no existing domain or epic fits durable work, create the missing V6 domain/epic before adding tasks.
+<!-- tusker:epic-index:end -->

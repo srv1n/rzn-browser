@@ -1,0 +1,79 @@
+{
+  "system_id": "chatgpt",
+  "id": "chatgpt_get_response",
+  "name": "ChatGPT: Get Latest Response (API)",
+  "description": "Read the latest assistant response from a ChatGPT conversation via the same backend JSON the web app fetches. Returns clean raw markdown for the latest assistant turn (and the user message that triggered it). Authenticated via the page's session — no DOM scraping, no CDP.",
+  "domain": "chatgpt.com",
+  "version": "1.0.0",
+  "last_updated": "2026-05-09T00:00:00Z",
+  "help": {
+    "summary": "Get the latest assistant response (and triggering user message) as raw markdown via the backend-api JSON.",
+    "parameters": [
+      {
+        "name": "chat_id",
+        "required": true,
+        "shape": "uuid",
+        "description": "ChatGPT conversation id (the part after /c/ in the URL).",
+        "example": "01234567-89ab-cdef-0123-456789abcdef"
+      },
+      {
+        "name": "include_planning",
+        "required": false,
+        "shape": "boolean (true|false)",
+        "description": "If true, include intermediate assistant 'planning' turns that come before the final response. Defaults to false (only the last assistant turn).",
+        "example": "false"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Get the latest assistant response.",
+        "command": "rzn-browser run chatgpt get-response --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\""
+      }
+    ],
+    "returns": "{ chat_id, title, model_slug, latest_user_message: {id, role, text, create_time, content_type}, latest_assistant_response: {id, role, text, create_time, content_type, model_slug}, planning_turns: [{...}], message_count, user_turn_count, assistant_turn_count, streaming_in_progress }",
+    "notes": [
+      "Uses /api/auth/session for the access token, then /backend-api/conversation/{chat_id} for the conversation JSON. Same path as chatgpt_export_chat.",
+      "`streaming_in_progress` is true when the latest assistant turn is still being generated. Re-run after a short delay if you need the final text."
+    ]
+  },
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Open ChatGPT for the session cookies, then fetch the conversation JSON and return only the latest user→assistant pair.",
+    "sequences": [
+      {
+        "name": "chatgpt_get_response_api",
+        "description": "Authenticated backend-api latest-turn extract.",
+        "required_variables": [
+          { "name": "chat_id", "description": "ChatGPT conversation id." }
+        ],
+        "optional_variables": [
+          { "name": "include_planning", "description": "Include intermediate planning turns. Defaults to false." }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open ChatGPT to inherit the authenticated session",
+            "type": "navigate_to_url",
+            "url": "https://chatgpt.com/c/{chat_id}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the SPA shell + cookies to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          },
+          {
+            "id": "s2",
+            "name": "Fetch the conversation JSON and extract the latest assistant turn",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 60000,
+            "args": ["{chat_id}", "{include_planning}"],
+            "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const truthy=(v)=>{const t=cleanArg(v).toLowerCase();return t==='true'||t==='1'||t==='yes'||t==='y';};const chatId=cleanArg(arg0);if(!chatId)throw new Error('chat_id is required');const includePlanning=truthy(arg1);const session=await fetch('/api/auth/session',{credentials:'include'}).then(r=>r.json()).catch(()=>({}));const token=session?.accessToken;if(!token)throw new Error('No accessToken in /api/auth/session — not logged in?');const headers={'Authorization':'Bearer '+token,'Accept':'application/json'};const conv=await fetch('/backend-api/conversation/'+encodeURIComponent(chatId),{headers}).then(r=>{if(!r.ok)throw new Error('conversation API '+r.status);return r.json();});const mapping=conv.mapping||{};const orderedIds=[];const seen=new Set();const walk=(id)=>{if(!id||seen.has(id))return;seen.add(id);const node=mapping[id];if(!node)return;orderedIds.push(id);for(const c of (node.children||[]))walk(c);};const rootId=Object.entries(mapping).find(([id,n])=>n&&n.parent==null)?.[0];if(rootId)walk(rootId);else for(const id of Object.keys(mapping))walk(id);const turns=[];let userTurns=0,assistantTurns=0;for(const id of orderedIds){const node=mapping[id];const msg=node?.message;if(!msg||!msg.author?.role)continue;const role=msg.author.role;if(role==='system'||role==='tool')continue;const parts=Array.isArray(msg.content?.parts)?msg.content.parts:[];const text=parts.filter(p=>typeof p==='string').join('\\n\\n');if(!text)continue;const meta=msg.metadata||{};const turn={id:msg.id||id,role,text,create_time:msg.create_time||null,content_type:msg.content?.content_type||null,model_slug:meta.model_slug||null};if(role==='user')userTurns++;else if(role==='assistant')assistantTurns++;turns.push(turn);}const lastUserIdx=(()=>{for(let i=turns.length-1;i>=0;i--)if(turns[i].role==='user')return i;return-1;})();const latestUser=lastUserIdx>=0?turns[lastUserIdx]:null;const assistantsAfter=turns.slice(lastUserIdx+1).filter(t=>t.role==='assistant');const latestAssistant=assistantsAfter.length?assistantsAfter[assistantsAfter.length-1]:null;const planningTurns=includePlanning?assistantsAfter.slice(0,-1):[];const streaming=!!(latestAssistant&&(latestAssistant.content_type==='text'&&!String(latestAssistant.text||'').trim()));return{chat_id:chatId,title:conv.title||null,model_slug:conv.default_model_slug||null,message_count:turns.length,user_turn_count:userTurns,assistant_turn_count:assistantTurns,latest_user_message:latestUser,latest_assistant_response:latestAssistant,planning_turns:planningTurns,streaming_in_progress:streaming,url:window.location.href};"
+          }
+        ]
+      }
+    ]
+  }
+}

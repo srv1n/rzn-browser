@@ -21,7 +21,7 @@
     ]
   },
   "browser_automation": {
-    "use_current_tab": true,
+    "use_current_tab": false,
     "description": "Current-tab rendered-image save flow for ChatGPT Images.",
     "sequences": [
       {

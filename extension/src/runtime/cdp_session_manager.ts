@@ -1,4 +1,5 @@
 import { frameRouter } from '../cdp/frameRouter';
+import { isExpectedCdpLifecycleError } from '../cdp/errors';
 
 type SessionKey = string;
 
@@ -128,7 +129,15 @@ export class CdpSessionManager {
       chrome.debugger.sendCommand({ tabId }, method, params || {}, (result) => {
         const error = chrome.runtime.lastError;
         if (error) {
-          reject(new Error(`CDP command failed: ${formatChromeDebuggerError(error)}`));
+          const formatted = formatChromeDebuggerError(error);
+          const commandError = new Error(`CDP command failed: ${formatted}`);
+          if (isExpectedCdpLifecycleError(formatted)) {
+            frameRouter.markTabDetached(tabId, formatted);
+            (commandError as any).code = 'CDP_TARGET_DETACHED';
+          } else {
+            (commandError as any).code = 'CDP_COMMAND_FAILED';
+          }
+          reject(commandError);
           return;
         }
         resolve(result as T);

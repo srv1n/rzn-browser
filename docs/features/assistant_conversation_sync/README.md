@@ -30,8 +30,8 @@ rzn-browser run chatgpt export-full-chat-v1 --param chat_id=...
 ```
 
 ## Decision Record
-- Use dedicated-tab export/list flows for inbox sync. `use_current_tab` is fine for one-off manual sends, but it is the wrong shape for batch export or parallel fanout.
-- ChatGPT is the exception: in the live Chrome session, dedicated/background workflow tabs stalled on `chatgpt.com` while current-tab navigation was stable. ChatGPT sync is therefore sequential.
+- Use dedicated-tab export/list flows for inbox sync. Existing-session behavior can be useful for one-off manual sends, but it is the wrong shape for batch export or parallel fanout.
+- ChatGPT sync should use session-owned workflow tabs and preserve `session_id` + `current_tab_id` across follow-up calls. Earlier current-tab validation was a stopgap, not a catalog pattern.
 - Keep app-specific DOM logic in workflow JSON. ChatGPT and Claude are fast-moving SPAs; baking their selectors into shared Rust or extension code would be expensive to maintain.
 - The first-class unit is a CLI workflow invocation with explicit params. Local artifact persistence, index management, and waiting-state tracking are caller responsibilities — there is no shipped Python helper.
 - Reuse existing ChatGPT single-thread send flows for replies; add new dedicated-tab read/export surfaces for inbox-style work.
@@ -66,7 +66,7 @@ rzn-browser run chatgpt export-full-chat-v1 --param chat_id=...
 - For "newest assistant/user message" use cases: run `export-full-chat-v1` (or `get-response-v1` for assistant-only) and pick the matching tail entry from the returned transcript. There is no separate `latest` subcommand.
 - For "waiting state" derivation: take the last exported turn — `user` → `awaiting_assistant`, `assistant` → `awaiting_user`. Compute it in the caller, not the binary.
 - Claude sync can fan out across isolated workflow tabs.
-- ChatGPT sync is sequential because the stable runtime path in this session is current-tab only.
+- ChatGPT sync is sequential until the dedicated-tab path is fully revalidated end to end.
 
 ## Tasks & Status
 - [x] Add recent-chat discovery for ChatGPT
@@ -77,7 +77,7 @@ rzn-browser run chatgpt export-full-chat-v1 --param chat_id=...
 - [x] Remove the Python helper layer; promote sync/fetch/reply/latest to direct binary invocations
 - [x] Add workflow docs and parse coverage
 - [x] Add auth-required guards for ChatGPT and Claude export flows
-- [x] Re-validate ChatGPT after Chrome extension/native-host reconnect and confirm current-tab sync/export path
+- [x] Re-validate ChatGPT after Chrome extension/native-host reconnect and move the catalog back to dedicated workflow tabs
 - [ ] Validate Claude pack against a live authenticated session
 - [ ] Improve ChatGPT transcript deduplication for transient wrapper turns
 - [x] Add a button-backed ChatGPT attachment workflow for latest-assistant artifacts
@@ -91,9 +91,9 @@ rzn-browser run chatgpt export-full-chat-v1 --param chat_id=...
 
 ## Tried & Didn’t Work
 - Shipping a Python orchestration wrapper (`scripts/assistant_conversation_sync.py`). Added a hidden control surface that drifted from the binary; removed in favor of direct CLI calls.
-- Extending `use_current_tab` single-thread workflows into a batch sync surface. Kills parallelism and makes stateful fanout miserable.
+- Extending existing-session single-thread workflows into a batch sync surface. Kills parallelism and makes stateful fanout miserable.
 - Treating transcript export as "whatever is visible right now." Too weak — export flows now attempt upward scrolling before extraction.
 - Redirecting ChatGPT with `execute_javascript` after first landing on `/`. Inconsistent timeouts and blank-shell reads under the native-host path; direct route navigation is the better call.
 - Polling ChatGPT recent-history state inside one long async `execute_javascript` block. Hit `Runtime.evaluate` timeouts; a synchronous merge is simpler and more reliable.
-- Using dedicated/background workflow tabs for ChatGPT sync in this Chrome session. Google worked, ChatGPT did not; current-tab was the reliable path.
+- Earlier dedicated/background ChatGPT tabs were flaky in one Chrome session, which caused a temporary active-tab workaround. That workaround is no longer an acceptable catalog pattern; preserve `session_id` + `current_tab_id` instead.
 - Treating ChatGPT attachments like normal anchors. On real threads, the important artifacts were button-backed actions in the latest assistant turn, so share menus and page-wide button scans were the wrong approach.

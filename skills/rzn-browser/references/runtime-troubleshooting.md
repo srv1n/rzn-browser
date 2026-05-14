@@ -67,12 +67,12 @@ LLM_PROVIDER=dummy rzn-browser llm-auto "Search Google for OpenAI" --max-steps 1
 
 If provider variables are missing and the user asked for a real open-ended task, ask them to configure `OPENAI_*` or `GEMINI_*`.
 
-## Current Tab vs Dedicated Tab
+## Dedicated Tab vs Existing Session
 
 - Prefer dedicated workflow tabs for repeatable extraction and parallel runs.
-- Use current-tab behavior only when the workflow explicitly requires the active signed-in page or review state.
-- If a workflow unexpectedly steals the current tab, inspect its `browser_automation.use_current_tab` setting.
-- If an authenticated flow fails in a fresh tab but works in the live tab, current-tab behavior may be correct, but call it out.
+- Use `runtime.requires_existing_session: true` only when the workflow explicitly requires the already-open signed-in page or review state.
+- If a workflow unexpectedly steals the current tab, inspect the workflow for legacy active-tab fields and remove them from production JSON.
+- If an authenticated flow fails in a fresh tab but works in the live tab, existing-session behavior may be correct, but call it out.
 
 ## Bad Output
 

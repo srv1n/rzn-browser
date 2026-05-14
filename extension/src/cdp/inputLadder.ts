@@ -462,8 +462,12 @@ function getEscalationPath(fromTier: ExecutionTier): ExecutionTier[] {
 }
 
 async function getCurrentUrl(tabId: number): Promise<string> {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab?.url || '';
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    return tab?.url || tab?.pendingUrl || '';
+  } catch {
+    return '';
+  }
 }
 
 function sleep(ms: number): Promise<void> {

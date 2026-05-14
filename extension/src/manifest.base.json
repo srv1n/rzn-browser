@@ -50,6 +50,7 @@
     "nativeMessaging",
     "scripting",
     "activeTab",
+    "alarms",
     "storage",
     "notifications",
     "debugger",

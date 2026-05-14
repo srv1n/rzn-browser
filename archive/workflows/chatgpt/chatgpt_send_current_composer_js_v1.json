@@ -29,7 +29,7 @@
     ]
   },
   "browser_automation": {
-    "use_current_tab": true,
+    "use_current_tab": false,
     "description": "Current-tab ChatGPT composer send flow using fixed content-script DOM actions instead of CDP-backed execute_javascript.",
     "sequences": [
       {

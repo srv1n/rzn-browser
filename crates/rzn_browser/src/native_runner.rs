@@ -1,3 +1,4 @@
+use crate::supervisor;
 use crate::workflow_catalog::default_runtime_dir;
 use crate::workflow_failure_report::{build_failure_context, WorkflowRunFailure};
 use anyhow::{anyhow, Context, Result};
@@ -5,10 +6,19 @@ use interprocess::local_socket::traits::tokio::Stream as _;
 use interprocess::local_socket::{
     tokio::Stream as LocalSocketStream, GenericFilePath, GenericNamespaced, ToFsName, ToNsName,
 };
+use rzn_broker_endpoint::{
+    endpoint_pid_is_live, prune_stale_broker_endpoint, BrokerEndpointPruneReport,
+};
+use rzn_contracts::v2::{
+    validate_manifest_value, ParamDefV2, ParamKindV2, RunStatusV2, StepV2, WorkflowManifestV2,
+    RUN_RESULT_VERSION,
+};
 use rzn_core::dsl;
-use serde_json::{json, Value};
+use serde::Serialize;
+use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::fmt;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 use std::time::{Duration as StdDuration, SystemTime};
@@ -81,6 +91,121 @@ pub struct NativeRunConfig {
 }
 
 #[derive(Debug, Clone)]
+pub struct SupervisorRunConfig {
+    pub workflow_path: String,
+    pub params: HashMap<String, String>,
+    pub mode: NativeRunMode,
+    pub snapshot_mode: SnapshotMode,
+    pub app_base: Option<String>,
+    pub endpoint_path: Option<String>,
+    pub worker_cmd: Option<String>,
+    pub worker_args: Vec<String>,
+    pub allow_legacy_worker_fallback: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct NativeHealConfig {
+    pub app_base: Option<String>,
+    pub endpoint_path: Option<String>,
+    pub restart_native_host: bool,
+    pub reset_worker: bool,
+    pub spawn_worker: bool,
+    pub worker_cmd: Option<String>,
+    pub worker_args: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct NativeHealReport {
+    pub endpoint_reports: Vec<BrokerEndpointPruneReport>,
+    pub restarted_native_hosts: Vec<String>,
+    pub reset_worker_endpoints: Vec<String>,
+    pub spawned_worker: bool,
+    pub worker_health: Option<Value>,
+    pub supervisor: Option<Value>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+struct WorkflowRuntimeContext {
+    workflow_id: String,
+    workflow_version: String,
+    system: String,
+    capability: String,
+    declared_side_effects: Vec<String>,
+    enforce_side_effects: bool,
+    output_selector_step_id: Option<String>,
+    output_selector_path: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct LoadedWorkflow {
+    report_workflow: Value,
+    steps: Vec<RuntimeStep>,
+    prefer_current_tab: bool,
+    runtime_context: Option<WorkflowRuntimeContext>,
+}
+
+#[derive(Debug, Clone)]
+enum RuntimeStep {
+    Legacy(Value),
+    Manifest {
+        step: StepV2,
+        params: HashMap<String, String>,
+    },
+}
+
+impl RuntimeStep {
+    fn id(&self) -> &str {
+        match self {
+            Self::Legacy(step) => step.get("id").and_then(Value::as_str).unwrap_or("step"),
+            Self::Manifest { step, .. } => step.id.as_str(),
+        }
+    }
+
+    fn step_type(&self) -> String {
+        match self {
+            Self::Legacy(step) => step
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+            Self::Manifest { step, .. } => step
+                .action
+                .kind
+                .engine_step_type()
+                .or(step.action.custom_kind.as_deref())
+                .unwrap_or("custom")
+                .to_string(),
+        }
+    }
+
+    fn timeout_ms(&self) -> u64 {
+        match self {
+            Self::Legacy(step) => step
+                .get("timeout_ms")
+                .and_then(Value::as_u64)
+                .or_else(|| step.get("timeoutMs").and_then(Value::as_u64))
+                .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS)
+                .max(1),
+            Self::Manifest { step, .. } => {
+                step.timeout_ms.unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS).max(1)
+            }
+        }
+    }
+
+    fn executor_step(&self) -> Value {
+        match self {
+            Self::Legacy(step) => step.clone(),
+            Self::Manifest { step, params } => {
+                let mut step = manifest_step_to_executor_step(step);
+                inject_script_params(&mut step, params);
+                step
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 enum EndpointTransport {
     Tcp { host: String, port: u16 },
     Pipe { path: String, namespaced: bool },
@@ -114,14 +239,9 @@ impl fmt::Display for NativeRunPreflightFailure {
 
 impl std::error::Error for NativeRunPreflightFailure {}
 
-pub async fn run_desktop_workflow(config: DesktopRunConfig) -> Result<()> {
-    let workflow_value = load_workflow_value(&config.workflow_path)?;
-    let workflow_value = apply_parameters(workflow_value, &config.params);
-    let prefer_current_tab = workflow_prefers_current_tab(&workflow_value);
-
-    validate_required_params(&workflow_value, &config.params)?;
-    let steps = extract_steps(&workflow_value)?;
-    validate_steps(&steps)?;
+pub async fn run_desktop_workflow(config: DesktopRunConfig) -> Result<Option<Value>> {
+    let workflow = load_workflow_for_run(&config.workflow_path, &config.params)?;
+    validate_steps(&workflow.steps)?;
 
     let endpoint_path = resolve_desktop_endpoint_path(&config)?;
     let (socket_path, token_path, profile) = load_desktop_broker_endpoint(&endpoint_path, &config)?;
@@ -134,6 +254,7 @@ pub async fn run_desktop_workflow(config: DesktopRunConfig) -> Result<()> {
 
     let mut client = DesktopBrokerClient::connect(&socket_path, &token_path, &profile).await?;
     let mut final_payload: Option<Value> = None;
+    let mut step_outputs: HashMap<String, Value> = HashMap::new();
 
     // The desktop broker tool surface (`rzn.browser.session`) expects `session_id` in payload for
     // stateful automation commands like execute_step/snapshot.
@@ -147,30 +268,20 @@ pub async fn run_desktop_workflow(config: DesktopRunConfig) -> Result<()> {
         wait_for_desktop_native_host(&mut client, wait_ms).await?;
     }
 
-    for (idx, step) in steps.iter().enumerate() {
-        let step_id = step
-            .get("id")
-            .and_then(|value| value.as_str())
-            .unwrap_or("step");
-        let step_type = step
-            .get("type")
-            .and_then(|value| value.as_str())
-            .unwrap_or("unknown");
+    for (idx, step) in workflow.steps.iter().enumerate() {
+        let step_id = step.id();
+        let step_type = step.step_type();
+        let executor_step = step.executor_step();
 
         println!(
             "[STEP] {}/{} {} ({})",
             idx + 1,
-            steps.len(),
+            workflow.steps.len(),
             step_id,
             step_type
         );
 
-        let timeout_ms = step
-            .get("timeout_ms")
-            .and_then(|v| v.as_u64())
-            .or_else(|| step.get("timeoutMs").and_then(|v| v.as_u64()))
-            .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS)
-            .max(1);
+        let timeout_ms = step.timeout_ms();
         let rpc_grace_ms = std::env::var("RZN_DESKTOP_STEP_RPC_GRACE_MS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
@@ -181,31 +292,30 @@ pub async fn run_desktop_workflow(config: DesktopRunConfig) -> Result<()> {
         // navigation, that script may not be ready yet. Two pragmatic mitigations:
         // 1) handle simple sleeps locally for wait_for_timeout
         // 2) retry transient "Receiving end does not exist" failures briefly
-        if should_handle_step_locally(step_type) {
+        if should_handle_step_locally(&step_type) {
             tokio::time::sleep(Duration::from_millis(timeout_ms)).await;
             let response = json!({ "ok": true, "success": true, "waited_ms": timeout_ms });
-            log_step_response(step_id, step_type, &response);
+            log_step_response(step_id, &step_type, &response);
             continue;
         }
 
-        let payload = step_execution_payload(Some(&session_id), step, prefer_current_tab);
+        let payload = step_execution_payload(
+            Some(&session_id),
+            &executor_step,
+            workflow.prefer_current_tab,
+            workflow.runtime_context.as_ref(),
+        );
         let deadline = tokio::time::Instant::now() + Duration::from_millis(rpc_timeout_ms);
-        let mut stop_reason: Option<String> = None;
+        let stop_reason: Option<String>;
         loop {
             let response = client
                 .browser_session("execute_step", payload.clone(), rpc_timeout_ms)
                 .await?;
 
-            let success = response
-                .get("success")
-                .and_then(|v| v.as_bool())
-                .or_else(|| response.get("ok").and_then(|v| v.as_bool()))
-                .unwrap_or(false);
+            let success = response_success(&response);
             if success {
-                log_step_response(step_id, step_type, &response);
-                if let Some(payload) = extract_payload_for_output(&response) {
-                    final_payload = Some(payload);
-                }
+                log_step_response(step_id, &step_type, &response);
+                record_step_output(step_id, &response, &mut step_outputs, &mut final_payload);
                 stop_reason = response_stop_reason(&response);
                 break;
             }
@@ -217,12 +327,12 @@ pub async fn run_desktop_workflow(config: DesktopRunConfig) -> Result<()> {
                 continue;
             }
 
-            log_step_response(step_id, step_type, &response);
+            log_step_response(step_id, &step_type, &response);
             let error = response_error_message(&response).unwrap_or("unknown failure");
             let report_context = build_failure_context(
-                &workflow_value,
+                &workflow.report_workflow,
                 Path::new(&config.workflow_path),
-                step,
+                &executor_step,
                 idx,
                 error,
             );
@@ -241,31 +351,32 @@ pub async fn run_desktop_workflow(config: DesktopRunConfig) -> Result<()> {
         }
     }
 
-    if let Some(payload) = final_payload {
-        if let Ok(pretty) = serde_json::to_string_pretty(&payload) {
+    final_payload = selected_or_fallback_output(
+        workflow.runtime_context.as_ref(),
+        &step_outputs,
+        final_payload.take(),
+    )
+    .map(|payload| build_cli_run_result(workflow.runtime_context.as_ref(), payload));
+    if let Some(run_result) = final_payload.as_ref() {
+        if let Ok(pretty) = serde_json::to_string_pretty(run_result) {
             println!("{}", pretty);
         } else {
-            println!("{}", payload);
+            println!("{}", run_result);
         }
     }
 
-    Ok(())
+    Ok(final_payload)
 }
 
-pub async fn run_native_workflow(config: NativeRunConfig) -> Result<()> {
-    let workflow_value = load_workflow_value(&config.workflow_path)?;
-    let workflow_value = apply_parameters(workflow_value, &config.params);
-    let prefer_current_tab = workflow_prefers_current_tab(&workflow_value);
-
-    validate_required_params(&workflow_value, &config.params)?;
-    let steps = extract_steps(&workflow_value)?;
-    validate_steps(&steps)?;
+pub async fn run_native_workflow(config: NativeRunConfig) -> Result<Option<Value>> {
+    let workflow = load_workflow_for_run(&config.workflow_path, &config.params)?;
+    validate_steps(&workflow.steps)?;
 
     let max_self_heal_attempts = native_self_heal_attempts(config.mode);
     let mut attempt = 0usize;
     loop {
-        match run_native_workflow_once(&config, &workflow_value, &steps, prefer_current_tab).await {
-            Ok(()) => return Ok(()),
+        match run_native_workflow_once(&config, &workflow).await {
+            Ok(payload) => return Ok(payload),
             Err(err) if attempt < max_self_heal_attempts && is_preflight_native_error(&err) => {
                 attempt += 1;
                 println!(
@@ -280,17 +391,279 @@ pub async fn run_native_workflow(config: NativeRunConfig) -> Result<()> {
     }
 }
 
+pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Option<Value>> {
+    let workflow = load_workflow_for_run(&config.workflow_path, &config.params)?;
+    validate_steps(&workflow.steps)?;
+
+    let supervisor_config = supervisor::SupervisorConfig {
+        app_base: config.app_base.as_ref().map(PathBuf::from),
+        endpoint_path: config.endpoint_path.clone(),
+        mode: config.mode,
+        worker_cmd: config.worker_cmd.clone(),
+        worker_args: config.worker_args.clone(),
+        allow_legacy_worker_fallback: config.allow_legacy_worker_fallback,
+    };
+    supervisor::ensure_running(supervisor_config.clone()).await?;
+    let readiness =
+        supervisor::call(supervisor_config.clone(), "runtime.ensure_ready", json!({})).await?;
+    if readiness.get("ok").and_then(|value| value.as_bool()) != Some(true) {
+        let message = readiness
+            .get("error")
+            .and_then(|value| value.as_str())
+            .unwrap_or("supervisor runtime is not ready");
+        anyhow::bail!("{}", message);
+    }
+
+    let mut session_id: Option<String> = None;
+    let mut final_payload: Option<Value> = None;
+    let mut step_outputs: HashMap<String, Value> = HashMap::new();
+
+    let result: Result<()> = async {
+        let session_resp =
+            supervisor::call(supervisor_config.clone(), "browser.session_open", json!({})).await?;
+        session_id = extract_session_id(&session_resp);
+        if let Some(session) = session_id.as_ref() {
+            println!("[OK] Session opened: {}", session);
+        } else {
+            println!("[WARN] Session opened (no session_id returned)");
+        }
+
+        for (idx, step) in workflow.steps.iter().enumerate() {
+            let step_id = step.id();
+            let step_type = step.step_type();
+            let executor_step = step.executor_step();
+
+            println!(
+                "[STEP] {}/{} {} ({})",
+                idx + 1,
+                workflow.steps.len(),
+                step_id,
+                step_type
+            );
+
+            let timeout_ms = step.timeout_ms();
+            let rpc_grace_ms = std::env::var("RZN_SUPERVISOR_STEP_RPC_GRACE_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+                .unwrap_or(DEFAULT_NATIVE_STEP_RPC_GRACE_MS);
+            let rpc_timeout_ms = timeout_ms.saturating_add(rpc_grace_ms).max(timeout_ms);
+
+            if should_handle_step_locally(&step_type) {
+                tokio::time::sleep(Duration::from_millis(timeout_ms)).await;
+                let response = json!({ "ok": true, "success": true, "waited_ms": timeout_ms });
+                log_step_response(step_id, &step_type, &response);
+                continue;
+            }
+
+            let payload = step_execution_payload(
+                session_id.as_deref(),
+                &executor_step,
+                workflow.prefer_current_tab,
+                workflow.runtime_context.as_ref(),
+            );
+            let deadline = tokio::time::Instant::now() + Duration::from_millis(rpc_timeout_ms);
+            let stop_reason: Option<String>;
+            loop {
+                let response = supervisor::call(
+                    supervisor_config.clone(),
+                    "browser.execute_step",
+                    with_timeout(payload.clone(), rpc_timeout_ms),
+                )
+                .await?;
+                let success = response_success(&response);
+
+                if success {
+                    log_step_response(step_id, &step_type, &response);
+                    record_step_output(step_id, &response, &mut step_outputs, &mut final_payload);
+                    stop_reason = response_stop_reason(&response);
+                    break;
+                }
+
+                let err_str = response.get("error").and_then(|v| v.as_str()).unwrap_or("");
+                let transient = is_transient_step_error(err_str);
+                if transient && tokio::time::Instant::now() < deadline {
+                    tokio::time::sleep(Duration::from_millis(350)).await;
+                    continue;
+                }
+
+                log_step_response(step_id, &step_type, &response);
+                record_step_output(step_id, &response, &mut step_outputs, &mut final_payload);
+
+                if config.snapshot_mode == SnapshotMode::OnError {
+                    let _ =
+                        take_supervisor_snapshot(&supervisor_config, session_id.as_deref()).await;
+                }
+                let error = response_error_message(&response).unwrap_or("unknown failure");
+                let report_context = build_failure_context(
+                    &workflow.report_workflow,
+                    Path::new(&config.workflow_path),
+                    &executor_step,
+                    idx,
+                    error,
+                );
+                return Err(anyhow!(WorkflowRunFailure {
+                    message: format!("step {} ({}) failed", step_id, step_type),
+                    report_context,
+                }));
+            }
+
+            if config.snapshot_mode == SnapshotMode::AfterStep {
+                let _ = take_supervisor_snapshot(&supervisor_config, session_id.as_deref()).await;
+            }
+
+            if let Some(reason) = stop_reason {
+                println!(
+                    "[STOP] Workflow halted after {} ({}): {}",
+                    step_id, step_type, reason
+                );
+                break;
+            }
+        }
+
+        final_payload = selected_or_fallback_output(
+            workflow.runtime_context.as_ref(),
+            &step_outputs,
+            final_payload.take(),
+        )
+        .map(|payload| build_cli_run_result(workflow.runtime_context.as_ref(), payload));
+        if let Some(run_result) = final_payload.as_ref() {
+            if let Ok(pretty) = serde_json::to_string_pretty(run_result) {
+                println!("{}", pretty);
+            } else {
+                println!("{}", run_result);
+            }
+        }
+
+        Ok(())
+    }
+    .await;
+
+    if session_id.is_some() {
+        let _ = supervisor::call(
+            supervisor_config,
+            "browser.session_close",
+            with_session(session_id.as_deref(), json!({})),
+        )
+        .await;
+    }
+    result.map(|_| final_payload)
+}
+
+pub async fn heal_native_runtime(config: NativeHealConfig) -> Result<NativeHealReport> {
+    let mut report = NativeHealReport {
+        endpoint_reports: Vec::new(),
+        restarted_native_hosts: Vec::new(),
+        reset_worker_endpoints: Vec::new(),
+        spawned_worker: false,
+        worker_health: None,
+        supervisor: None,
+        notes: Vec::new(),
+    };
+
+    let endpoint_paths = native_heal_endpoint_paths(&config);
+    if endpoint_paths.is_empty() {
+        report
+            .notes
+            .push("No runtime endpoint paths were found or derivable".to_string());
+    }
+
+    for endpoint_path in &endpoint_paths {
+        if let Some(app_base) = app_base_from_endpoint_path(endpoint_path) {
+            if let Ok(prune_report) = prune_stale_broker_endpoint(&app_base) {
+                report.endpoint_reports.push(prune_report);
+            }
+        }
+
+        if config.restart_native_host {
+            if let Ok(Some(native_host_path)) = query_native_host_path(endpoint_path).await {
+                restart_native_host(&native_host_path).await?;
+                if !report
+                    .restarted_native_hosts
+                    .iter()
+                    .any(|existing| existing == &native_host_path)
+                {
+                    report.restarted_native_hosts.push(native_host_path);
+                }
+            }
+        }
+
+        if config.reset_worker {
+            let _lock = match app_base_from_endpoint_path(endpoint_path) {
+                Some(app_base) => acquire_spawn_lock(&app_base).await.ok(),
+                None => None,
+            };
+            terminate_browser_worker_at_endpoint(endpoint_path).await?;
+            remove_browser_worker_socket_artifacts(endpoint_path)?;
+            if let Some(app_base) = app_base_from_endpoint_path(endpoint_path) {
+                if let Ok(prune_report) = prune_stale_broker_endpoint(&app_base) {
+                    report.endpoint_reports.push(prune_report);
+                }
+            }
+            report
+                .reset_worker_endpoints
+                .push(endpoint_path.to_string_lossy().to_string());
+        }
+    }
+
+    if config.spawn_worker {
+        let run_config = NativeRunConfig {
+            workflow_path: String::new(),
+            params: HashMap::new(),
+            mode: NativeRunMode::Spawn,
+            snapshot_mode: SnapshotMode::OnError,
+            app_base: config.app_base.clone(),
+            endpoint_path: config.endpoint_path.clone(),
+            worker_cmd: config.worker_cmd.clone(),
+            worker_args: config.worker_args.clone(),
+        };
+        let mut client = spawn_worker(&run_config).await?;
+        report.spawned_worker = true;
+        report.worker_health = client
+            .send_request("rzn.worker.health", json!({}))
+            .await
+            .ok();
+        client.shutdown().await;
+    }
+
+    let supervisor_config = supervisor::SupervisorConfig {
+        app_base: config.app_base.as_ref().map(PathBuf::from),
+        endpoint_path: config.endpoint_path.clone(),
+        mode: NativeRunMode::Auto,
+        worker_cmd: config.worker_cmd.clone(),
+        worker_args: config.worker_args.clone(),
+        allow_legacy_worker_fallback: false,
+    };
+    match supervisor::ensure_running(supervisor_config.clone()).await {
+        Ok(_) => match supervisor::call(supervisor_config, "runtime.heal", json!({})).await {
+            Ok(value) => {
+                report.supervisor = Some(value);
+            }
+            Err(err) => {
+                report
+                    .notes
+                    .push(format!("Supervisor heal failed after startup: {}", err));
+            }
+        },
+        Err(err) => {
+            report
+                .notes
+                .push(format!("Supervisor startup failed during heal: {}", err));
+        }
+    }
+
+    Ok(report)
+}
+
 async fn run_native_workflow_once(
     config: &NativeRunConfig,
-    workflow_value: &Value,
-    steps: &[Value],
-    prefer_current_tab: bool,
-) -> Result<()> {
+    workflow: &LoadedWorkflow,
+) -> Result<Option<Value>> {
     let mut client = connect_native(config)
         .await
         .map_err(NativeRunPreflightFailure::new)?;
     let mut session_id: Option<String> = None;
     let mut final_payload: Option<Value> = None;
+    let mut step_outputs: HashMap<String, Value> = HashMap::new();
 
     let result: Result<()> = async {
         let session_resp = client
@@ -318,30 +691,20 @@ async fn run_native_workflow_once(
                 .map_err(NativeRunPreflightFailure::new)?;
         }
 
-        for (idx, step) in steps.iter().enumerate() {
-            let step_id = step
-                .get("id")
-                .and_then(|value| value.as_str())
-                .unwrap_or("step");
-            let step_type = step
-                .get("type")
-                .and_then(|value| value.as_str())
-                .unwrap_or("unknown");
+        for (idx, step) in workflow.steps.iter().enumerate() {
+            let step_id = step.id();
+            let step_type = step.step_type();
+            let executor_step = step.executor_step();
 
             println!(
                 "[STEP] {}/{} {} ({})",
                 idx + 1,
-                steps.len(),
+                workflow.steps.len(),
                 step_id,
                 step_type
             );
 
-            let timeout_ms = step
-                .get("timeout_ms")
-                .and_then(|v| v.as_u64())
-                .or_else(|| step.get("timeoutMs").and_then(|v| v.as_u64()))
-                .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS)
-                .max(1);
+            let timeout_ms = step.timeout_ms();
             let rpc_grace_ms = std::env::var("RZN_NATIVE_STEP_RPC_GRACE_MS")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
@@ -352,16 +715,21 @@ async fn run_native_workflow_once(
             // navigation. Keep the mitigation consistent across both paths:
             // 1) handle pure waits locally
             // 2) retry transient messaging failures briefly
-            if should_handle_step_locally(step_type) {
+            if should_handle_step_locally(&step_type) {
                 tokio::time::sleep(Duration::from_millis(timeout_ms)).await;
                 let response = json!({ "ok": true, "success": true, "waited_ms": timeout_ms });
-                log_step_response(step_id, step_type, &response);
+                log_step_response(step_id, &step_type, &response);
                 continue;
             }
 
-            let payload = step_execution_payload(session_id.as_deref(), step, prefer_current_tab);
+            let payload = step_execution_payload(
+                session_id.as_deref(),
+                &executor_step,
+                workflow.prefer_current_tab,
+                workflow.runtime_context.as_ref(),
+            );
             let deadline = tokio::time::Instant::now() + Duration::from_millis(rpc_timeout_ms);
-            let mut stop_reason: Option<String> = None;
+            let stop_reason: Option<String>;
             loop {
                 let response = client
                     .send_request_with_timeout(
@@ -373,10 +741,8 @@ async fn run_native_workflow_once(
                 let success = response_success(&response);
 
                 if success {
-                    log_step_response(step_id, step_type, &response);
-                    if let Some(payload) = extract_payload_for_output(&response) {
-                        final_payload = Some(payload);
-                    }
+                    log_step_response(step_id, &step_type, &response);
+                    record_step_output(step_id, &response, &mut step_outputs, &mut final_payload);
                     stop_reason = response_stop_reason(&response);
                     break;
                 }
@@ -388,19 +754,17 @@ async fn run_native_workflow_once(
                     continue;
                 }
 
-                log_step_response(step_id, step_type, &response);
-                if let Some(payload) = extract_payload_for_output(&response) {
-                    final_payload = Some(payload);
-                }
+                log_step_response(step_id, &step_type, &response);
+                record_step_output(step_id, &response, &mut step_outputs, &mut final_payload);
 
                 if config.snapshot_mode == SnapshotMode::OnError {
                     let _ = take_snapshot(&mut client, session_id.as_deref()).await;
                 }
                 let error = response_error_message(&response).unwrap_or("unknown failure");
                 let report_context = build_failure_context(
-                    workflow_value,
+                    &workflow.report_workflow,
                     Path::new(&config.workflow_path),
-                    step,
+                    &executor_step,
                     idx,
                     error,
                 );
@@ -423,11 +787,17 @@ async fn run_native_workflow_once(
             }
         }
 
-        if let Some(payload) = final_payload.clone() {
-            if let Ok(pretty) = serde_json::to_string_pretty(&payload) {
+        final_payload = selected_or_fallback_output(
+            workflow.runtime_context.as_ref(),
+            &step_outputs,
+            final_payload.take(),
+        )
+        .map(|payload| build_cli_run_result(workflow.runtime_context.as_ref(), payload));
+        if let Some(run_result) = final_payload.as_ref() {
+            if let Ok(pretty) = serde_json::to_string_pretty(run_result) {
                 println!("{}", pretty);
             } else {
-                println!("{}", payload);
+                println!("{}", run_result);
             }
         }
 
@@ -444,7 +814,7 @@ async fn run_native_workflow_once(
             .await;
     }
     client.shutdown().await;
-    result
+    result.map(|_| final_payload)
 }
 
 async fn wait_for_native_host(client: &mut NativeClient, timeout_ms: u64) -> Result<()> {
@@ -571,6 +941,7 @@ async fn reset_browser_worker_for_client(client: &NativeClient) -> Result<bool> 
 
 async fn self_heal_native_runtime(config: &NativeRunConfig) {
     for endpoint_path in native_self_heal_endpoint_paths(config) {
+        let _ = prune_stale_endpoint_path(&endpoint_path);
         let _lock = match app_base_from_endpoint_path(&endpoint_path) {
             Some(app_base) => acquire_spawn_lock(&app_base).await.ok(),
             None => None,
@@ -580,6 +951,7 @@ async fn self_heal_native_runtime(config: &NativeRunConfig) {
         }
         let _ = terminate_browser_worker_at_endpoint(&endpoint_path).await;
         let _ = remove_browser_worker_socket_artifacts(&endpoint_path);
+        let _ = prune_stale_endpoint_path(&endpoint_path);
     }
 }
 
@@ -598,6 +970,29 @@ fn native_self_heal_endpoint_paths(config: &NativeRunConfig) -> Vec<PathBuf> {
         }
     }
     Vec::new()
+}
+
+fn native_heal_endpoint_paths(config: &NativeHealConfig) -> Vec<PathBuf> {
+    let run_config = NativeRunConfig {
+        workflow_path: String::new(),
+        params: HashMap::new(),
+        mode: NativeRunMode::Auto,
+        snapshot_mode: SnapshotMode::OnError,
+        app_base: config.app_base.clone(),
+        endpoint_path: config.endpoint_path.clone(),
+        worker_cmd: config.worker_cmd.clone(),
+        worker_args: config.worker_args.clone(),
+    };
+
+    if let Some(path) = endpoint_path_arg(config.endpoint_path.as_ref()) {
+        return vec![path];
+    }
+
+    let mut paths = native_attach_endpoint_paths(&run_config);
+    if let Ok(app_base) = resolve_native_spawn_app_base_dir(&run_config) {
+        paths.push(resolve_native_spawn_endpoint_path(&run_config, &app_base));
+    }
+    dedupe_paths(paths)
 }
 
 async fn query_native_host_path(endpoint_path: &Path) -> Result<Option<String>> {
@@ -685,9 +1080,10 @@ fn print_worker_health_summary(health: &Value) {
     }
 }
 
-fn validate_steps(steps: &[Value]) -> Result<()> {
+fn validate_steps(steps: &[RuntimeStep]) -> Result<()> {
     for (index, step) in steps.iter().enumerate() {
-        if let Err(err) = dsl::validate_action_value(step) {
+        let executor_step = step.executor_step();
+        if let Err(err) = dsl::validate_action_value(&executor_step) {
             return Err(anyhow!(
                 "Step {} failed schema validation: {}",
                 index + 1,
@@ -927,7 +1323,7 @@ async fn wait_for_desktop_native_host(
     }
 }
 
-async fn connect_native(config: &NativeRunConfig) -> Result<NativeClient> {
+pub(crate) async fn connect_native(config: &NativeRunConfig) -> Result<NativeClient> {
     match config.mode {
         NativeRunMode::Attach => try_attach(config).await,
         NativeRunMode::Spawn => spawn_worker(config).await,
@@ -1002,6 +1398,11 @@ fn app_base_from_endpoint_path(endpoint_path: &Path) -> Option<PathBuf> {
     secure_dir.parent().map(Path::to_path_buf)
 }
 
+fn prune_stale_endpoint_path(endpoint_path: &Path) -> Option<BrokerEndpointPruneReport> {
+    let app_base = app_base_from_endpoint_path(endpoint_path)?;
+    prune_stale_broker_endpoint(&app_base).ok()
+}
+
 fn dedupe_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut deduped = Vec::new();
     for path in paths {
@@ -1037,6 +1438,7 @@ fn sorted_existing_endpoint_paths(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let mut existing: Vec<(PathBuf, Option<SystemTime>)> = paths
         .into_iter()
         .filter_map(|path| {
+            let _ = prune_stale_endpoint_path(&path);
             let metadata = std::fs::metadata(&path).ok()?;
             let modified = metadata.modified().ok();
             Some((path, modified))
@@ -1124,6 +1526,7 @@ fn load_desktop_broker_endpoint(
     endpoint_path: &Path,
     config: &DesktopRunConfig,
 ) -> Result<(PathBuf, PathBuf, String)> {
+    let _ = prune_stale_endpoint_path(endpoint_path);
     let contents = std::fs::read_to_string(endpoint_path)
         .with_context(|| format!("Read endpoint {}", endpoint_path.display()))?;
     let value: Value = serde_json::from_str(&contents)
@@ -1181,10 +1584,10 @@ async fn try_attach(config: &NativeRunConfig) -> Result<NativeClient> {
         }
         match try_attach_endpoint(&endpoint_path).await {
             Ok(client) => {
-                println!(
+                emit_runtime_status(format!(
                     "[INFO] Attach endpoint: {}",
                     endpoint_path.to_string_lossy()
-                );
+                ));
                 return Ok(client);
             }
             Err(err) => {
@@ -1200,8 +1603,9 @@ async fn try_attach(config: &NativeRunConfig) -> Result<NativeClient> {
 }
 
 async fn try_attach_endpoint(endpoint_path: &Path) -> Result<NativeClient> {
-    let endpoint = load_endpoint(endpoint_path)
-        .with_context(|| format!("Failed to read endpoint: {}", endpoint_path.display()))?;
+    let endpoint = load_browser_worker_endpoint(endpoint_path)
+        .with_context(|| format!("Failed to read endpoint: {}", endpoint_path.display()))?
+        .ok_or_else(|| anyhow!("Endpoint does not contain a live browser_worker section"))?;
 
     match endpoint.transport {
         EndpointTransport::Tcp { host, port } => {
@@ -1251,6 +1655,7 @@ async fn spawn_worker(config: &NativeRunConfig) -> Result<NativeClient> {
     let endpoint_path = resolve_native_spawn_endpoint_path(config, &app_base);
     let _spawn_lock = acquire_spawn_lock(&app_base).await?;
     let preferred_worker_binary = preferred_worker_binary_path(config);
+    let _ = prune_stale_broker_endpoint(&app_base);
 
     if let Some(client) = try_attach_existing_browser_worker_with_preference(
         &endpoint_path,
@@ -1258,10 +1663,10 @@ async fn spawn_worker(config: &NativeRunConfig) -> Result<NativeClient> {
     )
     .await?
     {
-        println!(
+        emit_runtime_status(format!(
             "[INFO] Reusing live browser worker at {}",
             endpoint_path.to_string_lossy()
-        );
+        ));
         return Ok(client);
     }
 
@@ -1276,10 +1681,10 @@ async fn spawn_worker(config: &NativeRunConfig) -> Result<NativeClient> {
             )
             .await?
             {
-                println!(
+                emit_runtime_status(format!(
                     "[INFO] Reusing live browser worker after retry at {}",
                     endpoint_path.to_string_lossy()
-                );
+                ));
                 return Ok(client);
             }
             if tokio::time::Instant::now() >= deadline {
@@ -1313,7 +1718,7 @@ async fn spawn_worker(config: &NativeRunConfig) -> Result<NativeClient> {
         Vec::new()
     };
 
-    println!("[INFO] Spawning worker: {} {:?}", command, args);
+    emit_runtime_status(format!("[INFO] Spawning worker: {} {:?}", command, args));
 
     let child = Command::new(&command)
         .args(&args)
@@ -1403,23 +1808,8 @@ async fn try_attach_existing_browser_worker_with_preference(
     }
 }
 
-fn load_endpoint(path: &Path) -> Result<EndpointSpec> {
-    let contents = std::fs::read_to_string(path)?;
-    let value: Value = serde_json::from_str(&contents)?;
-
-    let candidates = candidate_endpoint_values(&value);
-    for candidate in candidates {
-        if let Some(endpoint) = parse_endpoint(candidate) {
-            return Ok(endpoint);
-        }
-    }
-
-    Err(anyhow!(
-        "No usable endpoint found in broker_endpoint_v1.json"
-    ))
-}
-
 fn load_browser_worker_endpoint(path: &Path) -> Result<Option<EndpointSpec>> {
+    let _ = prune_stale_endpoint_path(path);
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
@@ -1438,12 +1828,28 @@ fn load_browser_worker_endpoint(path: &Path) -> Result<Option<EndpointSpec>> {
                 }
             }
             if let Some(spec) = parse_endpoint(entry) {
+                if !endpoint_spec_is_usable(&spec) {
+                    continue;
+                }
                 return Ok(Some(spec));
             }
         }
     }
 
     Ok(None)
+}
+
+fn endpoint_spec_is_usable(endpoint: &EndpointSpec) -> bool {
+    if let Some(token_path) = endpoint.token_path.as_ref() {
+        if !Path::new(token_path).exists() {
+            return false;
+        }
+    }
+
+    match &endpoint.transport {
+        EndpointTransport::Pipe { path, .. } => Path::new(path).exists(),
+        EndpointTransport::Tcp { .. } | EndpointTransport::Stdio { .. } => true,
+    }
 }
 
 fn browser_worker_pid_is_live(path: &Path) -> Result<bool> {
@@ -1524,52 +1930,7 @@ fn canonicalize_lossy(path: &Path) -> PathBuf {
 }
 
 fn pid_looks_alive(pid: u32) -> bool {
-    #[cfg(unix)]
-    {
-        // Some `kill` implementations treat oversized unsigned PIDs as signed sentinels
-        // (for example `4294967295` becoming `-1`), which can incorrectly report success.
-        let Ok(pid_i32) = i32::try_from(pid) else {
-            return false;
-        };
-        if pid_i32 <= 0 {
-            return false;
-        }
-
-        StdCommand::new("kill")
-            .arg("-0")
-            .arg(pid_i32.to_string())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use windows_sys::Win32::Foundation::CloseHandle;
-        use windows_sys::Win32::System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-        };
-
-        if pid == 0 {
-            return false;
-        }
-
-        unsafe {
-            let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-            if handle.is_null() {
-                return false;
-            }
-            let _ = CloseHandle(handle);
-            true
-        }
-    }
-
-    #[cfg(not(any(unix, target_os = "windows")))]
-    {
-        let _ = pid;
-        false
-    }
+    endpoint_pid_is_live(pid)
 }
 
 async fn terminate_stale_browser_worker(endpoint_path: &Path) -> Result<()> {
@@ -1586,10 +1947,10 @@ async fn terminate_stale_browser_worker(endpoint_path: &Path) -> Result<()> {
             return Ok(());
         };
         if pid_i32 > 0 {
-            println!(
+            emit_runtime_status(format!(
                 "[WARN] Existing browser worker {} is unresponsive; terminating it before spawn",
                 pid
-            );
+            ));
             let _ = Command::new("kill")
                 .arg("-TERM")
                 .arg(pid_i32.to_string())
@@ -1837,52 +2198,6 @@ fn spawn_lock_is_stale(path: &Path) -> bool {
     age >= StdDuration::from_secs(STALE_SPAWN_LOCK_AGE_SECS)
 }
 
-fn candidate_endpoint_values<'a>(value: &'a Value) -> Vec<&'a Value> {
-    let mut candidates = Vec::new();
-    if let Some(obj) = value.as_object() {
-        if let Some(v) = obj.get("browser_worker") {
-            candidates.push(v);
-        }
-        if let Some(v) = obj.get("browser_worker_v1") {
-            candidates.push(v);
-        }
-        if let Some(v) = obj.get("browser_bridge") {
-            candidates.push(v);
-        }
-        if let Some(v) = obj.get("browser_bridge_v1") {
-            candidates.push(v);
-        }
-        if let Some(v) = obj.get("bridge") {
-            candidates.push(v);
-        }
-        if let Some(v) = obj.get("broker") {
-            candidates.push(v);
-        }
-        if let Some(v) = obj.get("endpoint") {
-            candidates.push(v);
-        }
-        if let Some(Value::Object(map)) = obj.get("endpoints") {
-            for key in [
-                "browser_worker",
-                "browser_worker_v1",
-                "browser_bridge",
-                "browser_bridge_v1",
-                "bridge",
-                "broker",
-                "default",
-            ] {
-                if let Some(v) = map.get(key) {
-                    candidates.push(v);
-                }
-            }
-        }
-    }
-    if candidates.is_empty() {
-        candidates.push(value);
-    }
-    candidates
-}
-
 fn parse_endpoint(value: &Value) -> Option<EndpointSpec> {
     if let Some(s) = value.as_str() {
         return parse_endpoint_string(s).map(|transport| EndpointSpec {
@@ -2065,10 +2380,531 @@ async fn connect_local_socket(path: &str, namespaced: bool) -> Result<LocalSocke
     }
 }
 
+fn load_workflow_for_run(path: &str, params: &HashMap<String, String>) -> Result<LoadedWorkflow> {
+    let content = std::fs::read_to_string(path).with_context(|| format!("Read {}", path))?;
+    let value: Value = serde_json::from_str(&content).with_context(|| "Invalid JSON workflow")?;
+
+    match validate_manifest_value(&value) {
+        Ok(manifest) => {
+            return load_manifest_workflow_for_run(Path::new(path), value, manifest, params)
+        }
+        Err(issues) if is_manifest_value(&value) => {
+            return Err(anyhow!(
+                "Invalid manifest: {}",
+                format_contract_issues(issues)
+            ));
+        }
+        Err(_) => {}
+    }
+
+    let workflow_value = apply_parameters(value, params);
+    validate_required_params(&workflow_value, params)?;
+    loaded_legacy_workflow(workflow_value, load_runtime_context_for_workflow(path)?)
+}
+
+fn load_manifest_workflow_for_run(
+    manifest_path: &Path,
+    manifest_value: Value,
+    manifest: WorkflowManifestV2,
+    params: &HashMap<String, String>,
+) -> Result<LoadedWorkflow> {
+    let normalized_params = normalize_manifest_params(&manifest, params)?;
+    let runtime_context = Some(runtime_context_from_manifest(manifest.clone()));
+
+    if manifest.steps.is_empty() {
+        let root = workflows_root_for_path(manifest_path).ok_or_else(|| {
+            anyhow!(
+                "cannot resolve workflows root for {}",
+                manifest_path.display()
+            )
+        })?;
+        let runtime_path = manifest_runtime_workflow_path(&root, &manifest).ok_or_else(|| {
+            anyhow!(
+                "Manifest {} has no steps[] and no runtime workflow pointer",
+                manifest_path.display()
+            )
+        })?;
+        let content = std::fs::read_to_string(&runtime_path)
+            .with_context(|| format!("Read {}", runtime_path.display()))?;
+        let runtime_value: Value =
+            serde_json::from_str(&content).with_context(|| "Invalid JSON workflow")?;
+        let runtime_value = apply_parameters(runtime_value, &normalized_params);
+        let mut loaded = loaded_legacy_workflow(runtime_value, runtime_context)?;
+        loaded.prefer_current_tab =
+            loaded.prefer_current_tab || manifest.runtime.requires_existing_session;
+        return Ok(loaded);
+    }
+
+    let executable_value = apply_parameters(manifest_value, &normalized_params);
+    let executable_manifest = validate_manifest_value(&executable_value).map_err(|issues| {
+        anyhow!(
+            "Invalid manifest after parameter substitution: {:?}",
+            issues
+        )
+    })?;
+    let steps = executable_manifest
+        .steps
+        .iter()
+        .cloned()
+        .map(|step| RuntimeStep::Manifest {
+            step,
+            params: normalized_params.clone(),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(LoadedWorkflow {
+        report_workflow: executable_value,
+        steps,
+        prefer_current_tab: executable_manifest.runtime.requires_existing_session,
+        runtime_context,
+    })
+}
+
+fn normalize_manifest_params(
+    manifest: &WorkflowManifestV2,
+    params: &HashMap<String, String>,
+) -> Result<HashMap<String, String>> {
+    let mut input = Map::new();
+    for (key, value) in params {
+        let value = match manifest.params.properties.get(key) {
+            Some(def) => cli_manifest_param_value(key, def, value)?,
+            None => Value::String(value.clone()),
+        };
+        input.insert(key.clone(), value);
+    }
+    let normalized = manifest
+        .params
+        .normalize(&Value::Object(input))
+        .map_err(|issues| {
+            let messages = issues
+                .into_iter()
+                .map(|issue| {
+                    if issue.field.is_empty() {
+                        issue.message
+                    } else {
+                        format!("{}: {}", issue.field, issue.message)
+                    }
+                })
+                .collect::<Vec<_>>();
+            anyhow!("Invalid workflow parameters: {}", messages.join(", "))
+        })?;
+
+    Ok(normalized
+        .into_iter()
+        .map(|(key, value)| {
+            let text = match value {
+                Value::String(value) => value,
+                other => other.to_string(),
+            };
+            (key, text)
+        })
+        .collect())
+}
+
+fn cli_manifest_param_value(field: &str, def: &ParamDefV2, raw: &str) -> Result<Value> {
+    match def.kind {
+        ParamKindV2::Array => cli_manifest_array_param_value(field, raw),
+        ParamKindV2::Object => cli_manifest_object_param_value(field, raw),
+        _ => Ok(Value::String(raw.to_string())),
+    }
+}
+
+fn cli_manifest_array_param_value(field: &str, raw: &str) -> Result<Value> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(Value::Array(Vec::new()));
+    }
+
+    if trimmed.starts_with('[') {
+        let parsed: Value = serde_json::from_str(trimmed)
+            .with_context(|| format!("{field}: invalid JSON array parameter"))?;
+        if parsed.is_array() {
+            return Ok(parsed);
+        }
+        return Err(anyhow!("{field}: expected JSON array parameter"));
+    }
+
+    let values = if trimmed.contains(',') {
+        trimmed
+            .split(',')
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| Value::String(value.to_string()))
+            .collect()
+    } else {
+        vec![Value::String(trimmed.to_string())]
+    };
+    Ok(Value::Array(values))
+}
+
+fn cli_manifest_object_param_value(field: &str, raw: &str) -> Result<Value> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(Value::Object(Map::new()));
+    }
+    let parsed: Value = serde_json::from_str(trimmed)
+        .with_context(|| format!("{field}: invalid JSON object parameter"))?;
+    if parsed.is_object() {
+        Ok(parsed)
+    } else {
+        Err(anyhow!("{field}: expected JSON object parameter"))
+    }
+}
+
+fn loaded_legacy_workflow(
+    workflow_value: Value,
+    runtime_context: Option<WorkflowRuntimeContext>,
+) -> Result<LoadedWorkflow> {
+    let steps = extract_steps(&workflow_value)?
+        .into_iter()
+        .map(RuntimeStep::Legacy)
+        .collect::<Vec<_>>();
+    let prefer_current_tab = workflow_prefers_current_tab(&workflow_value);
+    Ok(LoadedWorkflow {
+        report_workflow: workflow_value,
+        steps,
+        prefer_current_tab,
+        runtime_context,
+    })
+}
+
 fn load_workflow_value(path: &str) -> Result<Value> {
     let content = std::fs::read_to_string(path).with_context(|| format!("Read {}", path))?;
     let value: Value = serde_json::from_str(&content).with_context(|| "Invalid JSON workflow")?;
+    match validate_manifest_value(&value) {
+        Ok(manifest) => return workflow_value_for_manifest(Path::new(path), &manifest),
+        Err(issues) if is_manifest_value(&value) => {
+            return Err(anyhow!(
+                "Invalid manifest: {}",
+                format_contract_issues(issues)
+            ));
+        }
+        Err(_) => {}
+    }
     Ok(value)
+}
+
+fn is_manifest_value(value: &Value) -> bool {
+    value.get("schema_version").and_then(Value::as_str) == Some("rzn.workflow_manifest")
+}
+
+fn format_contract_issues(issues: Vec<rzn_contracts::v2::ContractValidationIssueV2>) -> String {
+    issues
+        .into_iter()
+        .map(|issue| {
+            if issue.field.is_empty() {
+                issue.message
+            } else {
+                format!("{}: {}", issue.field, issue.message)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn load_runtime_context_for_workflow(
+    workflow_path: &str,
+) -> Result<Option<WorkflowRuntimeContext>> {
+    let workflow_path = PathBuf::from(workflow_path);
+    if let Ok(content) = fs::read_to_string(&workflow_path) {
+        if let Ok(value) = serde_json::from_str::<Value>(&content) {
+            if let Ok(manifest) = validate_manifest_value(&value) {
+                return Ok(Some(runtime_context_from_manifest(manifest)));
+            }
+        }
+    }
+
+    let Some(workflows_root) = workflows_root_for_path(&workflow_path) else {
+        return Ok(None);
+    };
+
+    for manifest_path in manifest_candidates(&workflows_root) {
+        let Ok(content) = fs::read_to_string(&manifest_path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<Value>(&content) else {
+            continue;
+        };
+        let Ok(manifest) = validate_manifest_value(&value) else {
+            continue;
+        };
+        let Some(runtime_path) = manifest_runtime_workflow_path(&workflows_root, &manifest) else {
+            continue;
+        };
+        if !paths_match(&runtime_path, &workflow_path) {
+            continue;
+        }
+
+        return Ok(Some(runtime_context_from_manifest(manifest)));
+    }
+
+    Ok(None)
+}
+
+fn workflow_value_for_manifest(
+    manifest_path: &Path,
+    manifest: &WorkflowManifestV2,
+) -> Result<Value> {
+    if manifest.steps.is_empty() {
+        let root = workflows_root_for_path(manifest_path).ok_or_else(|| {
+            anyhow!(
+                "cannot resolve workflows root for {}",
+                manifest_path.display()
+            )
+        })?;
+        let runtime_path = manifest_runtime_workflow_path(&root, manifest).ok_or_else(|| {
+            anyhow!(
+                "Manifest {} has no steps[] and no runtime workflow pointer",
+                manifest_path.display()
+            )
+        })?;
+        return load_workflow_value(&runtime_path.to_string_lossy());
+    }
+
+    Ok(workflow_value_from_manifest_steps(manifest))
+}
+
+fn workflow_value_from_manifest_steps(manifest: &WorkflowManifestV2) -> Value {
+    let mut required_variables = Vec::new();
+    let mut optional_variables = Vec::new();
+    for (name, def) in &manifest.params.properties {
+        let variable = json!({
+            "name": name,
+            "description": def.description.clone().unwrap_or_default(),
+            "sensitive": def.sensitive
+        });
+        if def.required {
+            required_variables.push(variable);
+        } else {
+            optional_variables.push(variable);
+        }
+    }
+
+    let steps = manifest
+        .steps
+        .iter()
+        .map(manifest_step_to_executor_step)
+        .collect::<Vec<_>>();
+
+    json!({
+        "system_id": manifest.system,
+        "id": manifest.id,
+        "name": manifest.name,
+        "description": manifest.description.as_deref().or(manifest.summary.as_deref()).unwrap_or(""),
+        "version": manifest.version,
+        "browser_automation": {
+            "use_current_tab": manifest.runtime.requires_existing_session,
+            "description": manifest.description.as_deref().or(manifest.summary.as_deref()).unwrap_or(""),
+            "sequences": [{
+                "name": manifest.id.replace('/', "_").replace('.', "_"),
+                "description": manifest.description.as_deref().or(manifest.summary.as_deref()).unwrap_or(""),
+                "required_variables": required_variables,
+                "optional_variables": optional_variables,
+                "steps": steps
+            }]
+        }
+    })
+}
+
+fn manifest_step_to_executor_step(step: &StepV2) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("id".to_string(), Value::String(step.id.clone()));
+    if let Some(name) = &step.name {
+        map.insert("name".to_string(), Value::String(name.clone()));
+    }
+    let step_type = step
+        .action
+        .kind
+        .engine_step_type()
+        .or(step.action.custom_kind.as_deref())
+        .unwrap_or("custom")
+        .to_string();
+    map.insert("type".to_string(), Value::String(step_type));
+    if let Some(timeout_ms) = step.timeout_ms {
+        map.insert(
+            "timeout_ms".to_string(),
+            Value::Number(serde_json::Number::from(timeout_ms)),
+        );
+    }
+    if step.continue_on_error {
+        map.insert("continue_on_error".to_string(), Value::Bool(true));
+    }
+    if !step.action.side_effects.is_empty() {
+        map.insert(
+            "side_effects".to_string(),
+            Value::Array(
+                step.action
+                    .side_effects
+                    .iter()
+                    .map(|class| Value::String(class.as_str().to_string()))
+                    .collect(),
+            ),
+        );
+    }
+
+    if let Some(target) = &step.action.target {
+        insert_optional_string(&mut map, "encoded_id", target.encoded_id.as_deref());
+        insert_optional_string(&mut map, "selector", target.selector.as_deref());
+        insert_optional_string(&mut map, "text", target.text.as_deref());
+        insert_optional_string(&mut map, "role", target.role.as_deref());
+        insert_optional_string(&mut map, "frame_id", target.frame_id.as_deref());
+    }
+    for (key, value) in &step.action.inputs {
+        map.insert(key.clone(), value.clone());
+    }
+    for (key, value) in &step.action.options {
+        map.insert(key.clone(), value.clone());
+    }
+    Value::Object(map)
+}
+
+fn insert_optional_string(
+    map: &mut serde_json::Map<String, Value>,
+    key: &str,
+    value: Option<&str>,
+) {
+    if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+        map.insert(key.to_string(), Value::String(value.to_string()));
+    }
+}
+
+fn runtime_context_from_manifest(manifest: WorkflowManifestV2) -> WorkflowRuntimeContext {
+    let output_selector = manifest.result.output_selector.clone();
+    WorkflowRuntimeContext {
+        workflow_id: manifest.id,
+        workflow_version: manifest.version,
+        system: manifest.system,
+        capability: manifest.capability,
+        declared_side_effects: manifest
+            .side_effects
+            .iter()
+            .map(|effect| effect.class.as_str().to_string())
+            .collect(),
+        enforce_side_effects: true,
+        output_selector_step_id: output_selector
+            .as_ref()
+            .map(|selector| selector.step_id.clone()),
+        output_selector_path: output_selector.and_then(|selector| selector.path),
+    }
+}
+
+fn workflows_root_for_path(workflow_path: &Path) -> Option<PathBuf> {
+    let absolute = if workflow_path.is_absolute() {
+        workflow_path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(workflow_path)
+    };
+
+    for ancestor in absolute.ancestors() {
+        if ancestor.file_name().and_then(|value| value.to_str()) == Some("workflows") {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+
+    absolute.parent().map(Path::to_path_buf)
+}
+
+fn manifest_candidates(root: &Path) -> Vec<PathBuf> {
+    fn visit(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                visit(&path, out);
+                continue;
+            }
+            let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
+                continue;
+            };
+            if file_name.ends_with(".json") {
+                out.push(path);
+            }
+        }
+    }
+
+    let mut candidates = Vec::new();
+    visit(root, &mut candidates);
+    candidates
+}
+
+fn manifest_runtime_workflow_path(root: &Path, manifest: &WorkflowManifestV2) -> Option<PathBuf> {
+    manifest
+        .runtime
+        .workflow_ref
+        .as_deref()
+        .and_then(|workflow_ref| resolve_runtime_workflow_ref(root, workflow_ref))
+        .or_else(|| {
+            manifest
+                .runtime
+                .workflow_path
+                .as_deref()
+                .map(|workflow_path| {
+                    let path = PathBuf::from(workflow_path);
+                    if path.is_absolute() {
+                        path
+                    } else {
+                        root.join(path)
+                    }
+                })
+        })
+}
+
+fn resolve_runtime_workflow_ref(root: &Path, workflow_ref: &str) -> Option<PathBuf> {
+    let normalized = normalize_workflow_ref(workflow_ref);
+    let parts = normalized.split('/').collect::<Vec<_>>();
+    if parts.len() == 2 {
+        let system = slugify_ref_part(parts[0]);
+        let workflow = slugify_ref_part(parts[1]);
+        if !system.is_empty() && !workflow.is_empty() {
+            let candidates = [
+                root.join(&system).join(format!("{workflow}.json")),
+                root.join(&system).join(format!("{system}-{workflow}.json")),
+                root.join(&system).join(format!("{system}_{workflow}.json")),
+            ];
+            for candidate in candidates {
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+            return Some(root.join(&system).join(format!("{workflow}.json")));
+        }
+    }
+
+    let path = PathBuf::from(workflow_ref);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    })
+}
+
+fn normalize_workflow_ref(input: &str) -> String {
+    input
+        .trim()
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_ascii_lowercase()
+}
+
+fn slugify_ref_part(input: &str) -> String {
+    input
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+fn paths_match(left: &Path, right: &Path) -> bool {
+    canonicalize_lossy(left) == canonicalize_lossy(right)
 }
 
 fn apply_parameters(mut value: Value, params: &HashMap<String, String>) -> Value {
@@ -2181,6 +3017,7 @@ fn step_execution_payload(
     session_id: Option<&str>,
     step: &Value,
     prefer_current_tab: bool,
+    runtime_context: Option<&WorkflowRuntimeContext>,
 ) -> Value {
     let effective_step = apply_runtime_step_overrides(step);
     let mut payload = with_session(
@@ -2194,7 +3031,116 @@ fn step_execution_payload(
         payload["use_current_tab"] = Value::Bool(true);
     }
 
+    if let Some(context) = runtime_context {
+        inject_runtime_context(&mut payload, context);
+    }
+
     payload
+}
+
+fn inject_runtime_context(payload: &mut Value, context: &WorkflowRuntimeContext) {
+    let Some(map) = payload.as_object_mut() else {
+        return;
+    };
+    map.insert(
+        "workflow_id".to_string(),
+        Value::String(context.workflow_id.clone()),
+    );
+    map.insert(
+        "workflow_version".to_string(),
+        Value::String(context.workflow_version.clone()),
+    );
+    map.insert("system".to_string(), Value::String(context.system.clone()));
+    map.insert(
+        "capability".to_string(),
+        Value::String(context.capability.clone()),
+    );
+    map.insert(
+        "side_effect_policy".to_string(),
+        json!({
+            "enforce": context.enforce_side_effects,
+            "declared_side_effects": context.declared_side_effects
+        }),
+    );
+}
+
+fn build_cli_run_result(runtime_context: Option<&WorkflowRuntimeContext>, output: Value) -> Value {
+    if is_run_result_v2(&output) {
+        return output;
+    }
+
+    let workflow_id = runtime_context
+        .map(|context| context.workflow_id.clone())
+        .unwrap_or_else(|| "rzn.legacy.workflow".to_string());
+
+    json!({
+        "version": RUN_RESULT_VERSION,
+        "run_id": format!("local-{}", Uuid::new_v4()),
+        "workflow_id": workflow_id,
+        "status": RunStatusV2::Succeeded,
+        "output": output,
+        "artifacts": [],
+        "warnings": [],
+        "steps": []
+    })
+}
+
+fn select_workflow_output(
+    runtime_context: Option<&WorkflowRuntimeContext>,
+    step_outputs: &HashMap<String, Value>,
+    fallback: Option<Value>,
+) -> Option<Value> {
+    let context = runtime_context?;
+    let step_id = context.output_selector_step_id.as_deref()?.trim();
+    if step_id.is_empty() {
+        return fallback;
+    }
+
+    let selected = step_outputs.get(step_id)?;
+    let path = context.output_selector_path.as_deref().unwrap_or("$");
+    select_json_path(selected, path).or_else(|| Some(selected.clone()))
+}
+
+fn selected_or_fallback_output(
+    runtime_context: Option<&WorkflowRuntimeContext>,
+    step_outputs: &HashMap<String, Value>,
+    fallback: Option<Value>,
+) -> Option<Value> {
+    select_workflow_output(runtime_context, step_outputs, fallback.clone()).or(fallback)
+}
+
+fn select_json_path(value: &Value, path: &str) -> Option<Value> {
+    let path = path.trim();
+    if path.is_empty() || path == "$" {
+        return Some(value.clone());
+    }
+    let mut current = value;
+    let mut rest = path.strip_prefix('$')?;
+    while !rest.is_empty() {
+        if let Some(after_dot) = rest.strip_prefix('.') {
+            let end = after_dot
+                .find(|ch| ch == '.' || ch == '[')
+                .unwrap_or(after_dot.len());
+            let key = &after_dot[..end];
+            if key.is_empty() {
+                return None;
+            }
+            current = current.get(key)?;
+            rest = &after_dot[end..];
+        } else if let Some(after_bracket) = rest.strip_prefix('[') {
+            let end = after_bracket.find(']')?;
+            let index = after_bracket[..end].parse::<usize>().ok()?;
+            current = current.get(index)?;
+            rest = &after_bracket[end + 1..];
+        } else {
+            return None;
+        }
+    }
+    Some(current.clone())
+}
+
+fn is_run_result_v2(value: &Value) -> bool {
+    value.get("version").and_then(|value| value.as_str()) == Some(RUN_RESULT_VERSION)
 }
 
 fn apply_runtime_step_overrides(step: &Value) -> Value {
@@ -2254,6 +3200,14 @@ fn parse_env_bool(name: &str) -> Option<bool> {
     }
 }
 
+fn emit_runtime_status(message: String) {
+    if parse_env_bool("RZN_BROWSER_MCP_STDIO").unwrap_or(false) {
+        eprintln!("{}", message);
+    } else {
+        println!("{}", message);
+    }
+}
+
 fn extract_session_id(response: &Value) -> Option<String> {
     response
         .get("session_id")
@@ -2282,6 +3236,44 @@ fn with_session(session_id: Option<&str>, mut payload: Value) -> Value {
     payload
 }
 
+fn with_timeout(mut payload: Value, timeout_ms: u64) -> Value {
+    if let Value::Object(map) = &mut payload {
+        map.insert(
+            "timeout_ms".to_string(),
+            Value::Number(serde_json::Number::from(timeout_ms)),
+        );
+    }
+    payload
+}
+
+async fn take_supervisor_snapshot(
+    config: &supervisor::SupervisorConfig,
+    session_id: Option<&str>,
+) -> Result<()> {
+    let response = supervisor::call(
+        config.clone(),
+        "browser.snapshot",
+        with_session(session_id, json!({})),
+    )
+    .await?;
+    let hash = response
+        .get("dom_hash")
+        .and_then(|value| value.as_str())
+        .map(|s| s.to_string())
+        .or_else(|| {
+            response
+                .pointer("/result/dom_hash")
+                .and_then(|value| value.as_str())
+                .map(|s| s.to_string())
+        });
+    if let Some(hash) = hash {
+        println!("[SNAPSHOT] dom_hash={}", hash);
+    } else {
+        println!("[SNAPSHOT] ok");
+    }
+    Ok(())
+}
+
 async fn take_snapshot(client: &mut NativeClient, session_id: Option<&str>) -> Result<()> {
     let response = client
         .send_request("browser.snapshot", with_session(session_id, json!({})))
@@ -2305,6 +3297,20 @@ async fn take_snapshot(client: &mut NativeClient, session_id: Option<&str>) -> R
 }
 
 fn response_success(response: &Value) -> bool {
+    if let Some(status) = response
+        .get("run_result")
+        .filter(|value| is_run_result_v2(value))
+        .and_then(|value| value.get("status"))
+        .and_then(Value::as_str)
+        .or_else(|| {
+            is_run_result_v2(response)
+                .then(|| response.get("status").and_then(Value::as_str))
+                .flatten()
+        })
+    {
+        return status == "succeeded";
+    }
+
     let top_level = response
         .get("success")
         .and_then(|value| value.as_bool())
@@ -2331,6 +3337,10 @@ fn response_success(response: &Value) -> bool {
 
     if let Some(nested_success) = nested {
         return nested_success;
+    }
+
+    if response_error_message(response).is_some() || response.get("error_code").is_some() {
+        return false;
     }
 
     top_level.unwrap_or(true)
@@ -2431,7 +3441,47 @@ fn log_step_response(step_id: &str, step_type: &str, response: &Value) {
     }
 }
 
+fn record_step_output(
+    step_id: &str,
+    response: &Value,
+    step_outputs: &mut HashMap<String, Value>,
+    final_payload: &mut Option<Value>,
+) {
+    let output = extract_payload_for_output(response);
+    if let Some(output) = output {
+        step_outputs.insert(step_id.to_string(), output);
+    }
+
+    if let Some(run_result) = extract_run_result_for_output(response) {
+        *final_payload = Some(run_result);
+    } else if let Some(output) = extract_payload_for_output(response) {
+        *final_payload = Some(output);
+    }
+}
+
+fn extract_run_result_for_output(response: &Value) -> Option<Value> {
+    response
+        .get("run_result")
+        .filter(|value| is_run_result_v2(value))
+        .cloned()
+        .or_else(|| is_run_result_v2(response).then(|| response.clone()))
+}
+
 fn extract_payload_for_output(response: &Value) -> Option<Value> {
+    if let Some(output) = response
+        .get("run_result")
+        .filter(|value| is_run_result_v2(value))
+        .and_then(|value| value.get("output"))
+    {
+        if !matches!(output, Value::Null | Value::Bool(_)) {
+            return Some(output.clone());
+        }
+    }
+
+    if response.get("version").and_then(|value| value.as_str()) == Some(RUN_RESULT_VERSION) {
+        return response.get("output").cloned();
+    }
+
     let primary = response
         .get("result")
         .cloned()
@@ -2530,16 +3580,19 @@ fn summarize_result(value: &Value) {
 mod tests {
     use super::{
         app_base_from_endpoint_path, apply_parameters, endpoint_path_for_app_base,
-        health_indicates_stale_worker_handshake, is_transient_step_error,
-        keep_browser_worker_on_exit, load_browser_worker_endpoint, native_attach_endpoint_paths,
-        native_self_heal_attempts, native_self_heal_endpoint_paths,
-        resolve_native_spawn_app_base_dir, restart_native_host_enabled, should_handle_step_locally,
-        NativeRunConfig, NativeRunMode, SnapshotMode,
+        extract_payload_for_output, health_indicates_stale_worker_handshake,
+        is_transient_step_error, keep_browser_worker_on_exit, load_browser_worker_endpoint,
+        load_runtime_context_for_workflow, load_workflow_for_run, load_workflow_value,
+        native_attach_endpoint_paths, native_self_heal_attempts, native_self_heal_endpoint_paths,
+        record_step_output, resolve_native_spawn_app_base_dir, response_success,
+        restart_native_host_enabled, select_workflow_output, should_handle_step_locally,
+        step_execution_payload, NativeRunConfig, NativeRunMode, RuntimeStep, SnapshotMode,
+        WorkflowRuntimeContext,
     };
     use serde_json::json;
     use std::collections::HashMap;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::{Mutex, OnceLock};
     use uuid::Uuid;
 
@@ -2587,6 +3640,10 @@ mod tests {
     fn load_browser_worker_endpoint_prefers_worker_entry() {
         let path = unique_temp_path("native-run-endpoint.json");
         let live_pid = std::process::id();
+        let worker_socket = unique_temp_path("worker.sock");
+        let worker_token = unique_temp_path("worker.token");
+        write_marker(&worker_socket);
+        write_marker(&worker_token);
         let contents = serde_json::json!({
             "browser_bridge": {
                 "transport": "pipe",
@@ -2595,8 +3652,8 @@ mod tests {
             },
             "browser_worker": {
                 "transport": "pipe",
-                "path": "/tmp/worker.sock",
-                "token_path": "/tmp/worker.token",
+                "path": worker_socket,
+                "token_path": worker_token,
                 "pid": live_pid
             }
         });
@@ -2605,12 +3662,15 @@ mod tests {
         let endpoint = load_browser_worker_endpoint(&path).unwrap().unwrap();
         match endpoint.transport {
             super::EndpointTransport::Pipe { path, namespaced } => {
-                assert_eq!(path, "/tmp/worker.sock");
+                assert!(path.ends_with("worker.sock"));
                 assert!(!namespaced);
             }
             other => panic!("unexpected endpoint transport: {:?}", other),
         }
-        assert_eq!(endpoint.token_path.as_deref(), Some("/tmp/worker.token"));
+        assert!(endpoint
+            .token_path
+            .as_deref()
+            .is_some_and(|path| path.ends_with("worker.token")));
 
         let _ = fs::remove_file(&path);
     }
@@ -2657,6 +3717,458 @@ mod tests {
 
         assert_eq!(step["params"]["message_body"], "O'Reilly");
         assert_eq!(step["script"], "return window.__rzn_params.message_body;");
+    }
+
+    #[test]
+    fn runtime_context_is_discovered_from_manifest_workflow_ref() {
+        let root = unique_temp_path("runtime-context").join("workflows");
+        let workflow_dir = root.join("x");
+        fs::create_dir_all(&workflow_dir).unwrap();
+        let workflow_path = workflow_dir.join("x_open.json");
+        fs::write(
+            &workflow_path,
+            r#"{
+              "browser_automation": {
+                "sequences": [{
+                  "steps": [{ "id": "extract", "type": "extract_structured_data" }]
+                }]
+              }
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            workflow_dir.join("open.json"),
+            r#"{
+              "schema_version": "rzn.workflow_manifest",
+              "id": "x.open",
+              "name": "Open X",
+              "version": "0.1.0",
+              "system": "x",
+              "capability": "x.read.unified",
+              "side_effects": [{ "class": "read_only" }],
+              "runtime": { "actor": "supervisor", "workflow_path": "x/x_open.json" },
+              "steps": [],
+              "result": {
+                "output_selector": { "step_id": "extract", "path": "$" }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let context = load_runtime_context_for_workflow(&workflow_path.to_string_lossy()).unwrap();
+
+        let context = context.expect("manifest context");
+        assert_eq!(context.workflow_id, "x.open");
+        assert_eq!(context.workflow_version, "0.1.0");
+        assert_eq!(context.capability, "x.read.unified");
+        assert_eq!(context.declared_side_effects, vec!["read_only"]);
+        assert!(context.enforce_side_effects);
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn step_payload_threads_manifest_identity_and_side_effect_policy() {
+        let context = WorkflowRuntimeContext {
+            workflow_id: "x.open".to_string(),
+            workflow_version: "0.1.0".to_string(),
+            system: "x".to_string(),
+            capability: "x.read.unified".to_string(),
+            declared_side_effects: vec!["read_only".to_string()],
+            enforce_side_effects: true,
+            output_selector_step_id: None,
+            output_selector_path: None,
+        };
+
+        let payload = step_execution_payload(
+            Some("session-1"),
+            &json!({ "id": "extract", "type": "extract_structured_data" }),
+            true,
+            Some(&context),
+        );
+
+        assert_eq!(payload.get("workflow_id"), Some(&json!("x.open")));
+        assert_eq!(payload.get("workflow_version"), Some(&json!("0.1.0")));
+        assert_eq!(payload.get("system"), Some(&json!("x")));
+        assert_eq!(payload.get("capability"), Some(&json!("x.read.unified")));
+        assert_eq!(
+            payload.pointer("/side_effect_policy/enforce"),
+            Some(&json!(true))
+        );
+        assert_eq!(
+            payload.pointer("/side_effect_policy/declared_side_effects/0"),
+            Some(&json!("read_only"))
+        );
+        assert_eq!(payload.get("use_current_tab"), Some(&json!(true)));
+    }
+
+    #[test]
+    fn output_extraction_prefers_run_result_output() {
+        let response = json!({
+            "result": { "legacy": true },
+            "run_result": {
+                "version": "rzn.run_result.v2",
+                "run_id": "run-1",
+                "workflow_id": "x.open",
+                "status": "succeeded",
+                "output": { "markdown": "# done" }
+            }
+        });
+
+        assert_eq!(
+            extract_payload_for_output(&response),
+            Some(json!({ "markdown": "# done" }))
+        );
+    }
+
+    #[test]
+    fn manifest_output_selector_picks_named_step_payload() {
+        let context = WorkflowRuntimeContext {
+            workflow_id: "pubmed/search".to_string(),
+            workflow_version: "1.0.0".to_string(),
+            system: "pubmed".to_string(),
+            capability: "pubmed.search".to_string(),
+            declared_side_effects: vec!["read_only".to_string()],
+            enforce_side_effects: true,
+            output_selector_step_id: Some("extract".to_string()),
+            output_selector_path: Some("$.items[0]".to_string()),
+        };
+        let mut outputs = HashMap::new();
+        outputs.insert(
+            "extract".to_string(),
+            json!({ "items": [{ "title": "selected" }] }),
+        );
+        outputs.insert("count".to_string(), json!("42"));
+
+        assert_eq!(
+            select_workflow_output(Some(&context), &outputs, Some(json!("fallback"))),
+            Some(json!({ "title": "selected" }))
+        );
+    }
+
+    #[test]
+    fn manifest_with_steps_loads_as_executable_workflow() {
+        let root = unique_temp_path("manifest-runtime").join("workflows");
+        let workflow_dir = root.join("google");
+        fs::create_dir_all(&workflow_dir).unwrap();
+        let manifest_path = workflow_dir.join("google-search.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+              "schema_version": "rzn.workflow_manifest",
+              "id": "google/search",
+              "name": "Google Search",
+              "version": "1.0.0",
+              "system": "google",
+              "capability": "google.search",
+              "params": {
+                "properties": {
+                  "search_query": {
+                    "kind": "string",
+                    "required": true,
+                    "description": "Query text."
+                  }
+                }
+              },
+              "side_effects": [
+                { "class": "browser_state" },
+                { "class": "read_only" }
+              ],
+              "runtime": { "actor": "supervisor" },
+              "steps": [
+                {
+                  "id": "open",
+                  "action": {
+                    "kind": "navigate_to_url",
+                    "inputs": { "url": "https://www.google.com/search?q={search_query}" },
+                    "side_effects": ["browser_state"]
+                  }
+                },
+                {
+                  "id": "extract",
+                  "action": {
+                    "kind": "extract_structured_data",
+                    "inputs": {
+                      "item_selector": ".result",
+                      "fields": [{ "name": "title", "selector": "h3" }]
+                    },
+                    "side_effects": ["read_only"]
+                  }
+                }
+              ],
+              "result": {
+                "output_schema": { "type": "array" },
+                "output_selector": { "step_id": "extract", "path": "$" }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let workflow = load_workflow_value(&manifest_path.to_string_lossy()).unwrap();
+        let steps = workflow
+            .pointer("/browser_automation/sequences/0/steps")
+            .and_then(|value| value.as_array())
+            .expect("steps");
+
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0].get("type"), Some(&json!("navigate_to_url")));
+        assert_eq!(
+            steps[0].get("url"),
+            Some(&json!("https://www.google.com/search?q={search_query}"))
+        );
+        assert_eq!(steps[1].get("item_selector"), Some(&json!(".result")));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn manifest_run_loader_keeps_manifest_steps_and_params_authoritative() {
+        let root = unique_temp_path("manifest-native-runtime").join("workflows");
+        let workflow_dir = root.join("google");
+        fs::create_dir_all(&workflow_dir).unwrap();
+        let manifest_path = workflow_dir.join("google-search.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+              "schema_version": "rzn.workflow_manifest",
+              "id": "google/search",
+              "name": "Google Search",
+              "version": "1.0.0",
+              "system": "google",
+              "capability": "google.search",
+              "params": {
+                "properties": {
+                  "search_query": {
+                    "kind": "string",
+                    "required": true
+                  },
+                  "locale": {
+                    "kind": "string",
+                    "default": "en"
+                  }
+                }
+              },
+              "side_effects": [{ "class": "browser_state" }],
+              "runtime": { "actor": "supervisor" },
+              "steps": [
+                {
+                  "id": "open",
+                  "action": {
+                    "kind": "navigate_to_url",
+                    "inputs": { "url": "https://www.google.com/search?q={search_query}&hl={locale}" },
+                    "side_effects": ["browser_state"]
+                  }
+                }
+              ],
+              "result": {
+                "output_selector": { "step_id": "open", "path": "$" }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = load_workflow_for_run(
+            &manifest_path.to_string_lossy(),
+            &HashMap::from([("search_query".to_string(), "rust".to_string())]),
+        )
+        .unwrap();
+
+        assert!(
+            loaded.report_workflow.get("browser_automation").is_none(),
+            "manifest run path must not synthesize a legacy workflow object"
+        );
+        assert!(matches!(loaded.steps[0], RuntimeStep::Manifest { .. }));
+        let executor_step = loaded.steps[0].executor_step();
+        assert_eq!(executor_step.get("type"), Some(&json!("navigate_to_url")));
+        assert_eq!(
+            executor_step.get("url"),
+            Some(&json!("https://www.google.com/search?q=rust&hl=en"))
+        );
+
+        let missing = load_workflow_for_run(&manifest_path.to_string_lossy(), &HashMap::new())
+            .expect_err("manifest params must enforce required inputs");
+        assert!(missing.to_string().contains("search_query"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn manifest_run_loader_accepts_cli_array_params() {
+        let root = unique_temp_path("manifest-array-runtime").join("workflows");
+        let workflow_dir = root.join("demo");
+        fs::create_dir_all(&workflow_dir).unwrap();
+        let manifest_path = workflow_dir.join("upload.json");
+        fs::write(
+            &manifest_path,
+            r##"{
+              "schema_version": "rzn.workflow_manifest",
+              "id": "demo/upload",
+              "name": "Upload",
+              "version": "1.0.0",
+              "system": "demo",
+              "capability": "demo.upload",
+              "params": {
+                "properties": {
+                  "paths": {
+                    "kind": "array",
+                    "required": true
+                  }
+                }
+              },
+              "side_effects": [{ "class": "file_write" }],
+              "runtime": { "actor": "supervisor" },
+              "steps": [
+                {
+                  "id": "upload",
+                  "action": {
+                    "kind": "upload_file",
+                    "inputs": {
+                      "selector": "#file",
+                      "file_path": "{paths}"
+                    },
+                    "side_effects": ["file_write"]
+                  }
+                }
+              ],
+              "result": {
+                "output_selector": { "step_id": "upload", "path": "$" }
+              }
+            }"##,
+        )
+        .unwrap();
+
+        let loaded = load_workflow_for_run(
+            &manifest_path.to_string_lossy(),
+            &HashMap::from([("paths".to_string(), "/tmp/a.txt,/tmp/b.txt".to_string())]),
+        )
+        .unwrap();
+        let executor_step = loaded.steps[0].executor_step();
+        assert_eq!(
+            executor_step.get("file_path"),
+            Some(&json!("[\"/tmp/a.txt\",\"/tmp/b.txt\"]"))
+        );
+
+        let loaded_json = load_workflow_for_run(
+            &manifest_path.to_string_lossy(),
+            &HashMap::from([("paths".to_string(), "[\"/tmp/with space.txt\"]".to_string())]),
+        )
+        .unwrap();
+        let executor_step = loaded_json.steps[0].executor_step();
+        assert_eq!(
+            executor_step.get("file_path"),
+            Some(&json!("[\"/tmp/with space.txt\"]"))
+        );
+
+        let bad = load_workflow_for_run(
+            &manifest_path.to_string_lossy(),
+            &HashMap::from([("paths".to_string(), "[not-json".to_string())]),
+        )
+        .expect_err("invalid JSON array should fail before runtime");
+        assert!(bad
+            .to_string()
+            .contains("paths: invalid JSON array parameter"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn manifest_run_loader_rejects_unknown_output_selector_step() {
+        let root = unique_temp_path("manifest-selector-runtime").join("workflows");
+        let workflow_dir = root.join("x");
+        fs::create_dir_all(&workflow_dir).unwrap();
+        let manifest_path = workflow_dir.join("x-open.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+              "schema_version": "rzn.workflow_manifest",
+              "id": "x/open",
+              "name": "Open X",
+              "version": "1.0.0",
+              "system": "x",
+              "capability": "x.read",
+              "side_effects": [{ "class": "read_only" }],
+              "runtime": { "actor": "supervisor" },
+              "steps": [
+                {
+                  "id": "extract",
+                  "action": {
+                    "kind": "extract_structured_data",
+                    "side_effects": ["read_only"]
+                  }
+                }
+              ],
+              "result": {
+                "output_selector": { "step_id": "missing", "path": "$" }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let err = load_workflow_for_run(&manifest_path.to_string_lossy(), &HashMap::new())
+            .expect_err("selector must reference a manifest step");
+        assert!(err.to_string().contains("output_selector"));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn step_recording_preserves_supervisor_run_result_envelope() {
+        let response = json!({
+            "ok": true,
+            "result": { "legacy": true },
+            "run_result": {
+                "version": "rzn.run_result.v2",
+                "run_id": "run-1",
+                "workflow_id": "x.open",
+                "status": "succeeded",
+                "output": { "selected": true },
+                "artifacts": [],
+                "warnings": [],
+                "steps": []
+            }
+        });
+        let mut step_outputs = HashMap::new();
+        let mut final_payload = None;
+
+        record_step_output("extract", &response, &mut step_outputs, &mut final_payload);
+
+        assert_eq!(
+            step_outputs.get("extract"),
+            Some(&json!({ "selected": true }))
+        );
+        let final_payload = final_payload.expect("run result");
+        assert_eq!(
+            final_payload
+                .get("version")
+                .and_then(|value| value.as_str()),
+            Some("rzn.run_result.v2")
+        );
+        assert_eq!(
+            final_payload
+                .get("workflow_id")
+                .and_then(|value| value.as_str()),
+            Some("x.open")
+        );
+    }
+
+    #[test]
+    fn response_success_treats_error_shaped_legacy_response_as_failure() {
+        assert!(!response_success(&json!({
+            "error": "selector not found",
+            "error_code": "SELECTOR_NOT_FOUND"
+        })));
+        assert!(!response_success(&json!({
+            "run_result": {
+                "version": "rzn.run_result.v2",
+                "run_id": "run-1",
+                "workflow_id": "x.open",
+                "status": "failed",
+                "output": null,
+                "artifacts": [],
+                "warnings": [],
+                "steps": []
+            }
+        })));
     }
 
     #[test]
@@ -2805,6 +4317,13 @@ mod tests {
         std::env::temp_dir().join(format!("{}-{}", Uuid::new_v4(), name))
     }
 
+    fn write_marker(path: &Path) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, "ok\n").unwrap();
+    }
+
     fn sample_native_config() -> NativeRunConfig {
         NativeRunConfig {
             workflow_path: "workflows/google/google-search.json".to_string(),
@@ -2830,7 +4349,7 @@ mod tests {
     }
 }
 
-struct NativeClient {
+pub(crate) struct NativeClient {
     reader: Box<dyn AsyncRead + Unpin + Send>,
     writer: Box<dyn AsyncWrite + Unpin + Send>,
     child: Option<Child>,
@@ -2927,12 +4446,47 @@ impl NativeClient {
         Ok(())
     }
 
-    async fn send_request(&mut self, cmd: &str, payload: Value) -> Result<Value> {
+    pub(crate) async fn send_request(&mut self, cmd: &str, payload: Value) -> Result<Value> {
         self.send_request_with_timeout(cmd, payload, DEFAULT_REQUEST_TIMEOUT_MS)
             .await
     }
 
-    async fn send_request_with_timeout(
+    pub(crate) async fn send_request_with_timeout(
+        &mut self,
+        cmd: &str,
+        payload: Value,
+        timeout_ms: u64,
+    ) -> Result<Value> {
+        let result = self
+            .send_tool_call_result_with_timeout(cmd, payload, timeout_ms)
+            .await?;
+
+        // Return the structured tool payload (what rzn-browser-worker puts in structuredContent).
+        if let Some(structured) = result
+            .pointer("/structuredContent")
+            .or_else(|| result.pointer("/structured_content"))
+        {
+            return Ok(structured.clone());
+        }
+
+        // Fallback: try to parse the first text content as JSON.
+        if let Some(text) = result
+            .get("content")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| {
+                arr.iter()
+                    .find_map(|c| c.get("text").and_then(|t| t.as_str()))
+            })
+        {
+            if let Ok(v) = serde_json::from_str::<Value>(text) {
+                return Ok(v);
+            }
+        }
+
+        Ok(result)
+    }
+
+    async fn send_tool_call_result_with_timeout(
         &mut self,
         cmd: &str,
         payload: Value,
@@ -2965,28 +4519,6 @@ impl NativeClient {
             return Err(anyhow!("MCP error: {}", error));
         }
 
-        // Return the structured tool payload (what rzn-browser-worker puts in structuredContent).
-        if let Some(structured) = response
-            .pointer("/result/structuredContent")
-            .or_else(|| response.pointer("/result/structured_content"))
-        {
-            return Ok(structured.clone());
-        }
-
-        // Fallback: try to parse the first text content as JSON.
-        if let Some(text) = response
-            .pointer("/result/content")
-            .and_then(|v| v.as_array())
-            .and_then(|arr| {
-                arr.iter()
-                    .find_map(|c| c.get("text").and_then(|t| t.as_str()))
-            })
-        {
-            if let Ok(v) = serde_json::from_str::<Value>(text) {
-                return Ok(v);
-            }
-        }
-
         if let Some(result) = response.get("result") {
             Ok(result.clone())
         } else {
@@ -2994,7 +4526,7 @@ impl NativeClient {
         }
     }
 
-    async fn shutdown(&mut self) {
+    pub(crate) async fn shutdown(&mut self) {
         if let Some(child) = &mut self.child {
             let keep = keep_browser_worker_on_exit();
             if keep {
@@ -3073,10 +4605,10 @@ async fn worker_control_plane_responds(client: &mut NativeClient) -> bool {
     {
         Ok(_) => true,
         Err(err) => {
-            println!(
+            emit_runtime_status(format!(
                 "[WARN] Existing browser worker control plane is unresponsive: {}",
                 err
-            );
+            ));
             false
         }
     }

@@ -318,7 +318,16 @@ pub fn normalize_workflow_error(raw_error: &str, step_type: &str) -> String {
     {
         return "auth_required".to_string();
     }
-    if raw.contains("native host") || raw.contains("no native host") {
+    if raw.contains("native-host bridge is not connected")
+        || raw.contains("native host is not connected")
+        || raw.contains("no native host")
+    {
+        return "native_host_disconnected".to_string();
+    }
+    if raw.contains("timeout") || raw.contains("timed out") {
+        return "timeout".to_string();
+    }
+    if raw.contains("native host") || raw.contains("native-host") {
         return "native_host_disconnected".to_string();
     }
     if raw.contains("extension")
@@ -333,9 +342,6 @@ pub fn normalize_workflow_error(raw_error: &str, step_type: &str) -> String {
         || raw.contains("disabled")
     {
         return "element_not_clickable".to_string();
-    }
-    if raw.contains("timeout") || raw.contains("timed out") {
-        return "timeout".to_string();
     }
     if raw.contains("navigation")
         || raw.contains("navigate")
@@ -672,6 +678,15 @@ mod tests {
             "fill_input",
         );
         assert_eq!(code, "input_not_found");
+    }
+
+    #[test]
+    fn bridge_request_timeout_is_reported_as_timeout() {
+        let code = normalize_workflow_error(
+            "Supervisor error: {\"code\":-32000,\"message\":\"Native-host extension bridge timeout after 40000ms\"}",
+            "execute_step",
+        );
+        assert_eq!(code, "timeout");
     }
 
     #[test]

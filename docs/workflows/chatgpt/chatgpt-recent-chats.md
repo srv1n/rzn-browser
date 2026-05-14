@@ -1,7 +1,7 @@
 # ChatGPT: Recent Chats
 
 - JSON: `workflows/chatgpt/chatgpt_recent_chats_v1.json`
-- Purpose: Open ChatGPT in the current tab and return the most recent chats with optional `limit` / `days` filtering.
+- Purpose: Open ChatGPT in a dedicated workflow tab and return the most recent chats with optional `limit` / `days` filtering.
 - Optional params: `limit`, `days`
 - Canonical CLI:
 

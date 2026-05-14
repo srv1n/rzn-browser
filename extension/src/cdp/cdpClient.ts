@@ -2,6 +2,7 @@
 // Provides type-safe CDP command execution with session routing
 
 import { frameRouter } from './frameRouter';
+import { cdpErrorText, isExpectedCdpLifecycleError } from './errors';
 
 export interface CDPCommand {
   method: string;
@@ -30,46 +31,7 @@ export class CDPClient {
   private domainRefs = new Map<string, Map<string, number>>(); // sessionId -> domain -> refcount
 
   private formatCommandError(error: unknown): string {
-    if (typeof error === 'string') {
-      return error;
-    }
-    if (!error || typeof error !== 'object') {
-      return String(error);
-    }
-
-    const anyError = error as {
-      message?: unknown;
-      code?: unknown;
-      data?: unknown;
-      stack?: unknown;
-    };
-    const parts: string[] = [];
-
-    if (typeof anyError.message === 'string' && anyError.message.trim()) {
-      parts.push(anyError.message.trim());
-    }
-    if (typeof anyError.code === 'number') {
-      parts.push(`code=${anyError.code}`);
-    }
-    if (anyError.data !== undefined) {
-      try {
-        const dataText =
-          typeof anyError.data === 'string' ? anyError.data : JSON.stringify(anyError.data);
-        if (dataText) {
-          parts.push(`data=${dataText}`);
-        }
-      } catch {}
-    }
-
-    if (!parts.length) {
-      try {
-        return JSON.stringify(error);
-      } catch {
-        return String(error);
-      }
-    }
-
-    return parts.join(' ');
+    return cdpErrorText(error);
   }
 
   /**
@@ -118,8 +80,21 @@ export class CDPClient {
           const error = chrome.runtime.lastError;
           if (error) {
             const formatted = this.formatCommandError(error);
-            console.error(`[CDPClient] Command failed: ${method}: ${formatted}`);
-            reject(new Error(`CDP command failed: ${formatted}`));
+            const lifecycleError = isExpectedCdpLifecycleError(formatted);
+            const message = `[CDPClient] Command failed: ${method}: ${formatted}`;
+            if (lifecycleError) {
+              console.warn(message);
+              if (tabId !== undefined) {
+                frameRouter.markTabDetached(tabId, formatted);
+              }
+            } else {
+              console.error(message);
+            }
+            const commandError = new Error(`CDP command failed: ${formatted}`);
+            (commandError as any).code = lifecycleError
+              ? 'CDP_TARGET_DETACHED'
+              : 'CDP_COMMAND_FAILED';
+            reject(commandError);
           } else {
             console.log(`[CDPClient] Command succeeded: ${method}`);
             resolve(result as T);
@@ -382,7 +357,7 @@ export class CDPClient {
       target,
       'Runtime.evaluate',
       params,
-      { frameId: options?.frameId }
+      { frameId: options?.frameId, timeout: options?.timeout }
     );
   }
 

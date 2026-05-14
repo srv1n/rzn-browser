@@ -84,6 +84,52 @@ APP_BASE="${APP_BASE:-$HOME/Library/Application Support/rzn_debug}"
 ENDPOINT="$APP_BASE/secure/broker_endpoint_v1.json"
 if [[ -f "$ENDPOINT" ]]; then
   echo "[OK] Found bridge endpoint: $ENDPOINT"
+  export ENDPOINT
+  python3 - <<'PY'
+import json, os
+
+endpoint_path = os.environ["ENDPOINT"]
+try:
+    endpoint = json.load(open(endpoint_path))
+except Exception as exc:
+    print(f"[WARN] Could not parse endpoint health: {exc}")
+    raise SystemExit(0)
+
+def pid_live(pid):
+    if not isinstance(pid, int) or pid <= 0:
+        return None
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except ProcessLookupError:
+        return False
+    except Exception:
+        return None
+
+stale = False
+for section in ("broker", "browser_bridge", "browser_worker"):
+    value = endpoint.get(section)
+    if not isinstance(value, dict):
+        continue
+    socket = (value.get("socket") or "").strip()
+    token = (value.get("token_path") or "").strip()
+    pid = value.get("pid")
+    socket_ok = bool(socket) and os.path.exists(socket)
+    token_ok = bool(token) and os.path.exists(token)
+    live = pid_live(pid)
+    status = "OK" if socket_ok and token_ok and live is not False else "STALE"
+    if status == "STALE":
+        stale = True
+    print(
+        f"[{status}] {section}: pid={pid or '<none>'} "
+        f"socket={'ok' if socket_ok else 'missing'} token={'ok' if token_ok else 'missing'}"
+    )
+
+if stale:
+    print("[INFO] Repair command: rzn-browser heal")
+PY
 else
   echo "[WARN] Missing bridge endpoint: $ENDPOINT"
   echo "       Expected flow:"

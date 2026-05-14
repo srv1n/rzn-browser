@@ -159,6 +159,135 @@ function serializeForBridge(value: any, depth = 0, seen = new WeakSet<object>())
   return String(value);
 }
 
+function isCspEvalError(err: any): boolean {
+  const msg = (err && (err.message || String(err))) || '';
+  return /unsafe-eval|EvalError|Content Security Policy/i.test(msg);
+}
+
+// Chrome strips the `nonce` HTML attribute from the DOM after parsing for
+// security, but exposes the value via the `.nonce` IDL property to scripts in
+// the same world. So `querySelector('script[nonce]')` returns nothing, but
+// iterating all scripts and reading `.nonce` finds the page's allowed nonce.
+function findPageScriptNonce(): string | null {
+  const scripts = document.querySelectorAll('script');
+  for (const s of Array.from(scripts) as HTMLScriptElement[]) {
+    if (s.nonce) return s.nonce;
+  }
+  return null;
+}
+
+async function runViaScriptTag(
+  functionBody: string,
+  args: any[],
+  params: Record<string, any>,
+  returnValue: boolean,
+  nonce: string,
+  timeoutMs = 30_000
+): Promise<any> {
+  const channelId = '__rzn_eval_' + Math.random().toString(36).slice(2);
+  // Each window slot must be reachable by the injected script when it runs.
+  // Prepend an early sentinel so we know the script actually executed (i.e.
+  // wasn't silently blocked by CSP) — if `__started` never flips we can fail
+  // fast instead of waiting for the full timeout.
+  const wrapped = `(function(){
+    "use strict";
+    try { window['${channelId}_started'] = true; } catch (e) {}
+    return (async function(args, params){
+      const __args = Array.isArray(args) ? args : [];
+      const __rzn_params = params && typeof params === 'object' ? params : {};
+      const arg0 = __args[0]; const arg1 = __args[1]; const arg2 = __args[2];
+      const arg3 = __args[3]; const arg4 = __args[4]; const arg5 = __args[5];
+      const arg6 = __args[6]; const arg7 = __args[7]; const arg8 = __args[8];
+      const arg9 = __args[9];
+      const previousParams = window.__rzn_params;
+      window.__rzn_params = __rzn_params;
+      try {
+        return await (async () => {
+          ${functionBody}
+        })();
+      } finally {
+        if (typeof previousParams === 'undefined') {
+          try { delete window.__rzn_params; } catch {}
+        } else {
+          window.__rzn_params = previousParams;
+        }
+      }
+    })(window['${channelId}_args'], window['${channelId}_params']).then(
+      function(v){
+        var fn = window['${channelId}_resolve'];
+        if (fn) fn(v);
+      },
+      function(e){
+        var fn = window['${channelId}_reject'];
+        var err = e instanceof Error ? { name: e.name, message: e.message, stack: e.stack } : e;
+        if (fn) fn(err);
+      }
+    );
+  })();`;
+
+  return await new Promise<any>((resolve, reject) => {
+    let timer: any;
+    let earlyCheck: any;
+    const cleanup = () => {
+      clearTimeout(timer);
+      clearTimeout(earlyCheck);
+      try { delete (window as any)[channelId + '_args']; } catch {}
+      try { delete (window as any)[channelId + '_params']; } catch {}
+      try { delete (window as any)[channelId + '_resolve']; } catch {}
+      try { delete (window as any)[channelId + '_reject']; } catch {}
+      try { delete (window as any)[channelId + '_started']; } catch {}
+    };
+
+    (window as any)[channelId + '_args'] = args;
+    (window as any)[channelId + '_params'] = params;
+    (window as any)[channelId + '_resolve'] = (v: any) => {
+      cleanup();
+      resolve(returnValue === false ? null : serializeForBridge(v));
+    };
+    (window as any)[channelId + '_reject'] = (e: any) => {
+      cleanup();
+      const message = e && typeof e === 'object' && e.message ? e.message : String(e);
+      const err = new Error(message);
+      if (e && typeof e === 'object' && e.name) err.name = e.name;
+      reject(err);
+    };
+
+    const s = document.createElement('script');
+    // Setting via the IDL property is what Chrome's CSP checks; setAttribute
+    // sets the HTML attribute which is cleared post-parse and ignored.
+    (s as HTMLScriptElement).nonce = nonce;
+    s.textContent = wrapped;
+
+    timer = setTimeout(() => {
+      cleanup();
+      try { s.remove(); } catch {}
+      reject(new Error('Script-tag eval timeout'));
+    }, timeoutMs);
+
+    // If the script never starts within 200ms it was almost certainly blocked
+    // by CSP — fail fast instead of waiting the full timeoutMs.
+    earlyCheck = setTimeout(() => {
+      if (!(window as any)[channelId + '_started']) {
+        cleanup();
+        try { s.remove(); } catch {}
+        reject(new Error('Script-tag injection blocked (likely CSP nonce mismatch)'));
+      }
+    }, 200);
+
+    const root = document.head || document.documentElement || document.body;
+    if (!root) {
+      cleanup();
+      reject(new Error('No DOM root for script-tag injection'));
+      return;
+    }
+    root.appendChild(s);
+    // The inline script executes synchronously on append (modulo CSP), so it's
+    // safe to remove the element from the DOM right after — the kicked-off
+    // async work continues without it.
+    try { s.remove(); } catch {}
+  });
+}
+
 async function runMainWorldScript(
   script: string,
   args: any[] = [],
@@ -174,40 +303,61 @@ async function runMainWorldScript(
     trimmed.includes('\n')
       ? source
       : `return (${source});`;
-  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as FunctionConstructor;
-  const run = new AsyncFunction(
-    'args',
-    'params',
-    'windowRef',
-    'documentRef',
-    'consoleRef',
-    `
-    "use strict";
-    const window = windowRef;
-    const document = documentRef;
-    const console = consoleRef;
-    const __args = Array.isArray(args) ? args : [];
-    const __rzn_params = params && typeof params === 'object' ? params : {};
-    const arg0 = __args[0];
-    const arg1 = __args[1];
-    const arg2 = __args[2];
-    const previousParams = window.__rzn_params;
-    window.__rzn_params = __rzn_params;
-    try {
-      return await (async () => {
-        ${functionBody}
-      })();
-    } finally {
-      if (typeof previousParams === 'undefined') {
-        try { delete window.__rzn_params; } catch {}
-      } else {
-        window.__rzn_params = previousParams;
+  // Fast path: AsyncFunction. Subject to page CSP `unsafe-eval`.
+  try {
+    const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as FunctionConstructor;
+    const run = new AsyncFunction(
+      'args',
+      'params',
+      'windowRef',
+      'documentRef',
+      'consoleRef',
+      `
+      "use strict";
+      const window = windowRef;
+      const document = documentRef;
+      const console = consoleRef;
+      const __args = Array.isArray(args) ? args : [];
+      const __rzn_params = params && typeof params === 'object' ? params : {};
+      const arg0 = __args[0];
+      const arg1 = __args[1];
+      const arg2 = __args[2];
+      const arg3 = __args[3];
+      const arg4 = __args[4];
+      const arg5 = __args[5];
+      const arg6 = __args[6];
+      const arg7 = __args[7];
+      const arg8 = __args[8];
+      const arg9 = __args[9];
+      const previousParams = window.__rzn_params;
+      window.__rzn_params = __rzn_params;
+      try {
+        return await (async () => {
+          ${functionBody}
+        })();
+      } finally {
+        if (typeof previousParams === 'undefined') {
+          try { delete window.__rzn_params; } catch {}
+        } else {
+          window.__rzn_params = previousParams;
+        }
       }
-    }
-  `
-  );
-  const value = await run(args, params, window, document, console);
-  return returnValue === false ? null : serializeForBridge(value);
+    `
+    );
+    const value = await run(args, params, window, document, console);
+    return returnValue === false ? null : serializeForBridge(value);
+  } catch (err) {
+    if (!isCspEvalError(err)) throw err;
+    // Page CSP blocks `unsafe-eval` (e.g. chatgpt.com). Fall back to a
+    // <script nonce=...> injection — script tags whose nonce matches the page
+    // policy execute even when `unsafe-eval` is forbidden.
+  }
+
+  const nonce = findPageScriptNonce();
+  if (!nonce) {
+    throw new Error('CSP blocks unsafe-eval and no script[nonce] available on the page');
+  }
+  return await runViaScriptTag(functionBody, args, params, returnValue, nonce);
 }
 
 async function fillAndSubmitInMainWorld(payload: any): Promise<any> {

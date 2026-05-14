@@ -58,7 +58,7 @@
         ]
       }
     ],
-    "use_current_tab": true
+    "use_current_tab": false
   },
   "description": "Open an existing ChatGPT conversation, default to Pro with Extended effort unless overridden, send another prompt, and return post-send thread state.",
   "domain": "chatgpt.com",

@@ -49,7 +49,7 @@ But Claude is not at ChatGPT parity yet because:
 
 - it has not been live-validated to the same standard
 - its docs are still wrapper-first / older style
-- we do not yet know whether Claude should stay dedicated-tab or move to current-tab for stability
+- Claude should stay on the dedicated-tab policy unless live evidence proves a workflow-engine bug; do not move shipped workflows to active-tab binding as a workaround
 - transcript quality and reply stability still need real session evidence
 
 ## Required Outcome
@@ -64,7 +64,7 @@ Another agent should land Claude parity with this exact bar:
 | Helper fetch | `assistant_conversation_sync.py fetch --system claude --thread-id ...` works live |
 | Helper reply | `assistant_conversation_sync.py reply --system claude --thread-id ... --message ...` works live |
 | Docs | Claude docs mirror ChatGPT’s CLI-first structure and clearly separate workflow CLI vs helper-layer behavior |
-| Runtime choice | Explicitly document whether Claude is stable on dedicated-tab or current-tab, based on live evidence |
+| Runtime choice | Validate Claude on dedicated workflow tabs and document any engine bug separately |
 
 ## Non-Negotiable Constraints
 
@@ -72,7 +72,7 @@ Another agent should land Claude parity with this exact bar:
 - The first-class contract must stay workflow CLI plus explicit variables.
 - Do not add site-specific engine code. Fix Claude drift in Claude workflow JSONs, not in shared Rust/extension logic.
 - Keep browser noise low. Do not spam retries or parallel runs on a live authenticated session.
-- If dedicated-tab Claude is flaky, switch to current-tab and document it clearly, just like ChatGPT.
+- If dedicated-tab Claude is flaky, file the engine/workflow blocker; do not switch shipped workflows to active-tab binding.
 
 ## Suggested Execution Order
 
@@ -114,7 +114,7 @@ Another agent should land Claude parity with this exact bar:
   - canonical read path
   - canonical write path
   - canonical discovery path
-  - whether the validated runtime is current-tab or dedicated-tab
+  - dedicated-tab validation status and any remaining runtime blocker
   - that the helper is not the primary control plane
 
 ## Copy-Paste Prompt
@@ -132,7 +132,7 @@ Important constraints:
 - The workflow CLI is the first-class orchestration surface. Do not make the Python helper the official interface in docs.
 - Keep browser noise low. No spammy retries or parallel runs on the live authenticated Claude session.
 - Do not add site-specific engine code. Fix Claude behavior in Claude workflow JSONs and docs.
-- If dedicated-tab Claude is flaky, move to current-tab and document that decision clearly.
+- If dedicated-tab Claude is flaky, document the blocker and keep shipped workflow JSON on the manifest standard with dedicated workflow tabs.
 
 Files to use:
 - workflows/claude/claude_recent_chats_v1.json

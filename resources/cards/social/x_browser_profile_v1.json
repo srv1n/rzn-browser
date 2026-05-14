@@ -17,23 +17,15 @@
       "required_args": [],
       "notes": "Reads the authenticated home timeline in a fresh tab and returns a bounded digest."
     },
-    "open_post": {
-      "card_id": "x.open_post",
-      "workflow_id": "x_open_post",
-      "workflow_path": "workflows/x/x_open_post.json",
+    "open": {
+      "card_id": "x.open",
+      "workflow_id": "x_open",
+      "workflow_path": "workflows/x/x_open.json",
       "mutating": false,
       "approval_required": false,
-      "required_args": ["post_url"],
-      "notes": "Opens one post in a fresh tab and returns DOM + GraphQL snapshot."
-    },
-    "open_article": {
-      "card_id": "x.open_article",
-      "workflow_id": "x_open_article",
-      "workflow_path": "workflows/x/x_open_article.json",
-      "mutating": false,
-      "approval_required": false,
-      "required_args": ["article_url"],
-      "notes": "Opens one X longform article in a fresh tab and returns its body + assets."
+      "required_args": ["url"],
+      "optional_args": ["mode"],
+      "notes": "Opens any X URL (post, article, thread) and returns markdown + media + linked-page URLs. Auto-detects kind."
     },
     "like_post": {
       "card_id": "x.like_post",
@@ -116,14 +108,5 @@
       "required_args": ["handle"],
       "notes": "Returns up to 20 recent posts from one profile."
     },
-    "thread": {
-      "card_id": "x.thread",
-      "workflow_id": "x_thread",
-      "workflow_path": "workflows/x/x_thread.json",
-      "mutating": false,
-      "approval_required": false,
-      "required_args": ["post_url", "handle"],
-      "notes": "Expands one same-author thread via conversation search."
-    }
   }
 }

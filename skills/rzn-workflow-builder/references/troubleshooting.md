@@ -43,16 +43,16 @@ Use dummy mode for workflow discovery:
 LLM_PROVIDER=dummy ./skills/rzn-workflow-builder/scripts/discover-workflow.sh "Search Google for rust lang and extract the top results"
 ```
 
-## Current Tab vs Dedicated Tab Bugs
+## Dedicated Tab vs Existing Session Bugs
 
 If a site behaves badly in a new tab but works in the live signed-in tab:
 
-- use `use_current_tab: true`
+- set `runtime.requires_existing_session: true`
 - keep the flow review-style
 
 If the workflow steals the operator's current tab and should not:
 
-- remove `use_current_tab: true`
+- remove legacy active-tab fields
 - run in a dedicated tab instead
 
 ## Logs

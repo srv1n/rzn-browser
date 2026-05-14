@@ -1,0 +1,122 @@
+filters:
+  and:
+    - 'this.file.folder == "" || file.inFolder(this.file.folder)'
+    - 'type == "task"'
+    - 'kind == "bug"'
+properties:
+  "file.name":
+    displayName: "ID"
+  title:
+    displayName: "Title"
+  status:
+    displayName: "Status"
+  risk:
+    displayName: "Risk"
+  priority:
+    displayName: "Priority"
+  assignee:
+    displayName: "Assignee"
+  size:
+    displayName: "Size"
+  epic:
+    displayName: "Epic"
+  blocked_by:
+    displayName: "Blocked By"
+  block_reason:
+    displayName: "Block Reason"
+  updated:
+    displayName: "Updated"
+views:
+  - type: table
+    name: "Board"
+    filters:
+      and:
+        - 'status != "done"'
+        - 'status != "cancelled"'
+        - 'status != "backlog"'
+        - 'status != "draft"'
+        - 'status != "ready"'
+    groupBy:
+      property: note.status
+      direction: ASC
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - size
+      - epic
+      - blocked_by
+      - block_reason
+  - type: table
+    name: "Ready"
+    filters:
+      and:
+        - 'status == "ready"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - assignee
+      - size
+      - epic
+      - updated
+  - type: table
+    name: "Blocked"
+    filters:
+      and:
+        - 'status == "blocked"'
+    order:
+      - "file.name"
+      - title
+      - blocked_by
+      - block_reason
+      - risk
+      - priority
+      - assignee
+      - epic
+  - type: table
+    name: "Backlog"
+    filters:
+      and:
+        - 'status == "backlog"'
+    order:
+      - "file.name"
+      - title
+      - risk
+      - priority
+      - size
+      - epic
+      - updated
+  - type: table
+    name: "Needs Attention"
+    filters:
+      and:
+        - 'status == "draft" || status == "blocked" || status == "review" || status == "rework"'
+    order:
+      - "file.name"
+      - title
+      - status
+      - risk
+      - priority
+      - assignee
+      - epic
+      - blocked_by
+      - block_reason
+      - updated
+  - type: table
+    name: "Archive"
+    filters:
+      and:
+        - 'status == "done" || status == "cancelled"'
+    groupBy:
+      property: note.epic
+      direction: ASC
+    order:
+      - "file.name"
+      - title
+      - status
+      - epic
+      - updated

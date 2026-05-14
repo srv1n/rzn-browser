@@ -12,8 +12,8 @@ fn repo_root() -> PathBuf {
 #[test]
 fn assistant_conversation_workflows_parse_as_v1_workflow() {
     let workflows = [
-        "workflows/chatgpt/chatgpt_recent_chats_v1.json",
-        "workflows/chatgpt/chatgpt_export_full_chat_v1.json",
+        "workflows/chatgpt/chatgpt_recent_chats.json",
+        "workflows/chatgpt/chatgpt_read.json",
         "workflows/claude/claude_recent_chats.json",
         "workflows/claude/claude_export_chat.json",
         "workflows/claude/claude_send.json",

@@ -50,6 +50,7 @@ contentScript.ts
 - Treat DOM/scripted rung misses as normal ladder signals, not operator-facing warnings, unless the final action fails.
 - Keep CDP diagnostics readable when break-glass is used; log the concrete protocol/runtime error text instead of opaque object dumps.
 - Preserve the default policy: DOM first, scripted second, CDP only when earlier rungs cannot complete the action.
+- Eval-backed JavaScript actions must fail loudly when injected code throws; do not map Chrome scripting errors or wrapper exceptions to `success: true` with a null result.
 
 ## Tasks & Status
 - [x] Click, fill, press_key, hover, scroll_into_view

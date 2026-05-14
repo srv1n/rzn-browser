@@ -951,6 +951,7 @@ mod tests {
     fn directory_resources_and_examples_are_hashed_into_manifest() -> Result<()> {
         let temp = TempDirGuard::new("rzn-plugin-devkit-test")?;
 
+        let browser_bin = temp.path.join("artifacts/rzn-browser");
         let worker_bin = temp.path.join("artifacts/rzn-browser-worker");
         let native_host_bin = temp.path.join("artifacts/rzn-native-host");
         let system_meta = temp
@@ -960,6 +961,7 @@ mod tests {
             .path
             .join("examples/browser_automation/open_page_get_title.json");
 
+        write_file(&browser_bin, b"browser-supervisor-binary")?;
         write_file(&worker_bin, b"worker-binary")?;
         write_file(&native_host_bin, b"native-host-binary")?;
         write_file(
@@ -994,6 +996,12 @@ mod tests {
                 "resources/systems/browser_automation".to_string(),
             )],
             payloads: vec![
+                PayloadConfig {
+                    source: browser_bin.display().to_string(),
+                    dest: "bin/macos/universal/rzn-browser".to_string(),
+                    platforms: Some(vec!["macos_universal".to_string()]),
+                    mode: Some(JsonValue::String("755".to_string())),
+                },
                 PayloadConfig {
                     source: worker_bin.display().to_string(),
                     dest: "bin/macos/universal/rzn-browser-worker".to_string(),
@@ -1032,12 +1040,16 @@ mod tests {
         };
 
         let payloads = collect_payloads(&config, "macos_universal")?;
+        assert!(payloads.contains_key("bin/macos/universal/rzn-browser"));
         assert!(payloads.contains_key("bin/macos/universal/rzn-browser-worker"));
         assert!(payloads.contains_key("bin/macos/universal/rzn-native-host"));
         assert!(payloads.contains_key("resources/systems/browser_automation/system.metadata.yaml"));
         assert!(payloads.contains_key("examples/browser_automation/open_page_get_title.json"));
 
         let manifest = build_manifest(&config, "macos_universal", &payloads)?;
+        assert!(manifest
+            .sha256
+            .contains_key("bin/macos/universal/rzn-browser"));
         assert_eq!(manifest.resources.len(), 1);
         assert_eq!(
             manifest.resources[0].path,

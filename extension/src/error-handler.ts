@@ -170,8 +170,12 @@ export class ErrorHandler {
    */
   private async captureScreenshot(tabId: number): Promise<string | null> {
     try {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab.windowId === undefined || tab.windowId === chrome.windows.WINDOW_ID_NONE) {
+        return null;
+      }
       const dataUrl = await chrome.tabs.captureVisibleTab(
-        chrome.windows.WINDOW_ID_CURRENT,
+        tab.windowId,
         { format: 'png' }
       );
       return dataUrl;

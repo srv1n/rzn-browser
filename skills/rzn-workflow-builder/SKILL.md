@@ -21,8 +21,10 @@ If the runtime is already healthy, the script exits quickly. If not, it runs the
    - Deterministic first: clone and edit an existing workflow JSON when the steps are already clear.
    - Discovery first: use `llm-auto --save-workflow` when the site path is fuzzy, then clean the saved JSON into a deterministic workflow.
 4. Validate the workflow locally with `rzn-browser run ...` until it is stable.
-5. Keep site-specific selectors and DOM logic inside the workflow JSON or workflow-local docs, not in shared engine code.
-6. If the workflow is worth keeping, add docs under `docs/workflows/<system>/` and keep the workflow filename canonical.
+5. Inspect and validate the manifest contract with `workflow inspect` and
+   `workflow validate --strict`.
+6. Keep site-specific selectors and DOM logic inside the workflow JSON or workflow-local docs, not in shared engine code.
+7. If the workflow is worth keeping, add docs under `docs/workflows/<system>/` and keep the workflow filename canonical.
 
 Read [references/workflow-authoring.md](references/workflow-authoring.md) before editing or generating a workflow.
 
@@ -56,12 +58,13 @@ The discovery helper writes saved flows into `workflows/generated/` by default. 
 ## Workflow Rules
 
 - Prefer built-in workflow ids like `google search` once the flow is good enough to reuse.
-- Use `use_current_tab: true` only when the flow truly needs the active signed-in tab.
+- Keep the normal workflow filename and put the manifest contract in the JSON body.
+- Use `runtime.requires_existing_session: true` only when the flow truly needs an already-open browser session.
 - Keep risky write flows explicit. For send/post/reply/submit actions, prefer `request_user_intervention` with a real approval gate.
 - Keep shared runtime code generic. Site-specific hacks belong in workflow data and workflow docs.
 - Do not hide real write behavior. Call out whether the flow mutates state.
 
-Read [references/workflow-authoring.md](references/workflow-authoring.md) for concrete patterns including `use_current_tab`, `request_user_intervention`, and local validation commands.
+Read [references/workflow-authoring.md](references/workflow-authoring.md) for concrete patterns including manifest params, `request_user_intervention`, and local validation commands.
 
 ## Contribution Shape
 
@@ -85,5 +88,5 @@ Use that reference when:
 - the native host is not connected
 - Chrome is open but the extension is stale
 - `llm-auto` should avoid real provider billing
-- the workflow should use current-tab or dedicated-tab behavior
+- the workflow should use a dedicated tab or requires an existing session
 - the runtime attaches but the flow still fails

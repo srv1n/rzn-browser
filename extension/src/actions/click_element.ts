@@ -9,6 +9,8 @@
  */
 
 import { cdpSessionManager } from '../runtime/cdp_session_manager';
+import { getActiveBrowserTabId } from '../browserTabs';
+import { actionSuccess } from './actionResult';
 
 type Rect = { left: number; top: number; width: number; height: number };
 
@@ -138,27 +140,30 @@ export async function handleClickElement(step: any): Promise<any> {
 
   let targetTabId: number | undefined = explicitTabId;
   if (!targetTabId) {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tabs[0]?.id) {
-      throw new Error("No active tab found");
-    }
-    targetTabId = tabs[0].id;
+    targetTabId = await getActiveBrowserTabId("click_element_cdp");
   }
 
   const sessionId = String(step.session_id || step.sessionId || "default");
+  const startedAt = Date.now();
   const clicked = await clickElementAction.execute(sessionId, targetTabId, String(selector), {
     randomOffset,
     forceSameTab,
   });
 
-  return {
-    success: true,
-    action: "click_element_cdp",
+  const result = {
     selector: String(selector),
+    clicked: true,
     force_same_tab: forceSameTab,
     point: { x: clicked.x, y: clicked.y },
     rect: clicked.rect,
     tabId: targetTabId,
-    timestamp: Date.now(),
   };
+
+  return actionSuccess({
+    action: "click_element_cdp",
+    result,
+    tabId: targetTabId,
+    duration_ms: Date.now() - startedAt,
+    legacy: result,
+  });
 }

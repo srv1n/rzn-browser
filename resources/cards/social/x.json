@@ -17,30 +17,17 @@
       "artifacts": ["result.json"]
     },
     {
-      "id": "x.open_post",
-      "title": "Open X Post",
+      "id": "x.open",
+      "title": "Open X URL",
       "app": "x",
       "mode": "read",
-      "workflow": "x_open_post",
+      "workflow": "x_open",
       "mutating": false,
       "commitRequired": false,
-      "description": "Open one post URL in a fresh tab and return its DOM + GraphQL snapshot.",
-      "defaults": {},
-      "requiredArgs": ["post_url"],
-      "artifacts": ["result.json"]
-    },
-    {
-      "id": "x.open_article",
-      "title": "Open X Article",
-      "app": "x",
-      "mode": "read",
-      "workflow": "x_open_article",
-      "mutating": false,
-      "commitRequired": false,
-      "description": "Open one X longform article URL and return its body, metadata, and assets.",
-      "defaults": {},
-      "requiredArgs": ["article_url"],
-      "artifacts": ["result.json"]
+      "description": "Open any X URL (post, longform article, or same-author thread) and return a unified markdown rendering plus media + linked-page URLs. Auto-detects kind.",
+      "defaults": { "mode": "auto" },
+      "requiredArgs": ["url"],
+      "artifacts": ["result.json", "content.md"]
     },
     {
       "id": "x.like_post",
@@ -162,18 +149,5 @@
       "requiredArgs": ["handle"],
       "artifacts": ["result.json"]
     },
-    {
-      "id": "x.thread",
-      "title": "X Thread Expansion",
-      "app": "x",
-      "mode": "read",
-      "workflow": "x_thread",
-      "mutating": false,
-      "commitRequired": false,
-      "description": "Expand one same-author X thread via conversation search and return all posts, assets, and external links.",
-      "defaults": {},
-      "requiredArgs": ["post_url", "handle"],
-      "artifacts": ["result.json", "thread.md"]
-    }
   ]
 }

@@ -90,6 +90,215 @@ pub fn read_broker_endpoint(app_base: &Path) -> Option<BrokerEndpointV1> {
     read_broker_endpoint_from_path(&broker_endpoint_path(app_base))
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BrokerEndpointPruneReport {
+    pub app_base_dir: String,
+    pub endpoint_path: String,
+    pub endpoint_existed: bool,
+    pub removed_broker: bool,
+    pub removed_browser_bridge: bool,
+    pub removed_browser_worker: bool,
+    pub removed_socket_paths: Vec<String>,
+    pub reasons: Vec<String>,
+}
+
+impl BrokerEndpointPruneReport {
+    pub fn changed(&self) -> bool {
+        self.removed_broker
+            || self.removed_browser_bridge
+            || self.removed_browser_worker
+            || !self.removed_socket_paths.is_empty()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StaleEndpointDecision {
+    reason: String,
+    remove_socket: bool,
+}
+
+pub fn endpoint_pid_is_live(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let Ok(pid_i32) = i32::try_from(pid) else {
+            return false;
+        };
+        if pid_i32 <= 0 {
+            return false;
+        }
+
+        let rc = unsafe { libc::kill(pid_i32, 0) };
+        if rc == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if pid == 0 {
+            return false;
+        }
+        let filter = format!("PID eq {}", pid);
+        let output = std::process::Command::new("tasklist")
+            .args(["/FI", &filter, "/NH"])
+            .output();
+        let Ok(output) = output else {
+            return false;
+        };
+        if !output.status.success() {
+            return false;
+        }
+        String::from_utf8_lossy(&output.stdout)
+            .split_whitespace()
+            .any(|part| part == pid.to_string())
+    }
+
+    #[cfg(not(any(unix, target_os = "windows")))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+fn stale_endpoint_decision(
+    section: &str,
+    socket: &str,
+    token_path: &str,
+    pid: Option<u32>,
+) -> Option<StaleEndpointDecision> {
+    let socket_path = Path::new(socket);
+    let token_path = Path::new(token_path);
+    let socket_exists = socket_path.exists();
+    let token_exists = token_path.exists();
+    let pid_dead = pid.map(|pid| !endpoint_pid_is_live(pid)).unwrap_or(false);
+
+    if socket_exists && token_exists && !pid_dead {
+        return None;
+    }
+
+    let mut parts = Vec::new();
+    if !socket_exists {
+        parts.push(format!("socket missing: {}", socket_path.display()));
+    }
+    if !token_exists {
+        parts.push(format!("token missing: {}", token_path.display()));
+    }
+    if pid_dead {
+        if let Some(pid) = pid {
+            parts.push(format!("pid is not live: {}", pid));
+        }
+    }
+
+    Some(StaleEndpointDecision {
+        reason: format!("{} stale ({})", section, parts.join(", ")),
+        remove_socket: socket_exists && (pid_dead || pid.is_none()),
+    })
+}
+
+pub fn prune_stale_broker_endpoint(app_base: &Path) -> Result<BrokerEndpointPruneReport, String> {
+    let path = broker_endpoint_path(app_base);
+    let mut report = BrokerEndpointPruneReport {
+        app_base_dir: app_base.to_string_lossy().to_string(),
+        endpoint_path: path.to_string_lossy().to_string(),
+        ..BrokerEndpointPruneReport::default()
+    };
+
+    let mut current = match read_broker_endpoint(app_base) {
+        Some(current) => {
+            report.endpoint_existed = true;
+            current
+        }
+        None => return Ok(report),
+    };
+
+    let mut changed = false;
+    let mut sockets_to_remove = Vec::new();
+
+    if let Some(endpoint) = current.broker.as_ref() {
+        if let Some(decision) = stale_endpoint_decision(
+            "broker",
+            &endpoint.socket,
+            &endpoint.token_path,
+            endpoint.pid,
+        ) {
+            report.reasons.push(decision.reason);
+            if decision.remove_socket {
+                sockets_to_remove.push(endpoint.socket.clone());
+            }
+            current.broker = None;
+            report.removed_broker = true;
+            changed = true;
+        }
+    }
+
+    if let Some(endpoint) = current.browser_bridge.as_ref() {
+        if let Some(decision) = stale_endpoint_decision(
+            "browser_bridge",
+            &endpoint.socket,
+            &endpoint.token_path,
+            endpoint.pid,
+        ) {
+            report.reasons.push(decision.reason);
+            if decision.remove_socket {
+                sockets_to_remove.push(endpoint.socket.clone());
+            }
+            current.browser_bridge = None;
+            report.removed_browser_bridge = true;
+            changed = true;
+        }
+    }
+
+    if let Some(endpoint) = current.browser_worker.as_ref() {
+        if let Some(decision) = stale_endpoint_decision(
+            "browser_worker",
+            &endpoint.socket,
+            &endpoint.token_path,
+            endpoint.pid,
+        ) {
+            report.reasons.push(decision.reason);
+            if decision.remove_socket {
+                sockets_to_remove.push(endpoint.socket.clone());
+            }
+            current.browser_worker = None;
+            report.removed_browser_worker = true;
+            changed = true;
+        }
+    }
+
+    if changed {
+        current.updated_at = Some(Utc::now().to_rfc3339());
+        current.app_base_dir = Some(app_base.to_string_lossy().to_string());
+
+        if endpoint_is_empty(&current) {
+            if path.exists() {
+                fs::remove_file(&path).map_err(|e| format!("remove endpoint {:?}: {}", path, e))?;
+            }
+        } else {
+            let bytes = serde_json::to_vec_pretty(&current)
+                .map_err(|e| format!("serialize endpoint: {}", e))?;
+            save_atomic_json(&path, &bytes)?;
+        }
+    }
+
+    sockets_to_remove.sort();
+    sockets_to_remove.dedup();
+    for socket in sockets_to_remove {
+        let socket_path = Path::new(&socket);
+        match fs::remove_file(socket_path) {
+            Ok(()) => report.removed_socket_paths.push(socket),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => report.reasons.push(format!(
+                "failed to remove stale socket {}: {}",
+                socket_path.display(),
+                err
+            )),
+        }
+    }
+
+    Ok(report)
+}
+
 fn save_atomic_json(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("create dir {:?}: {}", parent, e))?;
@@ -309,6 +518,13 @@ mod tests {
         }
     }
 
+    fn write_marker(path: &Path) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create marker parent");
+        }
+        fs::write(path, "ok\n").expect("write marker");
+    }
+
     #[test]
     fn clear_browser_bridge_preserves_other_endpoint_sections() {
         let temp = TempDirGuard::new("rzn-endpoint-preserve");
@@ -356,5 +572,86 @@ mod tests {
             .expect("clear worker");
 
         assert!(!broker_endpoint_path(&temp.path).exists());
+    }
+
+    #[test]
+    fn prune_stale_endpoint_removes_dead_sections_and_orphan_sockets() {
+        let temp = TempDirGuard::new("rzn-endpoint-prune");
+        let run_dir = temp.path.join("run");
+        let secure_dir = temp.path.join("secure");
+        let broker_socket = run_dir.join("broker.sock");
+        let bridge_socket = run_dir.join("bridge.sock");
+        let worker_socket = run_dir.join("worker.sock");
+        let broker_token = secure_dir.join("broker.token");
+        let bridge_token = secure_dir.join("bridge.token");
+        let worker_token = secure_dir.join("worker.token");
+        for path in [
+            &broker_socket,
+            &bridge_socket,
+            &worker_socket,
+            &broker_token,
+            &bridge_token,
+            &worker_token,
+        ] {
+            write_marker(path);
+        }
+
+        let endpoint = BrokerEndpointV1 {
+            v: 1,
+            broker: Some(BrokerEndpointBroker {
+                socket: broker_socket.to_string_lossy().to_string(),
+                token_path: broker_token.to_string_lossy().to_string(),
+                profile: None,
+                pid: Some(u32::MAX),
+            }),
+            browser_bridge: Some(BrokerEndpointBrowserBridge {
+                socket: bridge_socket.to_string_lossy().to_string(),
+                token_path: bridge_token.to_string_lossy().to_string(),
+                pid: Some(u32::MAX),
+            }),
+            browser_worker: Some(BrokerEndpointBrowserWorker {
+                socket: worker_socket.to_string_lossy().to_string(),
+                token_path: worker_token.to_string_lossy().to_string(),
+                pid: Some(u32::MAX),
+            }),
+            ..BrokerEndpointV1::default()
+        };
+        let bytes = serde_json::to_vec_pretty(&endpoint).expect("serialize endpoint");
+        save_atomic_json(&broker_endpoint_path(&temp.path), &bytes).expect("write endpoint");
+
+        let report = prune_stale_broker_endpoint(&temp.path).expect("prune endpoint");
+
+        assert!(report.changed());
+        assert!(report.removed_broker);
+        assert!(report.removed_browser_bridge);
+        assert!(report.removed_browser_worker);
+        assert_eq!(report.removed_socket_paths.len(), 3);
+        assert!(!broker_socket.exists());
+        assert!(!bridge_socket.exists());
+        assert!(!worker_socket.exists());
+        assert!(!broker_endpoint_path(&temp.path).exists());
+    }
+
+    #[test]
+    fn prune_stale_endpoint_preserves_live_existing_sections() {
+        let temp = TempDirGuard::new("rzn-endpoint-prune-live");
+        let socket = temp.path.join("run").join("worker.sock");
+        let token = temp.path.join("secure").join("worker.token");
+        write_marker(&socket);
+        write_marker(&token);
+        update_broker_endpoint_browser_worker(
+            &temp.path,
+            socket.to_string_lossy().to_string(),
+            token.to_string_lossy().to_string(),
+            Some(std::process::id()),
+        )
+        .expect("write worker");
+
+        let report = prune_stale_broker_endpoint(&temp.path).expect("prune endpoint");
+
+        assert!(!report.changed());
+        let endpoint = read_broker_endpoint(&temp.path).expect("endpoint should remain");
+        assert!(endpoint.browser_worker.is_some());
+        assert!(socket.exists());
     }
 }

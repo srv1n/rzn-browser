@@ -47,7 +47,7 @@
   "domain": "chatgpt.com",
   "version": "1.1.0",
   "browser_automation": {
-    "use_current_tab": true,
+    "use_current_tab": false,
     "description": "Current-tab ChatGPT entry flow. It reuses the authenticated browser session, resets to a fresh composer, defaults to Pro with Extended effort unless overridden, sends the initial prompt, and returns thread metadata.",
     "sequences": [
       {

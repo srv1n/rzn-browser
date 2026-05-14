@@ -69,7 +69,7 @@ chatgpt_images_get_latest_v1
 
 chatgpt_images_generate_and_download_v1
   -> rzn-browser run chatgpt images-generate-and-download-v1 --param message_text=... [--param attachment_file_path=...] [--param variation_count=...] [--param download_folder=...]
-  -> internally chains the right start flow, polls chatgpt_images_get_latest_v1 until URLs stabilize, and downloads the final images
+  -> waits for rendered image URLs to stabilize, then downloads them through chrome.downloads
 ```
 
 - Internal state machine
@@ -91,7 +91,7 @@ load route
 
 ## Decision Record
 - Keep the implementation in workflow JSON. ChatGPT selectors are site-specific and unstable, so the right place for that logic is `execute_javascript` inside the pack, not shared Rust or extension heuristics.
-- Use `use_current_tab: true`. These flows are only useful when they reuse the operator's logged-in browser profile.
+- Use explicit dedicated workflow tabs. These flows reuse the operator's logged-in Chrome profile without stealing the browser's active tab.
 - Default send flows to `Pro` with `Extended` effort. That matches the primary operator preference while still allowing explicit overrides via `model_slug` and `model_effort`.
 - Keep model and effort selection in the workflow. The picker is site-specific and changes often, so the right place for that traversal is the ChatGPT pack rather than generic engine code.
 - Use the generic `upload_file` step for attachments after a ChatGPT-specific prep script stamps the live file input with a stable temporary selector.
@@ -109,7 +109,8 @@ load route
   - `workflows/chatgpt/chatgpt_images_new_generation_v1.json`: Images entry point that sends a prompt on `chatgpt.com/images` and returns the resulting `chat_id`.
   - `workflows/chatgpt/chatgpt_images_new_generation_attachment_v1.json`: Images entry point that uploads one local file/image before sending the prompt.
   - `workflows/chatgpt/chatgpt_images_get_latest_v1.json`: Poll/read path that extracts the latest assistant-turn image URLs and readiness state.
-  - `workflows/chatgpt/chatgpt_images_generate_and_download_v1.json`: Single-shot binary workflow that chooses the right start flow, polls until the image set stabilizes, and downloads the final URLs into a caller-specified `download_folder`. Replaces the former `scripts/chatgpt_images.py` Python wrapper.
+  - `workflows/chatgpt/chatgpt_images_generate_and_download_v1.json`: Single-shot binary workflow that starts generation, waits until the rendered image set stabilizes, and downloads the final URLs into a caller-specified `download_folder`.
+  - `workflows/chatgpt/chatgpt_images_download_current_rendered_v1.json`: Session-tab helper that downloads an already visible rendered image from a workflow-owned tab.
   - `workflows/chatgpt/README.md`: Operator-facing pack overview and run examples.
   - `docs/workflows/chatgpt/*.md`: Docs-site workflow pages.
 - Data contracts:
@@ -130,6 +131,9 @@ load route
   - Main-world `execute_javascript` handles the ChatGPT-specific DOM traversal and extraction.
 - Key calls and event flow:
   - The send flows normalize the page into a composer-ready state, traverse the model picker with a `Pro -> Extended` default unless overridden, populate the prompt box via native setters, and trigger send from the nearest enabled submit control.
+- **Model + effort commits run through CDP `Input.dispatchMouseEvent`, not synthetic clicks (2026-05-11 rewrite).** The current ChatGPT effort RadioGroup is a controlled radix component that gates state on `isTrusted=true`; synthetic dispatch closes the menu without flipping `aria-checked`. `chatgpt_send.json` now opens the menu in a JS step, stamps the target radio with a unique id (`#rzn-target-model`, `#rzn-target-effort`), and commits via `click_element` with `inputs.use_cdp:true`. A follow-up JS step reopens the menu, parses `<Model>• <Effort>` from the checked top-level testid, and throws `model_selection_verify_failed` on mismatch so silent fallbacks (e.g. Pro Extended degrading to Pro Standard) cannot pass undetected. When no effort change is needed (Instant model, or current effort already matches), the prep step stamps a hidden no-op `<div>` so the `click_element` step still has a valid target.
+- **Top-level model testids are versioned** (`model-switcher-gpt-5-5`, `-thinking`, `-pro` today). The picker matches by visible label (Instant / Thinking / Pro) under a `[data-testid^="model-switcher-gpt-"]` filter so the workflow survives `5.5 → 5.6` renames without an edit.
+- **Effort submenu radios carry no testid** — match by visible text (`Standard`, `Extended`, `Light`, `Heavy`). Available effort levels per model: Pro → Standard | Extended; Thinking → Light | Standard | Extended | Heavy; Instant → no effort submenu.
   - The attachment flow uses a prep script to find or reveal ChatGPT's file input, stamps it with `#rzn-chatgpt-upload-input`, then uses the generic `upload_file` step to set the local file path before sending.
 - The read flows derive turn containers from `data-message-author-role` first, then fall back to broader conversation-turn/article selectors.
 - The full-thread exporter also records per-turn asset references plus top-level aggregated `assets.files` and `assets.images`, which gives downstream helpers a deterministic surface for local downloads.
@@ -155,11 +159,12 @@ load route
 - [ ] Tune model-picker and attachment heuristics against the live authenticated DOM as the UI drifts
 - [ ] Validate the Images turn and asset extraction heuristics against the live authenticated `chatgpt.com/images` DOM
 - [ ] Add a browser-click fallback for full-thread asset downloads when ChatGPT hides a document behind a button instead of a direct URL
+- [ ] Land the automation-blocker fixes tracked in `docs/features/chatgpt_workflows_automation_fixes/README.md` (always-return `chat_id`, ChatGPT-Images DOM/network fallbacks, dedicated-tab spawn, optional submit-only + by-chat-id split)
 
 ## What Works (Do Not Change)
 - Keep ChatGPT-specific DOM logic inside the workflow pack.
 - Keep the primary handle as `chat_id`, not a transient DOM selector.
-- Keep `use_current_tab: true` so the pack reuses the operator's authenticated browser session.
+- Keep session-owned workflow tabs so the pack reuses the operator's authenticated Chrome profile without stealing the active tab.
 - Keep file-upload transport generic. Only the DOM prep for ChatGPT belongs in this pack.
 - Keep local download naming and cwd-relative output logic in the wrapper script, not in the extension runtime.
 

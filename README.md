@@ -246,9 +246,9 @@ Useful commands:
 - `rzn-browser list --source user -v`
 - `rzn-browser workflow list`
 - `rzn-browser workflow list google`
-- `rzn-browser workflow show chatgpt continue-chat-v1`
-- `rzn-browser workflow validate workflows/chatgpt/chatgpt_continue_chat_v1.json`
-- `rzn-browser workflow validate workflows/chatgpt/chatgpt_continue_chat_v1.json --write-help`
+- `rzn-browser workflow show chatgpt send`
+- `rzn-browser workflow validate workflows/chatgpt/chatgpt_send.json`
+- `rzn-browser workflow validate workflows/chatgpt/chatgpt_send.json --write-help`
 - `rzn-browser workflow pull`
 - `rzn-browser workflow add ~/Downloads/my-flow.json --system custom --name my-flow`
 
@@ -283,8 +283,8 @@ Useful commands:
 # inspect the shipped packs
 rzn-browser list
 rzn-browser list google
-rzn-browser list chatgpt continue-chat-v1
-rzn-browser workflow validate workflows/chatgpt/chatgpt_continue_chat_v1.json
+rzn-browser list chatgpt send
+rzn-browser workflow validate workflows/chatgpt/chatgpt_send.json
 
 # run a built-in workflow
 rzn-browser run google search --param search_query="browser automation"

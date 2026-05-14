@@ -57,9 +57,11 @@ Why a wishlist doc instead of opening N issues: each item is small individually,
 
 ### 1. Surface "page context destroyed" with an actionable error
 
+**Status.** Implemented for `Promise was collected`, `Inspected target navigated or closed`, execution-context loss, and `Detached while handling command`. Detach during CDP commands is treated as lifecycle churn, clears cached frame/session routes, and is logged as a warning instead of polluting the extension error page.
+
 **Pain.** The CDP error `-32000 Promise was collected` shows up when a state-changing action triggers a React re-render that destroys the execution context mid-evaluate. Currently this surfaces verbatim. Workflow authors waste 30+ min the first time they hit it (we did) because the message gives zero hint about cause or fix. Eventual workaround is "add a 3 s wait" — discoverable only by experimentation.
 
-**Fix sketch.** In `extension/src/background.ts` `runCdpEval` (around line 1577): catch `-32000 / Promise was collected` and `Inspected target navigated or closed`, and rethrow as a structured error: `EXEC_CONTEXT_DESTROYED: page execution context died during await — likely an in-page navigation or React re-render triggered by the previous step. Add a wait_for_timeout (≥ 3000 ms) between the trigger step and this one, or move the await inside the trigger step's evaluate.` The CLI prints the structured `code` plus the suggestion.
+**Fix sketch.** In `extension/src/background.ts` `runCdpEval`: catch `-32000 / Promise was collected`, `Inspected target navigated or closed`, context loss, and debugger-target detachment, then rethrow as a structured error: `EXEC_CONTEXT_DESTROYED: page execution context died during await`. The CLI prints the structured `code` plus the suggestion.
 
 **Who benefits.** Every workflow author hitting this for the first time. Free token savings.
 

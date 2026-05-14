@@ -190,8 +190,9 @@ This prevents older listeners on already-open tabs from falsely satisfying readi
 Parallel spawned sessions share one browser runtime, but they must not share tab state unless the workflow explicitly asks for it:
 
 ```text
-default session / use_current_tab flow
-  -> may bind to the visible active tab
+built-in workflow
+  -> create or reuse a dedicated workflow tab
+  -> caller may continue with session_id + current_tab_id
 
 explicit spawned workflow session
   -> create or reuse its dedicated workflow tab
@@ -217,7 +218,7 @@ every 30s keepalive alarm
      -> reconnect native host
 ```
 
-This gives native-run a way to recover from browser-side idling without a manual extension reload.
+This gives native-run a way to recover from browser-side idling without a manual extension reload. The manifest must include the `alarms` permission; otherwise Chrome withholds `chrome.alarms` and this path silently degrades to best-effort in-memory timers.
 
 ## Bridge auth and stale-session recovery
 The worker-side browser bridge used to snapshot the bridge token once at startup and trust native-host sessions to disappear cleanly. That is a bad bet for a long-lived automation runtime. The bridge now validates handshakes against the current token file on every incoming connection and keeps lightweight liveness probes running against each connected native host:
@@ -273,12 +274,12 @@ That split matters. Tokens are tiny and intentionally persistent; sockets and st
 
 # What Works (Do Not Change)
 - Existing workflow steps such as `click_element`, `fill_input_field`, `take_screenshot`, `wait_for_element`, and `request_user_intervention` continue to work.
-- `use_current_tab` workflow binding remains the correct path for review-style flows.
+- Built-in workflows stay dedicated-tab by default; active-tab binding is only a manual debugging escape hatch.
 - `execute_javascript` still exists for compatibility; it now routes through the new eval surface instead of a hard-coded pattern parser.
 - Health checks still degrade safely when the native host or browser bridge is missing.
 - Background-to-tab messaging now uses versioned command names so freshly injected scripts can win cleanly over stale listeners on older tabs.
 - The browser worker control socket is a shared runtime surface. Multiple CLI clients may attach concurrently, and CLI shutdown should not tear the shared worker down unless `RZN_KILL_BROWSER_WORKER_ON_EXIT=1` is explicitly set.
-- Explicit workflow sessions must keep their own dedicated workflow tabs. Only the default session and explicit `use_current_tab` flows may adopt the active tab.
+- Explicit workflow sessions must keep their own dedicated workflow tabs. Continue by passing the session's `current_tab_id`; do not silently adopt the active tab.
 - Browser-bridge auth is sourced from the current token file, not a startup snapshot. Rotating or repairing the token file must not require a worker restart.
 - Dead native-host bridge sessions should be evicted automatically; a live socket entry in health must mean something.
 - Worker-owned socket files and endpoint entries are ephemeral. They should be removed on shutdown; token files are the only durable bridge artifacts that should remain.

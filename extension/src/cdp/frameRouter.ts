@@ -1,5 +1,7 @@
 // CDP Frame Router - CRITICAL infrastructure for cross-origin iframe support
 // Based on Sam's feedback: Target.setAutoAttach with flatten=true enables OOPIF support
+import { isExpectedCdpLifecycleError } from './errors';
+import { getActiveBrowserTabId } from '../browserTabs';
 
 export interface FrameInfo {
   frameId: string;
@@ -55,6 +57,16 @@ export class FrameRouter {
   
   // Event listeners for cleanup
   private eventListeners = new Map<number, (source: any, method: string, params: any) => void>();
+  private readonly debuggerDetachListener = (source: chrome.debugger.Debuggee, reason: string) => {
+    if (source.tabId === undefined) return;
+    this.markTabDetached(source.tabId, reason || 'debugger detached');
+  };
+
+  constructor() {
+    if (typeof chrome !== 'undefined' && chrome.debugger?.onDetach) {
+      chrome.debugger.onDetach.addListener(this.debuggerDetachListener);
+    }
+  }
 
   /**
    * Attach CDP to tab with OOPIF support
@@ -114,19 +126,31 @@ export class FrameRouter {
       
     } catch (error: any) {
       const msg = (error && error.message) ? String(error.message) : String(error);
-      console.error(`[FrameRouter] Failed to attach to tab ${tabId}:`, msg);
       // If another debugger is attached, do not loop/throw; mark as not attached and return
       if (msg.includes('Another debugger')) {
+        console.warn(`[FrameRouter] CDP attach unavailable for tab ${tabId}: ${msg}`);
+        this.markTabDetached(tabId, msg);
         return;
       }
       // Common non-fatal case: trying to attach to internal pages (chrome://, etc.)
       if (msg.includes('chrome://') || msg.includes('Cannot access a chrome://')) {
+        console.warn(`[FrameRouter] CDP attach skipped for tab ${tabId}: ${msg}`);
+        this.markTabDetached(tabId, msg);
         return;
       }
       // If protocol method not found (e.g., Target.enable), we already skipped it above
       if (msg.includes("wasn't found") || msg.includes('not found')) {
+        console.warn(`[FrameRouter] CDP attach skipped for tab ${tabId}: ${msg}`);
+        this.markTabDetached(tabId, msg);
         return;
       }
+      if (isExpectedCdpLifecycleError(msg)) {
+        console.warn(`[FrameRouter] CDP attach lost target for tab ${tabId}: ${msg}`);
+        this.markTabDetached(tabId, msg);
+        return;
+      }
+      console.error(`[FrameRouter] Failed to attach to tab ${tabId}:`, msg);
+      this.markTabDetached(tabId, msg);
       throw error;
     }
   }
@@ -135,13 +159,7 @@ export class FrameRouter {
    * Ensure CDP is attached for a specific frame
    */
   async ensureAttachedForFrame(frameId?: string): Promise<void> {
-    // Get the tab ID from the current active tab or use a fallback
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs.length === 0) {
-      throw new Error('No active tab found for frame attachment');
-    }
-    
-    const tabId = tabs[0].id!;
+    const tabId = await getActiveBrowserTabId('frame attachment');
     await this.attachToTab(tabId);
     
     // If frameId is provided, ensure we have routing for it
@@ -191,6 +209,21 @@ export class FrameRouter {
     }
   }
 
+  markTabDetached(tabId: number, reason = 'detached'): void {
+    console.warn(`[FrameRouter] Marking tab ${tabId} detached: ${reason}`);
+
+    const eventListener = this.eventListeners.get(tabId);
+    if (eventListener && typeof chrome !== 'undefined' && chrome.debugger?.onEvent) {
+      try {
+        chrome.debugger.onEvent.removeListener(eventListener);
+      } catch {}
+    }
+    this.eventListeners.delete(tabId);
+    this.clearTabRoutes(tabId);
+    this.attachedTabs.delete(tabId);
+    this.tabSessions.delete(tabId);
+  }
+
   /**
    * Get sessionId for routing commands to specific frame
    * This is the core routing functionality
@@ -198,7 +231,6 @@ export class FrameRouter {
   routeForFrame(frameId?: string): { sessionId: string } {
     if (!frameId) {
       // Return root session for main frame
-      const tabs = chrome.tabs.query({ active: true, currentWindow: true });
       // This is a synchronous fallback - in practice, ensureAttachedForFrame should be called first
       return { sessionId: 'root:unknown' };
     }
@@ -211,7 +243,6 @@ export class FrameRouter {
     
     // Fallback to root session if frame not mapped yet
     console.warn(`[FrameRouter] No route found for frameId: ${frameId}, using root session`);
-    const tabs = chrome.tabs.query({ active: true, currentWindow: true });
     return { sessionId: 'root:unknown' };
   }
 
@@ -449,6 +480,7 @@ export class FrameRouter {
       if (route.sessionId === sessionId) {
         console.log(`[FrameRouter] Removing route for frame ${frameId}`);
         this.routes.delete(frameId);
+        this.frameToSession.delete(frameId);
       }
     }
   }
@@ -514,6 +546,7 @@ export class FrameRouter {
     
     console.log(`[FrameRouter] Frame detached: ${frameId}`);
     this.routes.delete(frameId);
+    this.frameToSession.delete(frameId);
   }
 
   /**

@@ -1,0 +1,62 @@
+schema: tusker.knowledge-policy/v6
+
+required_domain_files:
+  - INDEX.md
+  - CANON.md
+
+allowed_kinds:
+  - canon
+  - index
+  - architecture
+  - reference
+  - how-to
+  - troubleshooting
+  - decision
+  - glossary
+  - runbook
+  - asset
+  - feature
+  - support
+  - release
+
+allowed_audiences:
+  - user
+  - developer
+  - operator
+  - support
+  - release
+  - agent
+  - internal
+
+allowed_agent_layers:
+  - none
+  - capsule
+  - standalone
+
+required_sections:
+  knowledge:
+    - Read this when
+    - Do not read this when
+    - Source of truth
+    - Related
+  domain:
+    - Read this when
+    - Do not read this when
+    - Current canon
+    - Start here
+    - Main knowledge nodes
+    - Source of truth
+    - Related domains
+    - Current work
+
+publication:
+  default_llms_statuses:
+    - approved
+    - draft
+  default_llms_excluded_audiences:
+    - internal
+  historical_statuses:
+    - deprecated
+    - historical
+    - superseded
+    - archived

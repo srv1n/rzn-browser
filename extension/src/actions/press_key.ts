@@ -1,3 +1,6 @@
+import { getActiveBrowserTabId } from '../browserTabs';
+import { actionSuccess } from './actionResult';
+
 /**
  * First-class press_key action using CDP for reliable key input
  * Bypasses DOM event simulation for better reliability
@@ -163,20 +166,23 @@ export async function handlePressKey(step: any): Promise<any> {
 
   let targetTabId: number | undefined = explicitTabId;
   if (!targetTabId) {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tabs[0]?.id) {
-      throw new Error('No active tab found');
-    }
-    targetTabId = tabs[0].id;
+    targetTabId = await getActiveBrowserTabId('press_key');
   }
 
+  const startedAt = Date.now();
   await pressKeyAction.execute(targetTabId, key, { manageDebuggerLifecycle });
 
-  return {
-    success: true,
-    action: 'press_key',
+  const result = {
+    pressed: true,
     key: key,
     tabId: targetTabId,
-    timestamp: Date.now()
   };
+
+  return actionSuccess({
+    action: 'press_key',
+    result,
+    tabId: targetTabId,
+    duration_ms: Date.now() - startedAt,
+    legacy: result,
+  });
 }

@@ -1,36 +1,29 @@
 {
-  "system_id": "chatgpt",
-  "id": "chatgpt_images_get_latest_v1",
-  "name": "ChatGPT Images: Get Latest Result",
-  "description": "Open an existing ChatGPT conversation by chat id, inspect the latest assistant turn for generated images, and report whether the image set is ready.",
-  "domain": "chatgpt.com",
-  "version": "1.0.1",
   "browser_automation": {
-    "use_current_tab": true,
     "description": "Current-tab ChatGPT Images polling flow. It reuses the authenticated browser session, opens the conversation route, and extracts image URLs from the latest assistant turn.",
     "sequences": [
       {
-        "name": "chatgpt_images_get_latest",
         "description": "Open thread -> inspect latest assistant turn -> return image status and URLs.",
+        "name": "chatgpt_images_get_latest",
         "required_variables": [
           {
-            "name": "chat_id",
-            "description": "ChatGPT conversation id from /c/<chat_id>"
+            "description": "ChatGPT conversation id from /c/<chat_id>",
+            "name": "chat_id"
           }
         ],
         "steps": [
           {
             "id": "s0",
             "name": "Open the ChatGPT conversation in the current tab",
+            "timeout_ms": 60000,
             "type": "navigate_to_url",
-            "url": "https://chatgpt.com/c/{chat_id}",
-            "timeout_ms": 60000
+            "url": "https://chatgpt.com/c/{chat_id}"
           },
           {
             "id": "s1",
             "name": "Allow the thread shell to settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1600
+            "timeout_ms": 1600,
+            "type": "wait_for_timeout"
           },
           {
             "id": "s2",
@@ -40,24 +33,58 @@
           {
             "id": "s3",
             "name": "Wait for the ChatGPT thread surface",
-            "type": "wait_for_element",
             "selector": "[data-message-author-role], main article, #prompt-textarea, textarea[placeholder*='Message' i], img[src]",
-            "timeout_ms": 30000
+            "timeout_ms": 30000,
+            "type": "wait_for_element"
           },
           {
-            "id": "s4",
-            "name": "Inspect the latest assistant turn for generated images",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 120000,
             "args": [
               "{chat_id}",
               "{expected_image_count}"
             ],
-            "script": "const clean=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const expectedChatId=clean(arg0);const parsedCount=Number.parseInt(clean(arg1),10);const expectedImageCount=Number.isFinite(parsedCount)&&parsedCount>0?parsedCount:2;const normalize=(v)=>(v||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const visible=(n)=>!!(n&&n instanceof Element&&getComputedStyle(n).visibility!=='hidden'&&getComputedStyle(n).display!=='none'&&n.getBoundingClientRect().width>0&&n.getBoundingClientRect().height>0);const chatId=()=>{const m=window.location.pathname.match(/^\\/c\\/([^/?#]+)/);return m?m[1]:null;};const strip=(node)=>{const clone=node.cloneNode(true);clone.querySelectorAll('button, nav, form, textarea, input, svg, style, script').forEach((c)=>c.remove());return normalize(clone.textContent||'');};const turns=()=>{const raw=Array.from(document.querySelectorAll(\"[data-message-author-role], main article, [data-testid*='conversation-turn'], [data-testid*='conversationTurn']\"));const seen=new Set();const out=[];for(const node of raw){const root=node.closest('[data-message-author-role]')||node;if(seen.has(root)) continue;seen.add(root);const explicit=(root.getAttribute('data-message-author-role')||'').toLowerCase();const testId=(root.getAttribute('data-testid')||'').toLowerCase();const role=explicit||(/assistant|model/.test(testId)?'assistant':/user|prompt/.test(testId)?'user':'unknown');const markdown=root.querySelectorAll('.markdown, [data-message-content], [data-testid*=\"markdown\"], pre, code, p, li');const text=normalize(Array.from(markdown).map((child)=>child.textContent||'').join('\\n\\n'))||strip(root);if(!text&&role==='unknown') continue;out.push({root,role,text,test_id:root.getAttribute('data-testid')||null});}return out;};const imageUrl=(img)=>{const srcset=String(img.getAttribute('srcset')||'').split(',').map((p)=>p.trim()).filter(Boolean);const srcsetUrl=srcset.length?srcset[srcset.length-1].split(/\\s+/)[0]:'';const raw=img.currentSrc||img.src||img.getAttribute('src')||srcsetUrl||'';try{return raw?new URL(raw,window.location.origin).toString():'';}catch{return raw;}};const goodImage=(img)=>{const url=imageUrl(img);if(!url||/^data:/i.test(url)||/avatar|profile|favicon|icon|emoji|spinner|loading/i.test(url)) return false;const width=img.naturalWidth||img.width||img.clientWidth||0;const height=img.naturalHeight||img.height||img.clientHeight||0;const area=width*height;const label=normalize([img.alt||'',img.getAttribute('aria-label')||'',img.getAttribute('title')||''].join(' ')).toLowerCase();if(/avatar|profile|icon|logo/.test(label)) return false;if(area&&area<16384) return false;return true;};const extractImages=(root)=>{if(!root) return [];const out=[];const seen=new Set();for(const img of Array.from(root.querySelectorAll('img'))){if(!(img instanceof HTMLImageElement)||!goodImage(img)) continue;const url=imageUrl(img);if(!url||seen.has(url)) continue;seen.add(url);out.push({url,alt:normalize(img.alt||''),width:img.naturalWidth||img.width||img.clientWidth||0,height:img.naturalHeight||img.height||img.clientHeight||0});}return out;};const currentChatId=chatId();if(expectedChatId&&currentChatId&&currentChatId!==expectedChatId) throw new Error(`expected chat_id ${expectedChatId} but opened ${currentChatId}`);const allTurns=turns();const latestAssistant=[...allTurns].reverse().find((turn)=>turn.role==='assistant')||null;const latestUser=[...allTurns].reverse().find((turn)=>turn.role==='user')||null;const images=extractImages(latestAssistant?.root||null);const streamingControlsPresent=Array.from(document.querySelectorAll('button, [role=\"button\"]')).filter(visible).some((node)=>/stop generating|continue generating|resume|stop creating/i.test(normalize([node.getAttribute('aria-label')||'',node.getAttribute('title')||'',node.textContent||'',node.getAttribute('data-testid')||''].join(' ')).toLowerCase()));const pendingGeneration=/creating|generating|editing/i.test(normalize(latestAssistant?.text||'').toLowerCase())&&images.length<expectedImageCount;const ready=images.length>=expectedImageCount&&!streamingControlsPresent&&!pendingGeneration;const status=ready?'complete':(images.length>0?'partial':((streamingControlsPresent||pendingGeneration)?'pending':'missing'));return {url:window.location.href,title:document.title,chat_id:currentChatId,expected_image_count:expectedImageCount,ready,status,image_count:images.length,images,latest_assistant_response:latestAssistant?{text:latestAssistant.text,test_id:latestAssistant.test_id}:null,latest_user_message:latestUser?{text:latestUser.text,test_id:latestUser.test_id}:null,message_count:allTurns.length,assistant_turn_count:allTurns.filter((turn)=>turn.role==='assistant').length,streaming_controls_present:streamingControlsPresent,pending_generation:pendingGeneration};"
+            "id": "s4",
+            "name": "Inspect the latest assistant turn for generated images",
+            "script": "const clean=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const expectedChatId=clean(arg0);const parsedCount=Number.parseInt(clean(arg1),10);const expectedImageCount=Number.isFinite(parsedCount)&&parsedCount>0?parsedCount:2;const normalize=(v)=>(v||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const visible=(n)=>!!(n&&n instanceof Element&&getComputedStyle(n).visibility!=='hidden'&&getComputedStyle(n).display!=='none'&&n.getBoundingClientRect().width>0&&n.getBoundingClientRect().height>0);const chatId=()=>{const m=window.location.pathname.match(/^\\/c\\/([^/?#]+)/);return m?m[1]:null;};const strip=(node)=>{const clone=node.cloneNode(true);clone.querySelectorAll('button, nav, form, textarea, input, svg, style, script').forEach((c)=>c.remove());return normalize(clone.textContent||'');};const turns=()=>{const raw=Array.from(document.querySelectorAll(\"[data-message-author-role], main article, [data-testid*='conversation-turn'], [data-testid*='conversationTurn']\"));const seen=new Set();const out=[];for(const node of raw){const root=node.closest('[data-message-author-role]')||node;if(seen.has(root)) continue;seen.add(root);const explicit=(root.getAttribute('data-message-author-role')||'').toLowerCase();const testId=(root.getAttribute('data-testid')||'').toLowerCase();const role=explicit||(/assistant|model/.test(testId)?'assistant':/user|prompt/.test(testId)?'user':'unknown');const markdown=root.querySelectorAll('.markdown, [data-message-content], [data-testid*=\"markdown\"], pre, code, p, li');const text=normalize(Array.from(markdown).map((child)=>child.textContent||'').join('\\n\\n'))||strip(root);if(!text&&role==='unknown') continue;out.push({root,role,text,test_id:root.getAttribute('data-testid')||null});}return out;};const imageUrl=(img)=>{const srcset=String(img.getAttribute('srcset')||'').split(',').map((p)=>p.trim()).filter(Boolean);const srcsetUrl=srcset.length?srcset[srcset.length-1].split(/\\s+/)[0]:'';const raw=img.currentSrc||img.src||img.getAttribute('src')||srcsetUrl||'';try{return raw?new URL(raw,window.location.origin).toString():'';}catch{return raw;}};const goodImage=(img)=>{const url=imageUrl(img);if(!url||/^data:/i.test(url)||/avatar|profile|favicon|icon|emoji|spinner|loading/i.test(url)) return false;const width=img.naturalWidth||img.width||img.clientWidth||0;const height=img.naturalHeight||img.height||img.clientHeight||0;const area=width*height;const label=normalize([img.alt||'',img.getAttribute('aria-label')||'',img.getAttribute('title')||''].join(' ')).toLowerCase();if(/avatar|profile|icon|logo/.test(label)) return false;if(area&&area<16384) return false;return true;};const extractImages=(root)=>{if(!root) return [];const out=[];const seen=new Set();for(const img of Array.from(root.querySelectorAll('img'))){if(!(img instanceof HTMLImageElement)||!goodImage(img)) continue;const url=imageUrl(img);if(!url||seen.has(url)) continue;seen.add(url);out.push({url,alt:normalize(img.alt||''),width:img.naturalWidth||img.width||img.clientWidth||0,height:img.naturalHeight||img.height||img.clientHeight||0});}return out;};const currentChatId=chatId();if(expectedChatId&&currentChatId&&currentChatId!==expectedChatId) throw new Error(`expected chat_id ${expectedChatId} but opened ${currentChatId}`);const allTurns=turns();const latestAssistant=[...allTurns].reverse().find((turn)=>turn.role==='assistant')||null;const latestUser=[...allTurns].reverse().find((turn)=>turn.role==='user')||null;const images=extractImages(latestAssistant?.root||null);const streamingControlsPresent=Array.from(document.querySelectorAll('button, [role=\"button\"]')).filter(visible).some((node)=>/stop generating|continue generating|resume|stop creating/i.test(normalize([node.getAttribute('aria-label')||'',node.getAttribute('title')||'',node.textContent||'',node.getAttribute('data-testid')||''].join(' ')).toLowerCase()));const pendingGeneration=/creating|generating|editing/i.test(normalize(latestAssistant?.text||'').toLowerCase())&&images.length<expectedImageCount;const ready=images.length>=expectedImageCount&&!streamingControlsPresent&&!pendingGeneration;const status=ready?'complete':(images.length>0?'partial':((streamingControlsPresent||pendingGeneration)?'pending':'missing'));return {url:window.location.href,title:document.title,chat_id:currentChatId,expected_image_count:expectedImageCount,ready,status,image_count:images.length,images,latest_assistant_response:latestAssistant?{text:latestAssistant.text,test_id:latestAssistant.test_id}:null,latest_user_message:latestUser?{text:latestUser.text,test_id:latestUser.test_id}:null,message_count:allTurns.length,assistant_turn_count:allTurns.filter((turn)=>turn.role==='assistant').length,streaming_controls_present:streamingControlsPresent,pending_generation:pendingGeneration};",
+            "timeout_ms": 120000,
+            "type": "execute_javascript",
+            "world": "main"
           }
         ]
       }
-    ]
-  }
+    ],
+    "use_current_tab": false
+  },
+  "description": "Open an existing ChatGPT conversation by chat id, inspect the latest assistant turn for generated images, and report whether the image set is ready.",
+  "domain": "chatgpt.com",
+  "help": {
+    "examples": [
+      {
+        "command": "rzn-browser run workflows/chatgpt/chatgpt_images_get_latest_v1.json --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\"",
+        "description": "Basic run with required parameters."
+      }
+    ],
+    "notes": [],
+    "parameters": [
+      {
+        "description": "ChatGPT conversation id from /c/<chat_id>",
+        "example": "01234567-89ab-cdef-0123-456789abcdef",
+        "name": "chat_id",
+        "required": true,
+        "shape": "string id"
+      },
+      {
+        "description": "Numeric limit used by the workflow.",
+        "example": "10",
+        "name": "expected_image_count",
+        "required": false,
+        "shape": "integer"
+      }
+    ],
+    "returns": null,
+    "summary": "Open an existing ChatGPT conversation by chat id, inspect the latest assistant turn for generated images, and report whether the image set is ready."
+  },
+  "id": "chatgpt_images_get_latest_v1",
+  "name": "ChatGPT Images: Get Latest Result",
+  "system_id": "chatgpt",
+  "version": "1.0.1"
 }

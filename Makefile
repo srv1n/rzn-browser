@@ -130,8 +130,9 @@ plugins-keygen:
 
 # Build a signed rzn-browser bundle for rznapp "Install from file..."
 # Notes:
-# - This repo builds both the MCP worker (`rzn-browser-worker`) and the native messaging host
-#   (`rzn-native-host`) so the full browser toolchain is developed and released together.
+# - This repo builds the supervisor CLI (`rzn-browser`), MCP worker (`rzn-browser-worker`),
+#   and native messaging host (`rzn-native-host`) so the full browser toolchain is developed
+#   and released together.
 plugins-build-rzn-browser-macos:
 	@echo "📦 Building rzn-browser plugin ZIP (macos_universal)..."
 	@KEY_PATH="$${RZN_PLUGIN_SIGNING_KEY:-.secrets/plugin-signing/ed25519.private}"; \
@@ -144,8 +145,10 @@ plugins-build-rzn-browser-macos:
 		echo "       Or set: RZN_PLUGIN_SIGNING_KEY=/path/to/ed25519.private"; \
 		exit 1; \
 	fi; \
+	cargo build --release -p rzn-browser; \
 	cargo build --release -p rzn-browser-worker; \
 	cargo build --release -p rzn-native-host; \
+	RZN_BROWSER_BIN_MACOS="$(PWD)/target/release/rzn-browser" \
 	RZN_BROWSER_WORKER_BIN_MACOS="$(PWD)/target/release/rzn-browser-worker" \
 	RZN_NATIVE_HOST_BIN_MACOS="$(PWD)/target/release/rzn-native-host" \
 	cargo run -p rzn_plugin_devkit -- build \

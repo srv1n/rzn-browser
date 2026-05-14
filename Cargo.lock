@@ -2523,6 +2523,7 @@ name = "rzn-broker-endpoint"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "libc",
  "serde",
  "serde_json",
 ]
@@ -2545,6 +2546,7 @@ dependencies = [
  "interprocess",
  "log",
  "reqwest",
+ "rzn-broker-endpoint",
  "rzn_contracts",
  "rzn_core",
  "rzn_plan",
@@ -2554,6 +2556,7 @@ dependencies = [
  "sha2",
  "terminal_size",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -2610,6 +2613,7 @@ name = "rzn_core"
 version = "0.1.0"
 dependencies = [
  "jsonschema",
+ "rzn_contracts",
  "schemars",
  "serde",
  "serde_json",

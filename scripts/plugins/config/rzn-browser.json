@@ -2,7 +2,7 @@
   "id": "rzn-browser",
   "version": "0.1.0",
   "name": "RZN Browser",
-  "description": "Browser automation worker + native host",
+  "description": "Browser automation supervisor + worker + native host",
   "mcp_protocol_version": "2025-06-18",
   "platforms": [
     "macos_universal",
@@ -38,6 +38,30 @@
     }
   ],
   "payloads": [
+    {
+      "source": "${RZN_BROWSER_BIN_MACOS}",
+      "dest": "bin/macos/universal/rzn-browser",
+      "platforms": [
+        "macos_universal"
+      ],
+      "mode": "755"
+    },
+    {
+      "source": "${RZN_BROWSER_BIN_WINDOWS}",
+      "dest": "bin/windows/x86_64/rzn-browser.exe",
+      "platforms": [
+        "windows_x86_64"
+      ],
+      "mode": "755"
+    },
+    {
+      "source": "${RZN_BROWSER_BIN_LINUX}",
+      "dest": "bin/linux/x86_64/rzn-browser",
+      "platforms": [
+        "linux_x86_64"
+      ],
+      "mode": "755"
+    },
     {
       "source": "${RZN_BROWSER_WORKER_BIN_MACOS}",
       "dest": "bin/macos/universal/rzn-browser-worker",

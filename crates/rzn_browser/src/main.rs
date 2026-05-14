@@ -1,10 +1,14 @@
 mod cloud;
+mod mcp_browser;
 mod native_runner;
 mod result_formatter;
 mod skill_installer;
+mod supervisor;
+mod supervisor_cloud;
 mod workflow_catalog;
 mod workflow_failure_report;
 
+use anyhow::Context;
 use chrono;
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
 use cloud::{handle_cloud_commands, CloudCommands};
@@ -14,7 +18,11 @@ use comfy_table::{
     presets::{ASCII_FULL, UTF8_FULL_CONDENSED},
     Attribute, Cell, Color, ContentArrangement, Table,
 };
-use native_runner::{NativeRunConfig, NativeRunMode, SnapshotMode};
+use mcp_browser::{run_browser_mcp_server, BrowserMcpArgs};
+use native_runner::{
+    NativeHealConfig, NativeRunConfig, NativeRunMode, SnapshotMode, SupervisorRunConfig,
+};
+use rzn_contracts::v2::{validate_manifest_value, WorkflowManifestV2, WORKFLOW_CONTRACT_VERSION};
 use rzn_core::dsl::LogMessage;
 use rzn_core::{FieldSpec, Step, StepKind};
 use rzn_plan::action_surface::{
@@ -32,14 +40,16 @@ use skill_installer::{
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 use terminal_size::{terminal_size, Width};
 use url::Url;
 use workflow_catalog::{
     compose_workflow_reference, default_user_workflows_dir, detect_catalog_source_root,
-    import_user_workflows, install_builtin_catalog_from_repo_root, list_named_workflows_with_query,
-    resolve_workflow_reference, workflow_roots, NamedWorkflowEntry, WorkflowCatalogQuery,
+    import_user_workflows, install_builtin_catalog_from_repo_root, list_capabilities_with_query,
+    list_named_workflows_with_query, resolve_capability_route, resolve_workflow_reference,
+    validate_catalog_manifests, workflow_roots, CapabilityCatalogEntry, CapabilityCatalogQuery,
+    CatalogValidationReport, NamedWorkflowEntry, WorkflowCatalogQuery,
 };
 use workflow_failure_report::{
     build_failure_context_from_error, build_report_body,
@@ -62,6 +72,17 @@ enum Commands {
 
     /// Run a workflow using the preferred CLI surface
     Run(RunArgs),
+
+    /// Repair stale native browser runtime endpoints and optionally warm a worker
+    Heal(HealArgs),
+
+    /// Run or inspect the durable local browser supervisor
+    #[command(subcommand)]
+    Supervisor(SupervisorCommands),
+
+    /// Run MCP servers over stdio
+    #[command(subcommand)]
+    Mcp(McpCommands),
 
     /// List installed workflow systems and workflows
     List(WorkflowListArgs),
@@ -163,6 +184,7 @@ const DEFAULT_SNAPSHOT_MODE: &str = "on-error";
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 enum RunVia {
+    Supervisor,
     Native,
     Desktop,
 }
@@ -194,7 +216,7 @@ struct RunArgs {
     params: Vec<(String, String)>,
 
     /// Browser execution backend
-    #[arg(long, value_enum, default_value_t = RunVia::Native)]
+    #[arg(long, value_enum, default_value_t = RunVia::Supervisor)]
     via: RunVia,
 
     /// Connection mode for native runs: auto | attach | spawn
@@ -221,9 +243,125 @@ struct RunArgs {
     #[arg(long = "worker-arg")]
     worker_args: Vec<String>,
 
+    /// Allow supervisor mode to fall back to the legacy browser worker
+    #[arg(long)]
+    allow_legacy_worker_fallback: bool,
+
     /// Desktop broker profile (desktop runs only)
     #[arg(long)]
     profile: Option<String>,
+
+    /// Write the workflow's final result (markdown if present, otherwise pretty JSON) to this file path
+    #[arg(long = "output-file")]
+    output_file: Option<PathBuf>,
+
+    /// Download all asset_urls + external_links from the result into this directory (writes manifest.json)
+    #[arg(long = "download-dir")]
+    download_dir: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+struct HealArgs {
+    /// Override APP_BASE (used to find broker_endpoint_v1.json)
+    #[arg(long)]
+    app_base: Option<String>,
+
+    /// Override endpoint path (broker_endpoint_v1.json)
+    #[arg(long)]
+    endpoint_path: Option<String>,
+
+    /// Restart browser-launched native-host processes found through live workers
+    #[arg(long, default_value_t = true, action = ArgAction::Set)]
+    restart_native_host: bool,
+
+    /// Terminate unresponsive browser workers and clear their socket artifacts
+    #[arg(long)]
+    reset_worker: bool,
+
+    /// Spawn or attach a browser worker after pruning stale endpoint state
+    #[arg(long)]
+    spawn_worker: bool,
+
+    /// Worker command for spawn mode
+    #[arg(long)]
+    worker_cmd: Option<String>,
+
+    /// Worker args for spawn mode (repeatable)
+    #[arg(long = "worker-arg")]
+    worker_args: Vec<String>,
+
+    /// Emit machine-readable JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum McpCommands {
+    /// Expose browser automation worker tools over MCP stdio
+    Browser(BrowserMcpArgs),
+}
+
+#[derive(Subcommand, Debug)]
+enum SupervisorCommands {
+    /// Run the local browser supervisor until interrupted
+    Serve(SupervisorCommonArgs),
+
+    /// Print supervisor runtime status
+    Status(SupervisorCommonArgs),
+
+    /// Start the supervisor if needed and print status
+    #[command(name = "ensure-ready")]
+    EnsureReady(SupervisorCommonArgs),
+
+    /// Ask a running supervisor to shut down
+    Shutdown(SupervisorCommonArgs),
+
+    /// Call a supervisor method with JSON params
+    Call(SupervisorCallArgs),
+}
+
+#[derive(Args, Debug, Clone)]
+struct SupervisorCommonArgs {
+    /// Override APP_BASE for supervisor socket/token/runtime files
+    #[arg(long)]
+    app_base: Option<String>,
+
+    /// Legacy worker fallback mode used by the supervisor: auto | attach | spawn
+    #[arg(long, default_value = DEFAULT_NATIVE_MODE)]
+    mode: String,
+
+    /// Override legacy browser worker endpoint fallback path
+    #[arg(long)]
+    endpoint_path: Option<String>,
+
+    /// Worker command used by supervisor compatibility proxy
+    #[arg(long)]
+    worker_cmd: Option<String>,
+
+    /// Worker args used by supervisor compatibility proxy (repeatable)
+    #[arg(long = "worker-arg")]
+    worker_args: Vec<String>,
+
+    /// Allow supervisor browser calls to fall back to the legacy browser worker
+    #[arg(long)]
+    allow_legacy_worker_fallback: bool,
+
+    /// Emit machine-readable JSON
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+struct SupervisorCallArgs {
+    #[command(flatten)]
+    common: SupervisorCommonArgs,
+
+    /// Supervisor method, for example runtime.status or browser.snapshot
+    method: String,
+
+    /// JSON params object
+    #[arg(long, default_value = "{}")]
+    params: String,
 }
 
 #[derive(Args, Debug)]
@@ -258,6 +396,60 @@ struct NativeRunArgs {
     /// Worker args for spawn mode (repeatable)
     #[arg(long = "worker-arg")]
     worker_args: Vec<String>,
+
+    /// Write the workflow's final result (markdown if present, otherwise pretty JSON) to this file path
+    #[arg(long = "output-file")]
+    output_file: Option<PathBuf>,
+
+    /// Download all asset_urls + external_links from the result into this directory
+    #[arg(long = "download-dir")]
+    download_dir: Option<PathBuf>,
+}
+
+#[derive(Args, Debug)]
+struct SupervisorRunArgs {
+    #[command(flatten)]
+    workflow_ref: WorkflowRefArgs,
+
+    /// Parameters for the workflow (format: --param key=value)
+    #[arg(long = "param", value_parser = parse_key_val::<String, String>)]
+    params: Vec<(String, String)>,
+
+    /// Legacy worker fallback mode used by the supervisor: auto | attach | spawn
+    #[arg(long, default_value = DEFAULT_NATIVE_MODE)]
+    mode: String,
+
+    /// Snapshot mode for runs: none | after-step | on-error
+    #[arg(long, default_value = DEFAULT_SNAPSHOT_MODE)]
+    snapshot: String,
+
+    /// Override APP_BASE for supervisor socket/token/runtime files
+    #[arg(long)]
+    app_base: Option<String>,
+
+    /// Override legacy browser worker endpoint fallback path
+    #[arg(long)]
+    endpoint_path: Option<String>,
+
+    /// Worker command for supervisor fallback spawn mode
+    #[arg(long)]
+    worker_cmd: Option<String>,
+
+    /// Worker args for supervisor fallback spawn mode (repeatable)
+    #[arg(long = "worker-arg")]
+    worker_args: Vec<String>,
+
+    /// Allow supervisor browser calls to fall back to the legacy browser worker
+    #[arg(long)]
+    allow_legacy_worker_fallback: bool,
+
+    /// Write the workflow's final result (markdown if present, otherwise pretty JSON) to this file path
+    #[arg(long = "output-file")]
+    output_file: Option<PathBuf>,
+
+    /// Download all asset_urls + external_links from the result into this directory
+    #[arg(long = "download-dir")]
+    download_dir: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -280,6 +472,14 @@ struct DesktopRunArgs {
     /// Desktop broker profile (default: minimal)
     #[arg(long)]
     profile: Option<String>,
+
+    /// Write the workflow's final result (markdown if present, otherwise pretty JSON) to this file path
+    #[arg(long = "output-file")]
+    output_file: Option<PathBuf>,
+
+    /// Download all asset_urls + external_links from the result into this directory
+    #[arg(long = "download-dir")]
+    download_dir: Option<PathBuf>,
 }
 
 #[derive(Args, Debug)]
@@ -343,6 +543,12 @@ enum WorkflowCommands {
     Catalog(WorkflowListArgs),
     /// Validate workflow metadata, parameter docs, and examples
     Validate(WorkflowValidateArgs),
+    /// Validate manifest catalog/capability routing
+    #[command(name = "validate-catalog")]
+    ValidateCatalog(CatalogValidateArgs),
+    /// Inspect or resolve manifest-declared capabilities
+    #[command(subcommand)]
+    Capability(CapabilityCommands),
     /// Show workflow storage directories
     Dirs,
     /// Import a JSON workflow file or directory into the user catalog
@@ -351,10 +557,23 @@ enum WorkflowCommands {
     Pull(WorkflowPullArgs),
     /// Show a cached workflow by id or file path
     Show(WorkflowShowArgs),
+    /// Inspect the workflow manifest: inputs, outputs, side effects, and runtime
+    Inspect(WorkflowInspectArgs),
+    /// Deprecated alias for `workflow inspect`
+    #[command(hide = true)]
+    Contract(WorkflowContractArgs),
     /// Run a cached workflow by id or file path
     Run(WorkflowRunArgs),
     /// Create a new workflow via interactive builder (or with a template)
     New(WorkflowNewArgs),
+}
+
+#[derive(Subcommand, Debug)]
+enum CapabilityCommands {
+    /// List manifest-declared capabilities
+    List(CapabilityListArgs),
+    /// Resolve an explicit system/capability pair to its workflow route
+    Resolve(CapabilityResolveArgs),
 }
 
 #[derive(Args, Debug)]
@@ -376,6 +595,46 @@ struct WorkflowListArgs {
     /// Show ids, aliases, and paths for each workflow
     #[arg(long, short = 'v')]
     verbose: bool,
+
+    /// Emit JSON instead of table output
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Debug)]
+struct CapabilityListArgs {
+    /// Required explicit system namespace filter for launch-facing routes
+    #[arg(long)]
+    system: Option<String>,
+
+    /// Limit the list to a single catalog source
+    #[arg(long, value_enum)]
+    source: Option<WorkflowSourceArg>,
+
+    /// Emit JSON instead of table output
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Debug)]
+struct CapabilityResolveArgs {
+    /// Explicit system namespace, for example chatgpt
+    #[arg(long)]
+    system: String,
+
+    /// Manifest-declared capability id, for example assistant.conversation.read
+    capability_id: String,
+
+    /// Emit JSON instead of a route line
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Args, Debug)]
+struct CatalogValidateArgs {
+    /// Fail closed for launch contract validation
+    #[arg(long)]
+    strict: bool,
 
     /// Emit JSON instead of table output
     #[arg(long)]
@@ -609,12 +868,26 @@ struct WorkflowShowArgs {
 }
 
 #[derive(Args, Debug)]
+struct WorkflowInspectArgs {
+    #[command(flatten)]
+    workflow_ref: WorkflowRefArgs,
+    /// Output JSON
+    #[arg(long)]
+    json: bool,
+}
+
+type WorkflowContractArgs = WorkflowInspectArgs;
+
+#[derive(Args, Debug)]
 struct WorkflowValidateArgs {
     #[command(flatten)]
     workflow_ref: WorkflowRefArgs,
     /// Write or refresh the top-level help block before validating
     #[arg(long)]
     write_help: bool,
+    /// Require manifest capability routing and output-contract scaffolding
+    #[arg(long)]
+    strict: bool,
     /// Output JSON
     #[arg(long)]
     json: bool,
@@ -630,6 +903,9 @@ struct WorkflowRunArgs {
     /// Disable auto-healing if steps fail (enabled by default)
     #[arg(long = "no-auto-heal")]
     no_auto_heal: bool,
+    /// Developer escape hatch for direct workflow-id/path execution
+    #[arg(long)]
+    allow_direct_workflow: bool,
 }
 
 #[derive(Args, Debug)]
@@ -1038,6 +1314,26 @@ async fn main() {
                 process::exit(1);
             }
         }
+        Commands::Heal(args) => {
+            if let Err(err) = handle_heal(args).await {
+                eprintln!("❌ heal failed: {}", err);
+                process::exit(1);
+            }
+        }
+        Commands::Supervisor(cmd) => {
+            if let Err(err) = handle_supervisor_commands(cmd).await {
+                eprintln!("❌ supervisor command failed: {}", err);
+                process::exit(1);
+            }
+        }
+        Commands::Mcp(cmd) => match cmd {
+            McpCommands::Browser(args) => {
+                if let Err(err) = run_browser_mcp_server(args).await {
+                    eprintln!("❌ mcp browser failed: {}", err);
+                    process::exit(1);
+                }
+            }
+        },
         Commands::List(args) => {
             if let Err(e) = handle_workflow_catalog(args).await {
                 eprintln!("❌ list failed: {}", e);
@@ -1187,6 +1483,101 @@ async fn handle_skill_commands(cmd: SkillCommands) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn handle_supervisor_commands(cmd: SupervisorCommands) -> anyhow::Result<()> {
+    match cmd {
+        SupervisorCommands::Serve(args) => {
+            let json_output = args.json;
+            let config = supervisor_config_from_common(&args);
+            let paths = supervisor::SupervisorPaths::for_config(&config);
+            let report = supervisor::SupervisorServeReport {
+                ok: true,
+                protocol: supervisor::RZN_LOCAL_PROTOCOL_VERSION,
+                pid: std::process::id(),
+                app_base: paths.app_base.to_string_lossy().to_string(),
+                socket_path: paths.socket_path.to_string_lossy().to_string(),
+                token_path: paths.token_path.to_string_lossy().to_string(),
+            };
+            if json_output {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("[SUPERVISOR] starting");
+                println!("   ├─ Protocol: {}", report.protocol);
+                println!("   ├─ PID: {}", report.pid);
+                println!("   ├─ App base: {}", report.app_base);
+                println!("   ├─ Socket: {}", report.socket_path);
+                println!("   └─ Token: {}", report.token_path);
+            }
+            supervisor::serve(config).await?;
+        }
+        SupervisorCommands::Status(args) => {
+            let result = supervisor::call(
+                supervisor_config_from_common(&args),
+                "runtime.status",
+                json!({}),
+            )
+            .await?;
+            render_supervisor_json_result(&result, args.json)?;
+        }
+        SupervisorCommands::EnsureReady(args) => {
+            let config = supervisor_config_from_common(&args);
+            let _status = supervisor::ensure_running(config.clone()).await?;
+            let result = supervisor::call(config, "runtime.ensure_ready", json!({})).await?;
+            if args.json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("[SUPERVISOR] ready");
+                render_supervisor_json_result(&result, false)?;
+            }
+        }
+        SupervisorCommands::Shutdown(args) => {
+            let result = supervisor::call(
+                supervisor_config_from_common(&args),
+                "runtime.shutdown",
+                json!({}),
+            )
+            .await?;
+            render_supervisor_json_result(&result, args.json)?;
+        }
+        SupervisorCommands::Call(args) => {
+            let params: Value = serde_json::from_str(&args.params)
+                .with_context(|| format!("Invalid JSON params: {}", args.params))?;
+            let result = supervisor::call(
+                supervisor_config_from_common(&args.common),
+                &args.method,
+                params,
+            )
+            .await?;
+            render_supervisor_json_result(&result, args.common.json)?;
+        }
+    }
+    Ok(())
+}
+
+fn supervisor_config_from_common(args: &SupervisorCommonArgs) -> supervisor::SupervisorConfig {
+    let mode = match args.mode.to_lowercase().as_str() {
+        "attach" => NativeRunMode::Attach,
+        "spawn" => NativeRunMode::Spawn,
+        _ => NativeRunMode::Auto,
+    };
+    supervisor::SupervisorConfig {
+        app_base: args.app_base.as_ref().map(PathBuf::from),
+        endpoint_path: args.endpoint_path.clone(),
+        mode,
+        worker_cmd: args.worker_cmd.clone(),
+        worker_args: args.worker_args.clone(),
+        allow_legacy_worker_fallback: args.allow_legacy_worker_fallback,
+    }
+}
+
+fn render_supervisor_json_result(value: &Value, json_output: bool) -> anyhow::Result<()> {
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(value)?);
+        return Ok(());
+    }
+    println!("{}", serde_json::to_string_pretty(value)?);
+    Ok(())
+}
+
 fn skill_install_request(
     args: SkillInstallArgs,
     update: bool,
@@ -1330,12 +1721,32 @@ async fn handle_run(args: RunArgs) -> anyhow::Result<()> {
         endpoint_path,
         worker_cmd,
         worker_args,
+        allow_legacy_worker_fallback,
         profile,
+        output_file,
+        download_dir,
     } = args;
 
     match via {
+        RunVia::Supervisor => {
+            validate_native_run_surface(profile.as_deref(), false)?;
+            handle_supervisor_run(SupervisorRunArgs {
+                workflow_ref,
+                params,
+                mode,
+                snapshot,
+                app_base,
+                endpoint_path,
+                worker_cmd,
+                worker_args,
+                allow_legacy_worker_fallback,
+                output_file,
+                download_dir,
+            })
+            .await
+        }
         RunVia::Native => {
-            validate_native_run_surface(profile.as_deref())?;
+            validate_native_run_surface(profile.as_deref(), allow_legacy_worker_fallback)?;
             handle_native_run(NativeRunArgs {
                 workflow_ref,
                 params,
@@ -1345,29 +1756,160 @@ async fn handle_run(args: RunArgs) -> anyhow::Result<()> {
                 endpoint_path,
                 worker_cmd,
                 worker_args,
+                output_file,
+                download_dir,
             })
             .await
         }
         RunVia::Desktop => {
-            validate_desktop_run_surface(&mode, &snapshot, worker_cmd.as_deref(), &worker_args)?;
+            validate_desktop_run_surface(
+                &mode,
+                &snapshot,
+                worker_cmd.as_deref(),
+                &worker_args,
+                allow_legacy_worker_fallback,
+            )?;
             handle_desktop_run(DesktopRunArgs {
                 workflow_ref,
                 params,
                 app_base,
                 endpoint_path,
                 profile,
+                output_file,
+                download_dir,
             })
             .await
         }
     }
 }
 
-fn validate_native_run_surface(profile: Option<&str>) -> anyhow::Result<()> {
+async fn handle_heal(args: HealArgs) -> anyhow::Result<()> {
+    let json_output = args.json;
+    let config = NativeHealConfig {
+        app_base: args.app_base,
+        endpoint_path: args.endpoint_path,
+        restart_native_host: args.restart_native_host,
+        reset_worker: args.reset_worker,
+        spawn_worker: args.spawn_worker,
+        worker_cmd: args.worker_cmd,
+        worker_args: args.worker_args,
+    };
+
+    let report = native_runner::heal_native_runtime(config).await?;
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        render_native_heal_report(&report);
+    }
+    Ok(())
+}
+
+fn render_native_heal_report(report: &native_runner::NativeHealReport) {
+    println!("[HEAL] Native browser runtime");
+
+    let changed_reports: Vec<_> = report
+        .endpoint_reports
+        .iter()
+        .filter(|entry| entry.changed())
+        .collect();
+    if changed_reports.is_empty() {
+        println!("   ├─ Endpoint cache: clean");
+    } else {
+        println!(
+            "   ├─ Endpoint cache: pruned {} stale file(s)",
+            changed_reports.len()
+        );
+        for entry in changed_reports {
+            println!("   │  ├─ {}", entry.endpoint_path);
+            for reason in &entry.reasons {
+                println!("   │  │  └─ {}", reason);
+            }
+        }
+    }
+
+    if report.restarted_native_hosts.is_empty() {
+        println!("   ├─ Native host restart: none needed");
+    } else {
+        println!(
+            "   ├─ Native host restart: {} process path(s)",
+            report.restarted_native_hosts.len()
+        );
+        for path in &report.restarted_native_hosts {
+            println!("   │  └─ {}", path);
+        }
+    }
+
+    if report.reset_worker_endpoints.is_empty() {
+        println!("   ├─ Worker reset: not requested");
+    } else {
+        println!(
+            "   ├─ Worker reset: {} endpoint(s)",
+            report.reset_worker_endpoints.len()
+        );
+        for path in &report.reset_worker_endpoints {
+            println!("   │  └─ {}", path);
+        }
+    }
+
+    if report.spawned_worker {
+        let ready = report
+            .worker_health
+            .as_ref()
+            .and_then(|health| health.get("ok"))
+            .and_then(|ok| ok.as_bool())
+            .unwrap_or(false);
+        println!(
+            "   ├─ Worker warmup: {}",
+            if ready {
+                "ready"
+            } else {
+                "started, extension not ready"
+            }
+        );
+    } else {
+        println!("   ├─ Worker warmup: not requested");
+    }
+
+    if let Some(supervisor) = report.supervisor.as_ref() {
+        let ok = supervisor
+            .get("ok")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        let bridge = supervisor
+            .pointer("/status/native_host_bridge/connected")
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false);
+        println!(
+            "   ├─ Supervisor heal: {} (native-host bridge: {})",
+            if ok { "ok" } else { "reported issues" },
+            if bridge { "connected" } else { "not connected" }
+        );
+    } else {
+        println!("   ├─ Supervisor heal: unavailable");
+    }
+
+    if report.notes.is_empty() {
+        println!("   └─ Result: done");
+    } else {
+        println!("   └─ Notes:");
+        for note in &report.notes {
+            println!("      └─ {}", note);
+        }
+    }
+}
+
+fn validate_native_run_surface(
+    profile: Option<&str>,
+    allow_legacy_worker_fallback: bool,
+) -> anyhow::Result<()> {
     if let Some(profile) = profile.filter(|value| !value.trim().is_empty()) {
         anyhow::bail!(
             "--profile only works with --via desktop (received profile '{}')",
             profile
         );
+    }
+    if allow_legacy_worker_fallback {
+        anyhow::bail!("--allow-legacy-worker-fallback only works with --via supervisor");
     }
     Ok(())
 }
@@ -1377,31 +1919,348 @@ fn validate_desktop_run_surface(
     snapshot: &str,
     worker_cmd: Option<&str>,
     worker_args: &[String],
+    allow_legacy_worker_fallback: bool,
 ) -> anyhow::Result<()> {
     if mode.trim().to_ascii_lowercase() != DEFAULT_NATIVE_MODE {
-        anyhow::bail!("--mode only works with --via native");
+        anyhow::bail!("--mode only works with --via supervisor or --via native");
     }
     if snapshot.trim().to_ascii_lowercase() != DEFAULT_SNAPSHOT_MODE {
-        anyhow::bail!("--snapshot only works with --via native");
+        anyhow::bail!("--snapshot only works with --via supervisor or --via native");
     }
     if worker_cmd
         .map(str::trim)
         .map(|value| !value.is_empty())
         .unwrap_or(false)
     {
-        anyhow::bail!("--worker-cmd only works with --via native");
+        anyhow::bail!("--worker-cmd only works with --via supervisor or --via native");
     }
     if !worker_args.is_empty() {
-        anyhow::bail!("--worker-arg only works with --via native");
+        anyhow::bail!("--worker-arg only works with --via supervisor or --via native");
+    }
+    if allow_legacy_worker_fallback {
+        anyhow::bail!("--allow-legacy-worker-fallback only works with --via supervisor");
     }
     Ok(())
+}
+
+fn extract_output_overrides(
+    params: &mut HashMap<String, String>,
+    cli_output_file: Option<PathBuf>,
+    cli_download_dir: Option<PathBuf>,
+) -> (Option<PathBuf>, Option<PathBuf>) {
+    let from_params = |params: &mut HashMap<String, String>, keys: &[&str]| -> Option<PathBuf> {
+        for key in keys {
+            if let Some(value) = params.remove(*key) {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    return Some(PathBuf::from(trimmed));
+                }
+            }
+        }
+        None
+    };
+    let output_file =
+        cli_output_file.or_else(|| from_params(params, &["output_file", "output-file"]));
+    let download_dir =
+        cli_download_dir.or_else(|| from_params(params, &["download_dir", "download-dir"]));
+    (output_file, download_dir)
+}
+
+fn enforce_cli_output_side_effect_policy(
+    workflow_path: &Path,
+    output_file: Option<&Path>,
+    download_dir: Option<&Path>,
+) -> anyhow::Result<()> {
+    let required = required_cli_output_side_effects(output_file, download_dir);
+    if required.is_empty() {
+        return Ok(());
+    }
+
+    let Some(declared) = declared_manifest_side_effects(workflow_path)? else {
+        return Ok(());
+    };
+
+    let missing = required
+        .iter()
+        .filter(|effect| !declared.contains(effect.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if missing.is_empty() {
+        return Ok(());
+    }
+
+    anyhow::bail!(
+        "CLI output side-effect policy blocked {}: requested output post-processing requires [{}], but manifest declares [{}]",
+        workflow_path.display(),
+        missing.join(", "),
+        declared.into_iter().collect::<Vec<_>>().join(", ")
+    )
+}
+
+fn required_cli_output_side_effects(
+    output_file: Option<&Path>,
+    download_dir: Option<&Path>,
+) -> BTreeSet<String> {
+    let mut required = BTreeSet::new();
+    if output_file.is_some() {
+        required.insert("file_write".to_string());
+    }
+    if download_dir.is_some() {
+        required.insert("download".to_string());
+        required.insert("external_read".to_string());
+        required.insert("file_write".to_string());
+        required.insert("network_access".to_string());
+    }
+    required
+}
+
+fn declared_manifest_side_effects(
+    workflow_path: &Path,
+) -> anyhow::Result<Option<BTreeSet<String>>> {
+    let reference = workflow_path.to_string_lossy();
+    let (_contract_path, value) = load_workflow_contract_value(&reference)?;
+    if value.get("schema_version").and_then(|value| value.as_str())
+        != Some(WORKFLOW_CONTRACT_VERSION)
+    {
+        return Ok(None);
+    }
+
+    let manifest = validate_manifest_value(&value).map_err(|issues| {
+        let messages = issues
+            .into_iter()
+            .map(|issue| {
+                if issue.field.trim().is_empty() {
+                    issue.message
+                } else {
+                    format!("{}: {}", issue.field, issue.message)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        anyhow::anyhow!("invalid workflow manifest: {messages}")
+    })?;
+
+    Ok(Some(
+        manifest
+            .side_effects
+            .iter()
+            .map(|effect| effect.class.as_str().to_string())
+            .collect(),
+    ))
+}
+
+async fn process_workflow_output(
+    payload: Option<&Value>,
+    output_file: Option<&Path>,
+    download_dir: Option<&Path>,
+) -> anyhow::Result<()> {
+    let output_payload = payload.map(workflow_output_payload);
+    if let Some(path) = output_file {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .with_context(|| format!("create {}", parent.display()))?;
+        }
+        let body = output_payload
+            .map(workflow_output_body)
+            .unwrap_or_else(|| "null".to_string());
+        tokio::fs::write(path, body)
+            .await
+            .with_context(|| format!("write {}", path.display()))?;
+        println!("[OK] Wrote output to {}", path.display());
+    }
+
+    if let Some(dir) = download_dir {
+        let Some(payload) = output_payload else {
+            eprintln!("[WARN] --download-dir requested but workflow returned no result payload");
+            return Ok(());
+        };
+        download_payload_assets(payload, dir).await?;
+    }
+
+    Ok(())
+}
+
+fn workflow_output_payload(payload: &Value) -> &Value {
+    if payload.get("version").and_then(|value| value.as_str()) == Some("rzn.run_result.v2") {
+        return payload.get("output").unwrap_or(payload);
+    }
+    payload
+}
+
+fn workflow_output_body(payload: &Value) -> String {
+    payload
+        .get("markdown")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| {
+            serde_json::to_string_pretty(payload).unwrap_or_else(|_| payload.to_string())
+        })
+}
+
+fn collect_string_array(payload: &Value, key: &str) -> Vec<String> {
+    payload
+        .get(key)
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn sanitize_filename_segment(input: &str, max_len: usize) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    if out.len() > max_len {
+        out.truncate(max_len);
+    }
+    if out.is_empty() {
+        "asset".to_string()
+    } else {
+        out
+    }
+}
+
+fn filename_from_url(url: &str, fallback_ext: &str) -> String {
+    let parsed = Url::parse(url).ok();
+    let stem = parsed
+        .as_ref()
+        .and_then(|url| {
+            url.path_segments()
+                .and_then(|mut segments| segments.next_back().map(str::to_string))
+        })
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or_else(|| "asset".to_string());
+    let host = parsed
+        .as_ref()
+        .map(|url| url.host_str().unwrap_or("").to_string())
+        .unwrap_or_default();
+    let combined = if host.is_empty() {
+        stem
+    } else {
+        format!("{}_{}", host, stem)
+    };
+    let mut name = sanitize_filename_segment(&combined, 96);
+    if !name.contains('.') && !fallback_ext.is_empty() {
+        name.push('.');
+        name.push_str(fallback_ext);
+    }
+    name
+}
+
+async fn download_payload_assets(payload: &Value, dir: &Path) -> anyhow::Result<()> {
+    let images = collect_string_array(payload, "image_urls");
+    let videos = collect_string_array(payload, "video_urls");
+    let links = collect_string_array(payload, "external_links");
+
+    tokio::fs::create_dir_all(dir)
+        .await
+        .with_context(|| format!("create {}", dir.display()))?;
+
+    let client = reqwest::Client::builder()
+        .user_agent("rzn-browser workflow downloader")
+        .timeout(std::time::Duration::from_secs(60))
+        .redirect(reqwest::redirect::Policy::limited(8))
+        .build()
+        .context("build workflow download HTTP client")?;
+
+    let mut manifest = Vec::new();
+    let mut downloaded = 0usize;
+    for (kind, urls, fallback_ext) in [
+        ("image", images, "jpg"),
+        ("video", videos, "mp4"),
+        ("page", links, "html"),
+    ] {
+        let subdir = dir.join(format!("{kind}s"));
+        if !urls.is_empty() {
+            tokio::fs::create_dir_all(&subdir)
+                .await
+                .with_context(|| format!("create {}", subdir.display()))?;
+        }
+        for (index, url) in urls.iter().enumerate() {
+            let dest = subdir.join(format!(
+                "{:03}_{}",
+                index + 1,
+                filename_from_url(url, fallback_ext)
+            ));
+            match download_one(&client, url, &dest).await {
+                Ok(bytes) => {
+                    downloaded += 1;
+                    manifest.push(json!({
+                        "kind": kind,
+                        "url": url,
+                        "path": dest.strip_prefix(dir).unwrap_or(&dest).to_string_lossy(),
+                        "bytes": bytes
+                    }));
+                }
+                Err(err) => {
+                    eprintln!("[WARN] download failed for {}: {}", url, err);
+                    manifest.push(json!({
+                        "kind": kind,
+                        "url": url,
+                        "error": err.to_string()
+                    }));
+                }
+            }
+        }
+    }
+
+    let manifest_path = dir.join("manifest.json");
+    tokio::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&json!({
+            "downloaded": downloaded,
+            "items": manifest
+        }))?,
+    )
+    .await
+    .with_context(|| format!("write {}", manifest_path.display()))?;
+    println!("[OK] Wrote download manifest: {}", manifest_path.display());
+    Ok(())
+}
+
+async fn download_one(client: &reqwest::Client, url: &str, dest: &Path) -> anyhow::Result<u64> {
+    let bytes = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("GET {url}"))?
+        .error_for_status()
+        .with_context(|| format!("status {url}"))?
+        .bytes()
+        .await
+        .with_context(|| format!("read body {url}"))?;
+    let len = bytes.len() as u64;
+    tokio::fs::write(dest, &bytes)
+        .await
+        .with_context(|| format!("write {}", dest.display()))?;
+    Ok(len)
 }
 
 async fn handle_desktop_run(args: DesktopRunArgs) -> anyhow::Result<()> {
     let workflow_ref = workflow_ref_value(&args.workflow_ref)?;
     let resolved_workflow = resolve_named_workflow_path(&workflow_ref)?;
-    let params = normalize_run_params(args.params.into_iter().collect::<HashMap<_, _>>())?;
+    let mut params = normalize_run_params(args.params.into_iter().collect::<HashMap<_, _>>())?;
+    let (output_file, download_dir) =
+        extract_output_overrides(&mut params, args.output_file, args.download_dir);
     ensure_run_parameters_present(&workflow_ref, &resolved_workflow, &params)?;
+    enforce_cli_output_side_effect_policy(
+        &resolved_workflow,
+        output_file.as_deref(),
+        download_dir.as_deref(),
+    )?;
 
     println!("[LIST] RZN BROWSER RUN");
     println!("   ├─ Workflow: {}", workflow_ref);
@@ -1429,7 +2288,15 @@ async fn handle_desktop_run(args: DesktopRunArgs) -> anyhow::Result<()> {
     };
 
     match native_runner::run_desktop_workflow(config).await {
-        Ok(()) => Ok(()),
+        Ok(payload) => {
+            process_workflow_output(
+                payload.as_ref(),
+                output_file.as_deref(),
+                download_dir.as_deref(),
+            )
+            .await?;
+            Ok(())
+        }
         Err(err) => {
             let context = err
                 .downcast_ref::<WorkflowRunFailure>()
@@ -1450,8 +2317,15 @@ async fn handle_desktop_run(args: DesktopRunArgs) -> anyhow::Result<()> {
 async fn handle_native_run(args: NativeRunArgs) -> anyhow::Result<()> {
     let workflow_ref = workflow_ref_value(&args.workflow_ref)?;
     let resolved_workflow = resolve_named_workflow_path(&workflow_ref)?;
-    let params = normalize_run_params(args.params.into_iter().collect::<HashMap<_, _>>())?;
+    let mut params = normalize_run_params(args.params.into_iter().collect::<HashMap<_, _>>())?;
+    let (output_file, download_dir) =
+        extract_output_overrides(&mut params, args.output_file, args.download_dir);
     ensure_run_parameters_present(&workflow_ref, &resolved_workflow, &params)?;
+    enforce_cli_output_side_effect_policy(
+        &resolved_workflow,
+        output_file.as_deref(),
+        download_dir.as_deref(),
+    )?;
 
     println!("[LIST] RZN BROWSER RUN");
     println!("   ├─ Workflow: {}", workflow_ref);
@@ -1496,7 +2370,106 @@ async fn handle_native_run(args: NativeRunArgs) -> anyhow::Result<()> {
     };
 
     match native_runner::run_native_workflow(config).await {
-        Ok(()) => Ok(()),
+        Ok(payload) => {
+            process_workflow_output(
+                payload.as_ref(),
+                output_file.as_deref(),
+                download_dir.as_deref(),
+            )
+            .await?;
+            Ok(())
+        }
+        Err(err) => {
+            let context = err
+                .downcast_ref::<WorkflowRunFailure>()
+                .map(|failure| failure.report_context.clone())
+                .unwrap_or_else(|| {
+                    build_failure_context_from_error(
+                        &workflow_ref,
+                        &resolved_workflow,
+                        &err.to_string(),
+                    )
+                });
+            eprintln!("\n{}", render_report_block(&context));
+            Err(err)
+        }
+    }
+}
+
+async fn handle_supervisor_run(args: SupervisorRunArgs) -> anyhow::Result<()> {
+    let workflow_ref = workflow_ref_value(&args.workflow_ref)?;
+    let resolved_workflow = resolve_named_workflow_path(&workflow_ref)?;
+    let mut params = normalize_run_params(args.params.into_iter().collect::<HashMap<_, _>>())?;
+    let (output_file, download_dir) =
+        extract_output_overrides(&mut params, args.output_file, args.download_dir);
+    ensure_run_parameters_present(&workflow_ref, &resolved_workflow, &params)?;
+    enforce_cli_output_side_effect_policy(
+        &resolved_workflow,
+        output_file.as_deref(),
+        download_dir.as_deref(),
+    )?;
+
+    println!("[LIST] RZN BROWSER RUN");
+    println!("   ├─ Workflow: {}", workflow_ref);
+    println!("   ├─ Resolved: {}", resolved_workflow.display());
+    println!("   ├─ Backend: supervisor");
+    println!("   ├─ Fallback mode: {}", args.mode);
+    println!(
+        "   ├─ Legacy worker fallback: {}",
+        if args.allow_legacy_worker_fallback {
+            "allowed"
+        } else {
+            "disabled"
+        }
+    );
+    println!("   └─ Snapshot: {}", args.snapshot);
+    println!();
+
+    if !resolved_workflow.exists() {
+        anyhow::bail!("Workflow file not found: {}", resolved_workflow.display());
+    }
+    if !params.is_empty() {
+        println!("[NOTE] Parameters:");
+        for (key, value) in &params {
+            println!("   ├─ {}: {}", key, value);
+        }
+        println!();
+    }
+
+    let mode = match args.mode.to_lowercase().as_str() {
+        "attach" => NativeRunMode::Attach,
+        "spawn" => NativeRunMode::Spawn,
+        _ => NativeRunMode::Auto,
+    };
+
+    let snapshot_mode = match args.snapshot.to_lowercase().as_str() {
+        "after-step" | "after" => SnapshotMode::AfterStep,
+        "none" => SnapshotMode::None,
+        _ => SnapshotMode::OnError,
+    };
+
+    let config = SupervisorRunConfig {
+        workflow_path: resolved_workflow.to_string_lossy().to_string(),
+        params,
+        mode,
+        snapshot_mode,
+        app_base: args.app_base,
+        endpoint_path: args.endpoint_path,
+        worker_cmd: args.worker_cmd,
+        worker_args: args.worker_args,
+        allow_legacy_worker_fallback: args.allow_legacy_worker_fallback,
+    };
+
+    match native_runner::run_supervisor_workflow(config).await {
+        Ok(payload) => {
+            process_workflow_output(
+                payload.as_ref(),
+                output_file.as_deref(),
+                download_dir.as_deref(),
+            )
+            .await?;
+            Ok(())
+        }
         Err(err) => {
             let context = err
                 .downcast_ref::<WorkflowRunFailure>()
@@ -2950,10 +3923,14 @@ async fn handle_workflow_commands(
         WorkflowCommands::List(args) => handle_workflow_list(args, config).await,
         WorkflowCommands::Catalog(args) => handle_workflow_catalog(args).await,
         WorkflowCommands::Validate(args) => handle_workflow_validate(args).await,
+        WorkflowCommands::ValidateCatalog(args) => handle_catalog_validate(args).await,
+        WorkflowCommands::Capability(cmd) => handle_capability_commands(cmd).await,
         WorkflowCommands::Dirs => handle_workflow_dirs(),
         WorkflowCommands::Add(args) => handle_workflow_add(args).await,
         WorkflowCommands::Pull(args) => handle_workflow_pull(args).await,
         WorkflowCommands::Show(args) => handle_workflow_show(args, config).await,
+        WorkflowCommands::Inspect(args) => handle_workflow_inspect(args).await,
+        WorkflowCommands::Contract(args) => handle_workflow_contract(args).await,
         WorkflowCommands::Run(args) => handle_workflow_run(args, config).await,
         WorkflowCommands::New(args) => handle_workflow_new(args, config).await,
     }
@@ -3021,6 +3998,79 @@ struct WorkflowHelpView {
     returns: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct WorkflowContractView {
+    reference: String,
+    path: String,
+    schema_version: String,
+    id: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+    system: String,
+    capability: String,
+    inputs: Vec<WorkflowContractInputView>,
+    output: WorkflowContractOutputView,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    side_effects: Vec<WorkflowContractSideEffectView>,
+    runtime: WorkflowContractRuntimeView,
+    step_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WorkflowContractInputView {
+    name: String,
+    kind: String,
+    required: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    sensitive: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    enum_values: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WorkflowContractOutputView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    schema: Option<Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    returns: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selector_step_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selector_path: Option<String>,
+    prefer_downloads: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WorkflowContractSideEffectView {
+    class: String,
+    idempotency: String,
+    confirmation_required: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct WorkflowContractRuntimeView {
+    actor: String,
+    requires_existing_session: bool,
+    requires_cdp: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workflow_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workflow_path: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 struct WorkflowHelpMetadata {
     summary: Option<String>,
@@ -3059,6 +4109,8 @@ struct WorkflowValidationReport {
     issues: Vec<WorkflowValidationIssue>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     wrote_help: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    strict: bool,
 }
 
 fn is_false(value: &bool) -> bool {
@@ -3073,6 +4125,89 @@ fn load_workflow_value(reference: &str) -> anyhow::Result<(PathBuf, Value)> {
     let value: Value = serde_json::from_str(&content)
         .map_err(|e| anyhow::anyhow!("invalid workflow JSON in {}: {}", resolved.display(), e))?;
     Ok((resolved, value))
+}
+
+fn load_workflow_contract_value(reference: &str) -> anyhow::Result<(PathBuf, Value)> {
+    if let Some(manifest_path) = find_manifest_path_for_reference(reference) {
+        return read_contract_value_from_path(&manifest_path);
+    }
+
+    let (resolved, value) = load_workflow_value(reference)?;
+    if value.get("schema_version").and_then(|value| value.as_str())
+        == Some(WORKFLOW_CONTRACT_VERSION)
+    {
+        return Ok((resolved, value));
+    }
+
+    if let Some(manifest_path) = find_manifest_path_for_runtime_workflow(&resolved) {
+        return read_contract_value_from_path(&manifest_path);
+    }
+
+    Ok((resolved, value))
+}
+
+fn read_contract_value_from_path(path: &std::path::Path) -> anyhow::Result<(PathBuf, Value)> {
+    let content = fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("failed to read manifest {}: {}", path.display(), e))?;
+    let value: Value = serde_json::from_str(&content)
+        .map_err(|e| anyhow::anyhow!("invalid manifest JSON in {}: {}", path.display(), e))?;
+    Ok((path.to_path_buf(), value))
+}
+
+fn find_manifest_path_for_reference(reference: &str) -> Option<PathBuf> {
+    let normalized = normalize_contract_ref(reference);
+    let (system, workflow) = normalized.split_once('/')?;
+    let expected_capability = format!("{}.{}", system, workflow.replace('_', "."));
+    let expected_dash = format!("{}-{}", system, workflow);
+    let capabilities = list_capabilities_with_query(&CapabilityCatalogQuery::default()).ok()?;
+    capabilities.into_iter().find_map(|entry| {
+        let capability = entry.capability_id.replace('_', ".");
+        let matches = entry.system == system
+            && (capability == expected_capability
+                || entry.workflow == workflow
+                || entry.workflow == expected_dash
+                || entry.workflow.ends_with(&format!("-{}", workflow)));
+        matches.then(|| PathBuf::from(entry.manifest_path))
+    })
+}
+
+fn normalize_contract_ref(reference: &str) -> String {
+    reference
+        .trim()
+        .replace('\\', "/")
+        .trim_matches('/')
+        .split('/')
+        .map(slugify_contract_component)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn slugify_contract_component(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+fn find_manifest_path_for_runtime_workflow(runtime_path: &std::path::Path) -> Option<PathBuf> {
+    let runtime = canonicalize_for_compare(runtime_path);
+    let capabilities = list_capabilities_with_query(&CapabilityCatalogQuery::default()).ok()?;
+    capabilities.into_iter().find_map(|entry| {
+        let workflow_path = canonicalize_for_compare(Path::new(&entry.workflow_path));
+        (workflow_path == runtime).then(|| PathBuf::from(entry.manifest_path))
+    })
+}
+
+fn canonicalize_for_compare(path: &std::path::Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn find_catalog_entry_for_path(path: &std::path::Path) -> Option<NamedWorkflowEntry> {
@@ -3173,6 +4308,402 @@ fn build_workflow_help_view(
         notes,
         returns: help_meta.returns,
     }
+}
+
+fn build_workflow_contract_view(
+    reference: &str,
+    resolved_path: &std::path::Path,
+    value: &Value,
+    entry: Option<&NamedWorkflowEntry>,
+) -> anyhow::Result<WorkflowContractView> {
+    if value.get("schema_version").and_then(|value| value.as_str())
+        == Some(WORKFLOW_CONTRACT_VERSION)
+    {
+        let manifest = validate_manifest_value(value).map_err(|issues| {
+            let rendered = issues
+                .into_iter()
+                .map(|issue| format!("{}: {}", issue.field, issue.message))
+                .collect::<Vec<_>>()
+                .join("; ");
+            anyhow::anyhow!("invalid manifest contract: {}", rendered)
+        })?;
+        return Ok(build_manifest_contract_view(
+            reference,
+            resolved_path,
+            &manifest,
+        ));
+    }
+
+    Ok(build_legacy_contract_view(
+        reference,
+        resolved_path,
+        value,
+        entry,
+    ))
+}
+
+fn build_manifest_contract_view(
+    reference: &str,
+    resolved_path: &std::path::Path,
+    manifest: &WorkflowManifestV2,
+) -> WorkflowContractView {
+    let inputs = manifest
+        .params
+        .properties
+        .iter()
+        .map(|(name, def)| WorkflowContractInputView {
+            name: name.clone(),
+            kind: serde_json::to_value(def.kind)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| format!("{:?}", def.kind).to_ascii_lowercase()),
+            required: def.required,
+            sensitive: def.sensitive,
+            description: def.description.clone(),
+            default: def.default.clone(),
+            enum_values: def.enum_values.clone(),
+        })
+        .collect();
+    let returns = manifest
+        .help
+        .as_ref()
+        .map(|help| help.returns.clone())
+        .unwrap_or_default();
+    let output = WorkflowContractOutputView {
+        schema: manifest.result.output_schema.clone(),
+        returns,
+        selector_step_id: manifest
+            .result
+            .output_selector
+            .as_ref()
+            .map(|selector| selector.step_id.clone()),
+        selector_path: manifest
+            .result
+            .output_selector
+            .as_ref()
+            .and_then(|selector| selector.path.clone()),
+        prefer_downloads: manifest.result.artifact_policy.prefer_downloads,
+    };
+    let side_effects = manifest
+        .side_effects
+        .iter()
+        .map(|effect| WorkflowContractSideEffectView {
+            class: effect.class.as_str().to_string(),
+            idempotency: serde_json::to_value(&effect.idempotency)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_string))
+                .unwrap_or_else(|| "safe_retry".to_string()),
+            confirmation_required: effect.confirmation_required,
+            scopes: effect.scopes.clone(),
+        })
+        .collect();
+    let runtime = WorkflowContractRuntimeView {
+        actor: serde_json::to_value(&manifest.runtime.actor)
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| "extension".to_string()),
+        requires_existing_session: manifest.runtime.requires_existing_session,
+        requires_cdp: manifest.runtime.requires_cdp,
+        timeout_ms: manifest.runtime.timeout_ms,
+        workflow_ref: manifest.runtime.workflow_ref.clone(),
+        workflow_path: manifest.runtime.workflow_path.clone(),
+    };
+
+    WorkflowContractView {
+        reference: reference.to_string(),
+        path: resolved_path.display().to_string(),
+        schema_version: WORKFLOW_CONTRACT_VERSION.to_string(),
+        id: manifest.id.clone(),
+        name: manifest.name.clone(),
+        summary: manifest.summary.clone(),
+        description: manifest.description.clone(),
+        version: Some(manifest.version.clone()),
+        system: manifest.system.clone(),
+        capability: manifest.capability.clone(),
+        inputs,
+        output,
+        side_effects,
+        runtime,
+        step_count: manifest.steps.len(),
+    }
+}
+
+fn build_legacy_contract_view(
+    reference: &str,
+    resolved_path: &std::path::Path,
+    value: &Value,
+    entry: Option<&NamedWorkflowEntry>,
+) -> WorkflowContractView {
+    let help = build_workflow_help_view(reference, resolved_path, value, entry);
+    let inputs = help
+        .parameters
+        .iter()
+        .map(|param| WorkflowContractInputView {
+            name: param.name.clone(),
+            kind: param.shape.clone().unwrap_or_else(|| "string".to_string()),
+            required: param.required,
+            sensitive: param.sensitive,
+            description: Some(param.description.clone()),
+            default: param
+                .default_value
+                .as_ref()
+                .map(|value| Value::String(value.clone())),
+            enum_values: Vec::new(),
+        })
+        .collect();
+    let output = WorkflowContractOutputView {
+        schema: infer_legacy_output_schema(value),
+        returns: help.returns.clone().into_iter().collect(),
+        selector_step_id: final_result_step_id(value),
+        selector_path: None,
+        prefer_downloads: false,
+    };
+    let step_count = value
+        .pointer("/browser_automation/sequences/0/steps")
+        .and_then(|value| value.as_array())
+        .map(Vec::len)
+        .unwrap_or(0);
+
+    WorkflowContractView {
+        reference: reference.to_string(),
+        path: resolved_path.display().to_string(),
+        schema_version: "legacy.workflow_json".to_string(),
+        id: help.id,
+        name: help.name,
+        summary: Some(help.description.clone()),
+        description: Some(help.description),
+        version: help.version,
+        system: help.system.unwrap_or_else(|| "unknown".to_string()),
+        capability: help
+            .workflow
+            .map(|workflow| format!("{}.{}", "workflow", workflow))
+            .unwrap_or_else(|| "workflow.legacy".to_string()),
+        inputs,
+        output,
+        side_effects: Vec::new(),
+        runtime: WorkflowContractRuntimeView {
+            actor: "supervisor".to_string(),
+            requires_existing_session: help.uses_current_tab,
+            requires_cdp: false,
+            timeout_ms: None,
+            workflow_ref: None,
+            workflow_path: Some(resolved_path.display().to_string()),
+        },
+        step_count,
+    }
+}
+
+fn infer_legacy_output_schema(value: &Value) -> Option<Value> {
+    let steps = value
+        .pointer("/browser_automation/sequences/0/steps")
+        .and_then(|value| value.as_array())?;
+    let step = steps.iter().rev().find(|step| {
+        matches!(
+            step.get("type").and_then(|value| value.as_str()),
+            Some("extract_structured_data")
+                | Some("get_element_text")
+                | Some("download_images")
+                | Some("execute_javascript")
+        )
+    })?;
+    match step.get("type").and_then(|value| value.as_str()) {
+        Some("extract_structured_data") => Some(json!({
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": extract_structured_field_schema(step)
+            }
+        })),
+        Some("get_element_text") => Some(json!({ "type": "string" })),
+        Some("download_images") => Some(json!({
+            "type": "object",
+            "properties": {
+                "image_urls": { "type": "array", "items": { "type": "string", "format": "uri" } },
+                "downloads": { "type": "array", "items": { "type": "object" } }
+            }
+        })),
+        Some("execute_javascript") => Some(json!({ "type": "object" })),
+        _ => None,
+    }
+}
+
+fn extract_structured_field_schema(step: &Value) -> Value {
+    let mut properties = serde_json::Map::new();
+    if let Some(fields) = step.get("fields").and_then(|value| value.as_array()) {
+        for field in fields {
+            if let Some(name) = field.get("name").and_then(|value| value.as_str()) {
+                properties.insert(name.to_string(), json!({ "type": "string" }));
+            }
+        }
+    }
+    Value::Object(properties)
+}
+
+fn final_result_step_id(value: &Value) -> Option<String> {
+    value
+        .pointer("/browser_automation/sequences/0/steps")
+        .and_then(|value| value.as_array())
+        .and_then(|steps| {
+            steps.iter().rev().find_map(|step| {
+                let result_type = matches!(
+                    step.get("type").and_then(|value| value.as_str()),
+                    Some("extract_structured_data")
+                        | Some("get_element_text")
+                        | Some("download_images")
+                        | Some("execute_javascript")
+                );
+                result_type.then(|| {
+                    step.get("id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("step")
+                        .to_string()
+                })
+            })
+        })
+}
+
+fn render_workflow_contract_view(view: &WorkflowContractView) -> String {
+    let mut lines = vec![render_primary_heading(
+        &view.reference,
+        format!(" — {}", view.name),
+    )];
+    lines.push(render_meta_line(&format!(
+        "manifest: {} | id: {} | system: {} | capability: {} | version: {} | steps: {}",
+        view.schema_version,
+        view.id,
+        view.system,
+        view.capability,
+        view.version.as_deref().unwrap_or("-"),
+        view.step_count
+    )));
+    if let Some(summary) = view
+        .summary
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        lines.push(summary.to_string());
+    }
+
+    lines.push(String::new());
+    lines.push(render_section_heading("Inputs"));
+    if view.inputs.is_empty() {
+        lines.push("  none".to_string());
+    } else {
+        let rows = view
+            .inputs
+            .iter()
+            .map(|input| {
+                vec![
+                    styled_body_cell(&input.name),
+                    styled_status_cell(if input.required {
+                        "required"
+                    } else {
+                        "optional"
+                    }),
+                    styled_body_cell(&input.kind),
+                    styled_body_cell(
+                        input
+                            .default
+                            .as_ref()
+                            .map(format_json_inline)
+                            .as_deref()
+                            .unwrap_or("-"),
+                    ),
+                    styled_body_cell(input.description.as_deref().unwrap_or("-")),
+                ]
+            })
+            .collect();
+        lines.push(render_cli_table(
+            vec![
+                styled_header_cell("name"),
+                styled_header_cell("required"),
+                styled_header_cell("type"),
+                styled_header_cell("default"),
+                styled_header_cell("description"),
+            ],
+            rows,
+            2,
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push(render_section_heading("Output"));
+    if let Some(schema) = &view.output.schema {
+        lines.push(format!("  schema: {}", format_json_inline(schema)));
+    } else {
+        lines.push("  schema: not declared".to_string());
+    }
+    for returns in &view.output.returns {
+        lines.push(format!("  returns: {}", returns));
+    }
+    if let Some(step_id) = &view.output.selector_step_id {
+        let suffix = view
+            .output
+            .selector_path
+            .as_deref()
+            .map(|path| format!(" path={}", path))
+            .unwrap_or_default();
+        lines.push(format!("  selector: step={}{}", step_id, suffix));
+    }
+    if view.output.prefer_downloads {
+        lines.push("  artifacts: prefers downloads".to_string());
+    }
+
+    if !view.side_effects.is_empty() {
+        lines.push(String::new());
+        lines.push(render_section_heading("Side Effects"));
+        let rows = view
+            .side_effects
+            .iter()
+            .map(|effect| {
+                vec![
+                    styled_body_cell(&effect.class),
+                    styled_body_cell(&effect.idempotency),
+                    styled_body_cell(if effect.confirmation_required {
+                        "yes"
+                    } else {
+                        "no"
+                    }),
+                    styled_body_cell(&effect.scopes.join(", ")),
+                ]
+            })
+            .collect();
+        lines.push(render_cli_table(
+            vec![
+                styled_header_cell("class"),
+                styled_header_cell("idempotency"),
+                styled_header_cell("confirm"),
+                styled_header_cell("scopes"),
+            ],
+            rows,
+            2,
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push(render_section_heading("Runtime"));
+    lines.push(format!(
+        "  actor: {} | existing_session: {} | cdp: {} | timeout_ms: {}",
+        view.runtime.actor,
+        view.runtime.requires_existing_session,
+        view.runtime.requires_cdp,
+        view.runtime
+            .timeout_ms
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "-".to_string())
+    ));
+    if let Some(workflow_ref) = &view.runtime.workflow_ref {
+        lines.push(format!("  workflow_ref: {}", workflow_ref));
+    }
+    if let Some(workflow_path) = &view.runtime.workflow_path {
+        lines.push(format!("  workflow_path: {}", workflow_path));
+    }
+
+    lines.join("\n")
+}
+
+fn format_json_inline(value: &Value) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| value.to_string())
 }
 
 fn render_workflow_help_view(view: &WorkflowHelpView) -> String {
@@ -3449,7 +4980,21 @@ fn parse_workflow_help_metadata(value: &Value) -> WorkflowHelpMetadata {
         .get("returns")
         .and_then(|v| v.as_str())
         .map(|v| v.trim().to_string())
-        .filter(|v| !v.is_empty());
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            help.get("returns")
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(|item| item.as_str())
+                        .map(str::trim)
+                        .filter(|item| !item.is_empty())
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                })
+                .filter(|value| !value.is_empty())
+        });
     let notes = help
         .get("notes")
         .and_then(|v| v.as_array())
@@ -3536,6 +5081,28 @@ fn parse_workflow_help_metadata(value: &Value) -> WorkflowHelpMetadata {
                     })
                 })
                 .collect::<Vec<_>>()
+        })
+        .or_else(|| {
+            help.get("parameters")
+                .and_then(|v| v.as_object())
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|(name, description)| WorkflowHelpParamView {
+                            name: name.clone(),
+                            required: false,
+                            description: description
+                                .as_str()
+                                .map(|value| value.trim().to_string())
+                                .filter(|value| !value.is_empty())
+                                .unwrap_or_else(|| infer_param_description(name)),
+                            shape: infer_param_shape(name),
+                            default_value: None,
+                            example: Some(infer_param_example(name)),
+                            sensitive: infer_param_sensitive(name),
+                        })
+                        .collect::<Vec<_>>()
+                })
         })
         .unwrap_or_default();
 
@@ -4076,7 +5643,304 @@ fn validate_workflow_help_contract(
         info_count,
         issues,
         wrote_help: false,
+        strict: false,
     }
+}
+
+fn validate_workflow_strict_contract(
+    reference: &str,
+    resolved_path: &std::path::Path,
+    value: &Value,
+) -> WorkflowValidationReport {
+    if value.get("schema_version").and_then(|value| value.as_str())
+        == Some(WORKFLOW_CONTRACT_VERSION)
+    {
+        return validate_manifest_file(reference, resolved_path, value, true);
+    }
+
+    let mut report = validate_workflow_help_contract(reference, resolved_path, value);
+    report.strict = true;
+
+    let entry = find_catalog_entry_for_path(resolved_path);
+    let Some(entry) = entry else {
+        report.issues.push(WorkflowValidationIssue {
+            level: WorkflowValidationLevel::Error,
+            field: "catalog.route".to_string(),
+            message: "Strict mode requires the workflow to be installed in the catalog."
+                .to_string(),
+            suggestion: Some(
+                "Import/install the workflow, then declare it in a manifest capability."
+                    .to_string(),
+            ),
+        });
+        refresh_workflow_validation_counts(&mut report);
+        return report;
+    };
+
+    let capabilities = list_capabilities_with_query(&CapabilityCatalogQuery {
+        system_filter: Some(entry.system.clone()),
+        source_filter: None,
+    })
+    .unwrap_or_default();
+    let declared = capabilities.iter().any(|capability| {
+        std::path::Path::new(&capability.workflow_path) == resolved_path
+            || (capability.system == entry.system && capability.workflow == entry.workflow)
+    });
+    if !declared {
+        report.issues.push(WorkflowValidationIssue {
+            level: WorkflowValidationLevel::Error,
+            field: "manifest.capabilities".to_string(),
+            message: format!(
+                "Workflow `{}` is not reachable through a manifest capability for explicit system `{}`.",
+                entry.workflow, entry.system
+            ),
+            suggestion: Some("Add a manifest capability with `system_id`, `capability_id`, and `route.workflow`.".to_string()),
+        });
+    }
+
+    if value.pointer("/output").is_none()
+        && value.pointer("/result").is_none()
+        && value.pointer("/contract/output").is_none()
+        && value.pointer("/outputs").is_none()
+    {
+        report.issues.push(WorkflowValidationIssue {
+            level: WorkflowValidationLevel::Error,
+            field: "output".to_string(),
+            message: "Strict mode requires an explicit output/result contract; final output must not be guessed from the last payload.".to_string(),
+            suggestion: Some("Declare output selectors/results in the workflow contract before launch routing uses it.".to_string()),
+        });
+    }
+
+    refresh_workflow_validation_counts(&mut report);
+    report
+}
+
+fn validate_manifest_file(
+    reference: &str,
+    resolved_path: &std::path::Path,
+    value: &Value,
+    strict: bool,
+) -> WorkflowValidationReport {
+    let mut issues = Vec::new();
+    let manifest = match validate_manifest_value(value) {
+        Ok(manifest) => Some(manifest),
+        Err(contract_issues) => {
+            for issue in contract_issues {
+                issues.push(WorkflowValidationIssue {
+                    level: WorkflowValidationLevel::Error,
+                    field: issue.field,
+                    message: issue.message,
+                    suggestion: None,
+                });
+            }
+            None
+        }
+    };
+
+    if let Some(manifest) = manifest.as_ref() {
+        validate_manifest_runtime_link(resolved_path, manifest, &mut issues);
+    }
+
+    let error_count = issues
+        .iter()
+        .filter(|issue| matches!(issue.level, WorkflowValidationLevel::Error))
+        .count();
+    let warning_count = issues
+        .iter()
+        .filter(|issue| matches!(issue.level, WorkflowValidationLevel::Warning))
+        .count();
+    let info_count = issues
+        .iter()
+        .filter(|issue| matches!(issue.level, WorkflowValidationLevel::Info))
+        .count();
+
+    WorkflowValidationReport {
+        reference: reference.to_string(),
+        path: resolved_path.display().to_string(),
+        ok: error_count == 0,
+        error_count,
+        warning_count,
+        info_count,
+        issues,
+        wrote_help: false,
+        strict,
+    }
+}
+
+fn validate_manifest_runtime_link(
+    manifest_path: &std::path::Path,
+    manifest: &WorkflowManifestV2,
+    issues: &mut Vec<WorkflowValidationIssue>,
+) {
+    let runtime_path = manifest_manifest_runtime_workflow_path(manifest_path, manifest);
+    let Some(runtime_path) = runtime_path else {
+        if manifest.steps.is_empty() {
+            issues.push(WorkflowValidationIssue {
+                level: WorkflowValidationLevel::Error,
+                field: "runtime.workflow_ref".to_string(),
+                message: "Manifest with empty steps[] must declare runtime.workflow_ref or runtime.workflow_path.".to_string(),
+                suggestion: Some("Point the manifest at the runtime workflow until steps[] becomes authoritative.".to_string()),
+            });
+        }
+        return;
+    };
+
+    if !runtime_path.is_file() {
+        issues.push(WorkflowValidationIssue {
+            level: WorkflowValidationLevel::Error,
+            field: "runtime.workflow_ref".to_string(),
+            message: format!("Runtime workflow does not exist at {}.", runtime_path.display()),
+            suggestion: Some("Fix runtime.workflow_ref/runtime.workflow_path or install the referenced workflow.".to_string()),
+        });
+        return;
+    }
+
+    let Some(selector) = manifest.result.output_selector.as_ref() else {
+        return;
+    };
+    let Ok(content) = fs::read_to_string(&runtime_path) else {
+        return;
+    };
+    let Ok(runtime_value) = serde_json::from_str::<Value>(&content) else {
+        return;
+    };
+    if !legacy_runtime_has_step(&runtime_value, &selector.step_id) {
+        issues.push(WorkflowValidationIssue {
+            level: WorkflowValidationLevel::Error,
+            field: "result.output_selector.step_id".to_string(),
+            message: format!(
+                "Output selector references step `{}` which does not exist in {}.",
+                selector.step_id,
+                runtime_path.display()
+            ),
+            suggestion: Some(
+                "Update result.output_selector.step_id or the runtime workflow step id."
+                    .to_string(),
+            ),
+        });
+    }
+}
+
+fn manifest_manifest_runtime_workflow_path(
+    manifest_path: &std::path::Path,
+    manifest: &WorkflowManifestV2,
+) -> Option<PathBuf> {
+    let workflows_root = workflow_root_for_manifest_path(manifest_path)?;
+    manifest
+        .runtime
+        .workflow_ref
+        .as_deref()
+        .and_then(|workflow_ref| resolve_manifest_workflow_ref(&workflows_root, workflow_ref))
+        .or_else(|| {
+            manifest
+                .runtime
+                .workflow_path
+                .as_deref()
+                .map(|workflow_path| {
+                    let path = PathBuf::from(workflow_path);
+                    if path.is_absolute() {
+                        path
+                    } else {
+                        workflows_root.join(path)
+                    }
+                })
+        })
+}
+
+fn workflow_root_for_manifest_path(manifest_path: &std::path::Path) -> Option<PathBuf> {
+    for ancestor in manifest_path.ancestors() {
+        if ancestor.file_name().and_then(|value| value.to_str()) == Some("workflows") {
+            return Some(ancestor.to_path_buf());
+        }
+    }
+    manifest_path.parent().map(Path::to_path_buf)
+}
+
+fn resolve_manifest_workflow_ref(root: &std::path::Path, workflow_ref: &str) -> Option<PathBuf> {
+    let normalized = workflow_ref
+        .trim()
+        .replace('\\', "/")
+        .trim_matches('/')
+        .to_ascii_lowercase();
+    let parts = normalized.split('/').collect::<Vec<_>>();
+    if parts.len() == 2 {
+        let system = slugify_manifest_ref_part(parts[0]);
+        let workflow = slugify_manifest_ref_part(parts[1]);
+        if !system.is_empty() && !workflow.is_empty() {
+            let candidates = [
+                root.join(&system).join(format!("{workflow}.json")),
+                root.join(&system).join(format!("{system}-{workflow}.json")),
+                root.join(&system).join(format!("{system}_{workflow}.json")),
+            ];
+            for candidate in candidates {
+                if candidate.is_file() {
+                    return Some(candidate);
+                }
+            }
+            return Some(root.join(&system).join(format!("{workflow}.json")));
+        }
+    }
+
+    let path = PathBuf::from(workflow_ref);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    })
+}
+
+fn slugify_manifest_ref_part(input: &str) -> String {
+    input
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('_')
+        .to_string()
+}
+
+fn legacy_runtime_has_step(workflow: &Value, step_id: &str) -> bool {
+    workflow
+        .pointer("/browser_automation/sequences")
+        .and_then(|value| value.as_array())
+        .map(|sequences| {
+            sequences.iter().any(|sequence| {
+                sequence
+                    .get("steps")
+                    .and_then(|value| value.as_array())
+                    .map(|steps| {
+                        steps.iter().any(|step| {
+                            step.get("id").and_then(|value| value.as_str()) == Some(step_id)
+                        })
+                    })
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn refresh_workflow_validation_counts(report: &mut WorkflowValidationReport) {
+    report.error_count = report
+        .issues
+        .iter()
+        .filter(|issue| matches!(issue.level, WorkflowValidationLevel::Error))
+        .count();
+    report.warning_count = report
+        .issues
+        .iter()
+        .filter(|issue| matches!(issue.level, WorkflowValidationLevel::Warning))
+        .count();
+    report.info_count = report
+        .issues
+        .iter()
+        .filter(|issue| matches!(issue.level, WorkflowValidationLevel::Info))
+        .count();
+    report.ok = report.error_count == 0;
 }
 
 fn render_workflow_validation_report(report: &WorkflowValidationReport) -> String {
@@ -4097,6 +5961,9 @@ fn render_workflow_validation_report(report: &WorkflowValidationReport) -> Strin
         lines.push(render_meta_line(
             "help: wrote or refreshed top-level help metadata",
         ));
+    }
+    if report.strict {
+        lines.push(render_meta_line("mode: strict manifest contract"));
     }
     if report.issues.is_empty() {
         lines.push("No issues found.".to_string());
@@ -4153,18 +6020,54 @@ async fn handle_workflow_show(
     Ok(())
 }
 
+async fn handle_workflow_inspect(
+    args: WorkflowInspectArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let workflow_ref = workflow_ref_value(&args.workflow_ref)?;
+    let (resolved_path, value) = load_workflow_contract_value(&workflow_ref)?;
+    let entry = find_catalog_entry_for_path(&resolved_path);
+    let view = build_workflow_contract_view(&workflow_ref, &resolved_path, &value, entry.as_ref())?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&view)?);
+    } else {
+        println!("{}", render_workflow_contract_view(&view));
+    }
+    Ok(())
+}
+
+async fn handle_workflow_contract(
+    args: WorkflowContractArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    handle_workflow_inspect(args).await
+}
+
 async fn handle_workflow_validate(
     args: WorkflowValidateArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let workflow_ref = workflow_ref_value(&args.workflow_ref)?;
     let (resolved_path, mut value) = load_workflow_value(&workflow_ref)?;
     let entry = find_catalog_entry_for_path(&resolved_path);
+    let is_manifest = value.get("schema_version").and_then(|value| value.as_str())
+        == Some(WORKFLOW_CONTRACT_VERSION);
+
+    if is_manifest && args.write_help {
+        return Err(Box::<dyn std::error::Error>::from(anyhow::anyhow!(
+            "--write-help is only supported for legacy workflow JSON; manifest help lives in the manifest contract"
+        )));
+    }
 
     if args.write_help {
         value = write_workflow_help_block(&workflow_ref, &resolved_path, &value, entry.as_ref())?;
     }
 
-    let mut report = validate_workflow_help_contract(&workflow_ref, &resolved_path, &value);
+    let mut report = if is_manifest {
+        validate_manifest_file(&workflow_ref, &resolved_path, &value, args.strict)
+    } else if args.strict {
+        validate_workflow_strict_contract(&workflow_ref, &resolved_path, &value)
+    } else {
+        validate_workflow_help_contract(&workflow_ref, &resolved_path, &value)
+    };
     report.wrote_help = args.write_help;
 
     if args.json {
@@ -4188,6 +6091,11 @@ async fn handle_workflow_run(
     mut config: PlanConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let workflow_ref = workflow_ref_value(&args.workflow_ref)?;
+    if !args.allow_direct_workflow {
+        return Err(Box::<dyn std::error::Error>::from(anyhow::anyhow!(
+            "`rzn-browser workflow run` is a direct workflow escape hatch. Re-run with --allow-direct-workflow, or use `rzn-browser workflow capability resolve --system <system> <capability_id>` and route through a manifest capability."
+        )));
+    }
     let auto_heal = !args.no_auto_heal;
     if auto_heal {
         if let Err(msg) = ensure_llm_ready_for_auto_heal(&config) {
@@ -4288,6 +6196,183 @@ async fn handle_workflow_catalog(args: WorkflowListArgs) -> Result<(), Box<dyn s
     }
     println!("{}", render_workflow_catalog(&entries, &args));
     Ok(())
+}
+
+async fn handle_capability_commands(
+    cmd: CapabilityCommands,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        CapabilityCommands::List(args) => handle_capability_list(args).await,
+        CapabilityCommands::Resolve(args) => handle_capability_resolve(args).await,
+    }
+}
+
+async fn handle_capability_list(
+    args: CapabilityListArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let entries = list_capabilities_with_query(&CapabilityCatalogQuery {
+        system_filter: args.system.clone(),
+        source_filter: args.source.map(|source| source.as_str().to_string()),
+    })?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&entries)?);
+    } else {
+        println!(
+            "{}",
+            render_capability_catalog(&entries, args.system.as_deref())
+        );
+    }
+    Ok(())
+}
+
+async fn handle_capability_resolve(
+    args: CapabilityResolveArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let entry = resolve_capability_route(&args.system, &args.capability_id)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&entry)?);
+    } else {
+        println!("{} -> {}", entry.capability_id, entry.route);
+        println!("workflow: {}", entry.workflow_path);
+        println!("manifest: {}", entry.manifest_path);
+    }
+    Ok(())
+}
+
+async fn handle_catalog_validate(
+    args: CatalogValidateArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let report = validate_catalog_manifests(args.strict)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!("{}", render_catalog_validation_report(&report));
+    }
+    if report.ok {
+        return Ok(());
+    }
+    Err(Box::<dyn std::error::Error>::from(anyhow::anyhow!(
+        "catalog validation failed with {} error(s)",
+        report.error_count
+    )))
+}
+
+fn render_capability_catalog(entries: &[CapabilityCatalogEntry], system: Option<&str>) -> String {
+    if entries.is_empty() {
+        return match system {
+            Some(system) => format!(
+                "No manifest-declared capabilities found for system '{}'.",
+                system
+            ),
+            None => "No manifest-declared capabilities found.".to_string(),
+        };
+    }
+
+    let mut by_system: BTreeMap<&str, Vec<&CapabilityCatalogEntry>> = BTreeMap::new();
+    for entry in entries {
+        by_system.entry(&entry.system).or_default().push(entry);
+    }
+
+    let mut lines = vec![render_primary_heading(
+        "Manifest capabilities: ",
+        format!(
+            "{} capabilities across {} systems",
+            entries.len(),
+            by_system.len()
+        ),
+    )];
+    for (system, capabilities) in by_system {
+        lines.push(String::new());
+        lines.push(render_section_heading(&format!(
+            "{} ({} capabilities)",
+            system,
+            capabilities.len()
+        )));
+        let rows = capabilities
+            .iter()
+            .map(|entry| {
+                let effects = if entry.effects.is_empty() {
+                    "-".to_string()
+                } else {
+                    entry.effects.join(", ")
+                };
+                vec![
+                    styled_body_cell(&entry.capability_id),
+                    styled_body_cell(&entry.workflow),
+                    styled_body_cell(&entry.source),
+                    styled_body_cell(entry.description.as_deref().unwrap_or("-")),
+                    styled_body_cell(&effects),
+                ]
+            })
+            .collect();
+        lines.push(render_cli_table(
+            vec![
+                styled_header_cell("capability"),
+                styled_header_cell("workflow"),
+                styled_header_cell("source"),
+                styled_header_cell("description"),
+                styled_header_cell("effects"),
+            ],
+            rows,
+            2,
+        ));
+    }
+    lines.join("\n")
+}
+
+fn render_catalog_validation_report(report: &CatalogValidationReport) -> String {
+    let mut lines = vec![render_primary_heading(
+        "Catalog validation: ",
+        if report.ok { "ok" } else { "failed" }.to_string(),
+    )];
+    lines.push(render_meta_line(&format!(
+        "mode: {}",
+        if report.strict { "strict" } else { "compat" }
+    )));
+    lines.push(render_meta_line(&format!(
+        "manifests: {}, capabilities: {}",
+        report.manifest_count, report.capability_count
+    )));
+    lines.push(render_meta_line(&format!(
+        "issues: {} error(s), {} warning(s)",
+        report.error_count, report.warning_count
+    )));
+    if report.issues.is_empty() {
+        lines.push("No issues found.".to_string());
+        return lines.join("\n");
+    }
+    let rows = report
+        .issues
+        .iter()
+        .map(|issue| {
+            let level = match issue.level {
+                workflow_catalog::CatalogValidationLevel::Error => "ERROR",
+                workflow_catalog::CatalogValidationLevel::Warning => "WARN",
+                workflow_catalog::CatalogValidationLevel::Info => "INFO",
+            };
+            vec![
+                styled_status_cell(level),
+                styled_body_cell(&issue.source),
+                styled_body_cell(&issue.field),
+                styled_body_cell(&issue.message),
+                styled_body_cell(&issue.path),
+            ]
+        })
+        .collect();
+    lines.push(String::new());
+    lines.push(render_section_heading("Issues"));
+    lines.push(render_cli_table(
+        vec![
+            styled_header_cell("level"),
+            styled_header_cell("source"),
+            styled_header_cell("field"),
+            styled_header_cell("message"),
+            styled_header_cell("path"),
+        ],
+        rows,
+        2,
+    ));
+    lines.join("\n")
 }
 
 fn render_workflow_catalog(entries: &[NamedWorkflowEntry], args: &WorkflowListArgs) -> String {
@@ -4625,7 +6710,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_run_defaults_to_native_with_split_workflow_reference() {
+    fn parse_run_defaults_to_supervisor_with_split_workflow_reference() {
         let cli = Cli::try_parse_from([
             "rzn-browser",
             "run",
@@ -4638,7 +6723,7 @@ mod tests {
 
         match cli.command {
             Commands::Run(args) => {
-                assert_eq!(args.via, RunVia::Native);
+                assert_eq!(args.via, RunVia::Supervisor);
                 assert_eq!(
                     workflow_ref_value(&args.workflow_ref).expect("workflow ref"),
                     "google/search"
@@ -5020,9 +7105,122 @@ mod tests {
                     Some("continue-chat-v1")
                 );
                 assert!(args.write_help);
+                assert!(!args.strict);
                 assert!(args.json);
             }
             other => panic!("expected workflow validate command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_workflow_validate_strict() {
+        let cli = Cli::try_parse_from([
+            "rzn-browser",
+            "workflow",
+            "validate",
+            "chatgpt",
+            "read",
+            "--strict",
+        ])
+        .expect("parse strict workflow validate");
+
+        match cli.command {
+            Commands::Workflow(WorkflowCommands::Validate(args)) => {
+                assert_eq!(args.workflow_ref.workflow_or_system, "chatgpt");
+                assert_eq!(args.workflow_ref.workflow_name.as_deref(), Some("read"));
+                assert!(args.strict);
+            }
+            other => panic!("expected workflow validate command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_workflow_inspect_json() {
+        let cli = Cli::try_parse_from([
+            "rzn-browser",
+            "workflow",
+            "inspect",
+            "google",
+            "search",
+            "--json",
+        ])
+        .expect("parse workflow inspect");
+
+        match cli.command {
+            Commands::Workflow(WorkflowCommands::Inspect(args)) => {
+                assert_eq!(args.workflow_ref.workflow_or_system, "google");
+                assert_eq!(args.workflow_ref.workflow_name.as_deref(), Some("search"));
+                assert!(args.json);
+            }
+            other => panic!("expected workflow inspect command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_workflow_contract_alias_json() {
+        let cli = Cli::try_parse_from([
+            "rzn-browser",
+            "workflow",
+            "contract",
+            "google",
+            "search",
+            "--json",
+        ])
+        .expect("parse workflow contract alias");
+
+        match cli.command {
+            Commands::Workflow(WorkflowCommands::Contract(args)) => {
+                assert_eq!(args.workflow_ref.workflow_or_system, "google");
+                assert_eq!(args.workflow_ref.workflow_name.as_deref(), Some("search"));
+                assert!(args.json);
+            }
+            other => panic!("expected workflow contract command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_capability_resolve_requires_explicit_system() {
+        let cli = Cli::try_parse_from([
+            "rzn-browser",
+            "workflow",
+            "capability",
+            "resolve",
+            "--system",
+            "chatgpt",
+            "assistant.conversation.read",
+            "--json",
+        ])
+        .expect("parse capability resolve");
+
+        match cli.command {
+            Commands::Workflow(WorkflowCommands::Capability(CapabilityCommands::Resolve(args))) => {
+                assert_eq!(args.system, "chatgpt");
+                assert_eq!(args.capability_id, "assistant.conversation.read");
+                assert!(args.json);
+            }
+            other => panic!("expected capability resolve command, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_workflow_run_requires_direct_escape_hatch_flag() {
+        let cli = Cli::try_parse_from([
+            "rzn-browser",
+            "workflow",
+            "run",
+            "google",
+            "search",
+            "--allow-direct-workflow",
+        ])
+        .expect("parse workflow run");
+
+        match cli.command {
+            Commands::Workflow(WorkflowCommands::Run(args)) => {
+                assert_eq!(args.workflow_ref.workflow_or_system, "google");
+                assert_eq!(args.workflow_ref.workflow_name.as_deref(), Some("search"));
+                assert!(args.allow_direct_workflow);
+            }
+            other => panic!("expected workflow run command, got {:?}", other),
         }
     }
 
@@ -5165,6 +7363,121 @@ mod tests {
     }
 
     #[test]
+    fn strict_validate_accepts_manifest_file_through_contract_validator() {
+        let root =
+            std::env::temp_dir().join(format!("rzn_manifest_validate_{}", uuid::Uuid::new_v4()));
+        let workflow_dir = root.join("workflows").join("x");
+        std::fs::create_dir_all(&workflow_dir).unwrap();
+        let manifest_path = workflow_dir.join("x_open.json");
+        let manifest = json!({
+            "schema_version": "rzn.workflow_manifest",
+            "id": "x.open",
+            "name": "Open X",
+            "version": "0.1.0",
+            "system": "x",
+            "capability": "x.read.unified",
+            "side_effects": [{ "class": "read_only" }],
+            "runtime": { "actor": "supervisor" },
+            "steps": [{
+                "id": "extract",
+                "action": {
+                    "kind": "extract_structured_data",
+                    "side_effects": ["read_only"]
+                }
+            }],
+            "result": {
+                "output_selector": { "step_id": "extract", "path": "$" }
+            }
+        });
+
+        let report = validate_workflow_strict_contract("x/open", &manifest_path, &manifest);
+
+        assert!(report.ok, "{:?}", report.issues);
+        assert!(report.strict);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn workflow_output_payload_unwraps_run_result_v2_output() {
+        let payload = json!({
+            "version": "rzn.run_result.v2",
+            "run_id": "run-1",
+            "workflow_id": "x.open",
+            "status": "succeeded",
+            "output": { "markdown": "# done" }
+        });
+
+        assert_eq!(
+            workflow_output_payload(&payload),
+            &json!({ "markdown": "# done" })
+        );
+    }
+
+    #[test]
+    fn workflow_output_body_uses_unwrapped_run_result_payload() {
+        let payload = json!({
+            "version": "rzn.run_result.v2",
+            "run_id": "run-1",
+            "workflow_id": "x.open",
+            "status": "succeeded",
+            "output": { "items": [{ "title": "one" }] }
+        });
+
+        let body = workflow_output_body(workflow_output_payload(&payload));
+
+        assert!(body.contains("\"items\""));
+        assert!(!body.contains("rzn.run_result.v2"));
+        assert!(!body.contains("\"run_id\""));
+    }
+
+    #[test]
+    fn cli_output_side_effects_require_declared_file_write() {
+        let root =
+            std::env::temp_dir().join(format!("rzn_cli_output_policy_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let manifest_path = root.join("read.json");
+        std::fs::write(
+            &manifest_path,
+            serde_json::to_string_pretty(&json!({
+                "schema_version": "rzn.workflow_manifest",
+                "id": "fixture/read",
+                "name": "Fixture Read",
+                "version": "1.0.0",
+                "system": "fixture",
+                "capability": "fixture.read",
+                "side_effects": [{ "class": "read_only" }],
+                "runtime": { "actor": "supervisor" },
+                "steps": [],
+                "result": {}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let err = enforce_cli_output_side_effect_policy(
+            &manifest_path,
+            Some(std::path::Path::new("/tmp/out.json")),
+            None,
+        )
+        .unwrap_err();
+
+        assert!(err.to_string().contains("file_write"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn cli_download_side_effects_require_network_and_file_declarations() {
+        let required =
+            required_cli_output_side_effects(None, Some(std::path::Path::new("/tmp/assets")));
+
+        assert!(required.contains("download"));
+        assert!(required.contains("external_read"));
+        assert!(required.contains("file_write"));
+        assert!(required.contains("network_access"));
+    }
+
+    #[test]
     fn ensure_run_parameters_present_shows_help_for_missing_required_params() {
         let temp = std::env::temp_dir().join(format!("rzn_workflow_help_{}", uuid::Uuid::new_v4()));
         std::fs::write(
@@ -5268,11 +7581,12 @@ mod tests {
             DEFAULT_SNAPSHOT_MODE,
             None,
             &Vec::<String>::new(),
+            false,
         )
         .expect_err("desktop should reject native-only mode");
         assert!(
             err.to_string()
-                .contains("--mode only works with --via native"),
+                .contains("--mode only works with --via supervisor or --via native"),
             "unexpected error: {}",
             err
         );
@@ -5280,8 +7594,8 @@ mod tests {
 
     #[test]
     fn native_surface_rejects_desktop_only_flags() {
-        let err =
-            validate_native_run_surface(Some("minimal")).expect_err("native should reject profile");
+        let err = validate_native_run_surface(Some("minimal"), false)
+            .expect_err("native should reject profile");
         assert!(
             err.to_string()
                 .contains("--profile only works with --via desktop"),

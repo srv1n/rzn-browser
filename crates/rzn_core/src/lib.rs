@@ -1,5 +1,41 @@
 pub mod errors;
 pub mod executor;
+pub mod workflow_contract {
+    pub use rzn_contracts::v2::*;
+    use serde_json::Value;
+
+    pub fn validate_manifest_str(
+        json_str: &str,
+    ) -> Result<WorkflowManifestV2, Vec<ContractValidationIssueV2>> {
+        let value = serde_json::from_str::<Value>(json_str).map_err(|err| {
+            vec![ContractValidationIssueV2::new(
+                "",
+                format!("invalid JSON: {err}"),
+            )]
+        })?;
+        validate_manifest_value(&value)
+    }
+
+    pub fn validate_run_envelope_str(
+        manifest: &WorkflowManifestV2,
+        json_str: &str,
+    ) -> Result<RunEnvelopeV1, Vec<ContractValidationIssueV2>> {
+        let value = serde_json::from_str::<Value>(json_str).map_err(|err| {
+            vec![ContractValidationIssueV2::new(
+                "",
+                format!("invalid JSON: {err}"),
+            )]
+        })?;
+        validate_run_envelope_value(manifest, &value)
+    }
+
+    pub fn normalize_manifest_params(
+        manifest: &WorkflowManifestV2,
+        input: &Value,
+    ) -> Result<serde_json::Map<String, Value>, Vec<ParamValidationIssueV2>> {
+        manifest.normalize_params(input)
+    }
+}
 
 // Re-export commonly used error types
 pub use errors::{

@@ -1,57 +1,84 @@
 {
-  "system_id": "chatgpt",
-  "id": "chatgpt_send_current_composer_v1",
-  "name": "ChatGPT: Send Current Composer",
-  "description": "Reuse the current ChatGPT tab as-is, optionally verify an already attached file/image, send the prompt from the existing composer, and return the resolved chat id.",
-  "domain": "chatgpt.com",
-  "version": "1.0.0",
   "browser_automation": {
-    "use_current_tab": true,
     "description": "Current-tab ChatGPT composer send flow. It does not navigate or reset chat state. It is useful for resuming an already prepared composer, including one with a pre-uploaded attachment.",
     "sequences": [
       {
-        "name": "chatgpt_send_current_composer",
         "description": "Reuse current tab -> wait for composer -> optionally verify attachment -> send prompt -> return chat_id.",
+        "name": "chatgpt_send_current_composer",
         "required_variables": [
           {
-            "name": "message_text",
-            "description": "Prompt text to send from the current composer"
+            "description": "Prompt text to send from the current composer",
+            "name": "message_text"
           }
         ],
         "steps": [
           {
             "id": "s0",
             "name": "Allow the current ChatGPT surface to settle",
-            "type": "wait_for_timeout",
-            "timeout_ms": 1200
+            "timeout_ms": 1200,
+            "type": "wait_for_timeout"
           },
           {
             "id": "s1",
             "name": "Brief settle after current-tab bind",
-            "type": "wait_for_timeout",
-            "timeout_ms": 300
+            "timeout_ms": 300,
+            "type": "wait_for_timeout"
           },
           {
             "id": "s2",
             "name": "Wait for the ChatGPT composer",
-            "type": "wait_for_element",
             "selector": "#prompt-textarea, textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], textarea[placeholder*='Ask anything' i], textarea[aria-label*='message' i], textarea[aria-label*='chatgpt' i], form textarea, div[role='textbox'][contenteditable='true'], div[role='textbox'][contenteditable='plaintext-only'], [contenteditable='true'][data-testid*='composer'], [contenteditable='plaintext-only'][data-testid*='composer'], div.ProseMirror[contenteditable='true'], div.ProseMirror[contenteditable='plaintext-only']",
-            "timeout_ms": 30000
+            "timeout_ms": 30000,
+            "type": "wait_for_element"
           },
           {
-            "id": "s3",
-            "name": "Send from the current composer and return thread state",
-            "type": "execute_javascript",
-            "world": "main",
-            "timeout_ms": 180000,
             "args": [
               "{message_text}",
               "{attachment_file_path}"
             ],
-            "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const message = cleanArg(arg0); const attachmentPath = cleanArg(arg1); if (!message) throw new Error('message_text is required'); const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const parseTime = (value) => { const ts = value ? Date.parse(value) : NaN; return Number.isFinite(ts) ? ts : 0; }; const isVisible = (node) => { if (!node || !(node instanceof Element)) return false; const style = window.getComputedStyle(node); if (style.visibility === 'hidden' || style.display === 'none') return false; const rect = node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; }; const labelOf = (node) => normalize([node.getAttribute('aria-label') || '', node.getAttribute('title') || '', node.getAttribute('data-testid') || '', node.textContent || ''].join(' ')); const chatIdFromLocation = () => { const match = window.location.pathname.match(/^\\/c\\/([^/?#]+)/); return match ? match[1] : null; }; const isTemporaryChat = () => new URLSearchParams(window.location.search).get('temporary-chat') === 'true'; const collectTurns = () => Array.from(document.querySelectorAll(\"[data-message-author-role], main article, [data-testid*='conversation-turn'], [data-testid*='conversationTurn']\")); const getConversationHistoryItems = () => { for (let i = 0; i < localStorage.length; i += 1) { const key = localStorage.key(i); if (!key || !/conversation-history/i.test(key)) continue; try { const raw = localStorage.getItem(key); if (!raw) continue; const parsed = JSON.parse(raw); const pages = parsed?.value?.pages || []; const items = pages.flatMap((page) => Array.isArray(page?.items) ? page.items : []); return items.filter((item) => item && typeof item.id === 'string'); } catch {} } return []; }; const snapshotConversationHistory = () => getConversationHistoryItems().map((item, index) => ({ id: item.id, title: item.title || null, update_time: item.update_time || null, create_time: item.create_time || null, updated_at_ms: Math.max(parseTime(item.update_time), parseTime(item.create_time)), index })).filter((item) => item.id); const makeHistoryMap = (items) => new Map(items.map((item) => [item.id, item])); const chooseHistoryConversation = (beforeMap, afterItems) => { const changed = afterItems.filter((item) => { const previous = beforeMap.get(item.id); return !previous || item.updated_at_ms > previous.updated_at_ms; }); const pool = changed.length ? changed : afterItems; if (!pool.length) return null; return [...pool].sort((left, right) => { const leftIsNew = beforeMap.has(left.id) ? 0 : 1; const rightIsNew = beforeMap.has(right.id) ? 0 : 1; if (rightIsNew !== leftIsNew) return rightIsNew - leftIsNew; if (right.updated_at_ms !== left.updated_at_ms) return right.updated_at_ms - left.updated_at_ms; return left.index - right.index; })[0] || null; }; const findComposer = () => Array.from(document.querySelectorAll(\"#prompt-textarea, textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], textarea[placeholder*='Ask anything' i], textarea[aria-label*='message' i], textarea[aria-label*='chatgpt' i], form textarea, div[role='textbox'][contenteditable='true'], div[role='textbox'][contenteditable='plaintext-only'], [contenteditable='true'][data-testid*='composer'], [contenteditable='plaintext-only'][data-testid*='composer'], div.ProseMirror[contenteditable='true'], div.ProseMirror[contenteditable='plaintext-only']\")).find(isVisible) || null; const setComposerText = (node, text) => { node.focus(); if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) { const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), 'value')?.set || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set; if (setter) setter.call(node, text); else node.value = text; node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); node.dispatchEvent(new Event('change', { bubbles: true })); return; } node.textContent = text; node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); }; const findSendButton = (composer) => { const form = composer ? composer.closest('form') : null; const scopes = [form, composer?.parentElement, document].filter(Boolean); for (const scope of scopes) { const candidates = Array.from(scope.querySelectorAll(\"button, [role='button']\")).filter(isVisible).filter((node) => { const label = labelOf(node).toLowerCase(); const disabled = node.matches(':disabled') || node.getAttribute('aria-disabled') === 'true'; if (disabled) return false; return /send prompt|send|submit/.test(label); }); if (candidates.length) return candidates[0]; } return null; }; const attachmentFileName = attachmentPath ? (attachmentPath.split(/[\\\\/]/).pop() || attachmentPath) : null; const verifyAttachmentIfRequested = async () => { if (!attachmentFileName) return { required: false, confirmed: false }; const deadline = Date.now() + 15000; while (Date.now() < deadline) { const composer = findComposer(); const form = composer ? composer.closest('form') : null; const preparedInput = document.querySelector('#rzn-chatgpt-upload-input'); const hasInputFile = !!(preparedInput && preparedInput.files && preparedInput.files.length > 0); const formText = normalize(form ? form.innerText : '').toLowerCase(); const attachmentMentioned = formText.includes(attachmentFileName.toLowerCase()); const attachmentDecorations = !!(form && form.querySelector(\"img, [data-testid*='upload'], [data-testid*='attachment'], button[aria-label*='remove' i], button[title*='remove' i]\")); if (hasInputFile || attachmentMentioned || attachmentDecorations) return { required: true, confirmed: true, has_input_file: hasInputFile, attachment_mentioned: attachmentMentioned, attachment_decorations: attachmentDecorations }; await sleep(400); } throw new Error(`expected attachment '${attachmentFileName}' is not visible in the current composer`); }; const historyBeforeItems = snapshotConversationHistory(); const historyBeforeMap = makeHistoryMap(historyBeforeItems); const turnsBefore = collectTurns().length; const temporaryChatBeforeSend = isTemporaryChat(); const attachmentState = await verifyAttachmentIfRequested(); let composer = findComposer(); if (!composer) throw new Error('ChatGPT composer not found'); setComposerText(composer, message); await sleep(250); composer = findComposer() || composer; const sendButton = findSendButton(composer); if (!sendButton) throw new Error('ChatGPT send button not found'); sendButton.click(); let chatId = chatIdFromLocation(); let historyConversation = null; let historySignal = 'none'; let turnCount = collectTurns().length; const deadline = Date.now() + 45000; while (Date.now() < deadline) { chatId = chatIdFromLocation(); const historyAfterItems = snapshotConversationHistory(); const candidate = chooseHistoryConversation(historyBeforeMap, historyAfterItems); const previous = candidate ? historyBeforeMap.get(candidate.id) : null; const candidateIsFresh = !!candidate && (!previous || candidate.updated_at_ms > previous.updated_at_ms); if (candidate) { historyConversation = candidate; historySignal = candidateIsFresh ? (previous ? 'updated_history_item' : 'new_history_item') : 'stale_history_fallback'; } turnCount = collectTurns().length; const temporaryChatAdvanced = temporaryChatBeforeSend && turnCount > turnsBefore; if (temporaryChatAdvanced && historySignal === 'none') historySignal = 'temporary_chat_turn_advanced'; if (chatId || candidateIsFresh || temporaryChatAdvanced) break; await sleep(turnCount > turnsBefore ? 1200 : 750); } return { url: window.location.href, title: document.title, chat_id: chatIdFromLocation() || (historySignal !== 'stale_history_fallback' && historyConversation ? historyConversation.id : null), attachment_state: attachmentState, message_sent: message, turn_count: turnCount, history_signal: historySignal, history_before_count: historyBeforeItems.length, temporary_chat: temporaryChatBeforeSend || isTemporaryChat(), history_conversation: historyConversation ? { id: historyConversation.id, title: historyConversation.title || null, update_time: historyConversation.update_time || null, create_time: historyConversation.create_time || null } : null };"
+            "id": "s3",
+            "name": "Send from the current composer and return thread state",
+            "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const message = cleanArg(arg0); const attachmentPath = cleanArg(arg1); if (!message) throw new Error('message_text is required'); const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const parseTime = (value) => { const ts = value ? Date.parse(value) : NaN; return Number.isFinite(ts) ? ts : 0; }; const isVisible = (node) => { if (!node || !(node instanceof Element)) return false; const style = window.getComputedStyle(node); if (style.visibility === 'hidden' || style.display === 'none') return false; const rect = node.getBoundingClientRect(); return rect.width > 0 && rect.height > 0; }; const labelOf = (node) => normalize([node.getAttribute('aria-label') || '', node.getAttribute('title') || '', node.getAttribute('data-testid') || '', node.textContent || ''].join(' ')); const chatIdFromLocation = () => { const match = window.location.pathname.match(/^\\/c\\/([^/?#]+)/); return match ? match[1] : null; }; const isTemporaryChat = () => new URLSearchParams(window.location.search).get('temporary-chat') === 'true'; const collectTurns = () => Array.from(document.querySelectorAll(\"[data-message-author-role], main article, [data-testid*='conversation-turn'], [data-testid*='conversationTurn']\")); const getConversationHistoryItems = () => { for (let i = 0; i < localStorage.length; i += 1) { const key = localStorage.key(i); if (!key || !/conversation-history/i.test(key)) continue; try { const raw = localStorage.getItem(key); if (!raw) continue; const parsed = JSON.parse(raw); const pages = parsed?.value?.pages || []; const items = pages.flatMap((page) => Array.isArray(page?.items) ? page.items : []); return items.filter((item) => item && typeof item.id === 'string'); } catch {} } return []; }; const snapshotConversationHistory = () => getConversationHistoryItems().map((item, index) => ({ id: item.id, title: item.title || null, update_time: item.update_time || null, create_time: item.create_time || null, updated_at_ms: Math.max(parseTime(item.update_time), parseTime(item.create_time)), index })).filter((item) => item.id); const makeHistoryMap = (items) => new Map(items.map((item) => [item.id, item])); const chooseHistoryConversation = (beforeMap, afterItems) => { const changed = afterItems.filter((item) => { const previous = beforeMap.get(item.id); return !previous || item.updated_at_ms > previous.updated_at_ms; }); const pool = changed.length ? changed : afterItems; if (!pool.length) return null; return [...pool].sort((left, right) => { const leftIsNew = beforeMap.has(left.id) ? 0 : 1; const rightIsNew = beforeMap.has(right.id) ? 0 : 1; if (rightIsNew !== leftIsNew) return rightIsNew - leftIsNew; if (right.updated_at_ms !== left.updated_at_ms) return right.updated_at_ms - left.updated_at_ms; return left.index - right.index; })[0] || null; }; const findComposer = () => Array.from(document.querySelectorAll(\"#prompt-textarea, textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], textarea[placeholder*='Ask anything' i], textarea[aria-label*='message' i], textarea[aria-label*='chatgpt' i], form textarea, div[role='textbox'][contenteditable='true'], div[role='textbox'][contenteditable='plaintext-only'], [contenteditable='true'][data-testid*='composer'], [contenteditable='plaintext-only'][data-testid*='composer'], div.ProseMirror[contenteditable='true'], div.ProseMirror[contenteditable='plaintext-only']\")).find(isVisible) || null; const setComposerText = (node, text) => { node.focus(); if (node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement) { const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node), 'value')?.set || Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set; if (setter) setter.call(node, text); else node.value = text; node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); node.dispatchEvent(new Event('change', { bubbles: true })); return; } node.textContent = text; node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: text })); }; const findSendButton = (composer) => { const form = composer ? composer.closest('form') : null; const scopes = [form, composer?.parentElement, document].filter(Boolean); for (const scope of scopes) { const candidates = Array.from(scope.querySelectorAll(\"button, [role='button']\")).filter(isVisible).filter((node) => { const label = labelOf(node).toLowerCase(); const disabled = node.matches(':disabled') || node.getAttribute('aria-disabled') === 'true'; if (disabled) return false; return /send prompt|send|submit/.test(label); }); if (candidates.length) return candidates[0]; } return null; }; const attachmentFileName = attachmentPath ? (attachmentPath.split(/[\\\\/]/).pop() || attachmentPath) : null; const verifyAttachmentIfRequested = async () => { if (!attachmentFileName) return { required: false, confirmed: false }; const deadline = Date.now() + 15000; while (Date.now() < deadline) { const composer = findComposer(); const form = composer ? composer.closest('form') : null; const preparedInput = document.querySelector('#rzn-chatgpt-upload-input'); const hasInputFile = !!(preparedInput && preparedInput.files && preparedInput.files.length > 0); const formText = normalize(form ? form.innerText : '').toLowerCase(); const attachmentMentioned = formText.includes(attachmentFileName.toLowerCase()); const attachmentDecorations = !!(form && form.querySelector(\"img, [data-testid*='upload'], [data-testid*='attachment'], button[aria-label*='remove' i], button[title*='remove' i]\")); if (hasInputFile || attachmentMentioned || attachmentDecorations) return { required: true, confirmed: true, has_input_file: hasInputFile, attachment_mentioned: attachmentMentioned, attachment_decorations: attachmentDecorations }; await sleep(400); } throw new Error(`expected attachment '${attachmentFileName}' is not visible in the current composer`); }; const historyBeforeItems = snapshotConversationHistory(); const historyBeforeMap = makeHistoryMap(historyBeforeItems); const turnsBefore = collectTurns().length; const temporaryChatBeforeSend = isTemporaryChat(); const attachmentState = await verifyAttachmentIfRequested(); let composer = findComposer(); if (!composer) throw new Error('ChatGPT composer not found'); setComposerText(composer, message); await sleep(250); composer = findComposer() || composer; const sendButton = findSendButton(composer); if (!sendButton) throw new Error('ChatGPT send button not found'); sendButton.click(); let chatId = chatIdFromLocation(); let historyConversation = null; let historySignal = 'none'; let turnCount = collectTurns().length; const deadline = Date.now() + 45000; while (Date.now() < deadline) { chatId = chatIdFromLocation(); const historyAfterItems = snapshotConversationHistory(); const candidate = chooseHistoryConversation(historyBeforeMap, historyAfterItems); const previous = candidate ? historyBeforeMap.get(candidate.id) : null; const candidateIsFresh = !!candidate && (!previous || candidate.updated_at_ms > previous.updated_at_ms); if (candidate) { historyConversation = candidate; historySignal = candidateIsFresh ? (previous ? 'updated_history_item' : 'new_history_item') : 'stale_history_fallback'; } turnCount = collectTurns().length; const temporaryChatAdvanced = temporaryChatBeforeSend && turnCount > turnsBefore; if (temporaryChatAdvanced && historySignal === 'none') historySignal = 'temporary_chat_turn_advanced'; if (chatId || candidateIsFresh || temporaryChatAdvanced) break; await sleep(turnCount > turnsBefore ? 1200 : 750); } return { url: window.location.href, title: document.title, chat_id: chatIdFromLocation() || (historySignal !== 'stale_history_fallback' && historyConversation ? historyConversation.id : null), attachment_state: attachmentState, message_sent: message, turn_count: turnCount, history_signal: historySignal, history_before_count: historyBeforeItems.length, temporary_chat: temporaryChatBeforeSend || isTemporaryChat(), history_conversation: historyConversation ? { id: historyConversation.id, title: historyConversation.title || null, update_time: historyConversation.update_time || null, create_time: historyConversation.create_time || null } : null };",
+            "timeout_ms": 180000,
+            "type": "execute_javascript",
+            "world": "main"
           }
         ]
       }
-    ]
-  }
+    ],
+    "use_current_tab": false
+  },
+  "description": "Reuse the current ChatGPT tab as-is, optionally verify an already attached file/image, send the prompt from the existing composer, and return the resolved chat id.",
+  "domain": "chatgpt.com",
+  "help": {
+    "examples": [
+      {
+        "command": "rzn-browser run workflows/chatgpt/chatgpt_send_current_composer_v1.json --param message_text=\"Summarize the last three commits.\"",
+        "description": "Basic run with required parameters."
+      }
+    ],
+    "notes": [],
+    "parameters": [
+      {
+        "description": "Prompt text to send from the current composer",
+        "example": "Summarize the last three commits.",
+        "name": "message_text",
+        "required": true,
+        "shape": "text"
+      },
+      {
+        "description": "Absolute path to the local file to upload.",
+        "example": "/absolute/path/to/file.txt",
+        "name": "attachment_file_path",
+        "required": false,
+        "shape": "absolute path"
+      }
+    ],
+    "returns": null,
+    "summary": "Reuse the current ChatGPT tab as-is, optionally verify an already attached file/image, send the prompt from the existing composer, and return the resolved chat id."
+  },
+  "id": "chatgpt_send_current_composer_v1",
+  "name": "ChatGPT: Send Current Composer",
+  "system_id": "chatgpt",
+  "version": "1.0.0"
 }

@@ -21,6 +21,18 @@ const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_EXTENSION_RPC_GRACE_MS: u64 = 5_000;
 const MAX_CACHED_COMMAND_RESULTS: usize = 256;
 const DEFAULT_STATUS_TIMEOUT_MS: u64 = 5_000;
+const CLOUD_RUNTIME_OWNER: &str = "supervisor";
+const CLOUD_SUPERVISOR_BRIDGE_STATUS: &str = "native_host_compatibility_adapter";
+
+pub(crate) fn native_host_cloud_bridge_status() -> Value {
+    json!({
+        "runtime_owner": CLOUD_RUNTIME_OWNER,
+        "supervisor_bridge_status": CLOUD_SUPERVISOR_BRIDGE_STATUS,
+        "native_host_dispatch": "disabled",
+        "result_replay": "supervisor caches cloud command results by command_id for idempotent replay",
+        "status": "native host is transport-only; cloud.status is owned by rzn.local.v1"
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct LocalCloudActorConfig {
@@ -41,6 +53,8 @@ struct LocalCloudActorConfig {
 pub(crate) struct CloudActorStatusSnapshot {
     pub supported: bool,
     pub actor_mode: String,
+    pub runtime_owner: String,
+    pub supervisor_bridge_status: String,
     pub config_path: String,
     pub configured: bool,
     pub connected: bool,
@@ -338,6 +352,12 @@ async fn run_cloud_actor_session(
         },
         metadata: Some(json!({
             "actor_mode": "native_host",
+            "runtime_owner": CLOUD_RUNTIME_OWNER,
+            "supervisor_bridge": native_host_cloud_bridge_status(),
+            "run_envelope_contract": {
+                "version": "rzn.run_envelope.v1",
+                "status": "adapter_boundary_only"
+            },
             "native_host_pid": std::process::id(),
             "server_url": config.server_url,
         })),
@@ -492,6 +512,8 @@ fn manager_snapshot_from_state(state: &CloudActorRuntimeState) -> CloudActorStat
     CloudActorStatusSnapshot {
         supported: true,
         actor_mode: "native_host".to_string(),
+        runtime_owner: CLOUD_RUNTIME_OWNER.to_string(),
+        supervisor_bridge_status: CLOUD_SUPERVISOR_BRIDGE_STATUS.to_string(),
         config_path: config_path.display().to_string(),
         configured: config.is_some(),
         connected: state.connected,

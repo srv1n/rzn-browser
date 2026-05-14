@@ -25,7 +25,7 @@ rzn-browser run chatgpt get-response-v1 --via native --param chat_id="https://ch
 
 | Capability | Workflow | Status | Notes |
 | --- | --- | --- | --- |
-| List recent chats | `chatgpt_recent_chats_v1.json` | Validated | Current-tab only in the validated Chrome session |
+| List recent chats | `chatgpt_recent_chats_v1.json` | Validated | Dedicated workflow-tab path in the authenticated Chrome profile |
 | Fetch one thread by `chat_id` | `chatgpt_export_full_chat_v1.json` | Validated | Canonical read path for a known id |
 | Export thread asset metadata by `chat_id` | `chatgpt_export_full_chat_v1.json` | Implemented | Full export now includes aggregated file/image metadata |
 | Click a latest-assistant attachment by exact label | `chatgpt_download_attachment_v1.json` | Validated | Correct path for button-backed ChatGPT artifacts like `Markdown source` or `Zip package...` |
@@ -39,8 +39,8 @@ rzn-browser run chatgpt get-response-v1 --via native --param chat_id="https://ch
 
 ## Notes
 
-- The pack is session-aware and expects an authenticated ChatGPT session in the current Chrome tab/profile.
-- `chatgpt_recent_chats_v1.json` is the current-tab discovery workflow used for inbox-style sync/export.
+- The pack is session-aware and expects an authenticated ChatGPT session in the Chrome profile. It does not bind catalog workflows to the browser active tab.
+- `chatgpt_recent_chats_v1.json` is the dedicated-tab discovery workflow used for inbox-style sync/export.
 - `chatgpt_export_full_chat_v1.json` is the canonical single-thread read path.
 - `chatgpt_export_full_chat_v1.json` now also returns aggregated thread assets under `assets.files` and `assets.images`.
 - Some ChatGPT artifacts are button-backed rather than link-backed. `chatgpt_download_attachment_v1.json` clicks the exact attachment button inside the latest assistant turn instead of scanning page-level buttons.

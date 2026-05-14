@@ -1,3 +1,6 @@
+import { getActiveBrowserTabId } from '../browserTabs';
+import { actionSuccess } from './actionResult';
+
 /**
  * First-class type_text action using CDP for trusted per-key typing.
  * This is useful for structured editors that reject plain DOM mutation or bulk insertText.
@@ -145,20 +148,23 @@ export async function handleTypeText(step: any): Promise<any> {
 
   let targetTabId: number | undefined = explicitTabId;
   if (!targetTabId) {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tabs[0]?.id) {
-      throw new Error('No active tab found');
-    }
-    targetTabId = tabs[0].id;
+    targetTabId = await getActiveBrowserTabId('type_text');
   }
 
+  const startedAt = Date.now();
   await typeTextAction.execute(targetTabId, text, { manageDebuggerLifecycle });
 
-  return {
-    success: true,
-    action: 'type_text',
+  const result = {
+    inserted: true,
     textLength: text.length,
     tabId: targetTabId,
-    timestamp: Date.now()
   };
+
+  return actionSuccess({
+    action: 'type_text',
+    result,
+    tabId: targetTabId,
+    duration_ms: Date.now() - startedAt,
+    legacy: result,
+  });
 }

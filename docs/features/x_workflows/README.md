@@ -15,7 +15,7 @@ rzn-browser run x search-posts --param handle=... --param since_date=... --param
 
 - Review-gated interaction path
 ```text
-current tab
+workflow session tab
   -> navigate to target post/profile/messages route
   -> activate textbox/composer with trusted click when needed
   -> type_text
@@ -28,7 +28,7 @@ current tab
 ```text
 logged-in Chrome profile
   -> browser worker / extension
-  -> current-tab or new-tab workflow
+  -> dedicated workflow tab
   -> x.com requests use browser-managed cookies
   -> workflow reads hydrated DOM
 ```
@@ -46,17 +46,15 @@ logged-in Chrome profile
 
 ### Post-consolidation state (2026-04-24)
 
-The pack was consolidated from 37 files down to 13 canonical workflows. `_v1` filename suffixes were removed (id + version live inside the JSON). Every surviving workflow flips `browser_automation.use_current_tab: false` so parallel runs can execute against the same authenticated Chrome session.
+The pack was consolidated from 37 files down to 11 canonical workflows. The 2026-05 consolidation merged `x_open_post` + `x_open_article` + `x_thread` into a single `x_open` that auto-detects kind from URL + DOM and returns a unified markdown rendering plus media + linked-page URLs. `_v1` filename suffixes were removed (id + version live inside the JSON). Surviving workflows use dedicated workflow tabs by default so parallel runs can execute against the same authenticated Chrome session.
 
 - Modules — canonical pack (read-only)
   - `workflows/x/x_home_timeline_digest.json`: home timeline digest in a fresh tab.
-  - `workflows/x/x_open_post.json`: single-post DOM + GraphQL snapshot.
-  - `workflows/x/x_open_article.json`: longform `/article/<id>` reader.
+  - `workflows/x/x_open.json`: unified post / longform-article / same-author-thread reader. Auto-detects kind, redirects `/status/<id>` → `/article/<id>` when the input URL points to a longform article, scroll-collects same-author chains for threads, returns markdown plus image, video, and external-link URLs.
   - `workflows/x/x_open_inbox.json`: DM inbox opener (handles passcode onboarding state).
   - `workflows/x/x_open_dm_thread.json`: DM thread opener.
   - `workflows/x/x_search_posts.json`: search a handle optionally within a date window (merges the legacy `search-user-window` + `search-top-from-user`).
   - `workflows/x/x_profile_posts.json`: profile timeline extractor.
-  - `workflows/x/x_thread.json`: same-author thread expansion via conversation search (merges the legacy `thread-from-post-url` + `thread-from-current-tab`).
 - Modules — canonical pack (mutating, review-gated)
   - `workflows/x/x_like_post.json`
   - `workflows/x/x_reply_post.json`
@@ -94,8 +92,8 @@ The pack was consolidated from 37 files down to 13 canonical workflows. `_v1` fi
 - Search windows: the wrapper computes relative windows using the local date and emits explicit `since_date` / `until_date` values.
 - Thread extraction: `x-thread-from-post-url.json` uses `execute_javascript` in the page context to combine same-author posts, image URLs, video URLs, and hrefs into one final payload.
 - X article extraction: `x_open_article_v1.json` navigates to `/article/<id>`, reads the hydrated article DOM in the live browser session, and returns article HTML plus localizable asset URLs for export.
-- Current-tab extraction: `x-thread-from-current-tab.json` navigates to an explicit post URL, redirects into conversation search for the same author + conversation id, then accumulates matching post cards across scroll passes.
-- Canonical parity pack: the new `*_v1.json` workflows are current-tab-first so they reuse the live authenticated browser session and avoid the known `open_new_tab` fragility on X.
+- Session-tab extraction: canonical X workflows navigate to explicit URLs inside dedicated workflow tabs, redirect into conversation search for the same author + conversation id, then accumulate matching post cards across scroll passes.
+- Canonical parity pack: the new workflows are dedicated-tab first so they reuse the authenticated Chrome profile without stealing the browser active tab.
 - Review-gated mutating flows: `x_like_post_v1`, `x_reply_post_v1`, `x_create_post_v1`, `x_send_dm_v1`, and `x_reply_dm_thread_v1` all assert that the target control is actionable before the final click, then pause on `request_user_intervention` with `approval_mode: "ask_user"` and `continue_on_timeout: false`.
 - Approval overrides: the native runner can override those gates globally with `RZN_APPROVAL_MODE` / `RZN_INTERVENTION_POLICY` and `RZN_CONTINUE_ON_TIMEOUT` / `RZN_APPROVAL_CONTINUE_ON_TIMEOUT`.
 - X Chat routing: for this authenticated account, inbox access currently lands on `/i/chat` and may be blocked behind passcode onboarding. The canonical inbox and DM workflows now treat `button[data-testid='pin-onboarding-setup-now']` as a real state instead of assuming the composer is immediately available.
@@ -109,7 +107,7 @@ The pack was consolidated from 37 files down to 13 canonical workflows. `_v1` fi
 - Output handling: the binary returns one structured JSON payload per workflow invocation. Multi-thread aggregation, Markdown rendering, and asset downloads are caller responsibilities — drive them from your own script or pipeline using the binary's stdout.
 - Asset export hygiene: the exporter now writes downloads into an export-scoped `<basename>_assets/` folder and preserves URL-to-local-file mappings in the Markdown/JSON output.
 - Explicit-link robustness: the exporter unions a top-of-search snapshot with the scrolled conversation-search collector before reopening each discovered post URL for a richer per-post payload.
-- Explicit thread default: for `--post-url` exports, stay current-tab-first and use the scrolled conversation-search collector output directly. Reopening each discovered post is now opt-in via `--reopen-posts` because it is slower, noisier, and worse for stealth.
+- Explicit thread default: for `--post-url` exports, stay session-tab first and use the scrolled conversation-search collector output directly. Reopening each discovered post is now opt-in via `--reopen-posts` because it is slower, noisier, and worse for stealth.
 - Explicit post classifier: probe the root post once with `x_open_post_v1`. If it looks like an X-article launcher rather than a real thread opener, export the linked X article directly and skip the conversation.
 - Linked-article capture: after thread extraction, the exporter resolves external links, fetches article HTML, uses a lightweight BeautifulSoup-based content heuristic to emit markdown, and when `--download-assets` is set it stores per-article `source.html` plus local image/video assets under `thread_##/articles/article_##_*`.
 - Explicit X-article export: for `/article/<id>` URLs, run `rzn-browser run x open-article --param article_url=https://x.com/<handle>/article/<id>` directly. It returns the article body plus image/video asset URLs in one payload.
@@ -119,7 +117,7 @@ The pack was consolidated from 37 files down to 13 canonical workflows. `_v1` fi
 - [x] Add single-thread expansion workflow
 - [x] Add draft-only reply workflow
 - [x] Add draft-only DM workflow
-- [x] Add current-tab draft reply / DM workflows
+- [x] Add draft reply / DM workflows
 - [x] Add read-only inbox/thread DM helpers
 - [x] Add social-card catalog for X
 - [x] Add one-workflow-per-operation parity pack for X (`x_daily_scroll`, `x_open_post`, `x_like_post`, `x_reply_post`, `x_create_post`, `x_open_inbox`, `x_open_dm_thread`, `x_send_dm`, `x_reply_dm`)
@@ -132,20 +130,20 @@ The pack was consolidated from 37 files down to 13 canonical workflows. `_v1` fi
 - [x] Add explicit X longform article export support for `/article/<id>` URLs
 - [x] Preserve the exact source post in explicit-thread exports and pivot thread discovery through conversation search
 - [x] Write export-scoped asset folders and local file mappings in Markdown/JSON
-- [x] Add Chrome-tab compose wrapper for current-tab draft flows
-- [x] Live-validate current-tab thread extraction against an authenticated X session in the user's real Chrome profile
+- [x] Add Chrome-tab compose wrapper for draft flows
+- [x] Live-validate thread extraction against an authenticated X session in the user's real Chrome profile
 - [x] Expand truncated thread posts via `tweet-text-show-more-link`
 - [x] Fix duplicate characters in X draft composers by avoiding duplicate input dispatch on successful contenteditable `insertText`
 - [x] Fix wrapper deadlock caused by inherited stdout pipes from spawned browser-worker processes
 - [x] Fix wrapper JSON parsing for pretty-printed nested workflow payloads
 - [x] Align draft reply flows with trusted inline-textbox activation plus explicit `Reply`-enabled assertion
-- [x] Add non-pausing reply acceptance debug workflows for current-tab and new-tab validation
+- [x] Add non-pausing reply acceptance debug workflows for session-tab validation
 - [ ] Live-validate the mutating like/create-post/DM-send/DM-reply paths end to end on the user's authenticated session
 - [ ] Resolve the separate `open_new_tab` native-run `about:blank` injection issue so the new-tab acceptance probe works without the current-tab fallback
 
 ## What Works (Do Not Change)
 - Keep X-specific selectors in workflow data, not in generic engine heuristics.
-- Keep the canonical parity pack current-tab-first until the `open_new_tab` path is reliable again on live X flows.
+- Keep the canonical parity pack dedicated-tab first and pass `session_id` + `current_tab_id` when continuing a prior tab.
 - Keep the primary auth model anchored to the logged-in Chrome session.
 - Keep the bounded `Show more` expansion in workflow data so long-post recovery stays site-specific and does not leak into generic engine code.
 

@@ -13,8 +13,7 @@ fn repo_root() -> PathBuf {
 fn x_workflows_parse_as_v1_workflow() {
     let workflows = [
         "workflows/x/x_home_timeline_digest.json",
-        "workflows/x/x_open_post.json",
-        "workflows/x/x_open_article.json",
+        "workflows/x/x_open.json",
         "workflows/x/x_like_post.json",
         "workflows/x/x_reply_post.json",
         "workflows/x/x_create_post.json",
@@ -24,7 +23,6 @@ fn x_workflows_parse_as_v1_workflow() {
         "workflows/x/x_reply_dm_thread.json",
         "workflows/x/x_search_posts.json",
         "workflows/x/x_profile_posts.json",
-        "workflows/x/x_thread.json",
     ];
 
     for rel in workflows {

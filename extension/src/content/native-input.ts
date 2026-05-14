@@ -148,8 +148,8 @@ export class NativeInputHandler {
     const screenX = Math.round(pageX * window.devicePixelRatio);
     const screenY = Math.round(pageY * window.devicePixelRatio);
     
-    // Note: In a full implementation, we'd need to add window position offset
-    // This requires chrome.windows.getCurrent() from background script
+    // Note: In a full implementation, the background resolver should add
+    // the target tab window offset before handing coordinates to native input.
     
     return { x: screenX, y: screenY };
   }

@@ -1,21 +1,35 @@
 # Desktop App Bridge (Tauri Tool Adapter)
 
 ## Overview
-- Goal: Integrate an external desktop agent (Tauri app with LLM + local context/tools) with RZN’s stealth-first browser control so the desktop can **observe / extract / act** inside the user’s *real* browser profile via **native messaging** (no webdriver flags by default).
+- Goal: Integrate an external desktop agent (Tauri app with LLM + local context/tools) with RZN’s stealth-first browser control so the desktop can **observe / extract / act** inside the user’s *real* browser profile via **native messaging** (no webdriver flags by default). The launch target for this bridge is now for Reason.app to call the durable `rzn-browser supervisor` contract described in `docs/features/local_supervisor_runtime/README.md`, rather than owning or spawning a parallel browser worker.
 - Constraints: MV3 extension boundaries; native messaging size/latency limits; event trust (`isTrusted`) limitations for synthetic DOM events; cross-origin iframes; keep actions deterministic/auditable; unified logging; **avoid site-specific selectors and domain-tuned rules** (prefer AX/CDP IDs, roles, repeated-list detection, same-origin preference).
 
 ## Flow Diagrams
 - End-to-end flow (desktop-driven)
 ```
 Tauri Desktop (LLM + tools)
-  ↕ (TCP/pipe, length-prefixed JSON)
-rzn_broker (native messaging host)
+  ↕ (rzn.local.v1 JSON-RPC over user-scoped socket/pipe)
+rzn-browser supervisor
+  ↕ (supervisor bridge protocol)
+rzn-browser native-host mode (Chrome-owned bridge)
   ↕ (Chrome native messaging)
-Extension Service Worker
+Extension Service Worker / background.ts
   ↕ (tabs.sendMessage / frameRouter)
 Content Script / CDP (chrome.debugger)
   ↕
 Web Page (DOM)
+```
+
+- Legacy app-embedded path when explicitly requested
+```
+Reason app MCP / plugin helpers
+  ↕
+app broker + plugin worker discovery
+  ↕
+native host / extension
+
+Allowed only as compatibility/debug override. It is no longer the default
+browser automation owner for launch.
 ```
 
 - Two-tier control (what vs how)
@@ -39,7 +53,8 @@ Tier B: RZN executes atomic steps
 
 ## Architecture
 - Existing modules (already in-tree)
-  - `rzn_broker/src/main.rs`: broker relay (desktop ↔ extension), supports TCP/pipe with 4‑byte LE length prefix framing.
+  - `rzn-browser supervisor` (target): durable local runtime for browser sessions, extension availability, local IPC, and cloud actor state.
+  - `rzn_broker/src/main.rs`: legacy broker relay (desktop ↔ extension), supports TCP/pipe with 4‑byte LE length prefix framing.
   - `crates/rzn_plan/src/broker_client.rs`: client that speaks the broker protocol (session tracking, compression, retries).
   - `crates/rzn_plan/src/orchestrator.rs`: tiered planning loop (Planner/Navigator/Validator) when you want “full autonomy”.
   - `extension/src/background.ts`: native port connection, CDP lease + frame router, per-host flags/circuit breakers.
@@ -70,10 +85,25 @@ Tier B: RZN executes atomic steps
 
 ## Implementation Notes
 - Connection lifecycle (desktop)
-  - Desktop connects to broker (TCP `127.0.0.1:<port>` or named pipe), sends `ping`, then issues tasks.
-  - Desktop tracks `session_id` + `current_tab_id` (reused across steps) via `BrokerClient`.
-  - If broker is not running, the UX should instruct the user to open Chrome and ensure the extension is enabled (Chrome launches the native host when the extension connects).
-  - Broker app-side accepts both legacy task envelopes and JSON-RPC `browser.session`, translating `params.cmd/req_id/payload` into extension-native `cmd/req_id/payload` to keep desktop and CLI flows aligned.
+  - Target: desktop calls `runtime.ensure_ready`, then `browser.session_open`, `browser.snapshot`, `browser.execute_step`, `browser.poll_events`, and `browser.session_close` through `rzn.local.v1`.
+  - Desktop tracks `session_id`; `current_tab_id` remains extension-sourced and mirrored by the supervisor.
+  - If supervisor is not running, the UX can call `runtime.ensure_ready` and show the resulting diagnostics. If Chrome/extension is absent, status is degraded, not a request to start the Reason app.
+  - Legacy broker app-side accepts both task envelopes and JSON-RPC `browser.session`; keep it only as compatibility while the app moves to the supervisor client.
+
+- Reason app migration anchors (`LRT-T-0007`)
+
+| App path | Current browser dependency | Migration target |
+|---|---|---|
+| `/Users/sarav/Downloads/side/rzn/rznapp/src/agent/browserSupervisorClient.ts` | Calls Tauri commands that shell out to `rzn-browser supervisor`. | Browser helper for app dev surfaces; strict by default with no legacy worker fallback. |
+| `/Users/sarav/Downloads/side/rzn/rznapp/src/agent/bridge.ts` | Dev `window.__AGENT__.browser` defaults to the supervisor helper; explicit `serverName` still invokes plugin-worker MCP. | Keep plugin-worker routing as an explicit dev override only. |
+| `/Users/sarav/Downloads/side/rzn/rznapp/src-tauri/src/mcp/minimal_server.rs` | `rzn.browser.session` maps browser commands to supervisor methods. | Keep `rzn.browser.session` as the external MCP tool while forwarding to supervisor IPC internally. |
+| `/Users/sarav/Downloads/side/rzn/rznapp/src-tauri/src/browser_supervisor.rs` | App-side Tauri command adapter for `runtime.ensure_ready`, `supervisor call`, and `tools/call`. | Keep Reason app as a client of the shared local runtime. |
+| `/Users/sarav/Downloads/side/rzn/rznapp/src-tauri/src/broker/native_host.rs` | Legacy app native-host registry remains for non-migrated compatibility. | Do not use it as browser automation readiness authority. |
+| `/Users/sarav/Downloads/side/rzn/rznapp/src-tauri/src/bin/rzn-mcp-shim.rs` | App MCP stdio shim forwards JSON-RPC through the app broker socket. | Keep for app-owned non-browser tools; browser MCP should use `rzn-browser mcp browser` or the app's supervisor-backed adapter. |
+
+- Done (`LRT-T-0007`): app-side supervisor client Tauri commands exist for readiness, generic calls, and browser tool calls.
+- Done (`LRT-T-0007`): `window.__AGENT__.browser` defaults to the supervisor-backed adapter; explicit `serverName` is the only plugin-worker route.
+- Done (`LRT-T-0007`): app-owned non-browser MCP/plugin capabilities remain on the app/plugin path; only browser automation ownership moved.
 
 - Observe / inventory
   - Prefer AX slice for compact, semantic targets (roles/names + backend node IDs).
