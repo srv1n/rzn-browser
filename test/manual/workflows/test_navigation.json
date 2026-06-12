@@ -1,0 +1,26 @@
+{
+  "system_id": "test",
+  "id": "test_navigation",
+  "name": "Test Navigation",
+  "description": "Simple navigation test",
+  "domain": "example.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "description": "Simple test workflow",
+    "sequences": [
+      {
+        "name": "main",
+        "description": "Navigate to example.com",
+        "required_variables": [],
+        "steps": [
+          {
+            "id": "step1",
+            "name": "Navigate to Example",
+            "type": "navigate_to_url",
+            "url": "https://www.example.com"
+          }
+        ]
+      }
+    ]
+  }
+}

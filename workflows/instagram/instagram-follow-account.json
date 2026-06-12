@@ -1,0 +1,224 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "instagram/follow_account",
+  "name": "Instagram: Follow Account",
+  "version": "1.1.0",
+  "system": "instagram",
+  "capability": "instagram.follow.account",
+  "summary": "Follow one Instagram account via the home search rail.",
+  "description": "Follow one Instagram account by simulating a human: open Instagram home, type the handle into the search rail, click the matching profile result, then click the Follow button. Returns a status so callers can tell success apart from already-following, pending follow requests, not-found handles, login prompts, and blocked accounts. Use this when you want a single idempotent follow operation; use instagram profile-recent-posts or post-extract when you only want to read public content, not follow anyone.",
+  "params": {
+    "properties": {
+      "handle": {
+        "kind": "string",
+        "required": true,
+        "description": "Instagram handle without the leading @. Case-insensitive; the workflow normalizes to lowercase before matching."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "external_write",
+      "idempotency": "never_retry",
+      "confirmation_required": true,
+      "scopes": [
+        "instagram.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "instagram.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.instagram.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open Instagram home",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow Instagram home to hydrate",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "const normalize=(value)=>(value||'').replace(/\\s+/g,' ').trim(); const isVisible=(node)=>{if(!(node instanceof Element)) return false; const rect=node.getBoundingClientRect(); if(!rect||rect.width<=0||rect.height<=0) return false; const style=getComputedStyle(node); return style.display!=='none'&&style.visibility!=='hidden'&&style.opacity!=='0';}; const nodes=Array.from(document.querySelectorAll('a,button,div[role=\"button\"]')).filter(isVisible); const target=nodes.find((node)=>/search/i.test([normalize(node.innerText||node.textContent||''),normalize(node.getAttribute('aria-label')||''),normalize(node.getAttribute('href')||'')].join(' '))); if(!target) throw new Error('Search trigger not found'); target.click(); return JSON.stringify({clicked:true,text:normalize(target.innerText||target.textContent||''),href:normalize(target.getAttribute('href')||''),aria:normalize(target.getAttribute('aria-label')||'')});"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the search rail",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "input[aria-label='Search input'], input[placeholder='Search']"
+        }
+      },
+      "name": "Wait for the search input",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the search input settle",
+      "timeout_ms": 500
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "const normalize=(value)=>(value||'').replace(/\\s+/g,' ').trim();\nconst sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));\nconst isVisible=(node)=>{if(!(node instanceof Element)) return false; const rect=node.getBoundingClientRect(); if(!rect||rect.width<=0||rect.height<=0) return false; const style=getComputedStyle(node); return style.display!=='none'&&style.visibility!=='hidden'&&style.opacity!=='0';};\nconst isClickable=(node)=>node instanceof HTMLAnchorElement||node instanceof HTMLButtonElement||node.getAttribute('role')==='button'||typeof node.onclick==='function';\nconst findClickableAncestor=(node)=>{let current=node; for(let depth=0; current&&depth<8; depth++, current=current.parentElement){ if(isVisible(current)&&isClickable(current)) return current; } return null;};\nconst toAbsoluteUrl=(value)=>{try{return new URL(value,location.origin).toString();}catch{return '';}};\nconst normalizedPath=(value)=>{try{return new URL(value,location.origin).pathname.replace(/\\/+/g,'/').replace(/\\/?$/,'/').toLowerCase();}catch{return '';}};\nconst resolveHref=(node)=>{if(!(node instanceof Element)) return ''; if(node instanceof HTMLAnchorElement){ return normalize(node.getAttribute('href')||node.href||''); } const nested=node.querySelector('a[href]'); return nested instanceof HTMLAnchorElement ? normalize(nested.getAttribute('href')||nested.href||'') : ''; };\nconst handle=String(arg0||'').replace(/^@+/,'').trim().toLowerCase();\nconst expectedPath=`/${handle}/`;\nconst storyPath=`/stories/${handle}/`;\nconst input=document.querySelector(\"input[aria-label='Search input'], input[placeholder='Search']\");\nif(!(input instanceof HTMLInputElement)) throw new Error('Search input not found');\nconst valueSetter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;\nif(!valueSetter) throw new Error('HTMLInputElement.value setter unavailable');\ninput.focus();\nvalueSetter.call(input,'');\ninput.dispatchEvent(new InputEvent('input',{bubbles:true,composed:true,data:null,inputType:'deleteContentBackward'}));\nlet current='';\nfor(const ch of handle){\n  current += ch;\n  input.dispatchEvent(new KeyboardEvent('keydown',{key:ch,bubbles:true}));\n  valueSetter.call(input,current);\n  input.dispatchEvent(new InputEvent('input',{bubbles:true,composed:true,data:ch,inputType:'insertText'}));\n  input.dispatchEvent(new KeyboardEvent('keyup',{key:ch,bubbles:true}));\n  await sleep(95);\n}\ninput.dispatchEvent(new Event('change',{bubbles:true,composed:true}));\nawait sleep(2200);\nconst exactAnchors=Array.from(document.querySelectorAll('a[href]')).filter(isVisible).map((node)=>({node,href:toAbsoluteUrl(node.getAttribute('href')||node.href||''),path:normalizedPath(node.getAttribute('href')||node.href||''),label:normalize([node.textContent||'',node.getAttribute('aria-label')||''].join(' ')).toLowerCase(),rect:node.getBoundingClientRect()})).filter((entry)=>entry.path===expectedPath);\nif(exactAnchors.length){\n  exactAnchors.sort((a,b)=>a.rect.top-b.rect.top||a.rect.left-b.rect.left||(a.rect.width*a.rect.height)-(b.rect.width*b.rect.height)||a.label.length-b.label.length);\n  const chosenAnchor=exactAnchors[0];\n  chosenAnchor.node.click();\n  return JSON.stringify({handle,status:'clicked_exact_profile_result',match_label:chosenAnchor.label,match_rect:{top:Math.round(chosenAnchor.rect.top),left:Math.round(chosenAnchor.rect.left),width:Math.round(chosenAnchor.rect.width),height:Math.round(chosenAnchor.rect.height)},navigate_to:chosenAnchor.href});\n}\nconst candidates=Array.from(document.querySelectorAll('*')).filter(isVisible).map((node)=>{const clickable=findClickableAncestor(node); const href=resolveHref(clickable||node); return {node,clickable,label:normalize([node.textContent||'',node.getAttribute?.('aria-label')||''].join(' ')).toLowerCase(),rect:node.getBoundingClientRect(),href,path:normalizedPath(href)};}).filter((entry)=>entry.label.includes(handle)).filter((entry)=>entry.label.length<=120).filter((entry)=>entry.rect.left<window.innerWidth*0.6&&entry.rect.top<window.innerHeight*0.8).filter((entry)=>entry.rect.width<=420&&entry.rect.height<=140).filter((entry)=>entry.path!==''&&entry.path!==expectedPath?!entry.path.startsWith('/stories/'):true);\nif(!candidates.length) return JSON.stringify({handle,status:'search_miss',url:location.href,input_value:input.value});\ncandidates.sort((a,b)=>(a.path===expectedPath?0:1)-(b.path===expectedPath?0:1)||(a.rect.width*a.rect.height)-(b.rect.width*b.rect.height)||a.rect.top-b.rect.top||a.rect.left-b.rect.left||a.label.length-b.label.length);\nconst chosen=candidates[0];\nconst clickable=chosen.clickable||findClickableAncestor(chosen.node);\nif(!clickable) return JSON.stringify({handle,status:'search_match_not_clickable',match_label:chosen.label,match_rect:{top:Math.round(chosen.rect.top),left:Math.round(chosen.rect.left),width:Math.round(chosen.rect.width),height:Math.round(chosen.rect.height)},url:location.href,input_value:input.value});\nconst href=resolveHref(clickable);\nif(href&&normalizedPath(href)!==storyPath){\n  const absolute=toAbsoluteUrl(href);\n  window.location.assign(absolute);\n  return JSON.stringify({handle,status:'opened_result_via_href_fallback',match_label:chosen.label,match_rect:{top:Math.round(chosen.rect.top),left:Math.round(chosen.rect.left),width:Math.round(chosen.rect.width),height:Math.round(chosen.rect.height)},navigate_to:absolute});\n}\nclickable.click();\nreturn JSON.stringify({handle,status:'opened_result_via_click',match_label:chosen.label,match_rect:{top:Math.round(chosen.rect.top),left:Math.round(chosen.rect.left),width:Math.round(chosen.rect.width),height:Math.round(chosen.rect.height)},clicked_tag:clickable.tagName,clicked_aria:normalize(clickable.getAttribute('aria-label')||''),url:location.href});",
+          "args": [
+            "{handle}"
+          ]
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Type the handle and open the matching profile result",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the profile page to settle",
+      "timeout_ms": 3500
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "const normalize=(value)=>(value||'').replace(/\\s+/g,' ').trim();\nconst sleep=(ms)=>new Promise((resolve)=>setTimeout(resolve,ms));\nconst textFor=(node)=>normalize(node?.innerText||node?.textContent||node?.getAttribute?.('aria-label')||'');\nconst isVisible=(node)=>{if(!(node instanceof Element)) return false; const rect=node.getBoundingClientRect(); if(!rect||rect.width<=0||rect.height<=0) return false; const style=window.getComputedStyle(node); return style.display!=='none'&&style.visibility!=='hidden'&&style.opacity!=='0';};\nconst normalizedPath=(value)=>{try{return new URL(value,location.origin).pathname.replace(/\\/+/g,'/').replace(/\\/?$/,'/').toLowerCase();}catch{return '';}};\nconst getRoot=()=>document.querySelector('header')||document.querySelector('main header')||document.querySelector('main')||document;\nconst collect=(root)=>Array.from((root||document).querySelectorAll('button,a[role=\"button\"],div[role=\"button\"]')).filter(isVisible).map((node)=>({node,text:textFor(node),rect:node.getBoundingClientRect()})).filter((entry)=>/follow|requested/i.test(entry.text)&&entry.rect.top<Math.max(window.innerHeight*0.75,500));\nconst clickNode=(node)=>{node.scrollIntoView({block:'center',inline:'center'}); try{node.focus?.({preventScroll:true});}catch{}; try{node.click();}catch{}; const types=['pointerdown','mousedown','pointerup','mouseup','click']; for(const type of types){ try{ const eventName=type.startsWith('pointer')&&typeof PointerEvent!=='undefined'?PointerEvent:MouseEvent; node.dispatchEvent(new eventName(type,{bubbles:true,cancelable:true,composed:true,view:window,button:0,buttons:1,pointerType:'mouse'})); }catch{} } return true;};\nconst dismissTransient=()=>{const nodes=Array.from(document.querySelectorAll('button,a[role=\"button\"],div[role=\"button\"]')).filter(isVisible); for (const node of nodes) { const text=textFor(node); const aria=normalize(node.getAttribute('aria-label')||''); if (/^(not now|close)$/i.test(text)||/^close$/i.test(aria)) { try { node.click(); return text||aria||'dismissed'; } catch {} } } return null;};\nconst expected=String(arg0||'').replace(/^@+/,'').trim().toLowerCase();\nconst pathParts=location.pathname.split('/').filter(Boolean);\nif(pathParts[0]==='stories'&&pathParts[1]?.toLowerCase()===expected){\n  const profileAnchor=Array.from(document.querySelectorAll('a[href]')).find((node)=>isVisible(node)&&normalizedPath(node.getAttribute('href')||node.href||'')===`/${expected}/`);\n  if(profileAnchor){ profileAnchor.click(); await sleep(1800); }\n}\nconst settledHandle=location.pathname.split('/').filter(Boolean)[0]||'';\nif(settledHandle.toLowerCase()!==expected) return JSON.stringify({handle:expected,status:'wrong_profile_after_search',current_handle:settledHandle,url:location.href});\nif(/login/i.test(document.title)||document.querySelector('input[name=\"username\"],input[name=\"enc_password\"]')) return JSON.stringify({handle:expected,status:'login_required',url:location.href});\nconst bodyText=normalize(document.body?.innerText||'');\nif(/sorry, this page isn't available|user not found|page isn't available/i.test(bodyText)) return JSON.stringify({handle:expected,status:'not_found',url:location.href});\nlet candidates=collect(getRoot()); if(!candidates.length) candidates=collect(document);\nif(!candidates.length){const dismissed=dismissTransient(); if(dismissed){await sleep(600); candidates=collect(getRoot()); if(!candidates.length) candidates=collect(document);}}\nconst following=candidates.find((entry)=>/^following$/i.test(entry.text)); if(following) return JSON.stringify({handle:expected,status:'already_following',button_text:following.text,url:location.href});\nconst requested=candidates.find((entry)=>/^requested$/i.test(entry.text)); if(requested) return JSON.stringify({handle:expected,status:'requested',button_text:requested.text,url:location.href});\nconst follow=candidates.find((entry)=>/^(follow|follow back)$/i.test(entry.text)); if(!follow) return JSON.stringify({handle:expected,status:'blocked',visible_buttons:candidates.map((entry)=>entry.text),url:location.href});\nlet clicked=false;\nfor(let attempt=0; attempt<3; attempt++){\n  clicked=clickNode(follow.node)||clicked;\n  await sleep(1400 + attempt*500);\n  candidates=collect(getRoot()); if(!candidates.length) candidates=collect(document);\n  const followingAfterAttempt=candidates.find((entry)=>/^following$/i.test(entry.text)); if(followingAfterAttempt) return JSON.stringify({handle:expected,status:'followed',clicked,button_text:followingAfterAttempt.text,url:location.href,attempt:attempt+1});\n  const requestedAfterAttempt=candidates.find((entry)=>/^requested$/i.test(entry.text)); if(requestedAfterAttempt) return JSON.stringify({handle:expected,status:'requested',clicked,button_text:requestedAfterAttempt.text,url:location.href,attempt:attempt+1});\n}\nconst followStill=candidates.find((entry)=>/^(follow|follow back)$/i.test(entry.text));\nreturn JSON.stringify({handle:expected,status:followStill?'click_failed':'unknown_after_click',clicked,button_text:followStill?followStill.text:null,visible_buttons:candidates.map((entry)=>entry.text),url:location.href});",
+          "args": [
+            "{handle}"
+          ]
+        },
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ]
+      },
+      "name": "Follow the current profile if needed",
+      "timeout_ms": 25000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "string",
+      "description": "JSON-encoded string returned by the follow-action script. Parse to access { handle, status, button_text?, attempt?, clicked?, current_handle?, visible_buttons?, url }. status values: followed | already_following | requested | not_found | login_required | wrong_profile_after_search | search_miss | search_match_not_clickable | blocked | click_failed | unknown_after_click."
+    },
+    "output_selector": {
+      "step_id": "s8",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Follow one Instagram account via the home search rail.",
+    "parameters": {
+      "handle": "Instagram handle without the leading @. Case-insensitive; the workflow normalizes to lowercase before matching."
+    },
+    "examples": [
+      {
+        "description": "Follow @timbersfc (no-op if already followed)",
+        "command": "rzn-browser run instagram follow-account --param handle=\"timbersfc\""
+      }
+    ],
+    "returns": [
+      "JSON string with handle and one of status: followed | already_following | requested | not_found | login_required | wrong_profile_after_search | search_miss | search_match_not_clickable | blocked | click_failed | unknown_after_click. Successful follows also return button_text and attempt; terminal states include url for triage."
+    ],
+    "notes": [
+      "Requires a logged-in Instagram session in the active Chrome profile; returns status=login_required if the profile is signed out.",
+      "Idempotent: already_following and requested return without re-clicking, so this is safe to call in a loop over a handle list.",
+      "Private accounts surface status=requested (follow request sent) rather than status=followed.",
+      "Opens a dedicated workflow tab (use_current_tab=false), so this workflow is safe to run in parallel with other dedicated-tab instagram flows.",
+      "Rate limiting is an Instagram-side concern: don't loop faster than a real user would."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "instagram/instagram-follow-account.json",
+    "legacy_system_id": "instagram"
+  }
+}

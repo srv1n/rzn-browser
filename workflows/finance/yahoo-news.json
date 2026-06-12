@@ -1,0 +1,187 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "finance/yahoo_news",
+  "name": "Yahoo Finance: News Headlines",
+  "version": "1.1.0",
+  "system": "finance",
+  "capability": "finance.yahoo.news",
+  "summary": "Latest Yahoo Finance news headlines for a given ticker.",
+  "description": "Fetch the latest Yahoo Finance news headlines for a ticker. Returns headline, URL, publisher, and relative timestamp. Pure read; complements finance/stock-price (quote) since news is a separate output contract.",
+  "params": {
+    "properties": {
+      "limit": {
+        "kind": "integer",
+        "required": false,
+        "default": 20,
+        "min": 1,
+        "max": 50,
+        "description": "Maximum number of headlines to return. Default 20; capped at the number Yahoo renders without scrolling (typically 20\u201325)."
+      },
+      "ticker": {
+        "kind": "string",
+        "required": true,
+        "description": "Same ticker grammar as finance/stock-price (AAPL, ^GSPC, BTC-USD, EURUSD=X, BMW.DE, etc.)."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "finance.yahoo.com"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "finance.yahoo.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "finance.yahoo.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "finance.yahoo.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://finance.yahoo.com/quote/{ticker}/news"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Yahoo news for ticker"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "[data-testid='storyitem']"
+        }
+      },
+      "name": "Wait for story items",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow late items to render",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "{ticker}",
+            "{limit}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const ticker = cleanArg(arg0); if (!ticker) throw new Error('ticker is required'); const limitRaw = cleanArg(arg1); const limit = limitRaw && /^[1-9][0-9]*$/.test(limitRaw) ? parseInt(limitRaw, 10) : 20; const norm = (v) => { const t = String(v || '').replace(/\\s+/g, ' ').trim(); return t || 'N/A'; }; const items = Array.from(document.querySelectorAll(\"[data-testid='storyitem']\")); if (!items.length) throw new Error('No story items found for ' + ticker); const extractPubAge = (item) => { const pub = item.querySelector('.publishing'); if (!pub) return { publisher: '', age: '' }; const parts = (pub.innerText || '').split(/\\n+/).map((s) => s.trim()).filter((s) => s && s !== '\\u2022'); if (parts.length >= 2) return { publisher: parts[0], age: parts[parts.length - 1] }; if (parts.length === 1) { const m = parts[0].split(/\\s*\\u2022\\s*/).map((s) => s.trim()).filter(Boolean); if (m.length >= 2) return { publisher: m[0], age: m[m.length - 1] }; return { publisher: parts[0], age: '' }; } const textNodes = Array.from(pub.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).filter(Boolean); return { publisher: textNodes[0] || '', age: textNodes[textNodes.length - 1] || '' }; }; const headlines = items.slice(0, limit).map((item) => { const link = item.querySelector('a[href]'); const headlineText = item.querySelector('h3, h4, [class*=\"headline\"]')?.textContent || link?.getAttribute('title') || link?.getAttribute('aria-label') || link?.textContent || ''; const { publisher, age } = extractPubAge(item); return { title: norm(headlineText), url: link?.href || 'N/A', publisher: norm(publisher), age: norm(age) }; }).filter((h) => h.title !== 'N/A'); return { ticker, count: headlines.length, headlines };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract news headlines"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "ticker": { "type": "string" },
+        "count": { "type": "integer" },
+        "headlines": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "url": { "type": "string" },
+              "publisher": { "type": "string" },
+              "age": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Latest Yahoo Finance news headlines for a given ticker.",
+    "parameters": {
+      "limit": "Maximum number of headlines to return. Default 20; capped at the number Yahoo renders without scrolling (typically 20\u201325).",
+      "ticker": "Same ticker grammar as finance/stock-price (AAPL, ^GSPC, BTC-USD, EURUSD=X, BMW.DE, etc.)."
+    },
+    "examples": [
+      {
+        "description": "Latest Apple headlines (default 20)",
+        "command": "rzn-browser run finance yahoo-news --param ticker=\"AAPL\""
+      },
+      {
+        "description": "Top 5 S&P 500 headlines",
+        "command": "rzn-browser run finance yahoo-news --param ticker=\"^GSPC\" --param limit=\"5\""
+      }
+    ],
+    "returns": [
+      "Object: { ticker, count, headlines: [{ title, url, publisher, age }] }. Pair with finance/stock-price for current quote on the same ticker."
+    ],
+    "notes": [
+      "JS-first: reads [data-testid='storyitem']. Yahoo has used this contract for several redesigns.",
+      "Publisher and age come from the '.publishing' div inside each story card (first/last non-bullet text node, separated by a U+2022 bullet).",
+      "Publisher and timestamp fields can still come back as 'N/A' on some story types (sponsored content, video-only items)."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "finance/yahoo-news.json",
+    "legacy_system_id": "finance"
+  }
+}

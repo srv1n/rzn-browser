@@ -1,0 +1,32 @@
+include:
+  - extension/src/**
+  - extension/tests/**
+  - crates/**/src/**
+  - workflows/**
+  - docs/features/**
+  - docs/ARCHITECTURE.md
+  - docs/WORKFLOW_MODE.md
+  - AGENTS.md
+  - README.md
+  - Makefile
+exclude:
+  - target/**
+  - node_modules/**
+  - extension/dist/**
+  - extension/dist-*/**
+  - extension/dist-chrome/**
+  - logs/**
+  - .git/**
+  - test-results/**
+hotspots:
+  - chrome.runtime.onMessage
+  - chrome.runtime.sendMessage
+  - chrome.tabs.sendMessage
+  - window.postMessage
+  - __rznExecuteStep
+  - captureEnhancedDOMSnapshot
+  - createSlice
+  - dispatch(
+  - serde_json
+  - mpsc
+  - tokio

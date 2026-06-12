@@ -1,0 +1,244 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "reddit/flair_list",
+  "name": "Reddit: List Post Flairs",
+  "version": "1.0.0",
+  "system": "reddit",
+  "capability": "reddit.flair.list",
+  "summary": "List every post flair available to the signed-in account on a subreddit. Returns id (canonical UUID), text, color, position, and mod_only flag. Discovery-only; pure read; safe to call repeatedly.",
+  "description": "Pure-read discovery: open a subreddit's submit page, open the post-flair modal, scrape every available flair (id + text + color + mod-only state). Source is the live picker (authoritative for the signed-in account \u2014 surfaces karma-gated and account-conditional flairs that /api/link_flair_v2 misses). Use this once per sub during discovery, cache the result, then have your publisher do flair_text \u2192 flair_id lookup locally instead of probing the modal on every post.",
+  "params": {
+    "properties": {
+      "subreddit": {
+        "kind": "string",
+        "required": true,
+        "description": "Community to scrape. Must be one the signed-in account can submit to (otherwise the submit page short-circuits to login or shows a 'restricted' notice)."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "www.reddit.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "www.reddit.com"
+      ]
+    },
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "www.reddit.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.reddit.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open www.reddit.com (bootstrap \u2014 execute_javascript needs a live tab)",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{subreddit}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const subreddit = cleanArg(arg0); if (!subreddit) throw new Error('subreddit is required'); const target = 'https://www.reddit.com/r/' + encodeURIComponent(subreddit) + '/submit/?type=TEXT'; setTimeout(() => { window.location.assign(target); }, 0); return JSON.stringify({ navigating_to: target });"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Redirect to the subreddit's text-submit page (the surface that hosts the post-flair button)",
+      "timeout_ms": 8000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Initial composer settle (\u22656s for shreddit-* + faceplate-* hydration on cold start; flair button mounts late)",
+      "timeout_ms": 6000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{subreddit}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const subreddit = cleanArg(arg0); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const collect = () => { const roots = []; const visit = (r) => { roots.push(r); const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT); let n = w.currentNode; while (n) { if (n.shadowRoot) visit(n.shadowRoot); n = w.nextNode(); } }; visit(document); return roots; }; const qDeep = (sel) => { for (const r of collect()) { try { const el = r.querySelector(sel); if (el) return el; } catch(e){} } return null; }; if (/\\/login\\b/i.test(location.pathname)) throw new Error('Redirected to /login \u2014 session not authenticated.'); if (qDeep('shreddit-login-prompt')) throw new Error('shreddit-login-prompt visible \u2014 not logged in.'); if (/communitynotfound|page not found/i.test(document.title)) throw new Error('subreddit not found: r/' + (subreddit || '<unknown>')); const cap = (() => { const ifr = document.querySelectorAll('iframe[src*=\"recaptcha/api2/bframe\"], iframe[src*=\"recaptcha/enterprise/bframe\"], iframe[src*=\"hcaptcha\"]'); for (const f of ifr) { const r = f.getBoundingClientRect(); if (r.width > 50 && r.height > 50) return f.src; } return null; })(); if (cap) return JSON.stringify({ outcome: 'abandoned', reason: 'captcha', detail: cap, url: location.href }); let flairBtn = null; const dl = Date.now() + 8000; while (Date.now() < dl) { flairBtn = qDeep('button#reddit-post-flair-button'); if (flairBtn) break; await sleep(300); } if (!flairBtn) throw new Error('flair button (#reddit-post-flair-button) did not mount within 8s \u2014 composer surface may have changed for r/' + subreddit); return JSON.stringify({ outcome: 'ready', url: location.href, flair_button_aria: flairBtn.getAttribute('aria-label') || null, flair_button_text: (flairBtn.innerText || '').trim().slice(0, 60) });"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Sanity check: detect logout / community-not-found / captcha and POLL for flair button mount (up to 8s within the native-host 15s cap). Return outcome:abandoned for captcha so the discovery loop can route around without retry.",
+      "timeout_ms": 12000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{subreddit}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const subreddit = cleanArg(arg0); const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const collect = () => { const roots = []; const visit = (r) => { roots.push(r); const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT); let n = w.currentNode; while (n) { if (n.shadowRoot) visit(n.shadowRoot); n = w.nextNode(); } }; visit(document); return roots; }; const qDeep = (sel) => { for (const r of collect()) { try { const el = r.querySelector(sel); if (el) return el; } catch(e){} } return null; }; const btn = qDeep('button#reddit-post-flair-button'); if (!btn) throw new Error('flair button disappeared between s4 and s5'); const aria = (btn.getAttribute('aria-label') || '').toLowerCase(); if (/not available/i.test(aria)) return JSON.stringify({ flair_unavailable: true, aria_label: aria, subreddit: subreddit }); btn.click(); await sleep(1800); const modalHost = qDeep('r-post-flairs-modal'); if (!modalHost || !modalHost.shadowRoot) throw new Error('flair modal (r-post-flairs-modal) did not open within 1.8s'); return JSON.stringify({ modal_opened: true });"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Open the flair modal. If the community has no flairs (aria-label contains 'Not available'), short-circuit with a clean empty catalog before bothering with a click.",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [],
+          "script": "const sleep = (ms) => new Promise(r => setTimeout(r, ms)); const collect = () => { const roots = []; const visit = (r) => { roots.push(r); const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT); let n = w.currentNode; while (n) { if (n.shadowRoot) visit(n.shadowRoot); n = w.nextNode(); } }; visit(document); return roots; }; const qDeep = (sel) => { for (const r of collect()) { try { const el = r.querySelector(sel); if (el) return el; } catch(e){} } return null; }; const modalHost = qDeep('r-post-flairs-modal'); if (!modalHost || !modalHost.shadowRoot) return JSON.stringify({ skipped: true, reason: 'modal not open (may have been short-circuited as flair_unavailable in s5)' }); const viewAll = modalHost.shadowRoot.querySelector('button#view-all-flairs-button'); if (!viewAll) return JSON.stringify({ view_all_clicked: false, reason: 'no View all flairs button (sub has fewer flairs than the collapse threshold)' }); viewAll.click(); await sleep(1200); return JSON.stringify({ view_all_clicked: true });"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "If 'View all flairs' button is rendered (high-flair-count subs collapse the list), click it so every flair is in the DOM at scrape time.",
+      "timeout_ms": 8000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{subreddit}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const subreddit = cleanArg(arg0); const collect = () => { const roots = []; const visit = (r) => { roots.push(r); const w = document.createTreeWalker(r, NodeFilter.SHOW_ELEMENT); let n = w.currentNode; while (n) { if (n.shadowRoot) visit(n.shadowRoot); n = w.nextNode(); } }; visit(document); return roots; }; const qDeep = (sel) => { for (const r of collect()) { try { const el = r.querySelector(sel); if (el) return el; } catch(e){} } return null; }; const modalHost = qDeep('r-post-flairs-modal'); if (!modalHost || !modalHost.shadowRoot) { return JSON.stringify({ outcome: 'flair_unavailable', subreddit: subreddit, scraped_at: new Date().toISOString(), flairs: [], count: 0, view_all_clicked: false, note: 'modal not open \u2014 community has no post flair (aria-label \\'Not available\\') or modal closed prematurely' }); } const sr = modalHost.shadowRoot; const radios = Array.from(sr.querySelectorAll('faceplate-radio-input[name=\"flairId\"]')); const colorRe = /background-color\\s*:\\s*([^;\\s]+)/i; const txtColorRe = /(?:^|;|\\s)color\\s*:\\s*([^;\\s]+)/i; const flairs = []; let position = 0; for (const r of radios) { const rid = r.id || ''; if (rid === 'post-flair-radio-input-no-flair') continue; const flairId = r.getAttribute('value') || ''; const text = (r.innerText || r.textContent || '').replace(/\\s+/g, ' ').trim(); const inner = r.querySelector('span[style*=\"background-color\"]') || r.querySelector('span'); const style = inner ? (inner.getAttribute('style') || '') : ''; const bgMatch = style.match(colorRe); const txtMatch = style.match(txtColorRe); const ariaDisabled = (r.getAttribute('aria-disabled') || '').toLowerCase() === 'true'; const dataDisabled = !!r.disabled; flairs.push({ flair_id: flairId, flair_text: text, position: position++, color: bgMatch ? bgMatch[1].trim() : null, text_color: txtMatch ? txtMatch[1].trim() : null, mod_only: ariaDisabled || dataDisabled }); } const viewAllBtn = sr.querySelector('button#view-all-flairs-button'); const titleEl = sr.querySelector('h3'); const modalTitle = titleEl ? (titleEl.innerText || '').trim().slice(0, 80) : null; const cancel = sr.querySelector('button#post-flair-modal-cancel-button'); if (cancel) cancel.click(); return JSON.stringify({ outcome: 'ok', subreddit: subreddit, scraped_at: new Date().toISOString(), modal_title: modalTitle, flairs: flairs, count: flairs.length, view_all_button_still_visible: !!viewAllBtn, source: 'submit_page_picker', modal_closed: !!cancel });"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Scrape every faceplate-radio-input[name=flairId] inside the modal, extract canonical metadata (id from HTML value attr, text, color, mod_only, position), then close the modal cleanly via Cancel. One step so the catalog surfaces as the workflow's final result.",
+      "timeout_ms": 14000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "outcome": { "type": "string", "enum": ["ok", "flair_unavailable", "abandoned"] },
+        "subreddit": { "type": "string" },
+        "scraped_at": { "type": "string" },
+        "modal_title": { "type": "string", "nullable": true },
+        "flairs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "flair_id": { "type": "string" },
+              "flair_text": { "type": "string" },
+              "position": { "type": "integer" },
+              "color": { "type": "string", "nullable": true },
+              "text_color": { "type": "string", "nullable": true },
+              "mod_only": { "type": "boolean" }
+            }
+          }
+        },
+        "count": { "type": "integer" },
+        "view_all_button_still_visible": { "type": "boolean" },
+        "source": { "type": "string" },
+        "modal_closed": { "type": "boolean" },
+        "reason": { "type": "string", "nullable": true },
+        "detail": { "type": "string", "nullable": true },
+        "url": { "type": "string", "nullable": true }
+      }
+    },
+    "output_selector": {
+      "step_id": "s7",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "List every post flair available to the signed-in account on a subreddit. Returns id (canonical UUID), text, color, position, and mod_only flag. Discovery-only; pure read; safe to call repeatedly.",
+    "parameters": {
+      "subreddit": "Community to scrape. Must be one the signed-in account can submit to (otherwise the submit page short-circuits to login or shows a 'restricted' notice)."
+    },
+    "examples": [
+      {
+        "description": "Scrape r/getdisciplined's 8 post flairs",
+        "command": "rzn-browser run reddit flair-list --param subreddit=getdisciplined"
+      },
+      {
+        "description": "Probe a sub that has no post flairs (returns flair_unavailable cleanly)",
+        "command": "rzn-browser run reddit flair-list --param subreddit=test"
+      }
+    ],
+    "returns": [
+      "JSON. Happy path: { outcome: 'ok', subreddit, scraped_at (ISO), modal_title, flairs: [{flair_id, flair_text, position, color, text_color, mod_only}, ...], count, view_all_button_still_visible, source: 'submit_page_picker' }. No-flair sub: { outcome: 'flair_unavailable', subreddit, flairs: [], count: 0, ... }. Soft block: { outcome: 'abandoned', reason: 'captcha', detail, url } from the sanity step."
+    ],
+    "notes": [
+      "Source of truth is the live submit-page picker, not /api/link_flair_v2. The picker reflects what THIS account can actually use, including karma-gated and account-conditional flairs the public API hides or shows indiscriminately. Trade-off: the picker is browser-only, so this workflow is slower (~10s) than an API call.",
+      "Cache the result. Reddit's flair sets change rarely (weeks\u2013months). The intended call site is the publisher's discovery loop, not its publish-time path.",
+      "mod_only is derived from aria-disabled='true' on the radio input \u2014 Reddit hides flairs the account can't use OR shows them disabled with this attribute. text_editable and allowed_post_types are NOT exposed in the picker DOM without selecting each flair (Reddit only renders the edit affordance after selection); shipping these would 9\u00d7 the run time. They are out of scope for v1; add via a follow-up workflow if a publisher actually needs them.",
+      "Closes the flair modal via Cancel before returning so the composer is left in a clean state for any subsequent workflow that reuses the session.",
+      "Caller must be signed into reddit.com in the active browser profile.",
+      "Idempotent + side-effect-free. Safe to call repeatedly without rate-limit risk beyond Reddit's normal page-load gating."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "reddit/reddit-flair-list.json",
+    "legacy_system_id": "reddit"
+  }
+}

@@ -1,0 +1,164 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "x/open_dm_thread",
+  "name": "X: Open DM Thread",
+  "version": "1.1.0",
+  "system": "x",
+  "capability": "x.open.dm.thread",
+  "summary": "Open one X DM thread URL read-only and snapshot its surface state.",
+  "description": "Open one X DM thread URL in a fresh tab and return whether the thread composer surface or the passcode-onboarding gate is present. Use for read-only inspection of a specific thread. Do not use to send a reply (use `x_reply_dm_thread`) or to list all threads (use `x_open_inbox`).",
+  "params": {
+    "properties": {
+      "thread_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Full X DM thread URL such as https://x.com/messages/123-456."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{thread_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the DM thread in a fresh tab",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow thread navigation to settle",
+      "timeout_ms": 1800
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput'], main [href*='/messages/'], main [href*='/i/chat/'], button[data-testid='pin-onboarding-setup-now']"
+        }
+      },
+      "name": "Wait for the DM composer, thread surface, or onboarding gate",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "return { url: location.href, composer_present: !!document.querySelector(\"div[data-testid='dmComposerTextInput'], div[role='textbox'][data-testid='dmComposerTextInput']\"), thread_link_count: document.querySelectorAll(\"main a[href*='/messages/'], main a[href*='/i/chat/']\").length, pin_onboarding_present: !!document.querySelector(\"button[data-testid='pin-onboarding-setup-now']\") };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the opened thread or onboarding state",
+      "timeout_ms": 10000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "composer_present": { "type": "boolean" },
+        "thread_link_count": { "type": "integer" },
+        "pin_onboarding_present": { "type": "boolean" }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open one X DM thread URL read-only and snapshot its surface state.",
+    "parameters": {
+      "thread_url": "Full X DM thread URL such as https://x.com/messages/123-456."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run x open-dm-thread --param thread_url=\"https://x.com/messages/123-456\"",
+        "description": "Load one thread and return composer state."
+      }
+    ],
+    "returns": [
+      "{ url, composer_present, thread_link_count, pin_onboarding_present }."
+    ],
+    "notes": [
+      "Read-only: never sends.",
+      "If onboarding is gating access, finish the X Chat passcode setup manually before using reply workflows.",
+      "Opens a fresh tab so parallel runs don't interfere."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "x/x_open_dm_thread.json",
+    "legacy_system_id": "x"
+  }
+}

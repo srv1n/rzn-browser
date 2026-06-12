@@ -1,0 +1,195 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "arxiv/html",
+  "name": "arXiv HTML Extractor",
+  "version": "1.0.0",
+  "system": "arxiv",
+  "capability": "arxiv.html",
+  "summary": "Open an arXiv abstract page and return title, authors, abstract, categories, and the PDF/HTML/source links.",
+  "description": "Navigate to https://arxiv.org/abs/{arxiv_id} and extract the abstract page metadata: title, author list, abstract text, arXiv id (canonical), primary categories, PDF link, HTML (ar5iv/LaTeXML) link when present, and source tarball link. Use when you already know the arXiv id and want a single-paper detail fetch. Do not use to search arXiv (use arxiv search).",
+  "params": {
+    "properties": {
+      "arxiv_id": {
+        "kind": "string",
+        "required": true,
+        "description": "arXiv paper id, e.g. 2301.00234 or 1706.03762. No 'arXiv:' prefix; no version suffix needed (latest version is fetched)."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "arxiv.org"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "arxiv.org"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://arxiv.org/abs/{arxiv_id}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to arXiv paper"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "h1.title"
+        }
+      },
+      "name": "Wait for page to load",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "title",
+              "selector": "h1.title"
+            },
+            {
+              "multiple": true,
+              "name": "authors",
+              "selector": "div.authors a"
+            },
+            {
+              "name": "abstract",
+              "selector": "blockquote.abstract"
+            },
+            {
+              "name": "arxiv_id",
+              "selector": "td.arxivid a"
+            },
+            {
+              "name": "categories",
+              "selector": "td.subjects"
+            },
+            {
+              "attribute": "href",
+              "name": "pdf_link",
+              "selector": "a.abs-button[href*='/pdf/']"
+            },
+            {
+              "attribute": "href",
+              "name": "html_link",
+              "optional": true,
+              "selector": "a#latexml-download-link[href*='/html/']"
+            },
+            {
+              "attribute": "href",
+              "name": "source_link",
+              "selector": "a.abs-button[href*='/src/']"
+            }
+          ],
+          "item_selector": "body"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract paper metadata"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "authors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "abstract": {
+            "type": "string"
+          },
+          "arxiv_id": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "string"
+          },
+          "pdf_link": {
+            "type": "string"
+          },
+          "html_link": {
+            "type": "string"
+          },
+          "source_link": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s3",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open an arXiv abstract page and return title, authors, abstract, categories, and the PDF/HTML/source links.",
+    "parameters": {
+      "arxiv_id": "arXiv paper id, e.g. 2301.00234 or 1706.03762. No 'arXiv:' prefix; no version suffix needed."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run arxiv html --param arxiv_id=\"1706.03762\"",
+        "description": "Fetch the abstract page for 'Attention Is All You Need'."
+      }
+    ],
+    "returns": [
+      "Array with one item: { title, authors[], abstract, arxiv_id, categories, pdf_link, html_link?, source_link }. html_link is optional — not every paper has a LaTeXML/ar5iv HTML build."
+    ],
+    "notes": [
+      "Read-only. No arXiv login required.",
+      "Use this for a single known id; for keyword search use arxiv search.",
+      "Links resolve against arxiv.org; pdf_link and source_link are stable arXiv endpoints."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "arxiv/arxiv-html.json",
+    "legacy_system_id": "arxiv"
+  }
+}

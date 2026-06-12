@@ -1,0 +1,75 @@
+{
+  "system_id": "chatgpt",
+  "id": "chatgpt_send_current_composer_js_v1",
+  "name": "ChatGPT: Send Current Composer (JS Only)",
+  "description": "Reuse the current ChatGPT tab and send the composer through fixed content-script DOM actions, without CDP Runtime.evaluate.",
+  "domain": "chatgpt.com",
+  "version": "1.0.0",
+  "help": {
+    "summary": "Send a prompt from the current ChatGPT composer using fixed content-script DOM actions instead of CDP Runtime.evaluate.",
+    "parameters": [
+      {
+        "name": "message_text",
+        "required": true,
+        "shape": "text",
+        "description": "Prompt text to send from the current composer",
+        "example": "Who let the dogs out?"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Send from the active ChatGPT composer",
+        "command": "rzn-browser run chatgpt send-current-composer-js-v1 --param message_text=\"Who let the dogs out?\""
+      }
+    ],
+    "returns": "Current ChatGPT URL and compact send metadata after the JS-only send attempt.",
+    "notes": [
+      "Uses the current authenticated ChatGPT tab.",
+      "Avoids CDP Runtime.evaluate; it relies on fixed content-script DOM actions, not arbitrary string eval."
+    ]
+  },
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Current-tab ChatGPT composer send flow using fixed content-script DOM actions instead of CDP-backed execute_javascript.",
+    "sequences": [
+      {
+        "name": "chatgpt_send_current_composer_js",
+        "description": "Reuse current tab -> wait for composer -> run page-bridge JavaScript -> return send metadata.",
+        "required_variables": [
+          {
+            "name": "message_text",
+            "description": "Prompt text to send from the current composer"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Allow the current ChatGPT surface to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 1200
+          },
+          {
+            "id": "s1",
+            "name": "Wait for the ChatGPT composer",
+            "type": "wait_for_element",
+            "selector": "#prompt-textarea, textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], textarea[placeholder*='Ask anything' i], textarea[aria-label*='message' i], textarea[aria-label*='chatgpt' i], form textarea, div[role='textbox'][contenteditable='true'], div[role='textbox'][contenteditable='plaintext-only'], [contenteditable='true'][data-testid*='composer'], [contenteditable='plaintext-only'][data-testid*='composer'], div.ProseMirror[contenteditable='true'], div.ProseMirror[contenteditable='plaintext-only']",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s2",
+            "name": "Fill and submit through fixed content-script DOM actions",
+            "type": "fill_and_submit",
+            "selector": "#prompt-textarea, textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], textarea[placeholder*='Ask anything' i], textarea[aria-label*='message' i], textarea[aria-label*='chatgpt' i], form textarea, div[role='textbox'][contenteditable='true'], div[role='textbox'][contenteditable='plaintext-only'], [contenteditable='true'][data-testid*='composer'], [contenteditable='plaintext-only'][data-testid*='composer'], div.ProseMirror[contenteditable='true'], div.ProseMirror[contenteditable='plaintext-only']",
+            "value": "{message_text}",
+            "submit_selector": "button[data-testid='send-button'], button[aria-label*='Send' i], form button[type='submit']",
+            "submit_label_regex": "send prompt|send|submit",
+            "wait_for_increase_selector": "[data-message-author-role], main article, [data-testid*='conversation-turn'], [data-testid*='conversationTurn']",
+            "simulate_typing": false,
+            "timeout_ms": 30000,
+            "wait_timeout_ms": 15000
+          }
+        ]
+      }
+    ]
+  }
+}

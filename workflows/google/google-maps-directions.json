@@ -1,0 +1,291 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "google/maps_directions",
+  "name": "Google Maps Directions",
+  "version": "2.1.0",
+  "system": "google",
+  "capability": "google.maps.directions",
+  "summary": "Get a Google Maps route summary + step-by-step directions between two places, plus a screenshot.",
+  "description": "Get a route between two locations on Google Maps and extract distance/duration plus the step-by-step instructions, with a viewport screenshot.",
+  "params": {
+    "properties": {
+      "destination": {
+        "kind": "string",
+        "required": true,
+        "description": "Ending location: address, place name, or 'lat,lng'."
+      },
+      "mode": {
+        "kind": "string",
+        "required": false,
+        "description": "Travel mode. Defaults to driving when omitted.",
+        "enum_values": [
+          "driving",
+          "walking",
+          "bicycling",
+          "transit"
+        ],
+        "default": "driving"
+      },
+      "origin": {
+        "kind": "string",
+        "required": true,
+        "description": "Starting location: address, place name, or 'lat,lng'."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.google.com/maps/dir/?api=1&origin={origin}&destination={destination}&travelmode={mode}&hl=en",
+          "wait": "domcontentloaded"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Google Maps directions",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss common popups"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#section-directions-trip-0, [data-trip-index='0'], .MespJc, [role='main']"
+        }
+      },
+      "name": "Wait for the directions panel",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Settle: let route paint",
+      "timeout_ms": 3000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "extraction_type": "summary",
+          "item_selector": "body",
+          "limit": 1,
+          "fields": [
+            {
+              "name": "distance",
+              "selector": "div.ivN21e > div",
+              "post_processing": [
+                "collapse_whitespace",
+                "regex:(\\\\d[\\\\d,.]*\\\\s*(?:km|mi|mile|miles|m|ft))"
+              ]
+            },
+            {
+              "name": "duration",
+              "selector": "div.Fk3sm",
+              "post_processing": [
+                "collapse_whitespace",
+                "regex:(\\\\d+\\\\s*(?:day|d|hr|hour|h|min)(?:\\\\s*\\\\d+\\\\s*min)?)"
+              ]
+            },
+            {
+              "name": "summary",
+              "selector": "h1.VuCHmb",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract route summary"
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "button.TIQqpf[aria-labelledby^='ucc-']:not([jsaction])"
+        }
+      },
+      "name": "Open route details (steps panel)"
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "div.gHCNqf[data-stepindex], div.S0JAMb div.gHCNqf"
+        }
+      },
+      "name": "Wait for the step-by-step list",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "extraction_type": "steps",
+          "item_selector": "div.gHCNqf[data-stepindex]",
+          "limit": 30,
+          "fields": [
+            {
+              "name": "step_index",
+              "selector": "*",
+              "attribute": "data-stepindex"
+            },
+            {
+              "name": "instruction",
+              "selector": ".j3isMd",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "distance",
+              "selector": ".V2xD3e",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract route steps"
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "take_screenshot",
+        "inputs": {
+          "format": "png",
+          "full_page": false
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Capture viewport screenshot"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "step_index": {
+            "type": "string"
+          },
+          "instruction": {
+            "type": "string"
+          },
+          "distance": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s8",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Get a Google Maps route summary + step-by-step directions between two places, plus a screenshot.",
+    "parameters": {
+      "destination": "Ending location: address, place name, or 'lat,lng'.",
+      "mode": "Travel mode. Defaults to driving when omitted.",
+      "origin": "Starting location: address, place name, or 'lat,lng'."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run google maps-directions --param origin=\"Times Square, New York\" --param destination=\"Central Park, New York\"",
+        "description": "Default driving directions."
+      },
+      {
+        "command": "rzn-browser run google maps-directions --param origin=\"SFO\" --param destination=\"Salesforce Tower, San Francisco\" --param mode=transit",
+        "description": "Transit route from SFO."
+      }
+    ],
+    "returns": [
+      "Primary output (step s8): array (up to 30) of { step_index, instruction, distance } turn-by-turn steps. Step s5 additionally extracts a single-row summary { distance, duration, summary }, and step s9 captures a viewport screenshot (written under test-results/workflow-artifacts/google-maps-directions/)."
+    ],
+    "notes": [
+      "When 'mode' is omitted, the default 'driving' is substituted into the URL.",
+      "Steps panel only opens after clicking the route card; if click fails, the steps array will be empty but summary will still be populated."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "google/google-maps-directions.json",
+    "legacy_system_id": "google"
+  }
+}

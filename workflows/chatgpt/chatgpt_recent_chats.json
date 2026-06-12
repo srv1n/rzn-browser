@@ -1,0 +1,137 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "chatgpt/recent_chats",
+  "name": "ChatGPT: Recent Chats",
+  "version": "1.0.0",
+  "system": "chatgpt",
+  "capability": "chatgpt.recent.chats",
+  "summary": "Open ChatGPT in the active tab, inspect recent conversation history, and return the most recent chats with optional day-window filtering.",
+  "description": "Open ChatGPT in the active tab, inspect recent conversation history, and return the most recent chats with optional day-window filtering.",
+  "params": {
+    "properties": {},
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "chatgpt.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "chatgpt.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://chatgpt.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open ChatGPT home in the active tab",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the shell to settle",
+      "timeout_ms": 1800
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Give transient UI a moment to settle",
+      "timeout_ms": 300
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "aside, nav, [data-message-author-role], #prompt-textarea, textarea[placeholder*='Message' i], a[href^='/c/']"
+        }
+      },
+      "name": "Wait for the shell or sidebar",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "const params = window.__rzn_params || {}; const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const parseNumber = (value, fallback) => { const parsed = Number.parseInt(String(value == null ? '' : value).trim(), 10); return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback; }; const parseTime = (value) => { const ts = value ? Date.parse(value) : NaN; return Number.isFinite(ts) ? ts : 0; }; const limit = parseNumber(params.limit, 10); const days = parseNumber(params.days, 0); const isVisible = (node) => !!(node && node instanceof Element && getComputedStyle(node).visibility !== 'hidden' && getComputedStyle(node).display !== 'none' && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0); const normalizeUrl = (raw) => { if (!raw) return ''; try { return new URL(raw, window.location.origin).toString(); } catch { return String(raw); } }; const chatIdFromHref = (raw) => { const url = normalizeUrl(raw); if (!url) return ''; try { const match = new URL(url).pathname.match(/^\\/c\\/([^/?#]+)/); return match ? match[1] : ''; } catch { return ''; } }; const bucketDaysFromLabel = (label) => { const text = normalize(label).toLowerCase(); if (!text) return null; if (/today/.test(text)) return 0; if (/yesterday/.test(text)) return 1; if (/last\\s+7\\s+days|previous\\s+7\\s+days|this\\s+week/.test(text)) return 7; if (/last\\s+30\\s+days|previous\\s+30\\s+days|this\\s+month/.test(text)) return 30; if (/older|archive|earlier/.test(text)) return 365; return null; }; const getConversationHistoryItems = () => { for (let index = 0; index < localStorage.length; index += 1) { const key = localStorage.key(index); if (!key || !/conversation-history/i.test(key)) continue; try { const raw = localStorage.getItem(key); if (!raw) continue; const parsed = JSON.parse(raw); const pages = Array.isArray(parsed?.value?.pages) ? parsed.value.pages : []; const items = pages.flatMap((page) => Array.isArray(page?.items) ? page.items : []); return items.filter((item) => item && typeof item.id === 'string'); } catch {} } return []; }; const collectDomEntries = () => { const anchors = Array.from(document.querySelectorAll(\"aside a[href*='/c/'], nav a[href*='/c/'], main a[href*='/c/']\")).filter(isVisible); const entries = []; const seen = new Set(); anchors.forEach((anchor, index) => { const href = normalizeUrl(anchor.getAttribute('href') || anchor.href); const chatId = chatIdFromHref(href); if (!chatId || seen.has(chatId)) return; seen.add(chatId); const text = normalize(anchor.textContent || ''); const lines = text.split('\\n').map((line) => normalize(line)).filter(Boolean); const title = lines[0] || chatId; const preview = lines.slice(1).join(' ').slice(0, 240) || null; const container = anchor.closest('li, section, div, article') || anchor.parentElement || anchor; const heading = container?.closest('section, nav, aside, div')?.querySelector?.('h1, h2, h3, h4, h5, h6, [role=\"heading\"], strong') || null; const headingText = normalize(heading?.textContent || ''); const bucketDays = bucketDaysFromLabel(headingText); entries.push({ thread_id: chatId, chat_id: chatId, title, thread_url: href, url: href, last_message_preview: preview, update_time: null, create_time: null, updated_at_ms: 0, created_at_ms: 0, section_label: headingText || null, bucket_days: bucketDays, source: 'dom_sidebar', sidebar_order: index }); }); return entries; }; const merged = new Map(); getConversationHistoryItems().forEach((item, index) => { const chatId = normalize(item.id); if (!chatId) return; merged.set(chatId, { thread_id: chatId, chat_id: chatId, title: normalize(item.title || '') || chatId, thread_url: normalizeUrl('/c/' + chatId), url: normalizeUrl('/c/' + chatId), last_message_preview: null, update_time: item.update_time || null, create_time: item.create_time || null, updated_at_ms: Math.max(parseTime(item.update_time), parseTime(item.create_time)), created_at_ms: parseTime(item.create_time), section_label: null, bucket_days: null, source: 'local_storage', history_index: index }); }); collectDomEntries().forEach((entry) => { const existing = merged.get(entry.chat_id); if (!existing) { merged.set(entry.chat_id, entry); return; } merged.set(entry.chat_id, { ...existing, last_message_preview: existing.last_message_preview || entry.last_message_preview || null, section_label: existing.section_label || entry.section_label || null, bucket_days: existing.bucket_days ?? entry.bucket_days ?? null, sidebar_order: entry.sidebar_order, source: existing.source === 'local_storage' ? 'local_storage+dom_sidebar' : existing.source }); }); let entries = Array.from(merged.values()); const cutoffMs = days > 0 ? Date.now() - (days * 24 * 60 * 60 * 1000) : 0; if (cutoffMs > 0) { entries = entries.filter((entry) => (entry.updated_at_ms && entry.updated_at_ms >= cutoffMs) || (entry.created_at_ms && entry.created_at_ms >= cutoffMs) || (typeof entry.bucket_days === 'number' && entry.bucket_days <= days)); } entries.sort((left, right) => { const leftTs = left.updated_at_ms || left.created_at_ms || 0; const rightTs = right.updated_at_ms || right.created_at_ms || 0; if (rightTs !== leftTs) return rightTs - leftTs; const leftBucket = typeof left.bucket_days === 'number' ? left.bucket_days : Number.MAX_SAFE_INTEGER; const rightBucket = typeof right.bucket_days === 'number' ? right.bucket_days : Number.MAX_SAFE_INTEGER; if (leftBucket !== rightBucket) return leftBucket - rightBucket; const leftOrder = Number.isFinite(left.sidebar_order) ? left.sidebar_order : Number.MAX_SAFE_INTEGER; const rightOrder = Number.isFinite(right.sidebar_order) ? right.sidebar_order : Number.MAX_SAFE_INTEGER; return leftOrder - rightOrder; }); const returned = entries.slice(0, limit); const bodyText = normalize(document.body?.textContent || '').toLowerCase(); return { url: window.location.href, title: document.title, total_available: entries.length, returned_count: returned.length, filters: { limit, days }, auth_required: entries.length === 0 && /log in|sign up|welcome back|continue with/i.test(bodyText), threads: returned };",
+          "world": "main"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Read recent chat history",
+      "timeout_ms": 120000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object"
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open ChatGPT in the active tab, inspect recent conversation history, and return the most recent chats with optional day-window filtering.",
+    "parameters": {},
+    "examples": [
+      {
+        "command": "rzn-browser run workflows/chatgpt/chatgpt_recent_chats.json",
+        "description": "Basic run with required parameters."
+      }
+    ],
+    "returns": [],
+    "notes": []
+  },
+  "metadata": {
+    "migrated_from": "chatgpt/chatgpt_recent_chats.json",
+    "legacy_system_id": "chatgpt"
+  }
+}

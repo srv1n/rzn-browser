@@ -1,0 +1,39 @@
+{
+  "name": "rzn-browser-control",
+  "version": "0.1.1",
+  "description": "Chrome extension for browser automation",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "generate-types": "bun run scripts/generate-types.ts",
+    "build": "bun run scripts/generate-types.ts && ./build.sh all",
+    "build:dev": "bun run scripts/generate-types.ts && RZN_PAGE_TEST_BRIDGE_ENABLED=1 ./build.sh all",
+    "build:chrome": "bun run scripts/generate-types.ts && ./build.sh chrome",
+    "build:edge": "bun run scripts/generate-types.ts && ./build.sh edge",
+    "build:chromium": "bun run scripts/generate-types.ts && ./build.sh chromium",
+    "clean": "rm -rf .build dist dist-chrome dist-edge dist-chromium dist-firefox",
+    "package": "bun run build && bun run package:chrome && bun run package:edge && bun run package:chromium",
+    "package:chrome": "bun run build:chrome && tar -czf dist/rzn-browser-extension-chrome.tar.gz -C dist chrome",
+    "package:edge": "bun run build:edge && tar -czf dist/rzn-browser-extension-edge.tar.gz -C dist edge",
+    "package:chromium": "bun run build:chromium && tar -czf dist/rzn-browser-extension-chromium.tar.gz -C dist chromium",
+    "test": "bun x vitest",
+    "test:e2e": "bun x playwright test",
+    "test:e2e:headful": "RZN_PW_HEADFUL=1 bun x playwright test"
+  },
+  "dependencies": {
+    "zod": "^3.22.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.251",
+    "@types/node": "^25.7.0",
+    "@types/webextension-polyfill": "^0.10.0",
+    "ts-node": "^10.9.1",
+    "tsx": "^4.7.0",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.12",
+    "vitest": "^4.1.6",
+    "playwright": "^1.55.0",
+    "@playwright/test": "^1.55.0",
+    "webextension-polyfill": "^0.10.0"
+  }
+}

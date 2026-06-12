@@ -1,0 +1,185 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "finance/stock_price",
+  "name": "Yahoo Finance: Quote",
+  "version": "2.0.0",
+  "system": "finance",
+  "capability": "finance.stock.price",
+  "summary": "Yahoo Finance quote lookup for any ticker symbol. Works with stocks, ETFs, indices, crypto, forex, futures.",
+  "description": "Fetch a current quote for any Yahoo Finance ticker \u2014 equities, ETFs, indices (^GSPC), crypto (BTC-USD), forex (EURUSD=X), futures, mutual funds. Returns price, change, key statistics. JS-first via fin-streamer + quote-statistics; falls back to body parsing only if those are missing.",
+  "params": {
+    "properties": {
+      "ticker": {
+        "kind": "string",
+        "required": true,
+        "description": "Yahoo Finance ticker. Stocks/ETFs use the bare symbol (AAPL, SPY). Indices prefix with ^ (^GSPC, ^DJI, ^IXIC). Crypto uses BASE-QUOTE (BTC-USD, ETH-USD). Forex uses BASEQUOTE=X (EURUSD=X). Non-US listings use exchange suffix (BMW.DE, 7203.T)."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "finance.yahoo.com"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "finance.yahoo.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "finance.yahoo.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "finance.yahoo.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://finance.yahoo.com/quote/{ticker}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Yahoo Finance quote page"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "[data-testid='qsp-price'], fin-streamer[data-field='regularMarketPrice'], [data-testid='quote-statistics']"
+        }
+      },
+      "name": "Wait for the price widget",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow late stats to render",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "{ticker}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const ticker = cleanArg(arg0); if (!ticker) throw new Error('ticker is required'); const norm = (v) => v && String(v).trim() ? String(v).replace(/\\s+/g, ' ').trim() : 'N/A'; const titleMatch = document.title.match(/^(.*?)\\s*\\(([^)]+)\\)/); const companyName = titleMatch ? titleMatch[1].trim() : 'N/A'; const txt = (sel) => (document.querySelector(sel)?.textContent || '').trim(); const stream = (field) => { const list = Array.from(document.querySelectorAll(`fin-streamer[data-field=\"${field}\"]`)).filter((el) => (el.textContent || '').trim()); const exact = list.find((el) => (el.getAttribute('data-symbol') || '').toUpperCase() === ticker.toUpperCase()); return (exact || list[0])?.textContent || ''; }; let price = txt('[data-testid=\"qsp-price\"]'); let change = txt('[data-testid=\"qsp-price-change\"]'); let pct = txt('[data-testid=\"qsp-price-change-percent\"]'); if (pct) { pct = pct.replace(/^\\(/, '').replace(/\\)$/, ''); } if (!price) { const list = Array.from(document.querySelectorAll('fin-streamer[data-field=\"regularMarketPrice\"]')).filter((el) => (el.textContent || '').trim()); const exact = list.find((el) => (el.getAttribute('data-symbol') || '').toUpperCase() === ticker.toUpperCase()); price = (exact?.textContent || '').trim(); if (!change) change = (stream('regularMarketChange') || '').trim(); if (!pct) pct = (stream('regularMarketChangePercent') || '').trim(); } if (!price) { const body = (document.body?.innerText || '').replace(/\\r/g, ''); const m = body.match(new RegExp(`\\\\(${ticker.replace(/[.^$*+?()\\[\\]\\\\]/g, '\\\\$&')}\\\\)\\\\s*([0-9][0-9,]*(?:\\\\.[0-9]+)?)\\\\s*([+-][0-9,]*(?:\\\\.[0-9]+)?)\\\\s*(\\\\([+-]?[0-9.,]+%\\\\))`)); if (m) { price = m[1]; change = m[2]; pct = m[3]; } } const stats = new Map(Array.from(document.querySelectorAll('[data-testid=\"quote-statistics\"] li')).map((li) => { const label = (li.querySelector('.label')?.textContent || '').replace(/\\s+/g, ' ').trim(); const value = (li.querySelector('.value')?.textContent || '').replace(/\\s+/g, ' ').trim(); return [label, value]; }).filter(([l]) => l)); const result = { ticker, company_name: norm(companyName), current_price: norm(price), price_change: norm(change), percent_change: norm(pct), previous_close: norm(stats.get('Previous Close')), open: norm(stats.get('Open')), days_range: norm(stats.get(\"Day's Range\")), week_52_range: norm(stats.get('52 Week Range')), volume: norm(stats.get('Volume')), market_cap: norm(stats.get('Market Cap (intraday)') || stats.get('Market Cap')), pe_ratio: norm(stats.get('PE Ratio (TTM)')), eps: norm(stats.get('EPS (TTM)')) }; if (result.current_price === 'N/A' || result.company_name === 'N/A') { throw new Error('Unable to parse Yahoo quote header for ' + ticker); } return result;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract quote + key statistics"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "ticker": { "type": "string" },
+        "company_name": { "type": "string" },
+        "current_price": { "type": "string" },
+        "price_change": { "type": "string" },
+        "percent_change": { "type": "string" },
+        "previous_close": { "type": "string" },
+        "open": { "type": "string" },
+        "days_range": { "type": "string" },
+        "week_52_range": { "type": "string" },
+        "volume": { "type": "string" },
+        "market_cap": { "type": "string" },
+        "pe_ratio": { "type": "string" },
+        "eps": { "type": "string" }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Yahoo Finance quote lookup for any ticker symbol. Works with stocks, ETFs, indices, crypto, forex, futures.",
+    "parameters": {
+      "ticker": "Yahoo Finance ticker. Stocks/ETFs use the bare symbol (AAPL, SPY). Indices prefix with ^ (^GSPC, ^DJI, ^IXIC). Crypto uses BASE-QUOTE (BTC-USD, ETH-USD). Forex uses BASEQUOTE=X (EURUSD=X). Non-US listings use exchange suffix (BMW.DE, 7203.T)."
+    },
+    "examples": [
+      {
+        "description": "US equity",
+        "command": "rzn-browser run finance stock-price --param ticker=\"AAPL\""
+      },
+      {
+        "description": "Index (S&P 500)",
+        "command": "rzn-browser run finance stock-price --param ticker=\"^GSPC\""
+      },
+      {
+        "description": "Crypto",
+        "command": "rzn-browser run finance stock-price --param ticker=\"BTC-USD\""
+      },
+      {
+        "description": "Forex (EUR/USD)",
+        "command": "rzn-browser run finance stock-price --param ticker=\"EURUSD=X\""
+      }
+    ],
+    "returns": [
+      "Object: { ticker, company_name, current_price, price_change, percent_change, previous_close, open, days_range, week_52_range, volume, market_cap, pe_ratio, eps }. Fields not present for the asset class (e.g. PE ratio for crypto) come back as 'N/A'."
+    ],
+    "notes": [
+      "JS-first: reads fin-streamer[data-field=...] and [data-testid='quote-statistics'] li. These are stable Yahoo widgets \u2014 selectors have outlasted multiple page redesigns.",
+      "Body-text regex parsing was the fallback in v1; v2 keeps a slimmer fallback only for the price/change triple in case fin-streamer fails to mount.",
+      "Pair with finance/yahoo-news for headlines on the same ticker.",
+      "For Google Finance as an alternate source, use google/finance (workflows/google/google-finance.json \u2014 supports any TICKER:EXCHANGE)."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "finance/stock-price.json",
+    "legacy_system_id": "finance"
+  }
+}

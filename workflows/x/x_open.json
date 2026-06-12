@@ -1,0 +1,396 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "x/open",
+  "name": "X: Open URL",
+  "version": "1.0.0",
+  "system": "x",
+  "capability": "x.open",
+  "summary": "Open any X URL (post, longform article, or same-author thread) read-only and return a unified markdown rendering plus media + linked-page URLs.",
+  "description": "Open any X URL (post, longform article, or same-author thread) and return a unified markdown rendering plus media + linked-page URLs. Auto-detects kind from URL + DOM. Use this for any read-only `/<handle>/status/<id>` or `/<handle>/article/<id>` URL when you want the body as markdown. Do not use to fetch timelines (`x_search_posts`, `x_profile_posts`, `x_home_timeline_digest`) or to act on a post (`x_like_post`, `x_reply_post`).",
+  "params": {
+    "properties": {
+      "url": {
+        "kind": "string",
+        "required": true,
+        "description": "Full X URL: /<handle>/status/<id>, /<handle>/article/<id>, or any URL within a same-author thread."
+      },
+      "mode": {
+        "kind": "string",
+        "required": false,
+        "default": "auto",
+        "enum_values": [
+          "auto",
+          "post",
+          "article",
+          "thread"
+        ],
+        "description": "Force kind detection. Default auto picks from URL + DOM."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "download",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "pbs.twimg.com",
+        "video.twimg.com",
+        "x.com",
+        "*"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "pbs.twimg.com",
+        "video.twimg.com",
+        "x.com",
+        "*"
+      ]
+    },
+    {
+      "class": "file_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": []
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "pbs.twimg.com",
+        "video.twimg.com",
+        "x.com",
+        "*"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": true,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the target URL in a fresh tab",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the page to settle",
+      "timeout_ms": 2000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "main article, main section[role='region'], main"
+        }
+      },
+      "name": "Wait for primary main column",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst forcedMode = (cleanArg(arg0) || 'auto').toLowerCase();\nconst inputUrl = cleanArg(arg1) || location.href;\nconst urlObj = (() => { try { return new URL(location.href); } catch { return null; } })();\nconst path = urlObj ? urlObj.pathname : location.pathname;\nconst statusMatch = path.match(/^\\/([^/]+)\\/status\\/(\\d+)/i);\nconst articleMatch = path.match(/^\\/([^/]+)\\/article\\/(\\d+)/i);\nconst handle = (statusMatch || articleMatch || [])[1] || '';\nconst id = (statusMatch || articleMatch || [])[2] || '';\nlet kind = 'post';\nlet redirectTo = '';\nif (forcedMode !== 'auto') {\n  kind = forcedMode;\n} else if (articleMatch) {\n  kind = 'article';\n} else if (statusMatch) {\n  const articleAnchor = Array.from(document.querySelectorAll(\"a[href*='/article/']\")).find((a) => /\\/article\\/\\d+/i.test(a.getAttribute('href') || ''));\n  if (articleAnchor) {\n    const target = new URL(articleAnchor.getAttribute('href'), location.origin);\n    if (target.pathname.includes('/article/' + id) || target.pathname.match(/\\/article\\/\\d+/)) {\n      kind = 'article';\n      redirectTo = target.toString();\n    }\n  }\n  if (kind !== 'article') {\n    const sameAuthorPosts = Array.from(document.querySelectorAll(\"main article[data-testid='tweet'], main article[role='article']\")).filter((art) => {\n      const link = art.querySelector(\"a[href*='/status/'] time\")?.closest('a');\n      const href = link?.getAttribute('href') || '';\n      const m = href.match(/^\\/([^/]+)\\/status\\//i);\n      return m && m[1].toLowerCase() === handle.toLowerCase();\n    });\n    if (sameAuthorPosts.length >= 2) kind = 'thread';\n  }\n}\nsessionStorage.setItem('__rzn_x_open_meta', JSON.stringify({ kind, handle, id, input_url: inputUrl, redirect_to: redirectTo }));\nif (redirectTo && location.href !== redirectTo) {\n  setTimeout(() => window.location.assign(redirectTo), 0);\n  return { kind, redirected: true, target_url: redirectTo, handle, status_id: id };\n}\nreturn { kind, redirected: false, target_url: location.href, handle, status_id: id };",
+          "args": [
+            "{mode}",
+            "{url}"
+          ]
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Probe kind and redirect to /article/<id> when needed",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow redirect (if any) to settle",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present after redirect"
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "main article, main section[role='region'], main"
+        }
+      },
+      "name": "Wait for content surface",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst meta = (() => { try { return JSON.parse(sessionStorage.getItem('__rzn_x_open_meta') || '{}'); } catch { return {}; } })();\nconst kind = meta.kind || 'post';\nconst handle = (meta.handle || '').toLowerCase();\nconst statusId = meta.id || '';\nconst inputUrl = meta.input_url || location.href;\nconst normalize = (v) => (v || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim();\nconst normalizeUrl = (raw) => { if (!raw) return ''; try { return new URL(raw, location.origin).toString(); } catch { return String(raw); } };\nconst unique = (a) => Array.from(new Set((a || []).filter(Boolean)));\nconst readCookie = (name) => document.cookie.split(';').map((p) => p.trim()).find((p) => p.startsWith(name + '='))?.slice(name.length + 1) || '';\nconst toIso = (v) => { const p = Date.parse(v || ''); return Number.isFinite(p) ? new Date(p).toISOString() : null; };\nconst isVisible = (n) => { if (!(n instanceof Element)) return false; const s = getComputedStyle(n); if (s.display === 'none' || s.visibility === 'hidden' || Number(s.opacity || '1') === 0) return false; const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0; };\nconst escapeMd = (s) => (s || '').replace(/([\\\\`*_{}\\[\\]()#+!\\-])/g, '\\\\$1');\nconst BLOCK = new Set(['ADDRESS','ARTICLE','ASIDE','BLOCKQUOTE','DETAILS','DIALOG','DIV','DL','FIELDSET','FIGURE','FOOTER','FORM','HEADER','HR','MAIN','NAV','SECTION','TABLE','HEADER']);\nconst SKIP = new Set(['SCRIPT','STYLE','NOSCRIPT','SVG','BUTTON','INPUT','TEXTAREA','SELECT','OPTION','TEMPLATE']);\nconst htmlToMd = (root) => {\n  if (!root) return '';\n  const out = [];\n  const walk = (node, prefix) => {\n    if (!node) return '';\n    if (node.nodeType === 3) return node.nodeValue.replace(/\\s+/g, ' ');\n    if (node.nodeType !== 1) return '';\n    const tag = node.tagName;\n    if (SKIP.has(tag)) return '';\n    if (tag === 'BR') return '  \\n';\n    if (tag === 'HR') return '\\n\\n---\\n\\n';\n    if (tag === 'IMG') {\n      const src = node.currentSrc || node.getAttribute('src') || '';\n      if (!/^https?:/i.test(src)) return '';\n      const alt = (node.getAttribute('alt') || '').replace(/[\\[\\]]/g, '');\n      return '![' + alt + '](' + src + ')';\n    }\n    if (/^H[1-6]$/.test(tag)) {\n      const level = Number(tag[1]);\n      const inner = childMd(node, '');\n      return '\\n\\n' + '#'.repeat(level) + ' ' + inner.trim() + '\\n\\n';\n    }\n    if (tag === 'P') {\n      const inner = childMd(node, '');\n      return inner.trim() ? '\\n\\n' + inner.trim() + '\\n\\n' : '';\n    }\n    if (tag === 'BLOCKQUOTE') {\n      const inner = childMd(node, '').trim();\n      return inner ? '\\n\\n' + inner.split('\\n').map((l) => '> ' + l).join('\\n') + '\\n\\n' : '';\n    }\n    if (tag === 'PRE') {\n      const text = node.textContent || '';\n      return '\\n\\n```\\n' + text.replace(/\\n+$/, '') + '\\n```\\n\\n';\n    }\n    if (tag === 'CODE' && node.parentElement?.tagName !== 'PRE') {\n      return '`' + (node.textContent || '').replace(/`/g, '\\\\`') + '`';\n    }\n    if (tag === 'STRONG' || tag === 'B') {\n      return '**' + childMd(node, '').trim() + '**';\n    }\n    if (tag === 'EM' || tag === 'I') {\n      return '*' + childMd(node, '').trim() + '*';\n    }\n    if (tag === 'A') {\n      const href = normalizeUrl(node.getAttribute('href') || '');\n      const text = childMd(node, '').trim();\n      if (!href) return text;\n      if (!text) return '<' + href + '>';\n      return '[' + text + '](' + href + ')';\n    }\n    if (tag === 'UL' || tag === 'OL') {\n      const items = Array.from(node.children).filter((c) => c.tagName === 'LI');\n      const lines = items.map((li, i) => {\n        const marker = tag === 'OL' ? (i + 1) + '. ' : '- ';\n        const inner = childMd(li, '').trim().replace(/\\n/g, '\\n  ');\n        return marker + inner;\n      });\n      return '\\n\\n' + lines.join('\\n') + '\\n\\n';\n    }\n    if (tag === 'LI') return childMd(node, '');\n    return childMd(node, '');\n  };\n  const childMd = (node, prefix) => {\n    let s = '';\n    for (const child of node.childNodes) s += walk(child, prefix);\n    return s;\n  };\n  let md = walk(root, '');\n  return md.replace(/\\n{3,}/g, '\\n\\n').trim();\n};\n\n// ---------- ARTICLE ----------\nconst extractArticle = () => {\n  const candidates = [document.querySelector('main article'), document.querySelector('article'), document.querySelector('main')].filter(Boolean);\n  let best = null, bestScore = -Infinity;\n  for (const c of candidates) {\n    const scoped = [c, ...c.querySelectorAll('article, section, div')].slice(0, 200);\n    for (const n of scoped) {\n      if (!isVisible(n)) continue;\n      const text = normalize(n.textContent || '');\n      if (text.length < 200) continue;\n      const ps = Array.from(n.querySelectorAll('p')).filter((p) => normalize(p.textContent || '').length >= 40).length;\n      const hs = n.querySelectorAll('h1, h2, h3').length;\n      const imgs = n.querySelectorAll('img').length;\n      let score = text.length * 0.02 + ps * 50 + hs * 20 + imgs * 8;\n      const meta = (n.id + ' ' + n.className + ' ' + (n.getAttribute('data-testid') || '')).toLowerCase();\n      if (/article|content|body|story|post/.test(meta)) score += 80;\n      if (/reply|toolbar|nav|footer|sidebar|menu|modal|share/.test(meta)) score -= 120;\n      if (n.tagName === 'ARTICLE') score += 180;\n      if (score > bestScore) { bestScore = score; best = n; }\n    }\n  }\n  const root = best || document.querySelector('main article') || document.querySelector('main');\n  const titleEl = document.querySelector('main h1') || root?.querySelector('h1');\n  const ogTitleRaw = normalize(document.querySelector(\"meta[property='og:title']\")?.getAttribute('content') || '');\n  const docTitleRaw = normalize(document.title || '').replace(/\\s+\\/\\s+X\\s*$/i, '').replace(/\\s+on X.*$/i, '');\n  const headerInArticle = normalize(root?.querySelector('h1')?.textContent || titleEl?.textContent || '');\n  const cleanTitle = (raw) => normalize(raw || '').replace(/\\s+\\/\\s+X\\s*$/i, '').replace(/\\s+on X:.*$/i, '');\n  const titleCandidates = [headerInArticle, cleanTitle(ogTitleRaw), docTitleRaw].filter((s) => s && s.toLowerCase() !== 'x');\n  const title = titleCandidates[0] || cleanTitle(ogTitleRaw) || docTitleRaw || '';\n  const subtitle = normalize(root?.querySelector('h2')?.textContent || document.querySelector(\"meta[name='description']\")?.getAttribute('content') || '');\n  const publishedAt = root?.querySelector('time')?.getAttribute('datetime') || document.querySelector(\"meta[property='article:published_time']\")?.getAttribute('content') || null;\n  const authorLink = root?.querySelector(\"div[data-testid='User-Name'] a[href^='/']\") || document.querySelector(\"main div[data-testid='User-Name'] a[href^='/']\");\n  const authorHandle = (() => {\n    if (authorLink) {\n      const href = authorLink.getAttribute('href') || '';\n      const m = href.match(/^\\/([A-Za-z0-9_]+)/);\n      if (m) return m[1];\n    }\n    return handle || '';\n  })();\n  const authorName = normalize(root?.querySelector(\"div[data-testid='User-Name'] span\")?.textContent || authorLink?.textContent || '');\n  const imageUrls = unique(Array.from(root.querySelectorAll('img')).map((img) => img.currentSrc || img.getAttribute('src') || '').map(normalizeUrl).filter((s) => /^https?:/i.test(s) && !/profile_images|emoji|abs-/.test(s)));\n  const videoUrls = unique([...root.querySelectorAll('video')].map((v) => v.currentSrc || v.getAttribute('src') || v.poster || '').concat([...root.querySelectorAll('video source')].map((s) => s.getAttribute('src') || '')).map(normalizeUrl).filter((s) => /^https?:/i.test(s)));\n  const externalLinks = unique(Array.from(root.querySelectorAll('a[href]')).map((a) => normalizeUrl(a.getAttribute('href') || a.href)).filter((href) => { if (!/^https?:/i.test(href)) return false; try { const p = new URL(href); if (p.hostname !== location.hostname) return true; return !/\\/(article|status|photo|video)\\//i.test(p.pathname); } catch { return false; } }));\n  // Build article subtree clone, excluding header/toolbar children\n  const cloneRoot = root.cloneNode(true);\n  cloneRoot.querySelectorAll(\"div[data-testid='User-Name'], [aria-label='Reply'], [data-testid='reply'], [data-testid='retweet'], [data-testid='like'], [data-testid='unlike'], [role='group'], nav, [aria-label='Timeline: Conversation']\").forEach((n) => n.remove());\n  const md = htmlToMd(cloneRoot);\n  const header = '# ' + (title || 'Untitled') + '\\n\\n' + (subtitle ? '> ' + subtitle + '\\n\\n' : '') + '**' + (authorName || authorHandle) + (authorHandle ? ' · @' + authorHandle : '') + (publishedAt ? ' · ' + publishedAt : '') + '**\\n\\n[View on X](' + location.href + ')\\n\\n---\\n\\n';\n  return {\n    kind: 'article',\n    url: location.href,\n    requested_url: inputUrl,\n    title: title || null,\n    subtitle: subtitle || null,\n    author: authorName || null,\n    author_handle: authorHandle || null,\n    posted_at: publishedAt,\n    markdown: header + md,\n    image_urls: imageUrls,\n    video_urls: videoUrls,\n    external_links: externalLinks,\n    asset_urls: unique([...imageUrls, ...videoUrls]),\n    resolved_via: 'article-dom'\n  };\n};\n\n// ---------- POST (single) via GraphQL + DOM fallback ----------\nconst pickBestVariant = (variants) => { if (!Array.isArray(variants)) return ''; const c = variants.filter((v) => /^video\\//i.test(v?.content_type || '') && /^https?:/i.test(v?.url || '')); c.sort((a, b) => Number(b?.bitrate || 0) - Number(a?.bitrate || 0)); return c[0]?.url || ''; };\nconst mediaFromLegacy = (legacy) => { const m = legacy?.extended_entities?.media || legacy?.entities?.media || []; const i = [], v = [], p = []; for (const x of m) { if (!x) continue; if (x.type === 'photo' && /^https?:/i.test(x.media_url_https || '')) i.push(x.media_url_https); if (x.type === 'video' || x.type === 'animated_gif') { const u = pickBestVariant(x.video_info?.variants); if (u) v.push(u); } if (/^https?:/i.test(x.expanded_url || '')) p.push(x.expanded_url); } return { image_urls: unique(i), video_urls: unique(v), media_permalink_urls: unique(p) }; };\nconst urlsFromLegacy = (legacy) => unique((legacy?.entities?.urls || []).map((u) => u?.expanded_url || '').filter((h) => /^https?:/i.test(h)));\nconst findTweetResult = (root, target) => { const stack = [root], seen = new Set(); while (stack.length) { const cur = stack.pop(); if (!cur || typeof cur !== 'object' || seen.has(cur)) continue; seen.add(cur); const r = cur?.result; if (r && typeof r === 'object') stack.push(r); const t = cur?.tweet; if (t && typeof t === 'object') stack.push(t); const ic = cur?.itemContent?.tweet_results?.result; if (ic && typeof ic === 'object') stack.push(ic); const legacy = cur?.legacy; const id = String(cur?.rest_id || cur?.id_str || legacy?.id_str || ''); if (legacy && id === target) return cur; if (Array.isArray(cur)) { for (const x of cur) stack.push(x); continue; } for (const v of Object.values(cur)) if (v && typeof v === 'object') stack.push(v); } return null; };\nconst BEARER = decodeURIComponent('AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA');\nconst fetchTweetGraphql = async (id) => { if (!id) return null; const ct0 = readCookie('ct0'); const op = { queryId: 'zy39CwTyYhU-_0LP7dljjg', name: 'TweetResultByRestId', variables: { tweetId: id, withCommunity: false, includePromotedContent: false, withVoice: true }, features: { creator_subscriptions_tweet_preview_api_enabled: true, premium_content_api_read_enabled: false, communities_web_enable_tweet_community_results_fetch: true, c9s_tweet_anatomy_moderator_badge_enabled: true, responsive_web_grok_analyze_button_fetch_trends_enabled: false, responsive_web_grok_analyze_post_followups_enabled: false, responsive_web_jetfuel_frame: true, responsive_web_grok_share_attachment_enabled: true, responsive_web_grok_annotations_enabled: true, articles_preview_enabled: true, responsive_web_edit_tweet_api_enabled: true, graphql_is_translatable_rweb_tweet_is_translatable_enabled: true, view_counts_everywhere_api_enabled: true, longform_notetweets_consumption_enabled: true, responsive_web_twitter_article_tweet_consumption_enabled: true, tweet_awards_web_tipping_enabled: false, content_disclosure_indicator_enabled: true, content_disclosure_ai_generated_indicator_enabled: true, responsive_web_grok_show_grok_translated_post: false, responsive_web_grok_analysis_button_from_backend: true, post_ctas_fetch_enabled: true, freedom_of_speech_not_reach_fetch_enabled: true, standardized_nudges_misinfo: true, tweet_with_visibility_results_prefer_gql_limited_actions_policy_enabled: true, longform_notetweets_rich_text_read_enabled: true, longform_notetweets_inline_media_enabled: false, profile_label_improvements_pcf_label_in_post_enabled: true, responsive_web_profile_redirect_enabled: false, rweb_tipjar_consumption_enabled: false, verified_phone_label_enabled: true, responsive_web_grok_image_annotation_enabled: true, responsive_web_grok_imagine_annotation_enabled: true, responsive_web_grok_community_note_auto_translation_is_enabled: false, responsive_web_graphql_skip_user_profile_image_extensions_enabled: false, responsive_web_graphql_timeline_navigation_enabled: true, responsive_web_enhance_cards_enabled: false }, fieldToggles: { withArticleRichContentState: false, withArticlePlainText: false, withArticleSummaryText: false, withArticleVoiceOver: false, withGrokAnalyze: false, withDisallowedReplyControls: false, withPayments: false, withAuxiliaryUserLabels: false } }; const params = new URLSearchParams(); params.set('variables', JSON.stringify(op.variables)); params.set('features', JSON.stringify(op.features)); params.set('fieldToggles', JSON.stringify(op.fieldToggles)); const headers = { accept: 'application/json, text/plain, */*', authorization: 'Bearer ' + BEARER, 'x-twitter-active-user': 'yes', 'x-twitter-client-language': document.documentElement.lang || 'en' }; if (ct0) { headers['x-csrf-token'] = ct0; headers['x-twitter-auth-type'] = 'OAuth2Session'; } try { const resp = await fetch('https://api.x.com/graphql/' + op.queryId + '/' + op.name + '?' + params.toString(), { credentials: 'include', headers, method: 'GET', mode: 'cors' }); if (!resp.ok) return null; const json = await resp.json(); const t = findTweetResult(json, id); if (!t) return null; const legacy = t.legacy || {}; const m = mediaFromLegacy(legacy); const noteText = t?.note_tweet?.note_tweet_results?.result?.text; const text = normalize(noteText || legacy.full_text || ''); const authorName = normalize(t?.core?.user_results?.result?.legacy?.name || ''); const authorHandle = normalize(t?.core?.user_results?.result?.legacy?.screen_name || ''); return { author_name: authorName, author_handle: authorHandle, text, posted_at: toIso(legacy.created_at), image_urls: m.image_urls, video_urls: m.video_urls, media_permalink_urls: m.media_permalink_urls, external_links: urlsFromLegacy(legacy) }; } catch { return null; } };\nconst extractPost = async () => {\n  const article = document.querySelector(\"main article[data-testid='tweet']\") || document.querySelector(\"main article[role='article']\") || document.querySelector('main article');\n  const gql = await fetchTweetGraphql(statusId);\n  const domImgs = article ? unique(Array.from(article.querySelectorAll('img')).map((i) => i.currentSrc || i.getAttribute('src') || '').filter((s) => /^https?:/i.test(s) && !/profile_images|emoji/.test(s))) : [];\n  const domVids = article ? unique([...Array.from(article.querySelectorAll('video')).map((v) => v.currentSrc || v.getAttribute('src') || v.poster || ''), ...Array.from(article.querySelectorAll('video source')).map((s) => s.getAttribute('src') || '')].filter((s) => /^https?:/i.test(s))) : [];\n  const domLinks = article ? unique(Array.from(article.querySelectorAll('a[href]')).map((a) => normalizeUrl(a.getAttribute('href') || a.href)).filter((h) => /^https?:/i.test(h) && !h.includes('/status/') && !h.includes('/photo/') && !h.includes('/video/'))) : [];\n  const text = gql?.text || (article ? normalize(Array.from(article.querySelectorAll(\"div[data-testid='tweetText'], div[lang]\")).map((n) => n.textContent || '').join('\\n\\n')) : '');\n  const author = gql?.author_name || (article ? normalize(article.querySelector(\"div[data-testid='User-Name']\")?.textContent || '') : '');\n  const authorHandle = gql?.author_handle || handle || '';\n  const postedAt = gql?.posted_at || (article ? article.querySelector('time')?.getAttribute('datetime') || null : null);\n  const imageUrls = unique([...(gql?.image_urls || []), ...domImgs]);\n  const videoUrls = unique([...(gql?.video_urls || []), ...domVids]);\n  const externalLinks = unique([...(gql?.external_links || []), ...domLinks]);\n  const md = '**' + (author || authorHandle || 'Unknown') + (authorHandle ? ' · @' + authorHandle : '') + (postedAt ? ' · ' + postedAt : '') + '**\\n\\n[View on X](' + location.href + ')\\n\\n' + (text || '') + (imageUrls.length ? '\\n\\n' + imageUrls.map((u) => '![](' + u + ')').join('\\n\\n') : '') + (videoUrls.length ? '\\n\\nVideos:\\n' + videoUrls.map((u) => '- ' + u).join('\\n') : '');\n  return {\n    kind: 'post',\n    url: location.href,\n    requested_url: inputUrl,\n    title: null,\n    subtitle: null,\n    author: author || null,\n    author_handle: authorHandle || null,\n    posted_at: postedAt,\n    markdown: md,\n    image_urls: imageUrls,\n    video_urls: videoUrls,\n    external_links: externalLinks,\n    asset_urls: unique([...imageUrls, ...videoUrls]),\n    resolved_via: gql ? 'TweetResultByRestId' : 'dom'\n  };\n};\n\n// ---------- THREAD ----------\nconst extractThread = async () => {\n  const targetHandle = handle.toLowerCase();\n  const collected = new Map();\n  const collectVisible = () => {\n    for (const art of document.querySelectorAll(\"main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article\")) {\n      const link = art.querySelector(\"a[href*='/status/'] time\")?.closest('a') || art.querySelector(\"a[href*='/status/']\");\n      const href = link?.getAttribute('href') || '';\n      const m = href.match(/^\\/([^/]+)\\/status\\/(\\d+)/i);\n      if (!m) continue;\n      if (targetHandle && m[1].toLowerCase() !== targetHandle) continue;\n      const url = new URL('/' + m[1] + '/status/' + m[2], location.origin).toString();\n      const text = normalize(Array.from(art.querySelectorAll(\"div[data-testid='tweetText'], div[lang]\")).map((n) => n.textContent || '').join('\\n\\n'));\n      const postedAt = art.querySelector('time')?.getAttribute('datetime') || null;\n      const imgs = unique(Array.from(art.querySelectorAll('img')).map((i) => i.currentSrc || i.getAttribute('src') || '').filter((s) => /^https?:/i.test(s) && !/profile_images|emoji/.test(s)));\n      const vids = unique([...art.querySelectorAll('video')].map((v) => v.currentSrc || v.getAttribute('src') || v.poster || '').filter((s) => /^https?:/i.test(s)));\n      const links = unique(Array.from(art.querySelectorAll('a[href]')).map((a) => normalizeUrl(a.getAttribute('href') || a.href)).filter((h) => /^https?:/i.test(h) && !h.includes('/status/') && !h.includes('/photo/') && !h.includes('/video/')));\n      const existing = collected.get(url);\n      const candidate = { post_url: url, posted_at: postedAt, text, image_urls: imgs, video_urls: vids, external_links: links };\n      if (!existing || candidate.text.length > existing.text.length) collected.set(url, candidate);\n    }\n  };\n  const expandShowMore = () => { for (const btn of document.querySelectorAll(\"button[data-testid='tweet-text-show-more-link'], [role='button'][data-testid='tweet-text-show-more-link']\")) { try { btn.click(); } catch {} } };\n  window.scrollTo(0, 0);\n  await sleep(500);\n  for (let i = 0; i < 25; i++) {\n    collectVisible();\n    expandShowMore();\n    const before = window.scrollY;\n    window.scrollBy(0, Math.max(window.innerHeight * 0.9, 800));\n    await sleep(1100);\n    if (Math.abs(window.scrollY - before) < 16) break;\n  }\n  collectVisible();\n  const posts = Array.from(collected.values()).sort((a, b) => { const av = a.posted_at ? Date.parse(a.posted_at) : Number.MAX_SAFE_INTEGER; const bv = b.posted_at ? Date.parse(b.posted_at) : Number.MAX_SAFE_INTEGER; return av - bv; });\n  const allImgs = unique(posts.flatMap((p) => p.image_urls));\n  const allVids = unique(posts.flatMap((p) => p.video_urls));\n  const allLinks = unique(posts.flatMap((p) => p.external_links));\n  const headerLine = '**@' + (handle || 'unknown') + '** · ' + posts.length + ' posts · [View on X](' + location.href + ')\\n\\n---\\n\\n';\n  const body = posts.map((p, i) => {\n    return '### ' + (i + 1) + '/' + posts.length + (p.posted_at ? ' · ' + p.posted_at : '') + '\\n\\n' + p.text + (p.image_urls.length ? '\\n\\n' + p.image_urls.map((u) => '![](' + u + ')').join('\\n\\n') : '') + '\\n\\n[link](' + p.post_url + ')';\n  }).join('\\n\\n---\\n\\n');\n  return {\n    kind: 'thread',\n    url: location.href,\n    requested_url: inputUrl,\n    title: null,\n    subtitle: null,\n    author: null,\n    author_handle: handle || null,\n    posted_at: posts[0]?.posted_at || null,\n    markdown: headerLine + body,\n    posts,\n    total_posts: posts.length,\n    image_urls: allImgs,\n    video_urls: allVids,\n    external_links: allLinks,\n    asset_urls: unique([...allImgs, ...allVids]),\n    resolved_via: 'thread-scroll'\n  };\n};\n\nlet result;\nif (kind === 'article') result = extractArticle();\nelse if (kind === 'thread') result = await extractThread();\nelse result = await extractPost();\nsessionStorage.removeItem('__rzn_x_open_meta');\nreturn result;"
+        },
+        "side_effects": [
+          "read_only",
+          "external_read",
+          "network_access"
+        ]
+      },
+      "name": "Extract content + convert to markdown",
+      "timeout_ms": 45000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "post",
+            "article",
+            "thread"
+          ]
+        },
+        "url": {
+          "type": "string"
+        },
+        "requested_url": {
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "subtitle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "author": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "author_handle": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "posted_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "markdown": {
+          "type": "string"
+        },
+        "image_urls": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "video_urls": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "external_links": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "asset_urls": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "posts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "post_url": {
+                "type": "string"
+              },
+              "posted_at": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "text": {
+                "type": "string"
+              },
+              "image_urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "video_urls": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "external_links": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "total_posts": {
+          "type": "integer"
+        },
+        "resolved_via": {
+          "type": "string"
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s8",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open any X URL (post, longform article, or same-author thread) read-only and return a unified markdown rendering plus media + linked-page URLs.",
+    "parameters": {
+      "mode": "Force kind: auto | post | article | thread. Default auto.",
+      "url": "Full X URL: /<handle>/status/<id>, /<handle>/article/<id>, or any URL within a same-author thread."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run x open --param url=\"https://x.com/addyosmani/status/2053231239721885918\"",
+        "description": "Auto-detect kind, return markdown + asset URLs."
+      },
+      {
+        "command": "rzn-browser run x open --param url=\"https://x.com/elonmusk/status/2046981493197586714\" --param mode=thread",
+        "description": "Force thread expansion mode regardless of detection."
+      },
+      {
+        "command": "rzn-browser run x open --param url=\"https://x.com/mem0ai/article/2039041449854124229\" --output-file ./article.md --download-dir ./assets/",
+        "description": "Save markdown to disk and download all images + videos + linked pages locally."
+      }
+    ],
+    "returns": [
+      "{ kind: 'post'|'article'|'thread', url, requested_url, title, subtitle, author, author_handle, posted_at, markdown, image_urls[], video_urls[], external_links[], asset_urls[], posts?, total_posts?, resolved_via }."
+    ],
+    "notes": [
+      "Read-only. Never posts, replies, or likes.",
+      "Auto-detects: /article/<id> -> article; /status/<id> with article-card -> article (auto-redirects); /status/<id> with 2+ same-author posts in main column -> thread; otherwise post.",
+      "For longform articles with the input URL in /status/ form, the page is redirected to /article/<id> mid-workflow via window.location.assign.",
+      "Use `--output-file <path>` (CLI flag) to write the markdown body to disk; use `--download-dir <dir>` to download all images, videos, and linked pages to a folder with a manifest.json mapping URL -> local path.",
+      "Replaces the deprecated `x_open_post`, `x_open_article`, and `x_thread` workflows."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "x/x_open.json",
+    "legacy_system_id": "x"
+  }
+}

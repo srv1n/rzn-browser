@@ -1,0 +1,112 @@
+{
+  "schema_version": "rzn.browser.social.profile.v1",
+  "connector_id": "x",
+  "display_name": "X",
+  "channel": "browser",
+  "auth_model": "browser_session_reuse",
+  "catalog_path": "resources/cards/social/x_v1.json",
+  "default_approval_mode": "ask_user",
+  "supported_approval_modes": ["ask_user", "notify", "auto_continue", "noop"],
+  "operations": {
+    "home_timeline_digest": {
+      "card_id": "x.home_timeline_digest",
+      "workflow_id": "x_home_timeline_digest",
+      "workflow_path": "workflows/x/x_home_timeline_digest.json",
+      "mutating": false,
+      "approval_required": false,
+      "required_args": [],
+      "notes": "Reads the authenticated home timeline in a fresh tab and returns a bounded digest."
+    },
+    "open": {
+      "card_id": "x.open",
+      "workflow_id": "x_open",
+      "workflow_path": "workflows/x/x_open.json",
+      "mutating": false,
+      "approval_required": false,
+      "required_args": ["url"],
+      "optional_args": ["mode"],
+      "notes": "Opens any X URL (post, article, thread) and returns markdown + media + linked-page URLs. Auto-detects kind."
+    },
+    "like_post": {
+      "card_id": "x.like_post",
+      "workflow_id": "x_like_post",
+      "workflow_path": "workflows/x/x_like_post.json",
+      "mutating": true,
+      "approval_required": true,
+      "required_args": ["post_url"],
+      "notes": "One-way like flow with explicit approval gate."
+    },
+    "reply_post": {
+      "card_id": "x.reply_post",
+      "workflow_id": "x_reply_post",
+      "workflow_path": "workflows/x/x_reply_post.json",
+      "mutating": true,
+      "approval_required": true,
+      "required_args": ["post_url", "reply_text"],
+      "notes": "Drafts in the inline reply composer and only sends after approval."
+    },
+    "create_post": {
+      "card_id": "x.create_post",
+      "workflow_id": "x_create_post",
+      "workflow_path": "workflows/x/x_create_post.json",
+      "mutating": true,
+      "approval_required": true,
+      "required_args": ["post_text"],
+      "notes": "Navigates to the compose route, types, validates send enabled, then gates."
+    },
+    "open_inbox": {
+      "card_id": "x.open_inbox",
+      "workflow_id": "x_open_inbox",
+      "workflow_path": "workflows/x/x_open_inbox.json",
+      "mutating": false,
+      "approval_required": false,
+      "required_args": [],
+      "notes": "Handles both the inbox surface and X Chat passcode onboarding state."
+    },
+    "open_dm_thread": {
+      "card_id": "x.open_dm_thread",
+      "workflow_id": "x_open_dm_thread",
+      "workflow_path": "workflows/x/x_open_dm_thread.json",
+      "mutating": false,
+      "approval_required": false,
+      "required_args": ["thread_url"],
+      "notes": "Opens a specific DM thread in the authenticated browser session."
+    },
+    "send_dm": {
+      "card_id": "x.send_dm",
+      "workflow_id": "x_send_dm",
+      "workflow_path": "workflows/x/x_send_dm.json",
+      "mutating": true,
+      "approval_required": true,
+      "required_args": ["recipient_handle", "message_text"],
+      "notes": "Supports X Chat passcode onboarding before composing or sending."
+    },
+    "reply_dm": {
+      "card_id": "x.reply_dm",
+      "workflow_id": "x_reply_dm_thread",
+      "workflow_path": "workflows/x/x_reply_dm_thread.json",
+      "mutating": true,
+      "approval_required": true,
+      "required_args": ["thread_url", "message_text"],
+      "notes": "Replies in an existing DM thread with the same approval policy contract."
+    },
+    "search_posts": {
+      "card_id": "x.search_posts",
+      "workflow_id": "x_search_posts",
+      "workflow_path": "workflows/x/x_search_posts.json",
+      "mutating": false,
+      "approval_required": false,
+      "required_args": ["handle"],
+      "notes": "Search a handle optionally within a date window. timeline_mode defaults to latest."
+    },
+    "profile_posts": {
+      "card_id": "x.profile_posts",
+      "workflow_id": "x_profile_posts",
+      "workflow_path": "workflows/x/x_profile_posts.json",
+      "mutating": false,
+      "approval_required": false,
+      "required_args": ["handle"],
+      "notes": "Returns up to 20 recent posts from one profile."
+    },
+  }
+}

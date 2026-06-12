@@ -1,0 +1,92 @@
+{
+  "system_id": "chatgpt",
+  "id": "chatgpt_export_chat",
+  "name": "ChatGPT: Export Chat (API)",
+  "description": "Export a ChatGPT conversation by reading the same backend JSON the web app fetches. Returns clean raw markdown for every user/assistant/tool turn, plus any user-uploaded file attachments auto-downloaded to the browser Downloads folder. Authenticated via the page's session — no DOM scraping, no CDP.",
+  "domain": "chatgpt.com",
+  "version": "1.0.0",
+  "last_updated": "2026-05-09T00:00:00Z",
+  "help": {
+    "summary": "Export a ChatGPT conversation as structured markdown via the backend-api JSON, with file attachments auto-downloaded.",
+    "parameters": [
+      {
+        "name": "chat_id",
+        "required": true,
+        "shape": "uuid",
+        "description": "ChatGPT conversation id (the part after /c/ in the URL).",
+        "example": "01234567-89ab-cdef-0123-456789abcdef"
+      },
+      {
+        "name": "include_system",
+        "required": false,
+        "shape": "boolean (true|false)",
+        "description": "Include system/tool turns in the messages array. Defaults to false (only user + assistant).",
+        "example": "false"
+      },
+      {
+        "name": "download_attachments",
+        "required": false,
+        "shape": "boolean (true|false)",
+        "description": "If true, auto-download every user-uploaded file attachment via anchor click (saves to the browser Downloads folder). Defaults to true.",
+        "example": "true"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Export a chat as markdown JSON (default settings, attachments downloaded).",
+        "command": "rzn-browser run chatgpt export-chat --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\""
+      },
+      {
+        "description": "Export with no attachment download (just metadata).",
+        "command": "rzn-browser run chatgpt export-chat --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param download_attachments=false"
+      }
+    ],
+    "returns": "{ chat_id, title, model_slug, create_time, update_time, message_count, user_turn_count, assistant_turn_count, messages: [{id, role, create_time, content_type, text, attachments: [{id, name, mime_type, size_bytes, downloaded}]}], attachments_downloaded: [{file_id, name, size_bytes, status}] }",
+    "notes": [
+      "Uses /api/auth/session to read the access token from the authenticated browser session, then /backend-api/conversation/{chat_id} for the raw conversation JSON. Same endpoint and auth path the chatgpt.com web app uses.",
+      "Attachment downloads land in the browser default Downloads folder. The `download_url` returned by the backend file-download endpoint is a CloudFront pre-signed URL valid for a few minutes.",
+      "DALL-E / image-generation attachments inside assistant messages are NOT handled here — use chatgpt_images_download for that."
+    ]
+  },
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Navigate to ChatGPT, fetch backend-api conversation JSON, return structured markdown + auto-download attachments.",
+    "sequences": [
+      {
+        "name": "chatgpt_export_chat_api",
+        "description": "Authenticated backend-api export.",
+        "required_variables": [
+          { "name": "chat_id", "description": "ChatGPT conversation id." }
+        ],
+        "optional_variables": [
+          { "name": "include_system", "description": "Include system/tool turns. Defaults to false." },
+          { "name": "download_attachments", "description": "Auto-download user-uploaded file attachments. Defaults to true." }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open ChatGPT to inherit the authenticated session",
+            "type": "navigate_to_url",
+            "url": "https://chatgpt.com/c/{chat_id}",
+            "timeout_ms": 60000
+          },
+          {
+            "id": "s1",
+            "name": "Allow the SPA shell + cookies to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          },
+          {
+            "id": "s2",
+            "name": "Fetch the conversation JSON, normalize, and trigger attachment downloads",
+            "type": "execute_javascript",
+            "world": "main",
+            "timeout_ms": 60000,
+            "args": ["{chat_id}", "{include_system}", "{download_attachments}"],
+            "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const truthy=(v)=>{const t=cleanArg(v).toLowerCase();return t==='true'||t==='1'||t==='yes'||t==='y';};const falsy=(v)=>{const t=cleanArg(v).toLowerCase();return t==='false'||t==='0'||t==='no'||t==='n';};const chatId=cleanArg(arg0);if(!chatId)throw new Error('chat_id is required');const includeSystem=truthy(arg1);const downloadAttachments=!falsy(arg2);const session=await fetch('/api/auth/session',{credentials:'include'}).then(r=>r.json()).catch(()=>({}));const token=session?.accessToken;if(!token)throw new Error('No accessToken in /api/auth/session — not logged in?');const headers={'Authorization':'Bearer '+token,'Accept':'application/json'};const conv=await fetch('/backend-api/conversation/'+encodeURIComponent(chatId),{headers}).then(r=>{if(!r.ok)throw new Error('conversation API '+r.status);return r.json();});const mapping=conv.mapping||{};const orderedIds=[];const seen=new Set();const walk=(id)=>{if(!id||seen.has(id))return;seen.add(id);const node=mapping[id];if(!node)return;orderedIds.push(id);for(const c of (node.children||[]))walk(c);};const rootId=Object.entries(mapping).find(([id,n])=>n&&n.parent==null)?.[0];if(rootId)walk(rootId);else for(const id of Object.keys(mapping))walk(id);const messages=[];const attDl=[];const downloadOne=async(att)=>{try{const meta=await fetch('/backend-api/files/'+encodeURIComponent(att.id)+'/download',{headers}).then(r=>{if(!r.ok)throw new Error('download api '+r.status);return r.json();});const a=document.createElement('a');a.href=meta.download_url;a.download=meta.file_name||att.name||att.id;a.style.display='none';document.body.appendChild(a);a.click();await new Promise(r=>setTimeout(r,250));a.remove();attDl.push({file_id:att.id,name:meta.file_name||att.name,size_bytes:meta.file_size_bytes,mime_type:meta.mime_type,status:'triggered'});return true;}catch(err){attDl.push({file_id:att.id,name:att.name,status:'failed',error:String(err&&err.message||err)});return false;}};let userTurns=0,assistantTurns=0;for(const id of orderedIds){const node=mapping[id];const msg=node?.message;if(!msg||!msg.author?.role)continue;const role=msg.author.role;if(!includeSystem&&(role==='system'||role==='tool'))continue;const parts=Array.isArray(msg.content?.parts)?msg.content.parts:[];const textParts=parts.filter(p=>typeof p==='string');const text=textParts.join('\\n\\n');if(!text&&!includeSystem)continue;const meta=msg.metadata||{};const attachmentsRaw=Array.isArray(meta.attachments)?meta.attachments:[];const attachments=attachmentsRaw.map(a=>({id:a.id||a.file_id||null,name:a.name||a.file_name||null,mime_type:a.mime_type||a.mimeType||null,size_bytes:typeof a.size==='number'?a.size:(typeof a.file_size_bytes==='number'?a.file_size_bytes:null)}));if(downloadAttachments){for(const att of attachments){if(att.id){const ok=await downloadOne(att);att.downloaded=ok;}}}if(role==='user')userTurns++;else if(role==='assistant')assistantTurns++;messages.push({id:msg.id||id,role,create_time:msg.create_time||null,content_type:msg.content?.content_type||null,model_slug:meta.model_slug||null,text,attachments});}return{chat_id:chatId,title:conv.title||null,model_slug:conv.default_model_slug||null,create_time:conv.create_time||null,update_time:conv.update_time||null,message_count:messages.length,user_turn_count:userTurns,assistant_turn_count:assistantTurns,messages,attachments_downloaded:attDl,url:window.location.href};"
+          }
+        ]
+      }
+    ]
+  }
+}

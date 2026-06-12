@@ -1,0 +1,83 @@
+{
+  "asset": {
+    "height": 630,
+    "kind": "og_card",
+    "template_id": "editorial.choice_og.v1",
+    "width": 1200
+  },
+  "constraints": {
+    "overflow_policy": "fail",
+    "slots": {
+      "eyebrow": {
+        "max_chars": 24,
+        "max_lines": 1
+      },
+      "proof.items.label": {
+        "max_chars": 18,
+        "max_lines": 1
+      },
+      "proof.items.value": {
+        "max_chars": 22,
+        "max_lines": 1
+      },
+      "subtitle": {
+        "max_chars": 64,
+        "max_lines": 2
+      },
+      "title": {
+        "max_chars": 42,
+        "max_lines": 4
+      }
+    },
+    "thumbnail_legibility": true
+  },
+  "copy": {
+    "eyebrow": "Local Chrome automation",
+    "footer": "github.com/srv1n/rzn-browser",
+    "subtitle": "Real profile, DOM-first control, short CDP only for hard pages.",
+    "title": "Automate the Chrome you already use"
+  },
+  "meta": {
+    "id": "rzn_browser_local_chrome_og_v1",
+    "locale": "en_US",
+    "page_url": "https://github.com/srv1n/rzn-browser",
+    "repo": "rzn-browser"
+  },
+  "outputs": [
+    {
+      "format": "png",
+      "path": "rzn_browser_local_chrome_og_v1.png"
+    }
+  ],
+  "proof": {
+    "items": [
+      {
+        "label": "Existing profile",
+        "value": "Keep your real session"
+      },
+      {
+        "label": "Light first",
+        "value": "DOM before CDP"
+      },
+      {
+        "label": "One runtime",
+        "value": "Workflows or llm-auto"
+      }
+    ],
+    "kind": "choice_list"
+  },
+  "qa": {
+    "fail_on_warn": true,
+    "required_checks": [
+      "no_overflow",
+      "no_overlap",
+      "grid_alignment",
+      "font_lock",
+      "thumbnail_legibility"
+    ]
+  },
+  "schema": "clipper.website_visual.manifest.v0.1",
+  "theme": {
+    "theme_ref": "builtin:editorial_warm_v1"
+  }
+}

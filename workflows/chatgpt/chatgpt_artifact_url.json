@@ -1,0 +1,50 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "chatgpt/artifact-url",
+  "name": "ChatGPT: Capture assistant artifact URL",
+  "version": "0.1.0",
+  "system": "chatgpt",
+  "capability": "chatgpt.capture_assistant_artifact_url",
+  "summary": "Open a ChatGPT conversation, click a named assistant artifact chip, and return the signed estuary URL without downloading it.",
+  "params": {
+    "properties": {
+      "chat_id": { "kind": "string", "required": true, "description": "ChatGPT conversation id." },
+      "file_name": { "kind": "string", "required": true, "description": "Visible assistant artifact file name, for example onboarding-plan.zip." }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    { "class": "browser_state", "idempotency": "safe_retry", "confirmation_required": false, "scopes": ["chatgpt.com"] },
+    { "class": "network_access", "idempotency": "safe_retry", "confirmation_required": false, "scopes": ["chatgpt.com"] }
+  ],
+  "runtime": { "actor": "supervisor", "requires_cdp": false, "requires_existing_session": false, "timeout_ms": 120000 },
+  "steps": [
+    {
+      "id": "s0",
+      "name": "Open conversation",
+      "action": { "kind": "navigate_to_url", "inputs": { "url": "https://chatgpt.com/c/{chat_id}" }, "side_effects": ["browser_state"] },
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "name": "Allow UI to render",
+      "action": { "kind": "wait_for_timeout", "inputs": {}, "side_effects": ["browser_state"] },
+      "timeout_ms": 8000
+    },
+    {
+      "id": "s2",
+      "name": "Click matching assistant artifact",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": ["{file_name}"],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const wanted=(cleanArg(arg0)||'').toLowerCase();if(!wanted)throw new Error('file_name is required');const norm=(s)=>String(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const visible=(el)=>{if(!el||!(el instanceof Element))return false;const st=getComputedStyle(el);const r=el.getBoundingClientRect();return st.display!=='none'&&st.visibility!=='hidden'&&r.width>0&&r.height>0;};const label=(el)=>norm([el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('download'),el.getAttribute('href')].filter(Boolean).join(' '));const captured=[];const add=(kind,url,extra={})=>{if(!url)return;captured.push({kind,url:String(url),...extra});};const ofetch=window.fetch;window.fetch=function(input,init){try{add('fetch',typeof input==='string'?input:(input&&input.url),{method:init?.method||input?.method||'GET'});}catch{}return ofetch.apply(this,arguments);};const oxopen=XMLHttpRequest.prototype.open;XMLHttpRequest.prototype.open=function(method,url){try{add('xhr',url,{method});}catch{}return oxopen.apply(this,arguments);};const owopen=window.open;window.open=function(url,name,features){try{add('window.open',url,{name:name||''});}catch{}return null;};const oaclick=HTMLAnchorElement.prototype.click;HTMLAnchorElement.prototype.click=function(){try{add('anchor.click',this.href,{download:this.download||'',text:label(this).slice(0,200)});}catch{}return;};const all=Array.from(document.querySelectorAll('a,button,[role=\"button\"],[download]')).filter(visible);const direct=all.map((el,index)=>{const r=el.getBoundingClientRect();return{el,index,text:label(el),tag:el.tagName,href:el.getAttribute('href')||'',download:el.getAttribute('download')||'',y:r.y};}).filter(c=>{const t=c.text.toLowerCase();return (t===wanted||t.includes(wanted)||c.href.toLowerCase().includes(wanted)||c.download.toLowerCase().includes(wanted))&&c.text.length<300&&!/you said:/i.test(c.text);}).sort((a,b)=>{const ax=a.text.toLowerCase()===wanted?0:1;const bx=b.text.toLowerCase()===wanted?0:1;if(ax!==bx)return ax-bx;return b.y-a.y;});const targets=[];const seen=new Set();const push=(el,why,index)=>{if(!el||seen.has(el)||!visible(el))return;const txt=label(el);if(txt.length>500||/you said:/i.test(txt))return;seen.add(el);targets.push({el,why,index,text:txt,tag:el.tagName,href:el.getAttribute('href')||'',download:el.getAttribute('download')||'',aria:el.getAttribute('aria-label')||'',testid:el.getAttribute('data-testid')||''});};for(const c of direct){push(c.el,'direct',c.index);let p=c.el.parentElement;for(let i=0;p&&i<4;i++,p=p.parentElement){for(const q of Array.from(p.querySelectorAll('a,button,[role=\"button\"],[data-testid*=\"download\"],[download]')).filter(visible).slice(0,25)){push(q,'nearby-'+i,c.index);}}}const clicked=[];for(const t of targets.slice(0,30)){try{t.el.scrollIntoView({block:'center',inline:'center'});await new Promise(r=>setTimeout(r,200));for(const evt of ['pointerover','mouseover','pointerdown','mousedown','pointerup','mouseup']){t.el.dispatchEvent(new (evt.startsWith('pointer')?PointerEvent:MouseEvent)(evt,{bubbles:true,cancelable:true,button:0,view:window}));}t.el.click?.();t.el.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,button:0,view:window}));clicked.push({why:t.why,tag:t.tag,text:t.text.slice(0,240),href:t.href,download:t.download,aria:t.aria,testid:t.testid});await new Promise(r=>setTimeout(r,1200));if(captured.some(x=>/estuary\\/content/.test(x.url)))break;}catch(e){clicked.push({why:t.why,tag:t.tag,error:String(e&&e.message||e)});}}await new Promise(r=>setTimeout(r,1800));window.fetch=ofetch;XMLHttpRequest.prototype.open=oxopen;window.open=owopen;HTMLAnchorElement.prototype.click=oaclick;const signed=(captured.find(x=>/estuary\\/content/.test(x.url))||{}).url||'';return{url:location.href,title:document.title,file_name:wanted,signed_url:signed,captured:captured.filter(x=>/backend-api|estuary|files/.test(x.url)).slice(0,80),clicked,direct_count:direct.length,target_count:targets.length};"
+        },
+        "side_effects": ["browser_state", "network_access"]
+      },
+      "timeout_ms": 90000
+    }
+  ],
+  "result": { "artifact_policy": { "prefer_downloads": false }, "include_debug": false, "output_schema": { "type": "object" }, "output_selector": { "step_id": "s2", "path": "$" } }
+}

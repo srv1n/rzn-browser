@@ -1,0 +1,215 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "bing/web_search",
+  "name": "Bing: Web Search",
+  "version": "1.1.0",
+  "system": "bing",
+  "capability": "bing.web.search",
+  "summary": "Return up to 10 organic web results from Bing for one search query.",
+  "description": "Run a Bing web search in a fresh tab and return up to 10 organic result cards (title, url, source, snippet). Use for general-purpose web lookups. Do not use for images (`bing_images_search`), news (`bing_news_search`), or videos (`bing_videos_search`).",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Any Bing-compatible search query."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "bing.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "bing.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.bing.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Bing homepage",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1a",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#sb_form_q"
+        }
+      },
+      "name": "Wait for the Bing search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s1c",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#sb_form_q"
+        }
+      },
+      "name": "Fill the search box"
+    },
+    {
+      "id": "s1d",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#sb_form_q",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow results to hydrate",
+      "timeout_ms": 2000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "ol#b_results > li.b_algo"
+        }
+      },
+      "name": "Wait for the organic results list",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst norm = (s) => (s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim();\nconst decodeCk = (href) => {\n  if (!href) return null;\n  try {\n    const u = new URL(href, 'https://www.bing.com');\n    if (!/\\/ck\\/a/i.test(u.pathname)) return href;\n    let raw = u.searchParams.get('u');\n    if (!raw) return href;\n    if (raw.startsWith('a1')) raw = raw.slice(2);\n    raw = raw.replace(/-/g, '+').replace(/_/g, '/');\n    while (raw.length % 4) raw += '=';\n    const decoded = atob(raw);\n    return /^https?:\\/\\//i.test(decoded) ? decoded : href;\n  } catch (e) { return href; }\n};\nconst items = Array.from(document.querySelectorAll('ol#b_results > li.b_algo')).slice(0, 10);\nreturn items.map((it) => {\n  const a = it.querySelector('h2 a');\n  const title = a ? norm(a.textContent) : null;\n  const rawHref = a ? a.getAttribute('href') : null;\n  const url = decodeCk(rawHref);\n  const citeEl = it.querySelector('cite');\n  const source = citeEl ? norm(citeEl.textContent) : null;\n  const snipEl = it.querySelector('div.b_caption p, p.b_lineclamp2, p.b_lineclamp3, p.b_lineclamp4, p');\n  const snippet = snipEl ? norm(snipEl.textContent) : null;\n  return { title, url, source, snippet };\n}).filter((r) => r.title && r.url);"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract organic results and decode Bing ck/a redirector URLs"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Return up to 10 organic web results from Bing for one search query.",
+    "parameters": {
+      "search_query": "Any Bing-compatible search query."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run bing web-search --param search_query=\"claude code release notes\"",
+        "description": "Plain web lookup, returns title / url / source / snippet for each of the first 10 organic results."
+      }
+    ],
+    "returns": [
+      "Array of { title, url, source, snippet }."
+    ],
+    "notes": [
+      "Read-only: no logins, cookies, or mutations.",
+      "Drives the homepage search box (`#sb_form_q`) rather than hitting `/search?q=...` directly so traffic looks human.",
+      "Organic only \u2014 sponsored (`li.b_ad`) results are skipped by the item selector.",
+      "Opens a fresh tab; safe to run in parallel with the other bing workflows."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "bing/bing_web_search.json",
+    "legacy_system_id": "bing"
+  }
+}

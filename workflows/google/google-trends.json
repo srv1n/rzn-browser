@@ -1,0 +1,225 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "google/trends",
+  "name": "Google Trends Explore",
+  "version": "1.1.0",
+  "system": "google",
+  "capability": "google.trends",
+  "summary": "Open Google Trends Explore for a topic and return visible page text.",
+  "description": "Open Google Trends Explore page for a topic and dump the visible page text (best-effort).",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Topic to explore. Aliases query and q work too."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "trends.google.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "trends.google.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://trends.google.com/trends/explore"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Google Trends Explore landing",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1a",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "input[type='search'], input[aria-label*='search' i], input[aria-label*='Search'], md-autocomplete input, input.gf-input"
+        }
+      },
+      "name": "Wait for the Trends search box",
+      "timeout_ms": 45000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss consent / popups if present"
+    },
+    {
+      "id": "s1c",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[type='search'], input[aria-label*='search' i], input[aria-label*='Search'], md-autocomplete input, input.gf-input"
+        }
+      },
+      "name": "Fill the Trends explore box"
+    },
+    {
+      "id": "s1d",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[type='search'], input[aria-label*='search' i], input[aria-label*='Search'], md-autocomplete input, input.gf-input",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for Trends to load (long \u2014 Trends is slow)",
+      "timeout_ms": 12000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss common popups"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "body"
+        }
+      },
+      "name": "Wait for body",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "extraction_type": "trends_text",
+          "item_selector": "body",
+          "fields": [
+            {
+              "name": "text",
+              "selector": "*"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract visible body text"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open Google Trends Explore for a topic and return visible page text.",
+    "parameters": {
+      "search_query": "Topic to explore. Aliases query and q work too."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run google trends --param search_query=\"machine learning\"",
+        "description": "Trends for 'machine learning'."
+      },
+      {
+        "command": "rzn-browser run google trends --param query=\"election 2024\"",
+        "description": "Use the query alias."
+      }
+    ],
+    "returns": [
+      "Object with one field text \u2014 the inner text of the page, including chart legends and related queries. Numerical chart data is NOT returned \u2014 Trends draws charts in canvas."
+    ],
+    "notes": [
+      "Drives the Trends Explore page's real search input rather than hitting `?q=...` directly.",
+      "If you need actual time-series numbers, use the official Google Trends API or scrape the underlying network requests (out of scope for this workflow).",
+      "Trends rate-limits aggressively; retries on 429 will fail until cool-down."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "google/google-trends.json",
+    "legacy_system_id": "google"
+  }
+}

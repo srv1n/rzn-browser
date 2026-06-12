@@ -1,0 +1,319 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "claude/send",
+  "name": "Claude: Send",
+  "version": "1.0.0",
+  "system": "claude",
+  "capability": "claude.send",
+  "summary": "Unified Claude send. Handles new chats, replies, attachments, and model selection behind one surface.",
+  "description": "Send a message to Claude. Starts a new chat by default, or continues an existing one when thread_id is provided. Optional attachment, model selection, and adaptive-thinking toggle.",
+  "params": {
+    "properties": {
+      "adaptive_thinking": {
+        "kind": "string",
+        "required": false,
+        "description": "Set the Adaptive thinking toggle explicitly. Leave unset to keep whatever is currently selected.",
+        "enum_values": [
+          "on",
+          "off"
+        ]
+      },
+      "attachment_file_paths": {
+        "kind": "array",
+        "required": false,
+        "description": "One or more local files to upload before sending. Accepts a single path, comma-separated paths, or a JSON-encoded list like [\"/a\",\"/b\"]."
+      },
+      "message_text": {
+        "kind": "string",
+        "required": true,
+        "description": "Prompt text to send."
+      },
+      "model_slug": {
+        "kind": "string",
+        "required": false,
+        "description": "Model to select before sending. Matches against the visible label in the model picker (e.g. \"Opus 4.7\", \"Sonnet 4.6\", \"Haiku 4.5\"). If the model is not in the main menu, the workflow opens \"More models\" and looks there."
+      },
+      "thread_id": {
+        "kind": "string",
+        "required": false,
+        "description": "Claude conversation id from /chat/<thread_id>. Omit to start a new chat."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "claude.ai"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "claude.ai"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "claude.ai"
+      ]
+    },
+    {
+      "class": "external_write",
+      "idempotency": "never_retry",
+      "confirmation_required": true,
+      "scopes": [
+        "claude.ai"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://claude.ai/new"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open a fresh Claude shell",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the shell to settle",
+      "timeout_ms": 1800
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{thread_id}"
+          ],
+          "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const threadId = cleanArg(arg0); if (!threadId) return { redirected: false, target: window.location.href }; const target = '/chat/' + threadId; if (window.location.pathname === target) return { redirected: false, target: window.location.href }; setTimeout(() => window.location.assign(target), 0); return { redirected: true, target };"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Redirect to existing thread if thread_id provided, else stay on /new",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "div[data-testid='chat-input'][contenteditable='true'], div[role='textbox'][data-testid='chat-input'], div.ProseMirror[contenteditable='true']"
+        }
+      },
+      "name": "Wait for the Claude composer",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{model_slug}",
+            "{adaptive_thinking}"
+          ],
+          "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const modelSlug = cleanArg(arg0); const adaptiveRaw = cleanArg(arg1).toLowerCase(); const adaptiveWant = adaptiveRaw === 'on' || adaptiveRaw === 'true' ? 'on' : adaptiveRaw === 'off' || adaptiveRaw === 'false' ? 'off' : null; if (!modelSlug && !adaptiveWant) return { skipped: true, reason: 'no params' }; const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const normalize = (value) => (value || '').toLowerCase().replace(/\\s+/g, ' ').trim(); const btn = document.querySelector(\"button[data-testid='model-selector-dropdown']\"); if (!btn) throw new Error('model-selector-dropdown not found'); const labelBefore = btn.getAttribute('aria-label') || ''; const parseLabel = (s) => { const m = s.match(/^Model:\\s*(.+?)(\\s+Adaptive)?\\s*$/i); if (!m) return { model: null, adaptive: false }; let model = m[1].trim(); const suffix = model.match(/^(.+?)\\s+(Extended|Thinking)$/i); if (suffix) model = suffix[1]; return { model, adaptive: !!m[2] }; }; const state0 = parseLabel(labelBefore); const needModel = !!(modelSlug && normalize(state0.model) !== normalize(modelSlug)); const needAdaptive = !!(adaptiveWant && ((adaptiveWant === 'on') !== state0.adaptive)); if (!needModel && !needAdaptive) { return { skipped: true, reason: 'already in desired state', picker_label_before: labelBefore, picker_label_after: labelBefore }; } btn.click(); await sleep(400); let adaptiveApplied = null; if (needAdaptive) { const sw = Array.from(document.querySelectorAll(\"[role='switch']\")).find((n) => normalize(n.getAttribute('aria-label') || '') === 'adaptive thinking'); if (sw) { sw.click(); await sleep(350); adaptiveApplied = sw.checked ? 'on' : 'off'; } } let modelApplied = null; if (needModel) { const target = normalize(modelSlug); const findOption = () => Array.from(document.querySelectorAll(\"[role='menuitemradio']\")).find((n) => normalize((n.innerText || '').split('\\n')[0] || '') === target); let option = findOption(); if (!option) { const moreBtn = Array.from(document.querySelectorAll(\"[role='menuitem']\")).find((n) => normalize((n.innerText || '').split('\\n')[0] || '') === 'more models'); if (moreBtn) { moreBtn.click(); await sleep(400); } option = findOption(); } if (!option) throw new Error(`model_slug '${modelSlug}' not found in model picker`); option.click(); await sleep(400); modelApplied = normalize((option.innerText || '').split('\\n')[0] || ''); } if (document.querySelector(\"[role='menuitemradio']\")) { btn.click(); await sleep(250); } if (document.querySelector(\"[role='menuitemradio']\")) { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await sleep(250); } await sleep(3000); const labelAfter = btn.getAttribute('aria-label') || ''; return { skipped: false, model_applied: modelApplied, adaptive_applied: adaptiveApplied, picker_label_before: labelBefore, picker_label_after: labelAfter };"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Select model and adaptive-thinking if requested",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s5b",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Small settle buffer after the model picker",
+      "timeout_ms": 400
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "upload_file",
+        "inputs": {
+          "file_path": "{attachment_file_paths}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[type='file'][data-testid='file-upload']"
+        }
+      },
+      "name": "Upload attachments if any (no-op when attachment_file_paths is empty)",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let attachment chips render",
+      "timeout_ms": 1200
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{message_text}"
+          ],
+          "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const message = cleanArg(arg0); if (!message) throw new Error('message_text is required'); const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const isVisible = (node) => !!(node && node instanceof Element && getComputedStyle(node).visibility !== 'hidden' && getComputedStyle(node).display !== 'none' && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0); const composer = Array.from(document.querySelectorAll(\"div[data-testid='chat-input'][contenteditable='true'], div[role='textbox'][data-testid='chat-input'], div.ProseMirror[contenteditable='true']\")).find((n) => isVisible(n) && !n.closest('nav, aside')); if (!composer) throw new Error('composer not found'); composer.focus(); document.execCommand('selectAll'); document.execCommand('delete'); const typed = document.execCommand('insertText', false, message); if (!typed) { composer.textContent = message; composer.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: message })); } const currentText = (composer.innerText || composer.textContent || '').trim(); if (!currentText.includes(message.slice(0, Math.min(message.length, 32)))) throw new Error('composer text did not settle'); const findSendButton = () => Array.from(document.querySelectorAll('button, [role=\"button\"]')).filter(isVisible).find((n) => { if (n.disabled || n.getAttribute('aria-disabled') === 'true') return false; const label = [(n.getAttribute('aria-label') || ''), (n.innerText || ''), (n.getAttribute('data-testid') || '')].join(' ').toLowerCase(); return /send message|send prompt|\\bsend\\b/.test(label); }); const deadline = Date.now() + 8000; let btn = null; while (Date.now() < deadline) { btn = findSendButton(); if (btn) break; await sleep(150); } if (!btn) throw new Error('send button did not appear'); btn.click(); return { typed_length: message.length, clicked_label: btn.getAttribute('aria-label') || btn.innerText || null };"
+        },
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ]
+      },
+      "name": "Focus composer, type the prompt, and click Send",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s13",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{message_text}",
+            "{attachment_file_paths}",
+            "{thread_id}"
+          ],
+          "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const messageSent = cleanArg(arg0); const attachRaw = cleanArg(arg1); const incomingThreadId = cleanArg(arg2); const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const threadIdFromLocation = () => { const match = window.location.pathname.match(/\\/chat\\/([^/?#]+)/); return match ? match[1] : null; }; const isVisible = (node) => !!(node && node instanceof Element && getComputedStyle(node).visibility !== 'hidden' && getComputedStyle(node).display !== 'none' && node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0); const pendingLabels = () => Array.from(document.querySelectorAll('button, [role=\"button\"]')).filter(isVisible).map((node) => normalize([node.getAttribute('aria-label') || '', node.getAttribute('title') || '', node.innerText || node.textContent || ''].join(' ')).toLowerCase()).some((label) => /stop|cancel generation|retry response|continue generating/.test(label)); const attachmentCount = (() => { if (!attachRaw) return 0; if (attachRaw.startsWith('[')) { try { const parsed = JSON.parse(attachRaw); if (Array.isArray(parsed)) return parsed.filter((p) => String(p).trim()).length; } catch {} } if (attachRaw.includes(',')) return attachRaw.split(',').map((p) => p.trim()).filter(Boolean).length; return 1; })(); const pickerLabel = (document.querySelector(\"button[data-testid='model-selector-dropdown']\") || {}).getAttribute ? (document.querySelector(\"button[data-testid='model-selector-dropdown']\").getAttribute('aria-label') || null) : null; const deadline = Date.now() + 45000; let threadId = threadIdFromLocation(); let responsePending = false; while (Date.now() < deadline) { threadId = threadIdFromLocation(); responsePending = pendingLabels(); if (threadId || responsePending) break; await sleep(500); } if (!threadId) throw new Error('Claude did not produce a /chat/<id> route after send'); const [selectedModel, adaptiveSuffix] = (pickerLabel || '').replace(/^Model:\\s*/i, '').split(/\\s+/).reduce((acc, token) => { if (/^adaptive$/i.test(token)) acc[1] = 'on'; else if (acc[1] === null) acc[0] = (acc[0] ? acc[0] + ' ' : '') + token; return acc; }, ['', null]); return { url: window.location.href, title: document.title, thread_id: threadId, started_new_thread: !incomingThreadId, message_sent: messageSent, attachment_count: attachmentCount, selected_model: selectedModel || null, adaptive_thinking: adaptiveSuffix || null, response_pending: responsePending };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the thread URL to resolve and return state",
+      "timeout_ms": 60000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "title": { "type": "string" },
+        "thread_id": { "type": "string" },
+        "started_new_thread": { "type": "boolean" },
+        "message_sent": { "type": "string" },
+        "attachment_count": { "type": "integer" },
+        "selected_model": { "type": ["string", "null"] },
+        "adaptive_thinking": { "type": ["string", "null"] },
+        "response_pending": { "type": "boolean" }
+      }
+    },
+    "output_selector": {
+      "step_id": "s13",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Unified Claude send. Handles new chats, replies, attachments, and model selection behind one surface.",
+    "parameters": {
+      "adaptive_thinking": "Set the Adaptive thinking toggle explicitly. Leave unset to keep whatever is currently selected.",
+      "attachment_file_paths": "One or more local files to upload before sending. Accepts a single path, comma-separated paths, or a JSON-encoded list like [\"/a\",\"/b\"].",
+      "message_text": "Prompt text to send.",
+      "model_slug": "Model to select before sending. Matches against the visible label in the model picker (e.g. \"Opus 4.7\", \"Sonnet 4.6\", \"Haiku 4.5\"). If the model is not in the main menu, the workflow opens \"More models\" and looks there.",
+      "thread_id": "Claude conversation id from /chat/<thread_id>. Omit to start a new chat."
+    },
+    "examples": [
+      {
+        "description": "Start a new chat with a prompt",
+        "command": "rzn-browser run claude send --param message_text=\"Summarize the last three commits.\""
+      },
+      {
+        "description": "Reply into an existing thread",
+        "command": "rzn-browser run claude send --param thread_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param message_text=\"Turn that into a checklist.\""
+      },
+      {
+        "description": "New chat with an attachment and explicit model",
+        "command": "rzn-browser run claude send --param message_text=\"Describe this image.\" --param attachment_file_paths=\"/abs/path/to/image.png\" --param model_slug=\"Sonnet 4.6\""
+      },
+      {
+        "description": "Multiple files and adaptive thinking off",
+        "command": "rzn-browser run claude send --param message_text=\"Diff these two diagrams.\" --param attachment_file_paths=\"/a.png,/b.png\" --param adaptive_thinking=\"off\""
+      }
+    ],
+    "returns": [
+      "thread_id of the resulting conversation, url, title, message_sent, selected_model, adaptive_thinking, attachment_count, response_pending."
+    ],
+    "notes": [
+      "Pair with export-chat (mode=latest-assistant) to fetch Claude's reply after it finishes streaming.",
+      "Attachment support requires the extension patched with empty/placeholder-safe upload_file; if uploads seem to silently skip, reload the rzn-browser extension.",
+      "Model selection uses the model picker DOM; \"More models\" submenu is opened automatically if the requested slug is not in the main menu."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "claude/claude_send.json",
+    "legacy_system_id": "claude"
+  }
+}

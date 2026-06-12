@@ -1,0 +1,30 @@
+filters:
+  and:
+    - 'this.file.folder == "" || file.inFolder(this.file.folder)'
+    - 'file.ext == "md"'
+    - 'type == "doc"'
+properties:
+  title:
+    displayName: "Title"
+  node:
+    displayName: "Node"
+  publish:
+    displayName: "Publish"
+  publish_lane:
+    displayName: "Lane"
+  canonical_status:
+    displayName: "Canon"
+  updated:
+    displayName: "Updated"
+views:
+  - type: table
+    name: "Pipeline"
+    groupBy:
+      property: note.publish_lane
+      direction: ASC
+    order:
+      - title
+      - node
+      - publish
+      - canonical_status
+      - updated

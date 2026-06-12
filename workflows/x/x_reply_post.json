@@ -1,0 +1,286 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "x/reply_post",
+  "name": "X: Reply To Post",
+  "version": "1.1.0",
+  "system": "x",
+  "capability": "x.reply.post",
+  "summary": "Reply to one X post after human approval at an in-page review gate.",
+  "description": "Open one X post URL in a fresh tab, draft a reply in the inline composer, pause for human approval, then send. Use when you want to publicly reply to a specific post. Do not use for DMs (use `x_reply_dm_thread` or `x_send_dm`) or top-level posts (`x_create_post`).",
+  "params": {
+    "properties": {
+      "post_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Full X post URL to reply to."
+      },
+      "reply_text": {
+        "kind": "string",
+        "required": true,
+        "description": "Reply body (supports plain text)."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "external_write",
+      "idempotency": "never_retry",
+      "confirmation_required": true,
+      "scopes": [
+        "x.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{post_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the post in a fresh tab",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the post page to settle",
+      "timeout_ms": 1800
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']"
+        }
+      },
+      "name": "Wait for the inline reply textbox on the post page",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']"
+        }
+      },
+      "name": "Activate the inline reply textbox",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the inline reply caret to settle",
+      "timeout_ms": 400
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "type_text",
+        "inputs": {
+          "use_native_input": false,
+          "delay_ms": 35,
+          "typing_speed": "medium"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']",
+          "text": "{reply_text}"
+        }
+      },
+      "name": "Type the reply text",
+      "timeout_ms": 120000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "assert_selector_state",
+        "inputs": {
+          "condition": "enabled"
+        },
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "button[data-testid='tweetButton'], button[data-testid='tweetButtonInline']"
+        }
+      },
+      "name": "Confirm the reply is accepted by the composer",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "request_user_intervention",
+        "inputs": {
+          "message": "Reply draft is ready. Click Continue only if you want to send it.",
+          "instructions": "If you do not want to send this reply, stop the workflow instead of waiting for the timeout.",
+          "approval_mode": "ask_user",
+          "continue_on_timeout": false
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Pause for review before sending the reply",
+      "timeout_ms": 2147483647
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ],
+        "target": {
+          "selector": "button[data-testid='tweetButton'], button[data-testid='tweetButtonInline']"
+        }
+      },
+      "name": "Click the Reply button",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s10",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the reply send to settle",
+      "timeout_ms": 1200
+    },
+    {
+      "id": "s11",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const composer = document.querySelector(\"div[data-testid='tweetTextarea_0'], div[role='textbox'][data-testid='tweetTextarea_0'], div[role='textbox'][contenteditable='true']\"); const button = document.querySelector(\"button[data-testid='tweetButton'], button[data-testid='tweetButtonInline']\"); return { url: location.href, composer_text: composer ? normalize(composer.textContent || '') : null, reply_button_present: !!button, reply_button_disabled: button ? (!!button.getAttribute('disabled') || button.getAttribute('aria-disabled') === 'true') : null };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the final page state",
+      "timeout_ms": 10000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "composer_text": { "type": ["string", "null"] },
+        "reply_button_present": { "type": "boolean" },
+        "reply_button_disabled": { "type": ["boolean", "null"] }
+      }
+    },
+    "output_selector": {
+      "step_id": "s11",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Reply to one X post after human approval at an in-page review gate.",
+    "parameters": {
+      "post_url": "Full X post URL to reply to.",
+      "reply_text": "Reply body (supports plain text)."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run x reply-post --param post_url=\"https://x.com/elonmusk/status/2046981493197586714\" --param reply_text=\"I love your content, cheers\"",
+        "description": "Draft and send a reply after confirming at the review gate."
+      }
+    ],
+    "returns": [
+      "{ url, composer_text, reply_button_present, reply_button_disabled } post-send."
+    ],
+    "notes": [
+      "Mutating. Pauses at the in-page review gate with approval_mode=ask_user.",
+      "Opens a fresh tab \u2014 safe for parallel runs."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "x/x_reply_post.json",
+    "legacy_system_id": "x"
+  }
+}

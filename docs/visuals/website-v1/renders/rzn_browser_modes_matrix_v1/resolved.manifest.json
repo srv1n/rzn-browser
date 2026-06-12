@@ -1,0 +1,108 @@
+{
+  "asset": {
+    "height": 960,
+    "kind": "compare_matrix",
+    "template_id": "editorial.compare_matrix.v1",
+    "width": 1500
+  },
+  "constraints": {
+    "overflow_policy": "fail",
+    "slots": {
+      "proof.rows.cells": {
+        "max_chars": 24,
+        "max_lines": 2
+      },
+      "proof.rows.label": {
+        "max_chars": 28,
+        "max_lines": 2
+      },
+      "subtitle": {
+        "max_chars": 88,
+        "max_lines": 3
+      },
+      "title": {
+        "max_chars": 32,
+        "max_lines": 2
+      }
+    },
+    "thumbnail_legibility": true
+  },
+  "copy": {
+    "eyebrow": "Modes on one runtime",
+    "subtitle": "Two entry points, one runtime. Pick based on how much freedom the browser should get.",
+    "title": "Workflow mode or agent mode?"
+  },
+  "meta": {
+    "id": "rzn_browser_modes_matrix_v1",
+    "locale": "en_US",
+    "page_url": "https://github.com/srv1n/rzn-browser#where-it-shines",
+    "repo": "rzn-browser"
+  },
+  "outputs": [
+    {
+      "format": "png",
+      "path": "rzn_browser_modes_matrix_v1.png"
+    }
+  ],
+  "proof": {
+    "columns": [
+      {
+        "id": "workflow",
+        "label": "Workflow mode"
+      },
+      {
+        "id": "agent",
+        "label": "Agent mode"
+      }
+    ],
+    "kind": "matrix",
+    "rows": [
+      {
+        "label": "Same task every time",
+        "values": {
+          "agent": "Too much freedom",
+          "workflow": "Exact JSON steps"
+        },
+        "winner": "workflow"
+      },
+      {
+        "label": "UI shifts mid-run",
+        "values": {
+          "agent": "Planner can adapt",
+          "workflow": "Needs manual updates"
+        },
+        "winner": "agent"
+      },
+      {
+        "label": "Need strict review and audit",
+        "values": {
+          "agent": "Harder to lock tight",
+          "workflow": "Most predictable"
+        },
+        "winner": "workflow"
+      },
+      {
+        "label": "Exploring an unknown flow",
+        "values": {
+          "agent": "Best first pass",
+          "workflow": "Too rigid to scout"
+        },
+        "winner": "agent"
+      }
+    ]
+  },
+  "qa": {
+    "fail_on_warn": true,
+    "required_checks": [
+      "no_overflow",
+      "no_overlap",
+      "grid_alignment",
+      "font_lock",
+      "thumbnail_legibility"
+    ]
+  },
+  "schema": "clipper.website_visual.manifest.v0.1",
+  "theme": {
+    "theme_ref": "builtin:editorial_warm_v1"
+  }
+}

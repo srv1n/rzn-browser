@@ -1,0 +1,10 @@
+id: find-ts-runtime-listeners
+language: ts
+rule:
+  any:
+    - pattern: chrome.runtime.onMessage.addListener($A)
+    - pattern: browser.runtime.onMessage.addListener($A)
+    - pattern: window.addEventListener("message", $A)
+message: "Runtime listener"
+severity: info
+

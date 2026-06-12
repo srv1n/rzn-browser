@@ -1,0 +1,68 @@
+{
+  "manifest_version": 3,
+  "name": "RZN Browser Automation",
+  "version": "0.1.1",
+  "description": "Browser automation extension with enhanced reliability mode",
+  "icons": {
+    "16": "icons/brain-16.png",
+    "32": "icons/brain-32.png",
+    "48": "icons/brain-48.png",
+    "128": "icons/brain-128.png"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAiD31R1AFOBtQM5ab2yHwj4vuvSXJLOFpQY9cSfkuvbr1Pd1kVln7rFkac1Lt8qz+EWHwGiMZ6UTIBkU1UepwtACrtAUXew7wDXJlB9l1HzJ+5tNjR2qWbcvyhLa0SvKYVCRokQPxzvIrAJ/YVEJujvulG2Da0lbQg4gk30ZC9RTFJbFj9tIR9TZmwHfg/tKE2S83XN/lWhlrRORnwxVDOnffmgBMMospQnIlCtPef5TJ+wRsa8i895iKzxZ/XiRDfs+UPt8hmmrzg7UzK1FQOs2i0nfOD9d7GwjvVxsHgD0ohfvfzcg9OEusmenOPY3ALHgzfYQhfQh/Otl0c2OdewIDAQAB",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "shadow-dom-instrumentation.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "pageBridge.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "contentScript.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "permissions": [
+    "nativeMessaging",
+    "scripting",
+    "activeTab",
+    "alarms",
+    "storage",
+    "notifications",
+    "debugger",
+    "tabs",
+    "downloads",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "version_name": "0.1.1"
+}

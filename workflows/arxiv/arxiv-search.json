@@ -1,0 +1,199 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "arxiv/search",
+  "name": "arXiv Search and Extract",
+  "version": "1.0.0",
+  "system": "arxiv",
+  "capability": "arxiv.search",
+  "summary": "Search arXiv from the homepage and return first-page result metadata.",
+  "description": "Drive the arXiv homepage search box, submit, and extract the first page of result cards: title, author list, abstract, arXiv id, paper URL, PDF link, and primary categories. Use for keyword discovery on arXiv. Do not use to fetch one known paper (use arxiv html).",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Free-text search terms submitted to the arXiv mini-search box."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "arxiv.org"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "arxiv.org"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://arxiv.org/search/?searchtype=all&query={search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to arXiv search results",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "ol.breathe-horizontal li.arxiv-result"
+        }
+      },
+      "name": "Wait for results",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Additional wait for content",
+      "timeout_ms": 2000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "title",
+              "selector": "p.title"
+            },
+            {
+              "multiple": true,
+              "name": "authors",
+              "selector": "p.authors a"
+            },
+            {
+              "name": "abstract",
+              "selector": "span.abstract-full"
+            },
+            {
+              "name": "arxiv_id",
+              "selector": "p.list-title a"
+            },
+            {
+              "attribute": "href",
+              "name": "paper_url",
+              "selector": "p.list-title a"
+            },
+            {
+              "attribute": "href",
+              "name": "pdf_link",
+              "selector": "span a[href*='/pdf/']"
+            },
+            {
+              "name": "categories",
+              "selector": "span.primary-subject"
+            }
+          ],
+          "item_selector": "ol.breathe-horizontal li.arxiv-result"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract search results"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "authors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "abstract": {
+            "type": "string"
+          },
+          "arxiv_id": {
+            "type": "string"
+          },
+          "paper_url": {
+            "type": "string"
+          },
+          "pdf_link": {
+            "type": "string"
+          },
+          "categories": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search arXiv from the homepage and return first-page result metadata.",
+    "parameters": {
+      "search_query": "Free-text search terms submitted to the arXiv mini-search box."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run arxiv search --param search_query=\"transformer attention\"",
+        "description": "Search arXiv for transformer-attention papers."
+      }
+    ],
+    "returns": [
+      "Array of items: { title, authors[], abstract, arxiv_id, paper_url, pdf_link, categories }."
+    ],
+    "notes": [
+      "Only the first results page is returned. To paginate, issue narrower queries.",
+      "abstract reflects what arXiv renders on the result card (the 'full abstract' link is expanded server-side).",
+      "Use arxiv html to fetch the canonical abstract page for any returned id."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "arxiv/arxiv-search.json",
+    "legacy_system_id": "arxiv"
+  }
+}

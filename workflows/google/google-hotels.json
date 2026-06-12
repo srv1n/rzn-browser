@@ -1,0 +1,153 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "google/hotels",
+  "name": "Google Hotels Lookup",
+  "version": "1.1.0",
+  "system": "google",
+  "capability": "google.hotels",
+  "summary": "Look up hotels via Google Search and return the visible widget text. Best-effort.",
+  "description": "Search for hotels via Google Search and extract the visible Hotels widget text (best-effort).",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Location and/or hotel keywords. Aliases query and q work too."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.google.com/search?q=hotels%20{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Google Search hotels query"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#search, #rso"
+        }
+      },
+      "name": "Wait for results panel",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss common popups"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "extraction_type": "hotels_text",
+          "item_selector": "body",
+          "fields": [
+            {
+              "name": "search_text",
+              "selector": "#search"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract visible search panel text"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "search_text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Look up hotels via Google Search and return the visible widget text. Best-effort.",
+    "parameters": {
+      "search_query": "Location and/or hotel keywords. Aliases query and q work too."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run google hotels --param search_query=\"San Francisco hotels near Union Square\"",
+        "description": "Search for SF hotels with a location anchor."
+      },
+      {
+        "command": "rzn-browser run google hotels --param query=\"boutique hotel Lisbon Alfama\"",
+        "description": "Use the query alias with a neighborhood + style filter."
+      }
+    ],
+    "returns": [
+      "Object with one field, search_text \u2014 inner text of the #search panel including the Hotels widget. The caller is responsible for parsing prices/ratings/names because Google rotates the layout."
+    ],
+    "notes": [
+      "No dates / occupancy params here \u2014 defaults to whatever the widget shows.",
+      "If you need date/occupancy filters, drive google.com/travel/hotels directly via orchestrator."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "google/google-hotels.json",
+    "legacy_system_id": "google"
+  }
+}

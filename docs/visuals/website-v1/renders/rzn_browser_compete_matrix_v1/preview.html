@@ -1,0 +1,262 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root {
+  --bg-start: #D7E0E8;
+  --bg-end: #9EB4C7;
+  --surface: rgba(248, 251, 254, 0.84);
+  --surface-strong: rgba(255, 255, 255, 0.94);
+  --surface-soft: rgba(235, 243, 249, 0.72);
+  --border: rgba(51, 72, 89, 0.18);
+  --text: #12202C;
+  --text-muted: #465C6D;
+  --accent: #135A8A;
+  --accent-soft: #90C3E7;
+  --proof-label: #2D617E;
+  --proof-value: #12202C;
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  --font-body: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+  --font-label: "SF Pro Display", "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+  --display-weight: 700;
+  --body-weight: 600;
+  --label-weight: 700;
+  --text-shadow: none;
+  --grain-opacity: 0.06;
+}
+    * {
+      box-sizing: border-box;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 1600px;
+      height: 1000px;
+      overflow: hidden;
+      background: linear-gradient(
+        135deg,
+        color-mix(in srgb, var(--bg-start) 92%, white 8%),
+        color-mix(in srgb, var(--bg-end) 94%, black 6%)
+      );
+      color: var(--text);
+    }
+    body {
+      position: relative;
+      font-family: var(--font-body);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+    body::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 14% 12%, color-mix(in srgb, var(--accent-soft) 30%, white 12%), transparent 32%),
+        radial-gradient(circle at 86% 16%, color-mix(in srgb, var(--surface-strong) 64%, white 18%), transparent 24%),
+        radial-gradient(circle at 50% 100%, color-mix(in srgb, var(--bg-end) 18%, transparent), transparent 42%),
+        linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.00) 24%, rgba(255,255,255,0.03) 100%);
+      opacity: 0.98;
+      pointer-events: none;
+    }
+    body::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(rgba(255,255,255,0.20) 0.7px, transparent 0.7px),
+        radial-gradient(rgba(0,0,0,0.05) 0.7px, transparent 0.7px);
+      background-position: 0 0, 9px 9px;
+      background-size: 18px 18px;
+      opacity: calc(var(--grain-opacity) * 0.72);
+      mix-blend-mode: soft-light;
+      pointer-events: none;
+    }
+    .panel {
+      position: absolute;
+      border: 1px solid var(--border);
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--surface-strong) 96%, white 4%),
+        color-mix(in srgb, var(--surface) 90%, var(--bg-end) 10%)
+      );
+      backdrop-filter: blur(10px) saturate(108%);
+      box-shadow:
+        0 26px 80px rgba(20, 16, 13, 0.12),
+        inset 0 1px 0 rgba(255,255,255,0.46);
+      border-radius: 30px;
+    }
+    .slot {
+      position: absolute;
+      overflow: hidden;
+      white-space: normal;
+      word-break: break-word;
+      display: block;
+    }
+    .slot.eyebrow {
+      font-family: var(--font-label);
+      font-size: 20px;
+      line-height: 1.15;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: var(--label-weight);
+    }
+    .slot.title {
+      font-family: var(--font-display);
+      color: var(--text);
+      font-size: 80px;
+      line-height: 0.99;
+      letter-spacing: -0.035em;
+      font-weight: var(--display-weight);
+      text-wrap: balance;
+      text-shadow: var(--text-shadow);
+    }
+    .slot.subtitle {
+      font-family: var(--font-body);
+      color: var(--text-muted);
+      font-size: 26px;
+      line-height: 1.28;
+      font-weight: var(--body-weight);
+    }
+    .slot.footer {
+      font-family: var(--font-label);
+      color: color-mix(in srgb, var(--text-muted) 88%, white);
+      font-size: 18px;
+      line-height: 1.1;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+    .slot.proof-label {
+      font-family: var(--font-label);
+      color: var(--proof-label);
+      font-size: 15px;
+      line-height: 1.1;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.11em;
+    }
+    .slot.proof-value {
+      font-family: var(--font-display);
+      color: var(--proof-value);
+      font-size: 32px;
+      line-height: 1.01;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .slot.matrix-cell {
+      font-family: var(--font-body);
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1.22;
+      font-weight: var(--body-weight);
+    }
+    .slot.matrix-header {
+      font-family: var(--font-label);
+      color: var(--accent);
+      font-size: 18px;
+      line-height: 1.12;
+      font-weight: var(--label-weight);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .slot.node-title {
+      font-family: var(--font-display);
+      color: var(--text);
+      font-size: 34px;
+      line-height: 1.04;
+      letter-spacing: -0.025em;
+      font-weight: var(--display-weight);
+      text-align: center;
+    }
+    .slot.node-body {
+      font-family: var(--font-body);
+      color: var(--text-muted);
+      font-size: 21px;
+      line-height: 1.22;
+      font-weight: var(--body-weight);
+      text-align: center;
+    }
+    .slot.callout-kicker {
+      font-family: var(--font-label);
+      color: var(--accent);
+      font-size: 13px;
+      line-height: 1.08;
+      font-weight: var(--label-weight);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .slot.callout-title {
+      font-family: var(--font-display);
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1.06;
+      font-weight: var(--display-weight);
+      letter-spacing: -0.02em;
+    }
+    .slot.callout-body {
+      font-family: var(--font-body);
+      color: var(--text-muted);
+      font-size: 17px;
+      line-height: 1.22;
+      font-weight: var(--body-weight);
+    }
+  </style>
+</head>
+<body>
+<div class="panel" style="left:34px;top:30px;width:1532px;height:940px;border-radius:38px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 98%, white), color-mix(in srgb, var(--surface) 92%, var(--accent-soft) 8%));"></div>
+<div id="slot-eyebrow" class="slot eyebrow" data-slot="eyebrow" style="left:56px;top:56px;width:420px;height:24px;text-align:left;">Compare browser tools</div>
+<div id="slot-title" class="slot title" data-slot="title" style="left:56px;top:90px;width:1240px;height:84px;text-align:left;">Which browser automation stack fits which job?</div>
+<div id="slot-subtitle" class="slot subtitle" data-slot="subtitle" style="left:56px;top:160px;width:1160px;height:42px;text-align:left;">These tools solve different jobs. The matrix should make that obvious.</div>
+<div id="region-matrix" class="panel" style="left:56px;top:212px;width:1488px;height:524px;border-radius:28px;"></div>
+<div style="position:absolute;left:84px;top:234px;width:391px;height:24px;font-family:var(--font-label);font-size:15px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);">Scenario</div>
+<div class="panel" style="left:497px;top:226px;width:244px;height:44px;border-radius:16px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 96%, white), color-mix(in srgb, var(--surface) 88%, var(--accent-soft) 12%));box-shadow:0 14px 26px rgba(18,14,10,0.05);"></div>
+<div id="region-column-0" style="position:absolute;left:487px;top:234px;width:264px;height:30px;"></div>
+<div id="slot-proof-columns-0--label" class="slot matrix-header" data-slot="proof.columns[0].label" style="left:503px;top:234px;width:232px;height:30px;text-align:center;">RZN Browser</div>
+<div class="panel" style="left:761px;top:226px;width:244px;height:44px;border-radius:16px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 96%, white), color-mix(in srgb, var(--surface) 88%, var(--accent-soft) 12%));box-shadow:0 14px 26px rgba(18,14,10,0.05);"></div>
+<div id="region-column-1" style="position:absolute;left:751px;top:234px;width:264px;height:30px;"></div>
+<div id="slot-proof-columns-1--label" class="slot matrix-header" data-slot="proof.columns[1].label" style="left:767px;top:234px;width:232px;height:30px;text-align:center;">Browserbase</div>
+<div class="panel" style="left:1025px;top:226px;width:244px;height:44px;border-radius:16px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 96%, white), color-mix(in srgb, var(--surface) 88%, var(--accent-soft) 12%));box-shadow:0 14px 26px rgba(18,14,10,0.05);"></div>
+<div id="region-column-2" style="position:absolute;left:1015px;top:234px;width:264px;height:30px;"></div>
+<div id="slot-proof-columns-2--label" class="slot matrix-header" data-slot="proof.columns[2].label" style="left:1031px;top:234px;width:232px;height:30px;text-align:center;">Stagehand</div>
+<div class="panel" style="left:1289px;top:226px;width:244px;height:44px;border-radius:16px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 96%, white), color-mix(in srgb, var(--surface) 88%, var(--accent-soft) 12%));box-shadow:0 14px 26px rgba(18,14,10,0.05);"></div>
+<div id="region-column-3" style="position:absolute;left:1279px;top:234px;width:264px;height:30px;"></div>
+<div id="slot-proof-columns-3--label" class="slot matrix-header" data-slot="proof.columns[3].label" style="left:1295px;top:234px;width:232px;height:30px;text-align:center;">Browser Use</div>
+<div class="panel" style="left:68px;top:286px;width:1464px;height:96px;border-radius:20px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 94%, white), color-mix(in srgb, var(--surface) 90%, var(--bg-end) 10%));box-shadow:0 10px 22px rgba(18,14,10,0.04);"></div>
+<div id="region-row-0" style="position:absolute;left:74px;top:284px;width:1452px;height:100px;border-top:1px solid color-mix(in srgb, var(--border) 78%, transparent);"></div>
+<div id="slot-proof-rows-0--label" class="slot matrix-cell" data-slot="proof.rows[0].label" style="left:86px;top:304px;width:389px;height:76px;text-align:left;">Drive your logged-in Chrome</div>
+<div style="position:absolute;left:501px;top:294px;width:236px;height:90px;border-radius:18px;background:linear-gradient(180deg, color-mix(in srgb, var(--accent-soft) 62%, white), color-mix(in srgb, var(--surface-strong) 84%, white));border:1px solid color-mix(in srgb, var(--accent) 44%, white);box-shadow:0 16px 28px rgba(25,18,10,0.08);"></div>
+<div style="position:absolute;left:659px;top:300px;width:62px;height:20px;border-radius:999px;background:color-mix(in srgb, var(--accent) 88%, white 12%);color:white;font-family:var(--font-label);font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;display:flex;align-items:center;justify-content:center;">Best fit</div>
+<div id="slot-proof-rows-0--cells-0" class="slot matrix-cell" data-slot="proof.rows[0].cells[0]" style="left:509px;top:318px;width:220px;height:60px;text-align:center;">Native fit</div>
+<div id="slot-proof-rows-0--cells-1" class="slot matrix-cell" data-slot="proof.rows[0].cells[1]" style="left:773px;top:304px;width:220px;height:76px;text-align:center;">Remote browser instead</div>
+<div id="slot-proof-rows-0--cells-2" class="slot matrix-cell" data-slot="proof.rows[0].cells[2]" style="left:1037px;top:304px;width:220px;height:76px;text-align:center;">Needs your own stack</div>
+<div id="slot-proof-rows-0--cells-3" class="slot matrix-cell" data-slot="proof.rows[0].cells[3]" style="left:1301px;top:304px;width:220px;height:76px;text-align:center;">Persistent, not your Chrome</div>
+<div class="panel" style="left:68px;top:394px;width:1464px;height:96px;border-radius:20px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 94%, white), color-mix(in srgb, var(--surface) 90%, var(--bg-end) 10%));box-shadow:0 10px 22px rgba(18,14,10,0.04);"></div>
+<div id="region-row-1" style="position:absolute;left:74px;top:392px;width:1452px;height:100px;border-top:1px solid color-mix(in srgb, var(--border) 78%, transparent);"></div>
+<div id="slot-proof-rows-1--label" class="slot matrix-cell" data-slot="proof.rows[1].label" style="left:86px;top:412px;width:389px;height:76px;text-align:left;">Build on managed cloud browsers</div>
+<div id="slot-proof-rows-1--cells-0" class="slot matrix-cell" data-slot="proof.rows[1].cells[0]" style="left:509px;top:412px;width:220px;height:76px;text-align:center;">Not the point</div>
+<div style="position:absolute;left:765px;top:402px;width:236px;height:90px;border-radius:18px;background:linear-gradient(180deg, color-mix(in srgb, var(--accent-soft) 62%, white), color-mix(in srgb, var(--surface-strong) 84%, white));border:1px solid color-mix(in srgb, var(--accent) 44%, white);box-shadow:0 16px 28px rgba(25,18,10,0.08);"></div>
+<div style="position:absolute;left:923px;top:408px;width:62px;height:20px;border-radius:999px;background:color-mix(in srgb, var(--accent) 88%, white 12%);color:white;font-family:var(--font-label);font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;display:flex;align-items:center;justify-content:center;">Best fit</div>
+<div id="slot-proof-rows-1--cells-1" class="slot matrix-cell" data-slot="proof.rows[1].cells[1]" style="left:773px;top:426px;width:220px;height:60px;text-align:center;">Core product</div>
+<div id="slot-proof-rows-1--cells-2" class="slot matrix-cell" data-slot="proof.rows[1].cells[2]" style="left:1037px;top:412px;width:220px;height:76px;text-align:center;">Pairs with cloud infra</div>
+<div id="slot-proof-rows-1--cells-3" class="slot matrix-cell" data-slot="proof.rows[1].cells[3]" style="left:1301px;top:412px;width:220px;height:76px;text-align:center;">Cloud exists, less infra-led</div>
+<div class="panel" style="left:68px;top:502px;width:1464px;height:96px;border-radius:20px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 94%, white), color-mix(in srgb, var(--surface) 90%, var(--bg-end) 10%));box-shadow:0 10px 22px rgba(18,14,10,0.04);"></div>
+<div id="region-row-2" style="position:absolute;left:74px;top:500px;width:1452px;height:100px;border-top:1px solid color-mix(in srgb, var(--border) 78%, transparent);"></div>
+<div id="slot-proof-rows-2--label" class="slot matrix-cell" data-slot="proof.rows[2].label" style="left:86px;top:520px;width:389px;height:76px;text-align:left;">Embed browser AI in TypeScript</div>
+<div id="slot-proof-rows-2--cells-0" class="slot matrix-cell" data-slot="proof.rows[2].cells[0]" style="left:509px;top:520px;width:220px;height:76px;text-align:center;">CLI-first runtime</div>
+<div id="slot-proof-rows-2--cells-1" class="slot matrix-cell" data-slot="proof.rows[2].cells[1]" style="left:773px;top:520px;width:220px;height:76px;text-align:center;">Platform APIs</div>
+<div style="position:absolute;left:1029px;top:510px;width:236px;height:90px;border-radius:18px;background:linear-gradient(180deg, color-mix(in srgb, var(--accent-soft) 62%, white), color-mix(in srgb, var(--surface-strong) 84%, white));border:1px solid color-mix(in srgb, var(--accent) 44%, white);box-shadow:0 16px 28px rgba(25,18,10,0.08);"></div>
+<div style="position:absolute;left:1187px;top:516px;width:62px;height:20px;border-radius:999px;background:color-mix(in srgb, var(--accent) 88%, white 12%);color:white;font-family:var(--font-label);font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;display:flex;align-items:center;justify-content:center;">Best fit</div>
+<div id="slot-proof-rows-2--cells-2" class="slot matrix-cell" data-slot="proof.rows[2].cells[2]" style="left:1037px;top:534px;width:220px;height:60px;text-align:center;">Best fit</div>
+<div id="slot-proof-rows-2--cells-3" class="slot matrix-cell" data-slot="proof.rows[2].cells[3]" style="left:1301px;top:520px;width:220px;height:76px;text-align:center;">Broader product surface</div>
+<div class="panel" style="left:68px;top:610px;width:1464px;height:96px;border-radius:20px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 94%, white), color-mix(in srgb, var(--surface) 90%, var(--bg-end) 10%));box-shadow:0 10px 22px rgba(18,14,10,0.04);"></div>
+<div id="region-row-3" style="position:absolute;left:74px;top:608px;width:1452px;height:100px;border-top:1px solid color-mix(in srgb, var(--border) 78%, transparent);"></div>
+<div id="slot-proof-rows-3--label" class="slot matrix-cell" data-slot="proof.rows[3].label" style="left:86px;top:628px;width:389px;height:76px;text-align:left;">Need a broad agent and CLI</div>
+<div id="slot-proof-rows-3--cells-0" class="slot matrix-cell" data-slot="proof.rows[3].cells[0]" style="left:509px;top:628px;width:220px;height:76px;text-align:center;">Focused local runner</div>
+<div id="slot-proof-rows-3--cells-1" class="slot matrix-cell" data-slot="proof.rows[3].cells[1]" style="left:773px;top:628px;width:220px;height:76px;text-align:center;">Infra over operator UX</div>
+<div id="slot-proof-rows-3--cells-2" class="slot matrix-cell" data-slot="proof.rows[3].cells[2]" style="left:1037px;top:628px;width:220px;height:76px;text-align:center;">Library, not product</div>
+<div style="position:absolute;left:1293px;top:618px;width:236px;height:90px;border-radius:18px;background:linear-gradient(180deg, color-mix(in srgb, var(--accent-soft) 62%, white), color-mix(in srgb, var(--surface-strong) 84%, white));border:1px solid color-mix(in srgb, var(--accent) 44%, white);box-shadow:0 16px 28px rgba(25,18,10,0.08);"></div>
+<div style="position:absolute;left:1451px;top:624px;width:62px;height:20px;border-radius:999px;background:color-mix(in srgb, var(--accent) 88%, white 12%);color:white;font-family:var(--font-label);font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;display:flex;align-items:center;justify-content:center;">Best fit</div>
+<div id="slot-proof-rows-3--cells-3" class="slot matrix-cell" data-slot="proof.rows[3].cells[3]" style="left:1301px;top:642px;width:220px;height:60px;text-align:center;">Strongest match</div>
+</body>
+</html>

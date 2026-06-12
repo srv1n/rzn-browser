@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>RZN Extension Test Page</title>
+    <style>
+        body {
+            font-family: monospace;
+            padding: 40px;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 { color: #333; }
+        .status { 
+            padding: 10px; 
+            margin: 10px 0; 
+            border-radius: 4px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        .warning { background: #fff3cd; color: #856404; }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        #log {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            margin-top: 20px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            background: white;
+            border-left: 3px solid #007bff;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 RZN Extension Diagnostic Page</h1>
+    
+    <div id="status-container">
+        <div class="status info">Loading extension status...</div>
+    </div>
+
+    <h2>Tests:</h2>
+    <div>
+        <button onclick="testChromeRuntime()">Test Chrome Runtime</button>
+        <button onclick="testContentScript()">Test Content Script</button>
+        <button onclick="testFlightRecorder()">Test Flight Recorder (Ctrl+Shift+E)</button>
+        <button onclick="sendPing()">Send Ping to Extension</button>
+        <button onclick="clearLog()">Clear Log</button>
+    </div>
+
+    <h2>Instructions:</h2>
+    <ol>
+        <li>Make sure this page is open in a regular tab (not incognito)</li>
+        <li>The extension should be loaded and enabled</li>
+        <li>Click the test buttons to verify functionality</li>
+        <li>Check the console (F12) for additional logs</li>
+    </ol>
+
+    <h2>Activity Log:</h2>
+    <div id="log"></div>
+
+    <script>
+        function addLog(message, type = 'info') {
+            const log = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.innerHTML = `[${new Date().toLocaleTimeString()}] ${message}`;
+            entry.style.borderColor = type === 'error' ? '#dc3545' : 
+                                     type === 'success' ? '#28a745' : 
+                                     type === 'warning' ? '#ffc107' : '#007bff';
+            log.insertBefore(entry, log.firstChild);
+        }
+
+        function updateStatus(message, type = 'info') {
+            const container = document.getElementById('status-container');
+            container.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+
+        function testChromeRuntime() {
+            addLog('Testing Chrome Runtime API...');
+            
+            if (typeof chrome === 'undefined') {
+                addLog('❌ Chrome API not available', 'error');
+                updateStatus('Chrome API not available', 'error');
+                return;
+            }
+            
+            if (typeof chrome.runtime === 'undefined') {
+                addLog('❌ Chrome Runtime API not available', 'error');
+                updateStatus('Chrome Runtime API not available - Content script may not be injected', 'error');
+                return;
+            }
+            
+            addLog('✅ Chrome Runtime API available', 'success');
+            updateStatus('Chrome Runtime API is available', 'success');
+            
+            // Try to get extension ID
+            try {
+                if (chrome.runtime.id) {
+                    addLog(`Extension ID: ${chrome.runtime.id}`, 'info');
+                }
+            } catch (e) {
+                addLog(`Could not get extension ID: ${e.message}`, 'warning');
+            }
+        }
+
+        function testContentScript() {
+            addLog('Looking for RZN content script...');
+            
+            // Check for RZN console logs
+            const hasRZN = document.querySelector('[data-rzn-idx]') !== null;
+            
+            if (hasRZN) {
+                addLog('✅ RZN elements found - Content script is active', 'success');
+                updateStatus('Content script is injected and working', 'success');
+            } else {
+                addLog('⚠️ No RZN elements found yet', 'warning');
+                
+                // Check console for RZN logs
+                console.log('[TEST] If you see "[RZN]" logs in console, the content script is loaded');
+                addLog('Check browser console for [RZN] logs', 'info');
+            }
+        }
+
+        function testFlightRecorder() {
+            addLog('Testing Flight Recorder...');
+            addLog('Press Ctrl+Shift+E to trigger export', 'info');
+            
+            // Simulate keypress programmatically (won't actually trigger due to security)
+            const event = new KeyboardEvent('keydown', {
+                key: 'E',
+                code: 'KeyE',
+                ctrlKey: true,
+                shiftKey: true,
+                bubbles: true
+            });
+            document.dispatchEvent(event);
+            
+            addLog('Simulated Ctrl+Shift+E (may need manual press due to security)', 'warning');
+        }
+
+        function sendPing() {
+            addLog('Sending PING to extension...');
+            
+            if (typeof chrome === 'undefined' || typeof chrome.runtime === 'undefined') {
+                addLog('❌ Cannot send ping - Chrome Runtime not available', 'error');
+                return;
+            }
+            
+            try {
+                chrome.runtime.sendMessage({type: 'PING'}, response => {
+                    if (chrome.runtime.lastError) {
+                        addLog(`❌ Ping failed: ${chrome.runtime.lastError.message}`, 'error');
+                        updateStatus('Extension not responding - may need reload', 'error');
+                    } else if (response && response.success) {
+                        addLog('✅ Extension responded to ping!', 'success');
+                        updateStatus('Extension is responding correctly', 'success');
+                    } else {
+                        addLog('⚠️ Unexpected response from extension', 'warning');
+                    }
+                });
+            } catch (e) {
+                addLog(`❌ Error sending ping: ${e.message}`, 'error');
+            }
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+            addLog('Log cleared', 'info');
+        }
+
+        // Auto-test on page load
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                testChromeRuntime();
+                
+                // Listen for any messages from extension
+                if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+                    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+                        addLog(`Received message from extension: ${JSON.stringify(message)}`, 'info');
+                        return false;
+                    });
+                    addLog('Message listener registered', 'info');
+                }
+            }, 1000);
+        });
+
+        // Log any RZN-specific console messages
+        const originalLog = console.log;
+        console.log = function(...args) {
+            originalLog.apply(console, args);
+            const message = args.join(' ');
+            if (message.includes('[RZN]')) {
+                addLog(`Console: ${message}`, 'info');
+            }
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,248 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "etsy/search",
+  "name": "Etsy Search",
+  "version": "1.0.0",
+  "system": "etsy",
+  "capability": "etsy.search",
+  "summary": "Search Etsy listings by keyword and extract listing candidates.",
+  "description": "Search Etsy listings by keyword and extract listing candidates.",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Search keyword, e.g. leather wallet."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "etsy.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "etsy.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.etsy.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Etsy homepage"
+    },
+    {
+      "id": "s1a",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#global-enhancements-search-query, input[name='search_query']"
+        }
+      },
+      "name": "Wait for the Etsy search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s1c",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#global-enhancements-search-query, input[name='search_query']"
+        }
+      },
+      "name": "Fill the search box"
+    },
+    {
+      "id": "s1d",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#global-enhancements-search-query, input[name='search_query']",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for hydration",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "li[data-listing-id], article[data-listing-id], .v2-listing-card"
+        }
+      },
+      "name": "Wait for listing links",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "listing_title",
+              "selector": "h3, [data-testing-id='listing-card-title'], [class*='title']"
+            },
+            {
+              "attribute": "href",
+              "name": "listing_url",
+              "selector": "a[href*='/listing/']"
+            },
+            {
+              "name": "price",
+              "selector": "[class*='currency-value'], [class*='price']"
+            },
+            {
+              "name": "shop_name",
+              "selector": "[class*='shop-name'], [class*='shop'] a, [class*='seller']"
+            },
+            {
+              "name": "rating_summary",
+              "selector": "[aria-label*='out of 5'], [aria-label*='star'], [class*='rating']"
+            }
+          ],
+          "item_selector": "li[data-listing-id], article[data-listing-id], .v2-listing-card"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract listing candidates"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "listing_title": {
+            "type": "string"
+          },
+          "listing_url": {
+            "type": "string"
+          },
+          "price": {
+            "type": "string"
+          },
+          "shop_name": {
+            "type": "string"
+          },
+          "rating_summary": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search Etsy listings by keyword and extract listing candidate cards.",
+    "parameters": {
+      "search_query": "Search keyword, e.g. ceramic mug."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run etsy search --param search_query=\"ceramic mug\"",
+        "description": "Run a basic Etsy search and return candidate listing cards."
+      }
+    ],
+    "returns": [
+      "Array of listing rows: { listing_title, listing_url, price, shop_name, rating_summary }. Feed listing_url into etsy/listing-details-reviews for deep extraction."
+    ],
+    "notes": [
+      "Read-only.",
+      "Drives the homepage search box (`#global-enhancements-search-query`) rather than hitting `/search?q=<query>` directly so traffic looks human.",
+      "Item selector targets `li[data-listing-id]`, `article[data-listing-id]`, and `.v2-listing-card` so layouts across Etsy A/B variants are handled."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "etsy/etsy-search.json",
+    "legacy_system_id": "etsy"
+  }
+}

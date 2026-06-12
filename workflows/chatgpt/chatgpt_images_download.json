@@ -1,0 +1,151 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "chatgpt/images_download",
+  "name": "ChatGPT Images: Download (API)",
+  "version": "1.0.0",
+  "system": "chatgpt",
+  "capability": "chatgpt.images.download",
+  "summary": "Find every generated image in a ChatGPT chat (via backend-api) and trigger browser downloads for each.",
+  "description": "Download every generated image from a ChatGPT conversation by id, using the same backend JSON the web app fetches. Walks the conversation mapping for image_asset_pointer parts, resolves each via the backend file-download API, and triggers a browser anchor-click to save the file. No DOM scraping, no CDP.",
+  "params": {
+    "properties": {
+      "chat_id": {
+        "kind": "string",
+        "required": true,
+        "description": "ChatGPT conversation id (the part after /c/ in the URL)."
+      },
+      "download": {
+        "kind": "boolean",
+        "required": false,
+        "description": "If true (default), trigger browser downloads. If false, only list the images."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "chatgpt.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "chatgpt.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://chatgpt.com/c/{chat_id}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open ChatGPT to inherit the authenticated session",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the SPA shell + cookies to settle",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{chat_id}",
+            "{download}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const falsy=(v)=>{const t=cleanArg(v).toLowerCase();return t==='false'||t==='0'||t==='no'||t==='n';};const chatId=cleanArg(arg0);if(!chatId)throw new Error('chat_id is required');const shouldDownload=!falsy(arg1);const session=await fetch('/api/auth/session',{credentials:'include'}).then(r=>r.json()).catch(()=>({}));const token=session?.accessToken;if(!token)throw new Error('No accessToken in /api/auth/session \u2014 not logged in?');const headers={'Authorization':'Bearer '+token,'Accept':'application/json'};const conv=await fetch('/backend-api/conversation/'+encodeURIComponent(chatId),{headers}).then(r=>{if(!r.ok)throw new Error('conversation API '+r.status);return r.json();});const mapping=conv.mapping||{};const imageParts=[];for(const [id,node] of Object.entries(mapping)){const msg=node?.message;if(!msg)continue;const parts=msg.content?.parts||[];parts.forEach((p,i)=>{if(typeof p==='object'&&p&&p.content_type==='image_asset_pointer'&&p.asset_pointer){const fileId=String(p.asset_pointer).replace(/^sediment:\\/\\//,'').replace(/^file-service:\\/\\//,'');if(fileId)imageParts.push({msg_id:id,role:msg.author?.role||null,part_idx:i,file_id:fileId,width:p.width||null,height:p.height||null,size_bytes:p.size_bytes||null,create_time:msg.create_time||null});}});}const seen=new Set();const unique=imageParts.filter(p=>{if(seen.has(p.file_id))return false;seen.add(p.file_id);return true;});const results=[];for(const p of unique){try{const meta=await fetch('/backend-api/files/'+encodeURIComponent(p.file_id)+'/download',{headers}).then(r=>{if(!r.ok)throw new Error('download api '+r.status);return r.json();});const baseName=(meta.file_name||p.file_id).split('/').pop()||(p.file_id+'.png');const entry={file_id:p.file_id,file_name:baseName,full_name:meta.file_name||null,size_bytes:meta.file_size_bytes||p.size_bytes||null,width:p.width,height:p.height,mime_type:meta.mime_type||null,download_url_present:!!meta.download_url};if(shouldDownload&&meta.download_url){const a=document.createElement('a');a.href=meta.download_url;a.download=baseName;a.style.display='none';document.body.appendChild(a);a.click();await new Promise(r=>setTimeout(r,400));a.remove();entry.download_status='triggered';}else{entry.download_status=shouldDownload?'no_url':'list_only';}results.push(entry);}catch(err){results.push({file_id:p.file_id,download_status:'failed',error:String(err&&err.message||err)});}}return{chat_id:chatId,title:conv.title||null,url:location.href,image_count:imageParts.length,unique_image_count:unique.length,images:results,download_mode:shouldDownload};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Fetch the conversation JSON, walk for image_asset_pointer parts, trigger anchor-click downloads",
+      "timeout_ms": 90000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow browser downloads to flush",
+      "timeout_ms": 2500
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object"
+    },
+    "output_selector": {
+      "step_id": "s2",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Find every generated image in a ChatGPT chat (via backend-api) and trigger browser downloads for each.",
+    "parameters": {
+      "chat_id": "ChatGPT conversation id (the part after /c/ in the URL).",
+      "download": "If true (default), trigger browser downloads. If false, only list the images."
+    },
+    "examples": [
+      {
+        "description": "Download every generated image from a chat.",
+        "command": "rzn-browser run chatgpt images-download --param chat_id=\"69ff383c-a5b4-83a4-8af4-b2e9279cf336\""
+      },
+      {
+        "description": "List images without downloading.",
+        "command": "rzn-browser run chatgpt images-download --param chat_id=\"69ff383c-a5b4-83a4-8af4-b2e9279cf336\" --param download=false"
+      }
+    ],
+    "returns": [
+      "{ chat_id, title, image_count, unique_image_count, images: [{file_id, file_name, size_bytes, width, height, mime_type, download_status}] }"
+    ],
+    "notes": [
+      "Images are looked up by content_type=image_asset_pointer in the conversation mapping. Asset pointers like 'sediment://file_xxx' are resolved to signed download URLs.",
+      "Files land in the browser default Downloads folder under their server-assigned filename.",
+      "Same auth path as chatgpt_export_chat / chatgpt_export_full_chat: page session token, no separate login.",
+      "To generate images first, run chatgpt_send with `tool=image_gen`, then call this workflow with the resulting chat_id."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "chatgpt/chatgpt_images_download.json",
+    "legacy_system_id": "chatgpt"
+  }
+}

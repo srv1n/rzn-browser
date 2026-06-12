@@ -1,0 +1,48 @@
+filters:
+  and:
+    - 'this.file.folder == "" || file.inFolder(this.file.folder)'
+    - 'file.ext == "md"'
+    - 'type == "epic"'
+properties:
+  "file.name":
+    displayName: "ID"
+  title:
+    displayName: "Title"
+  status:
+    displayName: "Status"
+  summary:
+    displayName: "Summary"
+  updated:
+    displayName: "Updated"
+views:
+  - type: table
+    name: "Active"
+    filters:
+      and:
+        - 'status != "done"'
+        - 'status != "cancelled"'
+    order:
+      - "file.name"
+      - title
+      - status
+      - summary
+      - updated
+  - type: table
+    name: "All"
+    order:
+      - "file.name"
+      - title
+      - status
+      - summary
+      - updated
+  - type: table
+    name: "Done"
+    filters:
+      and:
+        - 'status == "done" || status == "cancelled"'
+    order:
+      - "file.name"
+      - title
+      - status
+      - summary
+      - updated

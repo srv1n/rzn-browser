@@ -1,0 +1,113 @@
+{
+  "schema_version": "rzn.workflow_manifest.v2",
+  "system_id": "fixture.local",
+  "workflow_id": "fixture-local-read-text-v2",
+  "name": "Fixture: Read Text",
+  "description": "Contract fixture for a pure-read capability against a local HTML page.",
+  "capabilities": [
+    {
+      "capability_id": "fixture.local.read_text",
+      "summary": "Read a heading and body text from a deterministic local fixture page.",
+      "route": {
+        "kind": "workflow",
+        "workflow_ref": "fixture-local-read-text-v2"
+      },
+      "input_schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["fixture_url"],
+        "properties": {
+          "fixture_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Local fixture URL served by the contract harness."
+          }
+        }
+      },
+      "effects": ["read"],
+      "output": {
+        "status_path": "$.ok",
+        "result_path": "$.data",
+        "warning_path": "$.warnings",
+        "artifact_paths": []
+      }
+    }
+  ],
+  "steps": [
+    {
+      "id": "open-fixture",
+      "action": {
+        "type": "navigate",
+        "url_param": "fixture_url"
+      }
+    },
+    {
+      "id": "extract-text",
+      "action": {
+        "type": "extract",
+        "schema": {
+          "heading": "string",
+          "body": "string"
+        }
+      }
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "success-basic-page",
+      "params": {
+        "fixture_url": "http://127.0.0.1:0/workflow_contract/basic-text.html"
+      },
+      "expect": {
+        "schema_version": "rzn.run_envelope.v1",
+        "system_id": "fixture.local",
+        "capability_id": "fixture.local.read_text",
+        "status": "succeeded",
+        "result": {
+          "heading": "Fixture Contract",
+          "body": "Stable text for ABI validation."
+        },
+        "warnings": [],
+        "artifacts": []
+      }
+    },
+    {
+      "id": "reject-extra-param",
+      "params": {
+        "fixture_url": "http://127.0.0.1:0/workflow_contract/basic-text.html",
+        "unexpected": true
+      },
+      "expect": {
+        "schema_version": "rzn.run_envelope.v1",
+        "system_id": "fixture.local",
+        "capability_id": "fixture.local.read_text",
+        "status": "failed",
+        "error": {
+          "code": "invalid_params"
+        }
+      }
+    }
+  ],
+  "help": {
+    "summary": "Read text from a local fixture page and return a stable run envelope.",
+    "parameters": [
+      {
+        "name": "fixture_url",
+        "required": true,
+        "shape": "uri",
+        "description": "Local fixture URL served by the contract harness.",
+        "example": "http://127.0.0.1:4321/workflow_contract/basic-text.html"
+      }
+    ],
+    "examples": [
+      {
+        "description": "Contract harness run",
+        "command": "rzn-browser workflow validate --strict workflows/fixtures/manifest_v2/local_read_text.manifest.v2.json"
+      }
+    ],
+    "returns": "RunEnvelopeV1 with heading and body text under result.",
+    "notes": [
+      "This is a ManifestV2 contract fixture, not an old-runtime workflow."
+    ]
+  }
+}

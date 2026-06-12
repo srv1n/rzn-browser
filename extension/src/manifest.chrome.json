@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "action": {
+    "default_title": "RZN Hosted Control",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/brain-16.png",
+      "32": "icons/brain-32.png",
+      "48": "icons/brain-48.png",
+      "128": "icons/brain-128.png"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+id: no-schema-ddl-outside-migrations
+language: generic
+rule:
+  any:
+    - regex: "\\bCREATE\\s+TABLE\\b"
+    - regex: "\\bALTER\\s+TABLE\\b"
+    - regex: "\\bDROP\\s+TABLE\\b"
+message: "Schema DDL detected; ensure it lives under migrations/"
+severity: warning
+constraints:
+  notMatchPath:
+    - "**/migrations/**"
+    - "crates/**/migrations/**"
+

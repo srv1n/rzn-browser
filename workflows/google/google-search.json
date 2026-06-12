@@ -1,0 +1,214 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "google/search",
+  "name": "Google Search",
+  "version": "2.1.0",
+  "system": "google",
+  "capability": "google.search",
+  "summary": "Search Google (web/news/books) and extract organic results.",
+  "description": "Search Google's web, news, or books vertical and extract title/url/snippet for each organic result.",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Query text. The engine accepts the aliases query and q as well."
+      },
+      "vertical": {
+        "kind": "string",
+        "required": false,
+        "description": "Which Google vertical to search. Defaults to web. news → tbm=nws, books → tbm=bks.",
+        "enum_values": [
+          "web",
+          "news",
+          "books"
+        ],
+        "default": "web"
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.google.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open Google homepage (creates tab for the SPA redirect in s2)"
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst q = cleanArg(arg0);\nconst vRaw = cleanArg(arg1).toLowerCase();\nconst tbm = { news: 'nws', books: 'bks' }[vRaw] || '';\nconst params = new URLSearchParams({ q });\nif (tbm) params.set('tbm', tbm);\nconst target = 'https://www.google.com/search?' + params.toString();\nsetTimeout(() => window.location.assign(target), 0);\nreturn { redirected: true, target, vertical: vRaw || 'web' };",
+          "return_value": true,
+          "args": [
+            "{search_query}",
+            "{vertical}"
+          ]
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Redirect to the chosen vertical (web/news/books)"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#search, #rso"
+        }
+      },
+      "name": "Wait for results container",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss common popups (consent, sign-in)"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#search h3, #rso h3, #search .SoaBEf, #search .MBeuO"
+        }
+      },
+      "name": "Wait for at least one result card (web/news/books)",
+      "timeout_ms": 12000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "script": "const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();\nconst timeRe=/^(\\d+\\s+(minute|hour|day|week|month|year)s?\\s+ago|yesterday|today|\\d{1,2}\\s+\\w+\\s+\\d{4}|\\w+\\s+\\d{1,2},\\s*\\d{4})$/i;\nconst looksLikeAge=(t)=>!!t&&t.length<40&&timeRe.test(t);\nconst pickAge=(card)=>{const spans=Array.from(card.querySelectorAll('span'));for(const s of spans){const t=norm(s.textContent);if(looksLikeAge(t))return t;}return null;};\nconst pickSource=(card,titleEl)=>{const spans=Array.from(card.querySelectorAll('span'));for(const s of spans){if(titleEl&&!(s.compareDocumentPosition(titleEl)&Node.DOCUMENT_POSITION_FOLLOWING))continue;const t=norm(s.textContent);if(!t||t==='.'||t.length>80)continue;if(looksLikeAge(t))continue;return t;}return null;};\nconst newsCards=Array.from(document.querySelectorAll('#search .WCv1we, #rso .WCv1we'));\nif(newsCards.length>0){return newsCards.map(c=>{const a=c.querySelector('a[href]');const href=a?a.href:null;const titleEl=c.querySelector('.MBeuO, .n0jPhd');const title=titleEl?norm(titleEl.textContent):(a?norm(a.textContent).split('\\n')[0]:null);const snipEl=c.querySelector('.UqSP2b, .GI74Re, .HSSq5c');const snippet=snipEl?norm(snipEl.textContent):null;return{title,url:href,snippet,source:pickSource(c,titleEl),age:pickAge(c)};}).filter(r=>r.title&&r.url);}\nconst cards=Array.from(document.querySelectorAll('#search .MjjYud, #rso .MjjYud, #search .SoaBEf'));\nreturn cards.map(c=>{const h=c.querySelector('h3, .MBeuO');if(!h)return null;const a=c.querySelector('a[href]');if(!a)return null;const snipEl=c.querySelector('.VwiC3b, [data-content-feature], .yXK7lf, .UqSP2b, .HSSq5c, .GI74Re');return{title:norm(h.textContent),url:a.href,snippet:snipEl?norm(snipEl.textContent):null,source:null,age:null};}).filter(Boolean);"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract organic results (news via .WCv1we; web/books via .MjjYud + h3)"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "age": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search Google (web/news/books) and extract organic results.",
+    "parameters": {
+      "search_query": "Query text. The engine accepts the aliases query and q as well.",
+      "vertical": "Which Google vertical to search. Defaults to web. news → tbm=nws, books → tbm=bks."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run google search --param search_query=\"rust browser automation\"",
+        "description": "Default web search."
+      },
+      {
+        "command": "rzn-browser run google search --param query=\"AI regulation\" --param vertical=news",
+        "description": "News vertical (uses the query alias). Returns extra source + age fields per result."
+      },
+      {
+        "command": "rzn-browser run google search --param search_query=\"category theory\" --param vertical=books",
+        "description": "Books vertical (titles + URLs; snippets often empty)."
+      }
+    ],
+    "returns": [
+      "Array of { title, url, snippet, source?, age? }. source/age populate for news results only; snippet is often empty for books cards."
+    ],
+    "notes": [
+      "Shopping is intentionally NOT included — Google moved shopping to a React widget at udm=28 with no clean per-product anchors. A dedicated google/shopping workflow would be needed; out of scope here.",
+      "For raw image results, use google/images — different output contract (image URLs).",
+      "For Scholar, use google/scholar — paper-shaped fields.",
+      "News uses .WCv1we cards; source/age are unclassed <span> nodes inside the card. We detect age by regex (e.g. '18 hours ago', '1 day ago', 'May 12, 2026'); source is the first short non-age span. Web/books cards keep source=age=null.",
+      "If results are empty, dismiss_popups may have failed on a consent gate — check the browser tab.",
+      "Unknown vertical values fall back to web."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "google/google-search.json",
+    "legacy_system_id": "google"
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "schema": "clipper.website_visual.manifest.v0.1",
+  "meta": {
+    "id": "rzn_browser_choose_rzn_decision_v1",
+    "page_url": "https://github.com/srv1n/rzn-browser#why-it-exists",
+    "repo": "rzn-browser",
+    "locale": "en_US"
+  },
+  "asset": {
+    "kind": "decision_diagram",
+    "template_id": "editorial.decision_tree.v1",
+    "width": 1400,
+    "height": 900
+  },
+  "theme": {
+    "theme_ref": "builtin:editorial_midnight_v1"
+  },
+  "copy": {
+    "eyebrow": "Decision guide",
+    "title": "Choose RZN when local Chrome is the point",
+    "subtitle": "If you need a hosted browser fleet, use something else. RZN wins when the real session matters."
+  },
+  "proof": {
+    "kind": "decision_tree",
+    "question": "What are you actually trying to automate?",
+    "branches": [
+      {
+        "label": "Real session",
+        "value": "Use RZN when cookies, tabs, and extensions need to stay put."
+      },
+      {
+        "label": "Repeatable",
+        "value": "Start with workflows when the task should run the same way every time."
+      },
+      {
+        "label": "Goal-based",
+        "value": "Use llm-auto when the browser must adapt instead of following fixed steps."
+      },
+      {
+        "label": "Cloud scale",
+        "value": "Pick a cloud platform when the job is hosted browser infrastructure."
+      }
+    ]
+  },
+  "constraints": {
+    "slots": {
+      "eyebrow": {
+        "max_chars": 18,
+        "max_lines": 1
+      },
+      "title": {
+        "max_chars": 44,
+        "max_lines": 2
+      },
+      "subtitle": {
+        "max_chars": 96,
+        "max_lines": 3
+      },
+      "proof.question": {
+        "max_chars": 42,
+        "max_lines": 2
+      },
+      "proof.branches.label": {
+        "max_chars": 14,
+        "max_lines": 1
+      },
+      "proof.branches.value": {
+        "max_chars": 76,
+        "max_lines": 5
+      }
+    },
+    "overflow_policy": "fail",
+    "thumbnail_legibility": true
+  },
+  "outputs": [
+    {
+      "format": "png",
+      "path": "rzn_browser_choose_rzn_decision_v1.png"
+    },
+    {
+      "format": "svg",
+      "path": "rzn_browser_choose_rzn_decision_v1.svg"
+    }
+  ],
+  "qa": {
+    "required_checks": [
+      "no_overflow",
+      "no_overlap",
+      "grid_alignment",
+      "font_lock",
+      "thumbnail_legibility"
+    ],
+    "fail_on_warn": true
+  }
+}

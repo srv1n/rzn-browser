@@ -1,0 +1,45 @@
+{
+  "system_id": "test",
+  "id": "test_connection",
+  "name": "Test Connection",
+  "description": "Test extension connection",
+  "domain": "google.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "description": "Test extension connection",
+    "sequences": [
+      {
+        "name": "test_connection",
+        "description": "Test basic connection",
+        "required_variables": [],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Google",
+            "type": "navigate_to_url",
+            "url": "https://www.google.com"
+          },
+          {
+            "id": "s2", 
+            "name": "Wait for page",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s3",
+            "name": "Extract title",
+            "type": "extract_structured_data",
+            "item_selector": "body",
+            "fields": [
+              {
+                "name": "title",
+                "selector": "title",
+                "attribute": "textContent"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

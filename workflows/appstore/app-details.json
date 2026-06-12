@@ -1,0 +1,371 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "appstore/app_details",
+  "name": "App Store: App Details",
+  "version": "2.1.0",
+  "system": "appstore",
+  "capability": "appstore.app.details",
+  "summary": "Open one App Store app page; return metadata, screenshots, and reviews.",
+  "description": "Open one App Store app page and extract title, subtitle, category, description, version info, ratings summary, screenshot sources, and review rows. Accepts either a numeric `app_id` or a full `app_url`. Use `mode` to choose how deep to go on reviews. Read-only.",
+  "params": {
+    "properties": {
+      "app_id": {
+        "kind": "string",
+        "required": false,
+        "default": "",
+        "description": "Numeric App Store app id. Pass this OR app_url (not both). When set, the workflow appends it to the US app-page prefix; for a non-US storefront, pass app_url instead."
+      },
+      "app_url": {
+        "kind": "string",
+        "required": false,
+        "default": "https://apps.apple.com/us/app/id",
+        "description": "Full App Store URL. Pass this OR app_id (not both). Default is the US app-page prefix; when only app_id is supplied, app_id is concatenated onto this prefix to form the final URL."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "apps.apple.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "apps.apple.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{app_url}{app_id}",
+          "wait": "domcontentloaded"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate directly to the App Store product page (no JS eval; avoids apps.apple.com CSP block)",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for hydration",
+      "timeout_ms": 6000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "h1"
+        }
+      },
+      "name": "Wait for app title",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#product_media_phone_, [id^='product_media_']"
+        }
+      },
+      "name": "Wait for screenshot media section",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#productRatings, #allProductReviews"
+        }
+      },
+      "name": "Wait for ratings/reviews section",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "infinite_scroll",
+        "inputs": {
+          "max_scrolls": 4,
+          "scroll_delay": 700
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll the page to force lazy review content to mount (no eval; apps.apple.com CSP forbids unsafe-eval)",
+      "continue_on_error": true
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "item_selector": "main",
+          "limit": 1,
+          "fields": [
+            {
+              "name": "app_title",
+              "selector": "h1",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "subtitle",
+              "selector": "h2.product-header__identity, h2",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "price_or_get_label",
+              "selector": "button.we-button, .app-header__list__item, li.inline-list__item",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "category",
+              "selector": "dd.information-list__item__definition a, .information-list__item__definition a",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "description",
+              "selector": ".we-truncate__text, .section__description, p.whats-new__description",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "latest_version",
+              "selector": "p.whats-new__latest__version, .version-history__item__version-number, #mostRecentVersion h3",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "rating_count",
+              "selector": "#productRatings .we-customer-ratings__count, #productRatings .we-rating-count, #productRatings [class*='rating-count']",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "rating_summary_text",
+              "selector": "#productRatings .we-customer-ratings__averages__display, #productRatings .we-star-rating, #productRatings",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "see_all_reviews_href",
+              "selector": "a[href*='see-all=reviews']",
+              "attribute": "href"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract core app metadata"
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "item_selector": "#product_media_phone_ img, [id^='product_media_'] img, [id^='product_media_'] source",
+          "limit": 20,
+          "fields": [
+            {
+              "name": "src",
+              "selector": "*",
+              "attribute": "src"
+            },
+            {
+              "name": "srcset",
+              "selector": "*",
+              "attribute": "srcset"
+            },
+            {
+              "name": "alt",
+              "selector": "*",
+              "attribute": "alt"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract screenshot sources"
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "item_selector": "#allProductReviews .shelf-grid__list-item:not(.placeholder), #allProductReviews article",
+          "limit": 20,
+          "fields": [
+            {
+              "name": "title",
+              "selector": "h1, h2, h3",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "author",
+              "selector": ".header-container .multiline-clamp, .content-modal-container .multiline-clamp, .review-header .multiline-clamp, .we-customer-review__user",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "date",
+              "selector": "time, [datetime], .we-customer-review__date",
+              "attribute": "datetime"
+            },
+            {
+              "name": "date_text",
+              "selector": "time, .we-customer-review__date",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "body",
+              "selector": ".content, blockquote, .we-clamp, .content-modal-container .content, .we-customer-review__body",
+              "post_processing": [
+                "collapse_whitespace"
+              ]
+            },
+            {
+              "name": "rating_aria",
+              "selector": "[aria-label*='out of'], [aria-label*='stars']",
+              "attribute": "aria-label"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract reviews visible on product page"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "date_text": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "rating_aria": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s9",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open one App Store app page; return metadata, screenshots, and reviews.",
+    "parameters": {
+      "app_id": "Numeric App Store app id. Pass this OR app_url (not both). When set, it is appended to the US app-page prefix.",
+      "app_url": "Full App Store URL. Pass this OR app_id (not both). Default is the US prefix 'https://apps.apple.com/us/app/id'; only override when targeting a non-US storefront or a slug-bearing URL."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run appstore app-details --param app_id=\"1232780281\"",
+        "description": "Notion \u2014 US storefront: metadata + screenshots + on-page reviews."
+      },
+      {
+        "command": "rzn-browser run appstore app-details --param app_url=\"https://apps.apple.com/gb/app/notion/id1232780281\"",
+        "description": "UK page via full URL."
+      }
+    ],
+    "returns": [
+      "Primary output is the review array (s9) extracted from the product page: each row carries title/author/date/date_text/body/rating_aria. Step s7 also extracts core app metadata (title/subtitle/category/description/latest_version/rating_count/rating_summary_text/see_all_reviews_href) and step s8 extracts the screenshot array (src/srcset/alt)."
+    ],
+    "notes": [
+      "Read-only.",
+      "Pass exactly one of app_id or app_url. The final URL is `{app_url}{app_id}` — app_url defaults to the US prefix 'https://apps.apple.com/us/app/id' and app_id defaults to empty, so an app_id-only call yields the canonical product URL and an app_url-only call uses the supplied URL verbatim. Passing both concatenates them, which produces an invalid URL.",
+      "We navigate directly to the product URL (no JS-eval redirect) because apps.apple.com's CSP forbids unsafe-eval and serves no nonced <script>, which blocks execute_javascript on the landing page. The default app_url is a STATIC prefix (no chained placeholders) to dodge the engine's HashMap-ordered substitution race.",
+      "The product page is React/Svelte-rendered; we rely on IDs (`#productRatings`, `#allProductReviews`, `#product_media_phone_`) which have been stable across Apple's redesigns.",
+      "`rating_aria` carries the '4.5 out of 5 stars' accessibility label \u2014 that's the most reliable numeric rating read.",
+      "Page scrolling uses the engine's infinite_scroll action because apps.apple.com's CSP forbids unsafe-eval and ships no nonced script (execute_javascript steps are blocked on the product page).",
+      "The previous mode=full path (see-all=reviews navigation + deeper extract) was removed because the page CSP blocks the JS-eval redirect and the engine doesn't honor `continue_on_error` at runtime. The primary review array (s9) already exposes the reviews mounted on the product page."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "appstore/app-details.json",
+    "legacy_system_id": "appstore"
+  }
+}

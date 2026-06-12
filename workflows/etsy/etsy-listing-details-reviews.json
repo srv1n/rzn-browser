@@ -1,0 +1,374 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "etsy/listing_details_reviews",
+  "name": "Etsy Listing Details and Reviews",
+  "version": "1.1.0",
+  "system": "etsy",
+  "capability": "etsy.listing.details.reviews",
+  "summary": "Open an Etsy listing and extract key facts plus reviews.",
+  "description": "Open an Etsy listing and extract key facts plus reviews.",
+  "params": {
+    "properties": {
+      "listing_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Full Etsy listing URL."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "etsy.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "etsy.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{listing_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to listing page"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for hydration",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "h1, [data-buy-box-listing-title='true'], [class*='listing-title'], [data-test-id*='listing-page-title']"
+        }
+      },
+      "name": "Wait for listing title",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "listing_title",
+              "selector": "h1, [data-buy-box-listing-title='true'], [class*='listing-title'], [data-test-id*='listing-page-title']"
+            },
+            {
+              "name": "price",
+              "selector": "[class*='currency-value'], [class*='price']"
+            },
+            {
+              "name": "shop_name",
+              "selector": "[class*='shop-name'], [data-shop-name], [class*='seller'], a[href*='/shop/']"
+            },
+            {
+              "name": "rating_summary",
+              "selector": "[aria-label*='out of 5'], [aria-label*='stars'], [class*='rating'], [class*='star']"
+            },
+            {
+              "name": "rating_count",
+              "selector": "[class*='rating-count'], [class*='review-count'], a[href*='#reviews'], a[href*='reviews']"
+            },
+            {
+              "attribute": "content",
+              "name": "description",
+              "selector": "meta[name='description']"
+            }
+          ],
+          "item_selector": "body"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract listing details"
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "attribute": "src",
+              "name": "image_src",
+              "selector": "*"
+            },
+            {
+              "attribute": "srcset",
+              "name": "image_srcset",
+              "selector": "*"
+            },
+            {
+              "attribute": "alt",
+              "name": "image_alt",
+              "selector": "*"
+            }
+          ],
+          "item_selector": "img[src*='etsy'], img[data-src*='etsy'], source[srcset*='etsy']"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract listing images"
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".review-card, [data-review-region], #reviews"
+        }
+      },
+      "name": "Wait for review rows",
+      "timeout_ms": 20000,
+      "continue_on_error": true
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "review_body",
+              "selector": "[id^='review-text-width-'], p"
+            },
+            {
+              "name": "review_author",
+              "selector": "a[href*='/people/']"
+            },
+            {
+              "name": "review_date",
+              "selector": "time, [datetime], [class*='date']"
+            },
+            {
+              "name": "review_rating",
+              "selector": ".wt-screen-reader-only, [aria-label*='out of 5'], [aria-label*='star']"
+            }
+          ],
+          "item_selector": ".review-card, [data-review-region]"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract reviews pass 1"
+    },
+    {
+      "id": "s10",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "amount": 2500,
+          "direction": "down",
+          "wait_after_ms": 1000
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll for more reviews"
+    },
+    {
+      "id": "s11",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "review_body",
+              "selector": "[id^='review-text-width-'], p"
+            },
+            {
+              "name": "review_author",
+              "selector": "a[href*='/people/']"
+            },
+            {
+              "name": "review_date",
+              "selector": "time, [datetime], [class*='date']"
+            },
+            {
+              "name": "review_rating",
+              "selector": ".wt-screen-reader-only, [aria-label*='out of 5'], [aria-label*='star']"
+            }
+          ],
+          "item_selector": ".review-card, [data-review-region]"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract reviews pass 2"
+    },
+    {
+      "id": "s12",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "a[rel='next'], a[aria-label*='Next'], button[aria-label*='Next'], a[href*='page=2'], a[href*='page=']"
+        }
+      },
+      "name": "Go to next review page if available",
+      "continue_on_error": true
+    },
+    {
+      "id": "s13",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for next review page",
+      "timeout_ms": 2500,
+      "continue_on_error": true
+    },
+    {
+      "id": "s14",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "review_body",
+              "selector": "[id^='review-text-width-'], p"
+            },
+            {
+              "name": "review_author",
+              "selector": "a[href*='/people/']"
+            },
+            {
+              "name": "review_date",
+              "selector": "time, [datetime], [class*='date']"
+            },
+            {
+              "name": "review_rating",
+              "selector": ".wt-screen-reader-only, [aria-label*='out of 5'], [aria-label*='star']"
+            }
+          ],
+          "item_selector": ".review-card, [data-review-region]"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract reviews pass 3"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "review_body": {
+            "type": "string"
+          },
+          "review_author": {
+            "type": "string"
+          },
+          "review_date": {
+            "type": "string"
+          },
+          "review_rating": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s14",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open an Etsy listing and extract key facts plus reviews across multiple passes.",
+    "parameters": {
+      "listing_url": "Full Etsy listing URL."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run etsy listing-details-reviews --param listing_url=\"https://www.etsy.com/listing/123456789/example\"",
+        "description": "Extract listing facts, images, and reviews for an Etsy listing."
+      }
+    ],
+    "returns": [
+      "Array of review rows from the third pass (output_selector points at s14). Each row carries { review_body, review_author, review_date, review_rating }. Etsy reviews do not have separate titles. Listing chrome (title, price, shop_name, rating_summary, rating_count, description) is collected in step s5; images in s6; earlier review passes in s9/s11."
+    ],
+    "notes": [
+      "Read-only.",
+      "Reviews render inline (~4 visible cards) under '#reviews' on a current Etsy listing page; no click is required to reveal them.",
+      "Three review-extraction passes: initial render, after scroll-down, and after an optional pagination click. The pagination step is marked continue_on_error so listings without a 'Next' control don't fail the run.",
+      "Item selector targets '.review-card, [data-review-region]'. Fields rely on '[id^=review-text-width-]' for body and '.wt-screen-reader-only' for the textual star rating."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "etsy/etsy-listing-details-reviews.json",
+    "legacy_system_id": "etsy"
+  }
+}

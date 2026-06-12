@@ -1,0 +1,75 @@
+{
+  "system_id": "test",
+  "id": "google_search_test",
+  "name": "Google Search Test",
+  "description": "Test site profile extraction on Google",
+  "domain": "google.com",
+  "version": "1.0.0",
+  "browser_automation": {
+    "description": "Search Google and extract results using site profile",
+    "sequences": [
+      {
+        "name": "search_and_extract",
+        "description": "Search for 'OpenAI GPT' and extract results",
+        "required_variables": [],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to Google",
+            "type": "navigate_to_url",
+            "url": "https://www.google.com"
+          },
+          {
+            "id": "s2", 
+            "name": "Wait for page load",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2000
+          },
+          {
+            "id": "s3",
+            "name": "Fill search box",
+            "type": "fill_input_field",
+            "selector": "input[name='q']:not([type='hidden']), textarea[name='q']",
+            "value": "OpenAI GPT latest news"
+          },
+          {
+            "id": "s4",
+            "name": "Submit search",
+            "type": "press_special_key",
+            "key": "Enter"
+          },
+          {
+            "id": "s5",
+            "name": "Wait for results",
+            "type": "wait_for_timeout",
+            "timeout_ms": 3000
+          },
+          {
+            "id": "s6",
+            "name": "Extract search results with site profile",
+            "type": "extract_structured_data",
+            "extraction_type": "search_results",
+            "item_selector": "#search",
+            "fields": [
+              {
+                "name": "title",
+                "selector": "h3"
+              },
+              {
+                "name": "url", 
+                "selector": "a[href]",
+                "attribute": "href"
+              },
+              {
+                "name": "snippet",
+                "selector": ".VwiC3b, .yXK7lf"
+              }
+            ],
+            "max_elements": 5,
+            "output_variable": "search_results"
+          }
+        ]
+      }
+    ]
+  }
+}

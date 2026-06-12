@@ -1,0 +1,70 @@
+node_modules/
+dist/
+dist-chrome
+dist-chrome/
+dist-firefox
+dist-firefox/
+*.zip
+
+com.example.rustapp.json
+google_search.json
+.DS_Store
+
+.cursor
+.cursor/*
+.claude/
+.playwright-cli/
+.tmp/
+.tmp_cssparser_test/
+.beads/
+CLAUDE.md
+.tusker-local/
+docs/index/
+
+google.md
+claude.md
+target/
+com.rzn.browser.broker.json
+pnpm-lock.yaml
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets (dev signing keys, etc.)
+.secrets/
+
+# Log files
+~/rzn_build.log
+~/rzn_build.log.old
+~/rzn_build.log.*
+logs/*.log
+logs/archive/
+*.log
+!workflows/*.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Playwright artifacts (extension e2e uses launchPersistentContext)
+extension/.pw-user-data/
+extension/.pw-user-data-*/
+extension/.build/
+extension/test-results/
+test-results/
+
+# Generated debug artifacts (do not commit)
+workflows/generated/
+output/
+artifacts/
+
+# Tusker generated/runtime state
+tusker/_generated/
+tusker/events/
+tusker/attempts/
+tusker/evidence/
+tusker/Attachments/
+
+# Chrome Web Store submission drafts (assets, screenshots, copy — not for git)
+chrome-store-submission/

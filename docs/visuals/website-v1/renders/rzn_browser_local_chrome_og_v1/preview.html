@@ -1,0 +1,229 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root {
+  --bg-start: #F4E2C8;
+  --bg-end: #D5B183;
+  --surface: rgba(255, 247, 238, 0.84);
+  --surface-strong: rgba(255, 250, 244, 0.94);
+  --surface-soft: rgba(253, 244, 232, 0.74);
+  --border: rgba(111, 75, 42, 0.18);
+  --text: #19120D;
+  --text-muted: #5F4C40;
+  --accent: #AA4D28;
+  --accent-soft: #F3B88C;
+  --proof-label: #8E5E41;
+  --proof-value: #17110C;
+  --font-display: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+  --font-body: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+  --font-label: "SF Pro Display", "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+  --display-weight: 700;
+  --body-weight: 600;
+  --label-weight: 700;
+  --text-shadow: none;
+  --grain-opacity: 0.08;
+}
+    * {
+      box-sizing: border-box;
+    }
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 1200px;
+      height: 630px;
+      overflow: hidden;
+      background: linear-gradient(
+        135deg,
+        color-mix(in srgb, var(--bg-start) 92%, white 8%),
+        color-mix(in srgb, var(--bg-end) 94%, black 6%)
+      );
+      color: var(--text);
+    }
+    body {
+      position: relative;
+      font-family: var(--font-body);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+    body::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(circle at 14% 12%, color-mix(in srgb, var(--accent-soft) 30%, white 12%), transparent 32%),
+        radial-gradient(circle at 86% 16%, color-mix(in srgb, var(--surface-strong) 64%, white 18%), transparent 24%),
+        radial-gradient(circle at 50% 100%, color-mix(in srgb, var(--bg-end) 18%, transparent), transparent 42%),
+        linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.00) 24%, rgba(255,255,255,0.03) 100%);
+      opacity: 0.98;
+      pointer-events: none;
+    }
+    body::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        radial-gradient(rgba(255,255,255,0.20) 0.7px, transparent 0.7px),
+        radial-gradient(rgba(0,0,0,0.05) 0.7px, transparent 0.7px);
+      background-position: 0 0, 9px 9px;
+      background-size: 18px 18px;
+      opacity: calc(var(--grain-opacity) * 0.72);
+      mix-blend-mode: soft-light;
+      pointer-events: none;
+    }
+    .panel {
+      position: absolute;
+      border: 1px solid var(--border);
+      background: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--surface-strong) 96%, white 4%),
+        color-mix(in srgb, var(--surface) 90%, var(--bg-end) 10%)
+      );
+      backdrop-filter: blur(10px) saturate(108%);
+      box-shadow:
+        0 26px 80px rgba(20, 16, 13, 0.12),
+        inset 0 1px 0 rgba(255,255,255,0.46);
+      border-radius: 30px;
+    }
+    .slot {
+      position: absolute;
+      overflow: hidden;
+      white-space: normal;
+      word-break: break-word;
+      display: block;
+    }
+    .slot.eyebrow {
+      font-family: var(--font-label);
+      font-size: 20px;
+      line-height: 1.15;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      font-weight: var(--label-weight);
+    }
+    .slot.title {
+      font-family: var(--font-display);
+      color: var(--text);
+      font-size: 80px;
+      line-height: 0.99;
+      letter-spacing: -0.035em;
+      font-weight: var(--display-weight);
+      text-wrap: balance;
+      text-shadow: var(--text-shadow);
+    }
+    .slot.subtitle {
+      font-family: var(--font-body);
+      color: var(--text-muted);
+      font-size: 26px;
+      line-height: 1.28;
+      font-weight: var(--body-weight);
+    }
+    .slot.footer {
+      font-family: var(--font-label);
+      color: color-mix(in srgb, var(--text-muted) 88%, white);
+      font-size: 18px;
+      line-height: 1.1;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+    }
+    .slot.proof-label {
+      font-family: var(--font-label);
+      color: var(--proof-label);
+      font-size: 15px;
+      line-height: 1.1;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.11em;
+    }
+    .slot.proof-value {
+      font-family: var(--font-display);
+      color: var(--proof-value);
+      font-size: 32px;
+      line-height: 1.01;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .slot.matrix-cell {
+      font-family: var(--font-body);
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1.22;
+      font-weight: var(--body-weight);
+    }
+    .slot.matrix-header {
+      font-family: var(--font-label);
+      color: var(--accent);
+      font-size: 18px;
+      line-height: 1.12;
+      font-weight: var(--label-weight);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .slot.node-title {
+      font-family: var(--font-display);
+      color: var(--text);
+      font-size: 34px;
+      line-height: 1.04;
+      letter-spacing: -0.025em;
+      font-weight: var(--display-weight);
+      text-align: center;
+    }
+    .slot.node-body {
+      font-family: var(--font-body);
+      color: var(--text-muted);
+      font-size: 21px;
+      line-height: 1.22;
+      font-weight: var(--body-weight);
+      text-align: center;
+    }
+    .slot.callout-kicker {
+      font-family: var(--font-label);
+      color: var(--accent);
+      font-size: 13px;
+      line-height: 1.08;
+      font-weight: var(--label-weight);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .slot.callout-title {
+      font-family: var(--font-display);
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1.06;
+      font-weight: var(--display-weight);
+      letter-spacing: -0.02em;
+    }
+    .slot.callout-body {
+      font-family: var(--font-body);
+      color: var(--text-muted);
+      font-size: 17px;
+      line-height: 1.22;
+      font-weight: var(--body-weight);
+    }
+  </style>
+</head>
+<body>
+<div class="panel" style="left:48px;top:46px;width:690px;height:538px;border-radius:38px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 98%, white), color-mix(in srgb, var(--surface) 92%, var(--accent-soft) 8%));"></div>
+<div style="position:absolute;left:724px;top:86px;width:1px;height:454px;background:linear-gradient(180deg, transparent, color-mix(in srgb, var(--border) 88%, transparent), transparent);"></div>
+<div id="slot-eyebrow" class="slot eyebrow" data-slot="eyebrow" style="left:90px;top:82px;width:520px;height:24px;text-align:left;">Local Chrome automation</div>
+<div id="slot-title" class="slot title" data-slot="title" style="left:88px;top:132px;width:604px;height:240px;text-align:left;">Automate the Chrome you already use</div>
+<div id="slot-subtitle" class="slot subtitle" data-slot="subtitle" style="left:90px;top:398px;width:544px;height:84px;text-align:left;">Real profile, DOM-first control, short CDP only for hard pages.</div>
+<div id="slot-footer" class="slot footer" data-slot="footer" style="left:90px;top:548px;width:592px;height:24px;text-align:left;">github.com/srv1n/rzn-browser</div>
+<div id="region-proof-panel" class="panel" style="left:770px;top:68px;width:358px;height:494px;"></div>
+<div id="region-proof-title" class="slot proof-title" style="left:798px;top:92px;width:302px;height:28px;font-family:var(--font-label);font-size:16px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);">choice list</div>
+<div style="position:absolute;left:798px;top:124px;width:302px;height:1px;background:color-mix(in srgb, var(--border) 82%, transparent);"></div>
+<div class="panel" style="left:788px;top:144px;width:322px;height:124px;border-radius:22px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 98%, white), color-mix(in srgb, var(--surface) 92%, var(--accent-soft) 8%));box-shadow:0 18px 44px rgba(23,18,14,0.08), inset 0 1px 0 rgba(255,255,255,0.4);"></div>
+<div style="position:absolute;left:802px;top:160px;width:4px;height:92px;border-radius:999px;background:color-mix(in srgb, var(--accent) 72%, white 28%);opacity:0.92;"></div>
+<div id="slot-proof-items-0--label" class="slot proof-label" data-slot="proof.items[0].label" style="left:810px;top:156px;width:280px;height:20px;text-align:left;">Existing profile</div>
+<div id="slot-proof-items-0--value" class="slot proof-value" data-slot="proof.items[0].value" style="left:810px;top:182px;width:280px;height:42px;text-align:left;">Keep your real session</div>
+<div class="panel" style="left:788px;top:274px;width:322px;height:124px;border-radius:22px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 98%, white), color-mix(in srgb, var(--surface) 92%, var(--accent-soft) 8%));box-shadow:0 18px 44px rgba(23,18,14,0.08), inset 0 1px 0 rgba(255,255,255,0.4);"></div>
+<div style="position:absolute;left:802px;top:290px;width:4px;height:92px;border-radius:999px;background:color-mix(in srgb, var(--accent) 72%, white 28%);opacity:0.92;"></div>
+<div id="slot-proof-items-1--label" class="slot proof-label" data-slot="proof.items[1].label" style="left:810px;top:286px;width:280px;height:20px;text-align:left;">Light first</div>
+<div id="slot-proof-items-1--value" class="slot proof-value" data-slot="proof.items[1].value" style="left:810px;top:312px;width:280px;height:42px;text-align:left;">DOM before CDP</div>
+<div class="panel" style="left:788px;top:404px;width:322px;height:124px;border-radius:22px;background:linear-gradient(180deg, color-mix(in srgb, var(--surface-strong) 98%, white), color-mix(in srgb, var(--surface) 92%, var(--accent-soft) 8%));box-shadow:0 18px 44px rgba(23,18,14,0.08), inset 0 1px 0 rgba(255,255,255,0.4);"></div>
+<div style="position:absolute;left:802px;top:420px;width:4px;height:92px;border-radius:999px;background:color-mix(in srgb, var(--accent) 72%, white 28%);opacity:0.92;"></div>
+<div id="slot-proof-items-2--label" class="slot proof-label" data-slot="proof.items[2].label" style="left:810px;top:416px;width:280px;height:20px;text-align:left;">One runtime</div>
+<div id="slot-proof-items-2--value" class="slot proof-value" data-slot="proof.items[2].value" style="left:810px;top:442px;width:280px;height:42px;text-align:left;">Workflows or llm-auto</div>
+</body>
+</html>

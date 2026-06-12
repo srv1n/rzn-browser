@@ -1,0 +1,173 @@
+schema: tusker.docs-map/v5
+generated: "2026-05-08"
+
+domains:
+  schema:
+    label: Schema
+    description: Note types, frontmatter, IDs, parser rules.
+  workflow:
+    label: Workflow
+    description: Lifecycle, close flow, review gates, docs gates.
+  docs:
+    label: Docs
+    description: Durable documentation pages, publication pipeline, docs impact.
+  cli:
+    label: CLI
+    description: User and agent command surface.
+  runtime:
+    label: Runtime
+    description: Daemon behavior, runs, events, generated caches.
+  obsidian:
+    label: Obsidian
+    description: Views, dashboard, vault readability.
+  adoption:
+    label: Adoption
+    description: V5 setup, operator rollout, and local conventions.
+  skill:
+    label: Skill
+    description: SKILL.md, AGENTS guidance, repo-local agent instructions.
+  docs-system:
+    label: Documentation system
+    description: Diátaxis catalog, docs freshness, doc nodes, and agent docs.
+
+nodes:
+  - id: spec/v5-overview
+    title: Tusker v5 overview
+    page: docs/spec/v5-overview.md
+    domain: adoption
+    mode: explanation
+    audience: developer
+    agent_layer: capsule
+    kind: canon
+    source_of_truth: [research/tusker_v5_implementation_spec.md]
+    stale_when:
+      paths: [cmd/tusker/**, skill/**, tusker/_config/docs-map.yaml]
+    publish_lane: internal
+    publish_path: spec/v5-overview
+    publish_description: Implementation spec for Tusker v5.
+  - id: spec/v5-adoption
+    title: Tusker v5 adoption guide
+    page: docs/spec/v5-adoption.md
+    domain: adoption
+    mode: how-to
+    audience: developer
+    agent_layer: none
+    kind: guide
+    source_of_truth: [research/tusker_v5_implementation_spec.md, AGENTS.md]
+    stale_when:
+      paths: [cmd/tusker/**, skill/**, tusker/WORKFLOW.md]
+    publish_lane: internal
+    publish_path: spec/v5-adoption
+    publish_description: Adoption guide for Tusker v5.
+  - id: reference/cli
+    title: Tusker CLI reference
+    page: docs/reference/cli.md
+    domain: cli
+    mode: reference
+    audience: developer
+    agent_layer: capsule
+    kind: reference
+    source_of_truth: [cmd/tusker/cli.go, cmd/tusker/commands_v5.go]
+    stale_when:
+      paths: [cmd/tusker/**, skill/references/COMMANDS.md]
+    publish_lane: internal
+    publish_path: reference/cli
+    publish_description: Primary v5 CLI surface.
+  - id: reference/validator
+    title: Tusker validator reference
+    page: docs/reference/validator.md
+    domain: schema
+    mode: reference
+    audience: developer
+    agent_layer: capsule
+    kind: reference
+    source_of_truth: [cmd/tusker/schema.go, cmd/tusker/v5_validation.go]
+    stale_when:
+      paths: [cmd/tusker/schema.go, cmd/tusker/v5_validation.go, skill/references/SCHEMA.md]
+    publish_lane: internal
+    publish_path: reference/validator
+    publish_description: Validator rollout, failure codes, and section requirements.
+  - id: reference/templates
+    title: Template contract
+    page: docs/reference/templates.md
+    domain: schema
+    mode: reference
+    audience: developer
+    agent_layer: capsule
+    kind: reference
+    source_of_truth: [cmd/tusker/v5_templates.go, skill/assets/templates]
+    stale_when:
+      paths: [cmd/tusker/v5_templates.go, skill/assets/templates/**]
+    publish_lane: internal
+    publish_path: reference/templates
+    publish_description: Epic, task, bug-task, and doc template contract.
+  - id: tusker/docs-system
+    title: Documentation freshness system
+    page: docs/reference/docs-pipeline.md
+    domain: docs-system
+    mode: explanation
+    audience: developer
+    agent_layer: capsule
+    kind: canon
+    source_of_truth: [cmd/tusker/docs_map.go, cmd/tusker/docs_impact.go, cmd/tusker/docs_export.go]
+    stale_when:
+      paths: [cmd/tusker/docs_*.go, cmd/tusker/docs_map.go, skill/references/DOCS_PUBLICATION.md]
+    publish_lane: internal
+    publish_path: reference/docs-pipeline
+    publish_description: Docs routing, impact hook, waiver flow, and publication rules.
+  - id: reference/runtime
+    title: Runtime state and events
+    page: docs/reference/runtime.md
+    domain: runtime
+    mode: reference
+    audience: developer
+    agent_layer: capsule
+    kind: canon
+    source_of_truth: [cmd/tusker/daemon.go, cmd/tusker/runtime_store.go]
+    stale_when:
+      paths: [cmd/tusker/daemon.go, cmd/tusker/runtime_store.go, skill/docs/ORCHESTRATION_RUNBOOK.md]
+    publish_lane: internal
+    publish_path: reference/runtime
+    publish_description: Current-state frontmatter, audit events, runs, and generated caches.
+  - id: reference/obsidian
+    title: Obsidian vault guide
+    page: docs/reference/obsidian.md
+    domain: obsidian
+    mode: how-to
+    audience: developer
+    agent_layer: none
+    kind: guide
+    source_of_truth: [cmd/tusker/v5_templates.go, skill/references/BASES.md]
+    stale_when:
+      paths: [tusker/_system/views/**, skill/assets/bases/**, skill/references/BASES.md]
+    publish_lane: internal
+    publish_path: reference/obsidian
+    publish_description: Dashboard, views, and vault readability requirements.
+  - id: reference/skill
+    title: Skill and agent workflow
+    page: docs/reference/skill.md
+    domain: skill
+    mode: reference
+    audience: developer
+    agent_layer: capsule
+    kind: canon
+    source_of_truth: [skill/SKILL.md, skill/references/**, AGENTS.md]
+    stale_when:
+      paths: [skill/**, AGENTS.md, CLAUDE.md]
+    publish_lane: internal
+    publish_path: reference/skill
+    publish_description: SKILL.md and AGENTS progressive-disclosure guidance.
+  - id: agents/tusker-skill
+    title: "Agent recipe: using Tusker"
+    page: docs/agents/use-tusker.md
+    domain: skill
+    mode: how-to
+    audience: agent
+    agent_layer: standalone
+    kind: runbook
+    source_of_truth: [skill/SKILL.md, AGENTS.md]
+    stale_when:
+      paths: [skill/**, AGENTS.md, CLAUDE.md, cmd/tusker/cli.go]
+    publish_lane: internal
+    publish_path: agents/use-tusker
+    publish_description: Agent-facing procedure for using Tusker safely.

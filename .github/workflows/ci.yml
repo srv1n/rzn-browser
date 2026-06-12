@@ -1,0 +1,160 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: Rustfmt Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test Suite (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: ubuntu-stable
+            os: ubuntu-latest
+            rust: stable
+          - label: ubuntu-beta
+            os: ubuntu-latest
+            rust: beta
+          - label: macos-stable
+            os: macos-latest
+            rust: stable
+          - label: windows-stable
+            os: windows-latest
+            rust: stable
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Build workspace
+        run: cargo build --workspace --all-targets --verbose
+
+      - name: Run workspace tests
+        run: cargo test --workspace --all-targets --verbose
+
+      - name: Run doc tests
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == 'stable'
+        run: cargo test --workspace --doc --verbose
+
+  extension:
+    name: Extension Build and Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install extension dependencies
+        working-directory: extension
+        run: bun install
+
+      - name: Build extension
+        working-directory: extension
+        run: bun run build
+
+      - name: Run extension unit tests
+        working-directory: extension
+        run: bun x vitest --run
+
+      - name: Check extension artifacts
+        run: |
+          test -d extension/dist-chrome
+          test -d extension/dist/chrome
+          test -d extension/dist/edge
+          test -d extension/dist/chromium
+
+  benchmarks:
+    name: Benchmarks
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build benchmark targets
+        run: cargo bench --no-run
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: target/criterion/
+          if-no-files-found: ignore
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Run cargo audit
+        shell: bash
+        run: |
+          baseline=".cargo/cargo-audit-baseline-2026-06-11.txt"
+          test -f "$baseline"
+
+          mapfile -t audit_ignores < <(sed -E 's/#.*//; s/^[[:space:]]+//; s/[[:space:]]+$//; /^$/d' "$baseline")
+          audit_args=()
+          for advisory in "${audit_ignores[@]}"; do
+            audit_args+=(--ignore "$advisory")
+          done
+
+          cargo audit "${audit_args[@]}"

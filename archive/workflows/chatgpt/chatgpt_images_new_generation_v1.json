@@ -1,0 +1,90 @@
+{
+  "browser_automation": {
+    "description": "Current-tab ChatGPT Images entry flow. It reuses the authenticated browser session, opens the Images surface, sends a prompt, and returns the chat handle for downstream polling.",
+    "sequences": [
+      {
+        "description": "Open ChatGPT Images -> wait for composer -> send prompt -> return chat state.",
+        "name": "chatgpt_images_new_generation",
+        "required_variables": [
+          {
+            "description": "Prompt text to send to ChatGPT Images",
+            "name": "message_text"
+          }
+        ],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Open ChatGPT Images in the current tab",
+            "timeout_ms": 60000,
+            "type": "navigate_to_url",
+            "url": "https://chatgpt.com/images/"
+          },
+          {
+            "id": "s1",
+            "name": "Allow the Images SPA shell to settle",
+            "timeout_ms": 1800,
+            "type": "wait_for_timeout"
+          },
+          {
+            "id": "s2",
+            "name": "Dismiss popups if present",
+            "type": "dismiss_popups"
+          },
+          {
+            "id": "s3",
+            "name": "Wait for the ChatGPT Images composer or thread shell",
+            "selector": "#prompt-textarea, textarea[placeholder*='Describe' i], textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], form textarea, [data-message-author-role], main article",
+            "timeout_ms": 30000,
+            "type": "wait_for_element"
+          },
+          {
+            "args": [
+              "{message_text}",
+              "{variation_count}"
+            ],
+            "id": "s4",
+            "name": "Send the image generation prompt and return the chat state",
+            "script": "const clean=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const message=clean(arg0);const parsedCount=Number.parseInt(clean(arg1),10);const variationCount=Number.isFinite(parsedCount)&&parsedCount>0?parsedCount:2;if(!message) throw new Error('message_text is required');const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const normalize=(v)=>(v||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const visible=(n)=>!!(n&&n instanceof Element&&getComputedStyle(n).visibility!=='hidden'&&getComputedStyle(n).display!=='none'&&n.getBoundingClientRect().width>0&&n.getBoundingClientRect().height>0);const chatId=()=>{const m=window.location.pathname.match(/^\\/c\\/([^/?#]+)/);return m?m[1]:null;};const composer=()=>Array.from(document.querySelectorAll(\"#prompt-textarea, textarea[placeholder*='Describe' i], textarea[placeholder*='Message' i], textarea[placeholder*='Send a message' i], form textarea, div[role='textbox'][contenteditable='true'], [contenteditable='true'][data-testid*='composer']\")).find(visible)||null;const setText=(node,text)=>{node.focus();if(node instanceof HTMLTextAreaElement||node instanceof HTMLInputElement){const setter=Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node),'value')?.set||Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value')?.set||Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set;if(setter) setter.call(node,text);else node.value=text;node.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));node.dispatchEvent(new Event('change',{bubbles:true}));return;}node.textContent=text;node.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));};const sendBtn=(comp)=>{const form=comp?.closest('form');const scopes=[form,comp?.parentElement,comp?.closest('[role=\"group\"]'),comp?.closest('main')].filter(Boolean);for(const scope of scopes){const candidates=Array.from(scope.querySelectorAll(\"button, [role='button']\")).filter(visible);const preferred=candidates.find((node)=>{const label=normalize([node.getAttribute('aria-label')||'',node.getAttribute('title')||'',node.getAttribute('data-testid')||'',node.textContent||''].join(' ')).toLowerCase();const disabled=node.matches(':disabled')||node.getAttribute('aria-disabled')==='true';if(disabled) return false;if(/share|post\\b|twitter|x\\.com|copy link|export/.test(label)) return false;return /send prompt|send|submit|create image|create images|generate/.test(label);});if(preferred) return preferred;const submit=candidates.find((node)=>!node.matches(':disabled')&&node.getAttribute('type')==='submit');if(submit) return submit;}return null;};const finalPrompt=/\\b(?:exactly|create)\\s+\\d+\\s+(?:distinct\\s+)?(?:image\\s+)?variations?\\b/i.test(normalize(message))?message:`${normalize(message)}\\n\\nGenerate exactly ${variationCount} distinct image variations. Return the final images in this chat.`;let comp=composer();if(!comp) throw new Error('ChatGPT Images composer not found');setText(comp,finalPrompt);await sleep(250);comp=composer()||comp;const btn=sendBtn(comp);if(!btn) throw new Error('ChatGPT Images send button not found');btn.click();const deadline=Date.now()+45000;while(Date.now()<deadline){if(chatId()) break;await sleep(750);}return {url:window.location.href,title:document.title,chat_id:chatId(),message_sent:message,submitted_prompt:finalPrompt,variation_count:variationCount};",
+            "timeout_ms": 180000,
+            "type": "execute_javascript",
+            "world": "main"
+          }
+        ]
+      }
+    ],
+    "use_current_tab": false
+  },
+  "description": "Open ChatGPT Images in the current tab, send a prompt that defaults to two variations unless already specified, and return the resolved chat id for follow-up polling.",
+  "domain": "chatgpt.com",
+  "help": {
+    "examples": [
+      {
+        "command": "rzn-browser run workflows/chatgpt/chatgpt_images_new_generation_v1.json --param message_text=\"Summarize the last three commits.\"",
+        "description": "Basic run with required parameters."
+      }
+    ],
+    "notes": [],
+    "parameters": [
+      {
+        "description": "Prompt text to send to ChatGPT Images",
+        "example": "Summarize the last three commits.",
+        "name": "message_text",
+        "required": true,
+        "shape": "text"
+      },
+      {
+        "description": "Numeric limit used by the workflow.",
+        "example": "10",
+        "name": "variation_count",
+        "required": false,
+        "shape": "integer"
+      }
+    ],
+    "returns": null,
+    "summary": "Open ChatGPT Images in the current tab, send a prompt that defaults to two variations unless already specified, and return the resolved chat id for follow-up polling."
+  },
+  "id": "chatgpt_images_new_generation_v1",
+  "name": "ChatGPT Images: New Generation",
+  "system_id": "chatgpt",
+  "version": "1.0.1"
+}

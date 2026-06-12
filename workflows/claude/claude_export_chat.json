@@ -1,0 +1,539 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "claude/export_chat",
+  "name": "Claude: Export Chat",
+  "version": "1.2.0",
+  "system": "claude",
+  "capability": "claude.export.chat",
+  "summary": "Read one Claude thread. Returns the full transcript by default, or the newest matching turn when mode is latest-assistant or latest-user. Optionally triggers downloads for every artifact in the thread (files land in the browser's default Downloads folder).",
+  "description": "Open a Claude conversation, scroll toward the top, and return its transcript as structured user/assistant turns. Use mode=latest-assistant or latest-user to return only the newest matching turn. Set download_artifacts=true to also click every artifact Download button in the thread.",
+  "params": {
+    "properties": {
+      "download_artifacts": {
+        "kind": "boolean",
+        "required": false,
+        "default": false,
+        "description": "When true, clicks every button matching button[aria-label^='Download '] in the thread and returns a manifest of the artifacts that were triggered. Files are saved by the browser to its default Downloads folder (on macOS typically ~/Downloads). Callers that need a custom destination should move the files after the workflow completes using the aria_label + expected filename returned in the manifest."
+      },
+      "mode": {
+        "kind": "string",
+        "required": false,
+        "default": "full",
+        "description": "full returns every visible turn. latest-assistant returns only the newest assistant turn. latest-user returns only the newest user turn.",
+        "enum_values": [
+          "full",
+          "latest-assistant",
+          "latest-user"
+        ]
+      },
+      "thread_id": {
+        "kind": "string",
+        "required": true,
+        "description": "Claude conversation id from /chat/<thread_id>."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "claude.ai"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "claude.ai"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "claude.ai"
+      ]
+    },
+    {
+      "class": "download",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "claude.ai"
+      ]
+    },
+    {
+      "class": "file_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": []
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://claude.ai/chat/{thread_id}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the Claude conversation",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the thread shell to settle",
+      "timeout_ms": 2200
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "main, textarea, [contenteditable='true'], [data-testid='user-message'], [class*='font-claude-response']"
+        }
+      },
+      "name": "Wait for the Claude thread surface",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{thread_id}",
+            "{mode}",
+            "{download_artifacts}"
+          ],
+          "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const expectedThreadId = cleanArg(arg0); const requestedMode = cleanArg(arg1).toLowerCase(); const doDownloadRaw = cleanArg(arg2).toLowerCase(); const doDownload = doDownloadRaw === 'true' || doDownloadRaw === '1' || doDownloadRaw === 'yes'; const validModes = new Set(['full', 'latest-assistant', 'latest-user']); const mode = validModes.has(requestedMode) ? requestedMode : 'full'; const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)); const threadIdFromLocation = () => { const match = window.location.pathname.match(/\\/chat\\/([^/?#]+)/); return match ? match[1] : null; }; const currentThreadId = threadIdFromLocation(); if (expectedThreadId && currentThreadId && expectedThreadId !== currentThreadId) throw new Error(`expected thread_id ${expectedThreadId} but opened ${currentThreadId}`); const authRequired = () => /log in|sign in|continue with google|continue with email|welcome back|enter your email/i.test(normalize(document.body?.innerText || '').toLowerCase()); const stripText = (node) => { if (!node) return ''; const clone = node.cloneNode(true); clone.querySelectorAll(\".sr-only, button, [role='button'], [aria-hidden='true'], style, script, svg\").forEach((child) => child.remove()); return normalize(clone.innerText || clone.textContent || ''); }; const linksFrom = (node) => Array.from(node.querySelectorAll('a[href]')).map((link) => { const href = link.getAttribute('href') || link.href || ''; if (!href) return null; try { return { href: new URL(href, window.location.origin).toString(), text: normalize(link.innerText || link.textContent || '') || null }; } catch { return null; } }).filter(Boolean).slice(0, 50); const codeBlocksFrom = (node) => Array.from(node.querySelectorAll('pre code, pre')).map((block) => normalize(block.innerText || block.textContent || '')).filter(Boolean); const findColumn = () => document.querySelector('.flex-1.flex.flex-col.px-4.max-w-3xl.mx-auto.w-full.pt-1') || document.querySelector('main') || document.body; const collectTurns = () => { const col = findColumn(); const turns = []; const walk = (node, depth) => { if (depth > 6) return; Array.from(node.children || []).forEach((child) => { if (!(child instanceof Element)) return; const classes = (child.className || '').toString(); const hasUser = !!child.querySelector(\"[data-testid='user-message']\"); const hasAssistant = !!child.querySelector(\"[data-testid='action-bar-retry'], [class*='font-claude-response']\"); const isTurnWrapper = (hasUser || hasAssistant) && /\\bgroup\\b/.test(classes); if (isTurnWrapper) { const role = hasUser ? 'user' : 'assistant'; const text = stripText(child); if (!text || text.length < 1) return; turns.push({ role, text, code_blocks: codeBlocksFrom(child), links: linksFrom(child) }); } else { walk(child, depth + 1); } }); }; walk(col, 0); return turns; }; const turnKey = (turn) => [turn.role || 'unknown', (turn.text || '').slice(0, 1200)].join('||'); const seen = new Map(); const absorb = (turns) => { turns.forEach((turn, order) => { const key = turnKey(turn); const existing = seen.get(key); const entry = existing || { ...turn, dom_order: order, first_seen_count: seen.size }; if (!existing) seen.set(key, entry); }); }; const scrollRoot = document.querySelector('.overflow-y-auto.overflow-x-hidden') || document.scrollingElement || document.documentElement; let reachedTop = false; let idlePasses = 0; let scrollPasses = 0; for (; scrollPasses < 24; scrollPasses += 1) { absorb(collectTurns()); const beforeCount = seen.size; const beforeTop = typeof scrollRoot.scrollTop === 'number' ? scrollRoot.scrollTop : window.scrollY; if (beforeTop <= 0) reachedTop = true; const targetTop = Math.max(0, beforeTop - Math.max(window.innerHeight * 0.9, 700)); if (typeof scrollRoot.scrollTo === 'function') scrollRoot.scrollTo(0, targetTop); else window.scrollTo(0, targetTop); await sleep(950); absorb(collectTurns()); const afterTop = typeof scrollRoot.scrollTop === 'number' ? scrollRoot.scrollTop : window.scrollY; if (afterTop <= 0) reachedTop = true; const grew = seen.size > beforeCount; if (reachedTop && !grew) idlePasses += 1; else idlePasses = 0; if (reachedTop && idlePasses >= 2) break; } if (typeof scrollRoot.scrollTo === 'function') scrollRoot.scrollTo(0, 0); else window.scrollTo(0, 0); await sleep(500); absorb(collectTurns()); const transcript = Array.from(seen.values()).sort((left, right) => (left.first_seen_count ?? 0) - (right.first_seen_count ?? 0)).map((turn) => ({ role: turn.role, text: turn.text, code_blocks: turn.code_blocks, links: turn.links })); let selected = transcript; if (mode === 'latest-assistant') { const last = [...transcript].reverse().find((t) => t.role === 'assistant'); selected = last ? [last] : []; } else if (mode === 'latest-user') { const last = [...transcript].reverse().find((t) => t.role === 'user'); selected = last ? [last] : []; } let artifacts = null; if (doDownload) { artifacts = Array.from(document.querySelectorAll(\"button[aria-label^='Download ']\")).map((btn) => { const aria = btn.getAttribute('aria-label') || ''; const slug = aria.replace(/^Download\\s+/i, '').trim(); return { aria_label: aria, slug }; }); } return { url: window.location.href, title: document.title, thread_id: threadIdFromLocation(), mode, auth_required: authRequired(), message_count: transcript.length, assistant_turn_count: transcript.filter((t) => t.role === 'assistant').length, user_turn_count: transcript.filter((t) => t.role === 'user').length, scroll_passes: scrollPasses + 1, reached_top: reachedTop, transcript: selected, artifacts, downloads_folder_hint: doDownload ? '~/Downloads' : null };"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Scroll and export the Claude transcript",
+      "timeout_ms": 180000
+    },
+    {
+      "id": "s5_0",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval_when_arg_truthy": 0,
+          "args": [
+            "{download_artifacts}",
+            "0"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const doIt=['true','1','yes'].includes(cleanArg(arg0).toLowerCase());const idx=parseInt(cleanArg(arg1),10)||0;if(!doIt)return{skipped:true,reason:'disabled'};const btns=Array.from(document.querySelectorAll(\"button[aria-label^='Download ']\"));if(idx>=btns.length)return{skipped:true,reason:'out of range',count:btns.length};const btn=btns[idx];const aria=btn.getAttribute('aria-label');try{btn.scrollIntoView({block:'center'});}catch{}await new Promise(r=>setTimeout(r,200));btn.click();return{clicked:true,aria_label:aria,index:idx};"
+        },
+        "side_effects": [
+          "browser_state",
+          "download",
+          "file_write"
+        ]
+      },
+      "name": "Click artifact download [0] (if present & enabled)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5_0w",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Gap after click [0]",
+      "timeout_ms": 700
+    },
+    {
+      "id": "s5_1",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval_when_arg_truthy": 0,
+          "args": [
+            "{download_artifacts}",
+            "1"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const doIt=['true','1','yes'].includes(cleanArg(arg0).toLowerCase());const idx=parseInt(cleanArg(arg1),10)||0;if(!doIt)return{skipped:true,reason:'disabled'};const btns=Array.from(document.querySelectorAll(\"button[aria-label^='Download ']\"));if(idx>=btns.length)return{skipped:true,reason:'out of range',count:btns.length};const btn=btns[idx];const aria=btn.getAttribute('aria-label');try{btn.scrollIntoView({block:'center'});}catch{}await new Promise(r=>setTimeout(r,200));btn.click();return{clicked:true,aria_label:aria,index:idx};"
+        },
+        "side_effects": [
+          "browser_state",
+          "download",
+          "file_write"
+        ]
+      },
+      "name": "Click artifact download [1] (if present & enabled)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5_1w",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Gap after click [1]",
+      "timeout_ms": 700
+    },
+    {
+      "id": "s5_2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval_when_arg_truthy": 0,
+          "args": [
+            "{download_artifacts}",
+            "2"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const doIt=['true','1','yes'].includes(cleanArg(arg0).toLowerCase());const idx=parseInt(cleanArg(arg1),10)||0;if(!doIt)return{skipped:true,reason:'disabled'};const btns=Array.from(document.querySelectorAll(\"button[aria-label^='Download ']\"));if(idx>=btns.length)return{skipped:true,reason:'out of range',count:btns.length};const btn=btns[idx];const aria=btn.getAttribute('aria-label');try{btn.scrollIntoView({block:'center'});}catch{}await new Promise(r=>setTimeout(r,200));btn.click();return{clicked:true,aria_label:aria,index:idx};"
+        },
+        "side_effects": [
+          "browser_state",
+          "download",
+          "file_write"
+        ]
+      },
+      "name": "Click artifact download [2] (if present & enabled)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5_2w",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Gap after click [2]",
+      "timeout_ms": 700
+    },
+    {
+      "id": "s5_3",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval_when_arg_truthy": 0,
+          "args": [
+            "{download_artifacts}",
+            "3"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const doIt=['true','1','yes'].includes(cleanArg(arg0).toLowerCase());const idx=parseInt(cleanArg(arg1),10)||0;if(!doIt)return{skipped:true,reason:'disabled'};const btns=Array.from(document.querySelectorAll(\"button[aria-label^='Download ']\"));if(idx>=btns.length)return{skipped:true,reason:'out of range',count:btns.length};const btn=btns[idx];const aria=btn.getAttribute('aria-label');try{btn.scrollIntoView({block:'center'});}catch{}await new Promise(r=>setTimeout(r,200));btn.click();return{clicked:true,aria_label:aria,index:idx};"
+        },
+        "side_effects": [
+          "browser_state",
+          "download",
+          "file_write"
+        ]
+      },
+      "name": "Click artifact download [3] (if present & enabled)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5_3w",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Gap after click [3]",
+      "timeout_ms": 700
+    },
+    {
+      "id": "s5_4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval_when_arg_truthy": 0,
+          "args": [
+            "{download_artifacts}",
+            "4"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const doIt=['true','1','yes'].includes(cleanArg(arg0).toLowerCase());const idx=parseInt(cleanArg(arg1),10)||0;if(!doIt)return{skipped:true,reason:'disabled'};const btns=Array.from(document.querySelectorAll(\"button[aria-label^='Download ']\"));if(idx>=btns.length)return{skipped:true,reason:'out of range',count:btns.length};const btn=btns[idx];const aria=btn.getAttribute('aria-label');try{btn.scrollIntoView({block:'center'});}catch{}await new Promise(r=>setTimeout(r,200));btn.click();return{clicked:true,aria_label:aria,index:idx};"
+        },
+        "side_effects": [
+          "browser_state",
+          "download",
+          "file_write"
+        ]
+      },
+      "name": "Click artifact download [4] (if present & enabled)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5_4w",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Gap after click [4]",
+      "timeout_ms": 700
+    },
+    {
+      "id": "s5_5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval_when_arg_truthy": 0,
+          "args": [
+            "{download_artifacts}",
+            "5"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const doIt=['true','1','yes'].includes(cleanArg(arg0).toLowerCase());const idx=parseInt(cleanArg(arg1),10)||0;if(!doIt)return{skipped:true,reason:'disabled'};const btns=Array.from(document.querySelectorAll(\"button[aria-label^='Download ']\"));if(idx>=btns.length)return{skipped:true,reason:'out of range',count:btns.length};const btn=btns[idx];const aria=btn.getAttribute('aria-label');try{btn.scrollIntoView({block:'center'});}catch{}await new Promise(r=>setTimeout(r,200));btn.click();return{clicked:true,aria_label:aria,index:idx};"
+        },
+        "side_effects": [
+          "browser_state",
+          "download",
+          "file_write"
+        ]
+      },
+      "name": "Click artifact download [5] (if present & enabled)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5_5w",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Gap after click [5]",
+      "timeout_ms": 700
+    },
+    {
+      "id": "s5_6",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval_when_arg_truthy": 0,
+          "args": [
+            "{download_artifacts}",
+            "6"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const doIt=['true','1','yes'].includes(cleanArg(arg0).toLowerCase());const idx=parseInt(cleanArg(arg1),10)||0;if(!doIt)return{skipped:true,reason:'disabled'};const btns=Array.from(document.querySelectorAll(\"button[aria-label^='Download ']\"));if(idx>=btns.length)return{skipped:true,reason:'out of range',count:btns.length};const btn=btns[idx];const aria=btn.getAttribute('aria-label');try{btn.scrollIntoView({block:'center'});}catch{}await new Promise(r=>setTimeout(r,200));btn.click();return{clicked:true,aria_label:aria,index:idx};"
+        },
+        "side_effects": [
+          "browser_state",
+          "download",
+          "file_write"
+        ]
+      },
+      "name": "Click artifact download [6] (if present & enabled)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5_6w",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Gap after click [6]",
+      "timeout_ms": 700
+    },
+    {
+      "id": "s5_7",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval_when_arg_truthy": 0,
+          "args": [
+            "{download_artifacts}",
+            "7"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const doIt=['true','1','yes'].includes(cleanArg(arg0).toLowerCase());const idx=parseInt(cleanArg(arg1),10)||0;if(!doIt)return{skipped:true,reason:'disabled'};const btns=Array.from(document.querySelectorAll(\"button[aria-label^='Download ']\"));if(idx>=btns.length)return{skipped:true,reason:'out of range',count:btns.length};const btn=btns[idx];const aria=btn.getAttribute('aria-label');try{btn.scrollIntoView({block:'center'});}catch{}await new Promise(r=>setTimeout(r,200));btn.click();return{clicked:true,aria_label:aria,index:idx};"
+        },
+        "side_effects": [
+          "browser_state",
+          "download",
+          "file_write"
+        ]
+      },
+      "name": "Click artifact download [7] (if present & enabled)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5_7w",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Settle after final click",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{thread_id}",
+            "{mode}",
+            "{download_artifacts}"
+          ],
+          "script": "const cleanArg = (value) => { const text = String(value == null ? '' : value).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(text) ? '' : text; }; const expectedThreadId = cleanArg(arg0); const requestedMode = cleanArg(arg1).toLowerCase(); const doDownload = ['true','1','yes'].includes(cleanArg(arg2).toLowerCase()); const validModes = new Set(['full', 'latest-assistant', 'latest-user']); const mode = validModes.has(requestedMode) ? requestedMode : 'full'; const normalize = (value) => (value || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim(); const threadIdFromLocation = () => { const match = window.location.pathname.match(/\\/chat\\/([^/?#]+)/); return match ? match[1] : null; }; const stripText = (node) => { if (!node) return ''; const clone = node.cloneNode(true); clone.querySelectorAll(\".sr-only, button, [role='button'], [aria-hidden='true'], style, script, svg\").forEach((child) => child.remove()); return normalize(clone.innerText || clone.textContent || ''); }; const linksFrom = (node) => Array.from(node.querySelectorAll('a[href]')).map((link) => { const href = link.getAttribute('href') || link.href || ''; if (!href) return null; try { return { href: new URL(href, window.location.origin).toString(), text: normalize(link.innerText || link.textContent || '') || null }; } catch { return null; } }).filter(Boolean).slice(0, 50); const codeBlocksFrom = (node) => Array.from(node.querySelectorAll('pre code, pre')).map((block) => normalize(block.innerText || block.textContent || '')).filter(Boolean); const findColumn = () => document.querySelector('.flex-1.flex.flex-col.px-4.max-w-3xl.mx-auto.w-full.pt-1') || document.querySelector('main') || document.body; const turns = []; const walk = (node, depth) => { if (depth > 6) return; Array.from(node.children || []).forEach((child) => { if (!(child instanceof Element)) return; const classes = (child.className || '').toString(); const hasUser = !!child.querySelector(\"[data-testid='user-message']\"); const hasAssistant = !!child.querySelector(\"[data-testid='action-bar-retry'], [class*='font-claude-response']\"); const isTurnWrapper = (hasUser || hasAssistant) && /\\bgroup\\b/.test(classes); if (isTurnWrapper) { const role = hasUser ? 'user' : 'assistant'; const text = stripText(child); if (!text || text.length < 1) return; turns.push({ role, text, code_blocks: codeBlocksFrom(child), links: linksFrom(child) }); } else { walk(child, depth + 1); } }); }; walk(findColumn(), 0); let selected = turns; if (mode === 'latest-assistant') { const last = [...turns].reverse().find((t) => t.role === 'assistant'); selected = last ? [last] : []; } else if (mode === 'latest-user') { const last = [...turns].reverse().find((t) => t.role === 'user'); selected = last ? [last] : []; } const artifacts = doDownload ? Array.from(document.querySelectorAll(\"button[aria-label^='Download ']\")).map((btn) => { const aria = btn.getAttribute('aria-label') || ''; return { aria_label: aria, slug: aria.replace(/^Download\\s+/i, '').trim() }; }) : null; return { url: window.location.href, title: document.title, thread_id: threadIdFromLocation(), mode, message_count: turns.length, assistant_turn_count: turns.filter((t) => t.role === 'assistant').length, user_turn_count: turns.filter((t) => t.role === 'user').length, transcript: selected, artifacts, artifacts_triggered: doDownload ? (artifacts?.length || 0) : null, downloads_folder_hint: doDownload ? '~/Downloads' : null };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Re-export transcript & artifact manifest for final return",
+      "timeout_ms": 30000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "url": { "type": "string" },
+        "title": { "type": "string" },
+        "thread_id": { "type": ["string", "null"] },
+        "mode": { "type": "string" },
+        "message_count": { "type": "integer" },
+        "assistant_turn_count": { "type": "integer" },
+        "user_turn_count": { "type": "integer" },
+        "transcript": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": { "type": "string", "enum": ["user", "assistant"] },
+              "text": { "type": "string" },
+              "code_blocks": { "type": "array", "items": { "type": "string" } },
+              "links": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "href": { "type": "string" },
+                    "text": { "type": ["string", "null"] }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "artifacts": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "properties": {
+              "aria_label": { "type": "string" },
+              "slug": { "type": "string" }
+            }
+          }
+        },
+        "artifacts_triggered": { "type": ["integer", "null"] },
+        "downloads_folder_hint": { "type": ["string", "null"] }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Read one Claude thread. Returns the full transcript by default, or the newest matching turn when mode is latest-assistant or latest-user. Optionally triggers downloads for every artifact in the thread (files land in the browser's default Downloads folder).",
+    "parameters": {
+      "download_artifacts": "Boolean. When true, clicks every button matching button[aria-label^='Download '] in the thread and returns a manifest of the artifacts that were triggered. Files are saved by Chrome to its default Downloads folder (on macOS typically ~/Downloads). Defaults to false.",
+      "mode": "full | latest-assistant | latest-user. full returns every visible turn. latest-assistant returns only the newest assistant turn. latest-user returns only the newest user turn. Defaults to full.",
+      "thread_id": "Claude conversation id from /chat/<thread_id>."
+    },
+    "examples": [
+      {
+        "description": "Export the full transcript",
+        "command": "rzn-browser run claude export-chat --param thread_id=\"01234567-89ab-cdef-0123-456789abcdef\""
+      },
+      {
+        "description": "Get only the newest assistant response (replaces a get-response workflow)",
+        "command": "rzn-browser run claude export-chat --param thread_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param mode=\"latest-assistant\""
+      },
+      {
+        "description": "Export transcript and trigger every artifact download",
+        "command": "rzn-browser run claude export-chat --param thread_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param download_artifacts=\"true\""
+      }
+    ],
+    "returns": [
+      "thread_id, title, message_count, assistant_turn_count, user_turn_count, transcript[{role, text, code_blocks, links}]. When download_artifacts=true, also returns artifacts[{aria_label, slug}], artifacts_triggered_at (ISO timestamp), and downloads_folder_hint (e.g. '~/Downloads')."
+    ],
+    "notes": [
+      "Turns are detected via [data-testid='user-message'] for user turns and the .group wrapper containing .font-claude-response or [data-testid='action-bar-retry'] for assistant turns.",
+      "sr-only, button, and style nodes are stripped from visible text.",
+      "download_artifacts clicks buttons in DOM order with a small gap between clicks; actual save path is controlled by Chrome's download preferences, not this workflow."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "claude/claude_export_chat.json",
+    "legacy_system_id": "claude"
+  }
+}

@@ -1,0 +1,238 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "x/profile_posts",
+  "name": "X: Profile Posts",
+  "version": "1.1.0",
+  "system": "x",
+  "capability": "x.profile.posts",
+  "summary": "Return up to 20 posts from one X handle's profile timeline.",
+  "description": "Open one X handle's profile timeline in a fresh tab and return up to 20 posts from the Posts tab. Use for a quick read of what an author has posted recently. Do not use when you also need replies, or posts within a specific date range (use `x_search_posts` with a date window).",
+  "params": {
+    "properties": {
+      "handle": {
+        "kind": "string",
+        "required": true,
+        "description": "X handle without the leading @."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "x.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://x.com/{handle}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the profile Posts tab in a fresh tab"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the profile page to hydrate",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article"
+        }
+      },
+      "name": "Wait for post cards",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "infinite_scroll",
+        "inputs": {
+          "max_scrolls": 8,
+          "scroll_delay": 1500,
+          "target_selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
+          "target_count": 20
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll until roughly 20 posts are visible",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "item_selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
+          "limit": 20,
+          "fields": [
+            {
+              "name": "author",
+              "selector": "div[data-testid='User-Name']"
+            },
+            {
+              "name": "text",
+              "selector": "div[data-testid='tweetText'], div[lang]"
+            },
+            {
+              "name": "posted_at",
+              "selector": "time",
+              "attribute": "datetime"
+            },
+            {
+              "name": "post_url",
+              "selector": "a[href*='/status/']",
+              "attribute": "href"
+            },
+            {
+              "name": "reply_count",
+              "selector": "button[data-testid='reply'], [data-testid='reply']"
+            },
+            {
+              "name": "repost_count",
+              "selector": "button[data-testid='retweet'], button[data-testid='unretweet'], [data-testid='retweet'], [data-testid='unretweet']"
+            },
+            {
+              "name": "like_count",
+              "selector": "button[data-testid='like'], button[data-testid='unlike'], [data-testid='like'], [data-testid='unlike']"
+            },
+            {
+              "name": "view_count",
+              "selector": "a[href*='/analytics']"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract profile posts"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "author": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "posted_at": {
+            "type": "string"
+          },
+          "post_url": {
+            "type": "string"
+          },
+          "reply_count": {
+            "type": "string"
+          },
+          "repost_count": {
+            "type": "string"
+          },
+          "like_count": {
+            "type": "string"
+          },
+          "view_count": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Return up to 20 posts from one X handle's profile timeline.",
+    "parameters": {
+      "handle": "X handle without the leading @."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run x profile-posts --param handle=\"elonmusk\"",
+        "description": "Return up to 20 of @elonmusk's most recent posts."
+      }
+    ],
+    "returns": [
+      "Array of post cards with author, text, posted_at, post_url, reply_count, repost_count, like_count, view_count."
+    ],
+    "notes": [
+      "Read-only.",
+      "For date-windowed results use `x_search_posts` instead.",
+      "Opens a fresh tab for parallel-safe execution."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "x/x_profile_posts.json",
+    "legacy_system_id": "x"
+  }
+}

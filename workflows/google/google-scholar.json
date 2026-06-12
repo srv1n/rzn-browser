@@ -1,0 +1,254 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "google/scholar",
+  "name": "Google Scholar Search",
+  "version": "1.1.0",
+  "system": "google",
+  "capability": "google.scholar",
+  "summary": "Search Google Scholar and extract paper title/authors/snippet/url + cited-by link.",
+  "description": "Search Google Scholar and extract paper-shaped results: title, authors, snippet, paper URL, and a link to the cited-by page.",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Academic search query. Aliases query and q work too."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "scholar.google.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "scholar.google.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://scholar.google.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Google Scholar homepage"
+    },
+    {
+      "id": "s1a",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "input[name='q'], #gs_hdr_tsi"
+        }
+      },
+      "name": "Wait for the Scholar search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss consent / popups if present"
+    },
+    {
+      "id": "s1c",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[name='q'], #gs_hdr_tsi"
+        }
+      },
+      "name": "Fill the search box"
+    },
+    {
+      "id": "s1d",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[name='q'], #gs_hdr_tsi",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the page to settle",
+      "timeout_ms": 3000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss common popups"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "div.gs_r, #gs_res_ccl"
+        }
+      },
+      "name": "Wait for result cards",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "extraction_type": "scholar_results",
+          "item_selector": "div.gs_r.gs_or.gs_scl, div.gs_r",
+          "fields": [
+            {
+              "name": "title",
+              "selector": "h3.gs_rt"
+            },
+            {
+              "name": "url",
+              "selector": "h3.gs_rt a",
+              "attribute": "href"
+            },
+            {
+              "name": "authors",
+              "selector": "div.gs_a"
+            },
+            {
+              "name": "snippet",
+              "selector": "div.gs_rs"
+            },
+            {
+              "name": "cited_by_url",
+              "selector": "a[href*='cites=']",
+              "attribute": "href"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract paper results"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "authors": {
+            "type": "string"
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "cited_by_url": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search Google Scholar and extract paper title/authors/snippet/url + cited-by link.",
+    "parameters": {
+      "search_query": "Academic search query. Aliases query and q work too."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run google scholar --param search_query=\"transformer attention mechanism\"",
+        "description": "Find papers on transformer attention."
+      },
+      {
+        "command": "rzn-browser run google scholar --param query=\"author:hinton deep learning\"",
+        "description": "Use Scholar's author: operator inline."
+      }
+    ],
+    "returns": [
+      "Array of { title, url, authors, snippet, cited_by_url }. authors is the raw 'authors \u2014 venue, year \u2014 site' line; parse downstream if you need fields."
+    ],
+    "notes": [
+      "Drives the Scholar homepage search input rather than hitting `?q=...` directly.",
+      "Scholar aggressively rate-limits scraping; expect intermittent 429s on busy sessions.",
+      "url is the paper's primary link (often direct PDF or publisher page), not a Scholar-internal link."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "google/google-scholar.json",
+    "legacy_system_id": "google"
+  }
+}

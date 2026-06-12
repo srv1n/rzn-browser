@@ -1,0 +1,338 @@
+{
+  "meta": {
+    "slug": "01-product-overview",
+    "title": "RZN Browser Automation — Product Overview",
+    "subtitle": "Local runtime, real browser session. RZN automates the Chrome you already use.",
+    "width": 1600,
+    "height": 880
+  },
+  "containers": [
+    {
+      "id": "entry_lane",
+      "x": 40,
+      "y": 180,
+      "w": 1520,
+      "h": 160,
+      "r": 20,
+      "title": "User / Entry Point",
+      "fill": "none",
+      "stroke": "#676258",
+      "titleX": 76,
+      "titleY": 218
+    },
+    {
+      "id": "rzn_lane",
+      "x": 40,
+      "y": 370,
+      "w": 1520,
+      "h": 200,
+      "r": 20,
+      "title": "RZN Runtime",
+      "fill": "dots",
+      "stroke": "#8ac24c",
+      "titleX": 76,
+      "titleY": 408
+    },
+    {
+      "id": "ext_lane",
+      "x": 40,
+      "y": 600,
+      "w": 1520,
+      "h": 230,
+      "r": 20,
+      "title": "External Runtime / Target Surface",
+      "fill": "none",
+      "stroke": "#4285F4",
+      "titleX": 76,
+      "titleY": 638
+    }
+  ],
+  "nodes": [
+    {
+      "id": "user_task",
+      "x": 100,
+      "y": 255,
+      "w": 220,
+      "h": 70,
+      "r": 18,
+      "label": ["User task"],
+      "fill": "#f8f7f2",
+      "stroke": "#22211d",
+      "font": "mono",
+      "fontSize": 22,
+      "weight": 700,
+      "textColor": "#22211d"
+    },
+    {
+      "id": "rzn_runtime",
+      "x": 220,
+      "y": 450,
+      "w": 260,
+      "h": 100,
+      "r": 22,
+      "label": ["RZN Runtime"],
+      "fill": "#f4faeb",
+      "stroke": "#8ac24c",
+      "font": "mono",
+      "fontSize": 22,
+      "weight": 800,
+      "textColor": "#22211d"
+    },
+    {
+      "id": "rzn_native_host",
+      "x": 580,
+      "y": 450,
+      "w": 260,
+      "h": 100,
+      "r": 22,
+      "label": ["RZN Native Host"],
+      "fill": "#f4faeb",
+      "stroke": "#8ac24c",
+      "font": "mono",
+      "fontSize": 21,
+      "weight": 700,
+      "textColor": "#22211d"
+    },
+    {
+      "id": "rzn_chrome_ext",
+      "x": 940,
+      "y": 450,
+      "w": 280,
+      "h": 100,
+      "r": 22,
+      "label": ["RZN Chrome", "Extension"],
+      "fill": "#f4faeb",
+      "stroke": "#8ac24c",
+      "font": "mono",
+      "fontSize": 21,
+      "weight": 700,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    },
+    {
+      "id": "chrome_dot_red",
+      "x": 1003,
+      "y": 648,
+      "w": 14,
+      "h": 14,
+      "r": 7,
+      "label": [""],
+      "fill": "#EA4335",
+      "stroke": "#EA4335",
+      "font": "mono",
+      "fontSize": 1,
+      "weight": 400,
+      "textColor": "#EA4335"
+    },
+    {
+      "id": "chrome_dot_yellow",
+      "x": 1021,
+      "y": 648,
+      "w": 14,
+      "h": 14,
+      "r": 7,
+      "label": [""],
+      "fill": "#FBBC04",
+      "stroke": "#FBBC04",
+      "font": "mono",
+      "fontSize": 1,
+      "weight": 400,
+      "textColor": "#FBBC04"
+    },
+    {
+      "id": "chrome_dot_green",
+      "x": 1039,
+      "y": 648,
+      "w": 14,
+      "h": 14,
+      "r": 7,
+      "label": [""],
+      "fill": "#34A853",
+      "stroke": "#34A853",
+      "font": "mono",
+      "fontSize": 1,
+      "weight": 400,
+      "textColor": "#34A853"
+    },
+    {
+      "id": "chrome_dot_blue",
+      "x": 1057,
+      "y": 648,
+      "w": 14,
+      "h": 14,
+      "r": 7,
+      "label": [""],
+      "fill": "#4285F4",
+      "stroke": "#4285F4",
+      "font": "mono",
+      "fontSize": 1,
+      "weight": 400,
+      "textColor": "#4285F4"
+    },
+    {
+      "id": "google_chrome",
+      "x": 940,
+      "y": 680,
+      "w": 280,
+      "h": 130,
+      "r": 22,
+      "label": ["Google Chrome"],
+      "fill": "#e8f0fe",
+      "stroke": "#4285F4",
+      "font": "mono",
+      "fontSize": 22,
+      "weight": 800,
+      "textColor": "#22211d"
+    },
+    {
+      "id": "target_web_app",
+      "x": 1280,
+      "y": 680,
+      "w": 240,
+      "h": 130,
+      "r": 22,
+      "label": ["Target", "Web App"],
+      "fill": "#f8f7f2",
+      "stroke": "#9a9388",
+      "font": "mono",
+      "fontSize": 22,
+      "weight": 700,
+      "textColor": "#22211d",
+      "baselineShift": 4,
+      "lineGap": 1.05
+    }
+  ],
+  "texts": [
+    {
+      "x": 340,
+      "y": 302,
+      "lines": ["CLI · workflow · SDK · agent task"],
+      "font": "mono",
+      "fontSize": 13,
+      "weight": 600,
+      "color": "#676258",
+      "anchor": "start"
+    },
+    {
+      "x": 352,
+      "y": 435,
+      "lines": ["plans + dispatches"],
+      "font": "mono",
+      "fontSize": 13,
+      "weight": 600,
+      "color": "#676258",
+      "anchor": "middle"
+    },
+    {
+      "x": 530,
+      "y": 490,
+      "lines": ["IPC"],
+      "font": "mono",
+      "fontSize": 13,
+      "weight": 600,
+      "color": "#676258",
+      "anchor": "middle",
+      "backplate": {
+        "x": 510,
+        "y": 476,
+        "w": 40,
+        "h": 22,
+        "fill": "#fbfaf4"
+      }
+    },
+    {
+      "x": 890,
+      "y": 490,
+      "lines": ["native messaging"],
+      "font": "mono",
+      "fontSize": 13,
+      "weight": 600,
+      "color": "#676258",
+      "anchor": "middle",
+      "backplate": {
+        "x": 830,
+        "y": 476,
+        "w": 120,
+        "h": 22,
+        "fill": "#fbfaf4"
+      }
+    },
+    {
+      "x": 1095,
+      "y": 615,
+      "lines": ["attaches to the real browser"],
+      "font": "mono",
+      "fontSize": 13,
+      "weight": 600,
+      "color": "#4285F4",
+      "anchor": "middle",
+      "backplate": {
+        "x": 960,
+        "y": 601,
+        "w": 270,
+        "h": 22,
+        "fill": "#fbfaf4"
+      }
+    },
+    {
+      "x": 1250,
+      "y": 750,
+      "lines": ["DOM action"],
+      "font": "mono",
+      "fontSize": 13,
+      "weight": 600,
+      "color": "#676258",
+      "anchor": "middle",
+      "backplate": {
+        "x": 1210,
+        "y": 736,
+        "w": 80,
+        "h": 22,
+        "fill": "#fbfaf4"
+      }
+    },
+    {
+      "x": 800,
+      "y": 858,
+      "lines": ["Browser automation in your existing Chrome profile — local runtime, real browser session."],
+      "font": "body",
+      "fontSize": 18,
+      "weight": 500,
+      "color": "#454039",
+      "anchor": "middle"
+    }
+  ],
+  "edges": [
+    {
+      "points": [[210, 325], [210, 500], [220, 500]],
+      "stroke": "#22211d",
+      "width": 2,
+      "arrow": true
+    },
+    {
+      "points": [[480, 500], [580, 500]],
+      "stroke": "#22211d",
+      "width": 2.2,
+      "arrow": true
+    },
+    {
+      "points": [[840, 500], [940, 500]],
+      "stroke": "#22211d",
+      "width": 2.2,
+      "arrow": true
+    },
+    {
+      "points": [[1080, 550], [1080, 680]],
+      "stroke": "#4285F4",
+      "width": 2.2,
+      "arrow": true
+    },
+    {
+      "points": [[1220, 745], [1280, 745]],
+      "stroke": "#22211d",
+      "width": 2.2,
+      "arrow": true
+    }
+  ]
+}

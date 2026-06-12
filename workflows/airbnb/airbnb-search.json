@@ -1,0 +1,494 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "airbnb/search",
+  "name": "Airbnb Property Search Workflow",
+  "version": "1.1.0",
+  "system": "airbnb",
+  "capability": "airbnb.search",
+  "summary": "Run a scripted Airbnb property search in San Francisco and extract listings + first-property details.",
+  "description": "Open Airbnb in a fresh tab, run a hard-coded San Francisco search (2 adults + 1 child, $100-$300/night, Entire place, check-in 7 days out for 3 nights), extract the first 5 result listings, then open the first listing and extract property details + availability calendar metadata. Read-only browser navigation; no parameters today. Use as a smoke / demo of Airbnb DOM extraction. Do not use for parameterized search — selectors and filters are pinned in-script.",
+  "params": {
+    "properties": {},
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "airbnb.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "airbnb.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "strict": true,
+          "url": "https://www.airbnb.com"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Airbnb homepage"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {
+          "condition": "visible"
+        },
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "[data-testid='structured-search-input-field-query']"
+        }
+      },
+      "name": "Wait for page to load",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "click_element",
+        "inputs": {
+          "wait_after_ms": 500
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "[data-testid='structured-search-input-field-query']"
+        }
+      },
+      "name": "Click on location search field"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "San Francisco",
+          "wait_after_ms": 1500
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "[data-testid='structured-search-input-field-query']"
+        }
+      },
+      "name": "Type location"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "(async()=>{const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const input=document.querySelector(\"[data-testid='structured-search-input-field-query']\");if(input){try{const proto=Object.getPrototypeOf(input);const desc=Object.getOwnPropertyDescriptor(proto,'value');if(desc&&desc.set){desc.set.call(input,'San Francisco');}else{input.value='San Francisco';}input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));input.focus();}catch(_e){}}const listboxSels=[\"[role='listbox']\",\"[data-testid='bigsearch-query-location-listbox']\",\"#bigsearch-query-location-listbox\",\"[data-testid^='bigsearch-query-location-listbox']\"];let listbox=null;for(let i=0;i<16;i++){for(const s of listboxSels){const els=document.querySelectorAll(s);for(const el of els){if(el&&el.offsetParent!==null){listbox=el;break;}}if(listbox)break;}if(listbox)break;await sleep(400);}if(!listbox)return{error:'listbox_not_visible'};const optSels=[\"[data-testid='option-0']\",\"[data-testid^='bigsearch-query-location-listbox-item-']\",\"[role='option']\",\"li[role='option']\",\"button[role='option']\"];for(const s of optSels){const el=listbox.querySelector(s);if(el){el.scrollIntoView({block:'center'});el.click();await sleep(800);return{clicked:s};}}const first=listbox.querySelector('button, li, [tabindex]:not([tabindex=\"-1\"])');if(first){first.click();await sleep(800);return{clicked:'first_interactive'};}return{error:'no_option'};})()"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Select San Francisco from suggestions (robust: triggers React input, waits for listbox, clicks first option)"
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "(() => { const today = new Date(); const checkIn = new Date(today); checkIn.setDate(today.getDate() + 7); const checkOut = new Date(checkIn); checkOut.setDate(checkIn.getDate() + 3); window.__airbnb_dates = { checkIn: checkIn.toISOString().split('T')[0], checkOut: checkOut.toISOString().split('T')[0], checkInFormatted: checkIn.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), checkOutFormatted: checkOut.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) }; return window.__airbnb_dates; })()"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Calculate dates using JavaScript",
+      "timeout_ms": 12000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "(()=>{const sels=[\"[data-testid='structured-search-input-field-split-dates-0']\",\"[data-testid='structured-search-input-field-dates-0']\",\"[data-testid^='structured-search-input-field-split-dates-']\",\"[data-testid^='structured-search-input-field-dates-']\",\"[data-testid='little-search-anytime']\",\"button[aria-label*='Check in']\",\"button[aria-label*='Add dates']\",\"button[aria-label*='dates']\"];for(const s of sels){const el=document.querySelector(s);if(el){el.click();return{clicked:s};}}return{clicked:null,note:'dates field not found; calendar may already be open'};})()"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Click on check-in date field (best-effort across Airbnb DOM variants)"
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "(() => { const checkInDate = window.__airbnb_dates.checkIn; const dateElements = document.querySelectorAll('[data-testid*=\"calendar-day\"]'); for (const el of dateElements) { if (el.getAttribute('data-testid').includes(checkInDate)) { el.click(); return true; } } return false; })()"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Select check-in date (7 days from now)"
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for check-out date to be selectable",
+      "timeout_ms": 500
+    },
+    {
+      "id": "s10",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "(() => { const checkOutDate = window.__airbnb_dates.checkOut; const dateElements = document.querySelectorAll('[data-testid*=\"calendar-day\"]'); for (const el of dateElements) { if (el.getAttribute('data-testid').includes(checkOutDate)) { el.click(); return true; } } return false; })()"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Select check-out date (3 days after check-in)"
+    },
+    {
+      "id": "s11",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "(async()=>{const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const tryClick=(sels)=>{for(const s of sels){const el=document.querySelector(s);if(el){el.click();return s;}}return null;};const guests=tryClick([\"[data-testid='structured-search-input-field-guests-button']\",\"[data-testid='structured-search-input-field-guests-0']\",\"[data-testid='little-search-guests']\",\"button[aria-label*='guest' i]\"]);if(!guests)return{error:'guests_button_not_found'};await sleep(700);const adults=tryClick([\"[data-testid='stepper-adults-increase-button']\",\"[data-testid^='stepper-adults-increase']\",\"button[aria-label*='increase Adults' i]\",\"button[aria-label*='Add one adult' i]\"]);if(adults)await sleep(300);const children=tryClick([\"[data-testid='stepper-children-increase-button']\",\"[data-testid^='stepper-children-increase']\",\"button[aria-label*='increase Children' i]\",\"button[aria-label*='Add one child' i]\"]);if(children)await sleep(300);const search=tryClick([\"[data-testid='structured-search-input-search-button']\",\"button[aria-label*='Search' i][type='submit']\",\"button[aria-label='Search']\",\"button[data-testid='search-button']\"]);return{ok:!!search,guests,adults,children,search:search||null};})()"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Configure guests + click search. Returns immediately after clicking — page navigates, so do not sleep here.",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s11a",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for search results SPA navigation",
+      "timeout_ms": 3500
+    },
+    {
+      "id": "s15",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {
+          "condition": "visible"
+        },
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "[data-testid='card-container']"
+        }
+      },
+      "name": "Wait for results to load",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s15a",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss 'all fees included' / 'Got it' interstitial that Airbnb shows post-search"
+    },
+    {
+      "id": "s16",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "smooth": true,
+          "y": 300
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Human-like scroll to see results"
+    },
+    {
+      "id": "s17",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait a moment",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s25",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "(() => { const listings = []; const cards = document.querySelectorAll('[data-testid=\"card-container\"]'); const maxListings = Math.min(5, cards.length); for (let i = 0; i < maxListings; i++) { const card = cards[i]; const titleEl = card.querySelector('[data-testid=\"listing-card-title\"]'); const priceEl = card.querySelector('span._tyxjp1') || card.querySelector('span._11jcbg2') || card.querySelector('[data-testid=\"price-availability-row\"] span'); const ratingEl = card.querySelector('[aria-label*=\"rating\"]') || card.querySelector('span.r4a59j5'); const typeEl = card.querySelector('[data-testid=\"listing-card-subtitle\"] > span:first-child') || card.querySelector('[data-testid=\"listing-card-name\"]'); const imageEl = card.querySelector('img[data-original-uri]') || card.querySelector('img'); const linkEl = card.querySelector('a[href*=\"/rooms/\"]'); listings.push({ position: i + 1, title: titleEl ? titleEl.textContent.trim() : 'N/A', price: priceEl ? priceEl.textContent.trim() : 'N/A', rating: ratingEl ? ratingEl.textContent.trim() : 'No rating', type: typeEl ? typeEl.textContent.trim() : 'N/A', image: imageEl ? imageEl.src : null, url: linkEl ? linkEl.href : null }); } const dates = window.__airbnb_dates || {}; const result = { timestamp: new Date().toISOString(), checkIn: dates.checkInFormatted || null, checkOut: dates.checkOutFormatted || null, location: 'San Francisco', guests: { adults: 2, children: 1 }, filters: { type: 'Entire place', priceRange: '$100-$300' }, listings: listings }; try { sessionStorage.setItem('__rzn_airbnb_search', JSON.stringify(result)); } catch (_e) {} try { window.name = JSON.stringify({ __rzn_airbnb_search: result }); } catch (_e) {} return result; })()"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Extract first 5 property listings"
+    },
+    {
+      "id": "s26",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "(()=>{const cardSels=[\"[data-testid='card-container']\",\"[itemprop='itemListElement']\"];let first=null;for(const s of cardSels){const els=document.querySelectorAll(s);if(els.length){first=els[0];break;}}if(!first)return{error:'no_card'};const a=first.querySelector('a[href*=\"/rooms/\"], a');if(!a||!a.href)return{error:'no_link_in_card'};const href=a.href;setTimeout(()=>window.location.assign(href),0);return{navigated:true,href};})()"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to first property (in-tab) — Airbnb cards open new tab on click, so override via location.assign"
+    },
+    {
+      "id": "s26a",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow property page to load",
+      "timeout_ms": 4000
+    },
+    {
+      "id": "s26b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss any login / save-listing pop-up on property page"
+    },
+    {
+      "id": "s27",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {
+          "condition": "visible"
+        },
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "[data-section-id='TITLE_DEFAULT'], [data-section-id='OVERVIEW_DEFAULT'], div[data-section-id], main h1, h1[elementtiming]"
+        }
+      },
+      "name": "Wait for property page to load (resilient across Airbnb PDP variants)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s28",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "smooth": true,
+          "y": 400
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll through photos slowly"
+    },
+    {
+      "id": "s29",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait to view photos",
+      "timeout_ms": 2000
+    },
+    {
+      "id": "s30",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "smooth": true,
+          "y": 800
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll to property details"
+    },
+    {
+      "id": "s31",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "(() => { const propertyName = document.querySelector('[data-section-id=\"TITLE_DEFAULT\"] h1')?.textContent?.trim() || document.querySelector('h1')?.textContent?.trim() || 'N/A'; const hostName = document.querySelector('[data-section-id=\"HOST_PROFILE_DEFAULT\"] h2')?.textContent?.trim() || document.querySelector('[data-section-id=\"HOST_OVERVIEW_DEFAULT\"] h2')?.textContent?.trim() || 'N/A'; const amenitiesSection = document.querySelector('[data-section-id=\"AMENITIES_DEFAULT\"]'); const amenities = amenitiesSection ? Array.from(amenitiesSection.querySelectorAll('[id^=\"pdp_v3_\"]')).map(el => el.textContent.trim()).filter(text => text && !text.includes('Show all')) : []; const descriptionEl = document.querySelector('[data-section-id=\"DESCRIPTION_DEFAULT\"] span'); const description = descriptionEl ? descriptionEl.textContent.trim() : 'N/A'; const overviewSection = document.querySelector('[data-section-id=\"OVERVIEW_DEFAULT_V2\"], [data-section-id=\"OVERVIEW_DEFAULT\"]'); const overviewItems = overviewSection ? Array.from(overviewSection.querySelectorAll('li')).map(el => el.textContent.trim()).filter(Boolean) : []; const bedroomsEl = document.querySelector('[data-section-id=\"OVERVIEW_DEFAULT\"] ol li:nth-child(2)'); const bedrooms = bedroomsEl ? bedroomsEl.textContent.trim() : (overviewItems[1] || 'N/A'); const reviewsEl = document.querySelector('[data-section-id=\"REVIEWS_DEFAULT\"] h2'); const reviews = reviewsEl ? reviewsEl.textContent.trim() : 'No reviews'; const details = { propertyName: propertyName, url: location.href, host: hostName, bedrooms: bedrooms, overview: overviewItems.slice(0, 8), amenities: amenities.slice(0, 10), description: description.substring(0, 500) + (description.length > 500 ? '...' : ''), reviews: reviews }; try { sessionStorage.setItem('__rzn_airbnb_property', JSON.stringify(details)); } catch (_e) {} try { let stash = {}; try { stash = JSON.parse(window.name) || {}; } catch (_e2) {} if (typeof stash !== 'object' || stash === null) stash = {}; stash.__rzn_airbnb_property = details; window.name = JSON.stringify(stash); } catch (_e) {} return details; })()"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Extract property details"
+    },
+    {
+      "id": "s32",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "(()=>{const sels=[\"[data-section-id='AVAILABILITY_CALENDAR_INLINE']\",\"[data-section-id='AVAILABILITY_CALENDAR_DEFAULT']\",\"[data-section-id^='AVAILABILITY_CALENDAR']\",\"[data-section-id='BOOK_IT_SIDEBAR']\",\"[data-testid='inline-availability-calendar']\"];for(const s of sels){const el=document.querySelector(s);if(el){el.scrollIntoView({behavior:'smooth',block:'center'});return{scrolled_to:s};}}return{scrolled_to:null};})()"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll to availability calendar (best-effort; no-op if section absent)"
+    },
+    {
+      "id": "s33",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait to view calendar",
+      "timeout_ms": 2000
+    },
+    {
+      "id": "s34",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "return (()=>{const sels=[\"[data-section-id='AVAILABILITY_CALENDAR_INLINE']\",\"[data-section-id='AVAILABILITY_CALENDAR_DEFAULT']\",\"[data-section-id^='AVAILABILITY_CALENDAR']\",\"[data-testid='inline-availability-calendar']\"];let calendarSection=null;for(const s of sels){const el=document.querySelector(s);if(el){calendarSection=el;break;}}const dates=window.__airbnb_dates||{};let calendar;if(!calendarSection){calendar={calendarFound:false,checkInDate:dates.checkInFormatted||null,checkOutDate:dates.checkOutFormatted||null};}else{const availableDates=calendarSection.querySelectorAll(\"[data-is-day-blocked='false']\").length;const blockedDates=calendarSection.querySelectorAll(\"[data-is-day-blocked='true']\").length;calendar={calendarFound:true,availableDates,blockedDates,checkInDate:dates.checkInFormatted||null,checkOutDate:dates.checkOutFormatted||null};}let stash={};try{stash=JSON.parse(window.name)||{};}catch(_e){}if(typeof stash!=='object'||stash===null)stash={};let search=stash.__rzn_airbnb_search||null;let property=stash.__rzn_airbnb_property||null;if(!search){try{const raw=sessionStorage.getItem('__rzn_airbnb_search');if(raw)search=JSON.parse(raw);}catch(_e){}}if(!property){try{const raw=sessionStorage.getItem('__rzn_airbnb_property');if(raw)property=JSON.parse(raw);}catch(_e){}}const out={search_meta:search?{location:search.location,checkIn:search.checkIn,checkOut:search.checkOut,guests:search.guests,filters:search.filters,timestamp:search.timestamp}:null,listings:search&&Array.isArray(search.listings)?search.listings:[],first_listing:{details:property,calendar:calendar,url:location.href}};try{window.name='';}catch(_e){}try{sessionStorage.removeItem('__rzn_airbnb_search');sessionStorage.removeItem('__rzn_airbnb_property');}catch(_e){}return out;})()"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Check availability in calendar (resilient across AVAILABILITY_CALENDAR_* section variants)"
+    },
+    {
+      "id": "s35",
+      "action": {
+        "kind": "close_current_tab",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Close the tab"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "search_meta": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "listings": {
+          "type": "array"
+        },
+        "first_listing": {
+          "type": "object",
+          "properties": {
+            "details": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "calendar": {
+              "type": "object"
+            },
+            "url": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s34",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Run a scripted Airbnb property search in San Francisco and extract listings + first-property details.",
+    "parameters": {},
+    "examples": [
+      {
+        "command": "rzn-browser run airbnb search",
+        "description": "Run the canned San Francisco search end-to-end."
+      }
+    ],
+    "returns": [
+      "Object with shape { search_meta, listings: [...], first_listing: { details, calendar, url } }. `listings` contains up to 5 SF result cards; `first_listing.details` is the PDP overview/host/amenities; `first_listing.calendar` is { calendarFound, availableDates, blockedDates, checkInDate, checkOutDate }. Listings + property details are stashed via window.name (survives in-tab navigation, including airbnb.com -> regional redirect) and re-read on the property page so the single final-step output can include them."
+    ],
+    "notes": [
+      "All search inputs are hard-coded inside the steps (location, dates, price band, guest counts). To parameterize, fork or replace the workflow.",
+      "Read-only: walks the SPA, opens a property tab, then closes it. No login required.",
+      "Selectors track Airbnb's data-testid attributes; expect breakage when Airbnb ships a UI refresh."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "airbnb/airbnb-search.json",
+    "legacy_system_id": "airbnb"
+  }
+}

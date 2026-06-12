@@ -1,0 +1,212 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "bing/videos_search",
+  "name": "Bing: Videos Search",
+  "version": "1.1.0",
+  "system": "bing",
+  "capability": "bing.videos.search",
+  "summary": "Return up to 20 video tiles from Bing Videos for one search query.",
+  "description": "Run a Bing Videos search in a fresh tab and return up to 20 video cards (title, url, channel). Use for finding videos across YouTube / Vimeo / MSN and similar sources indexed by Bing. Do not use for reading news articles (`bing_news_search`) or general web results (`bing_web_search`).",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Video search query."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "bing.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "bing.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.bing.com/videos"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Bing Videos landing",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1a",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#sb_form_q"
+        }
+      },
+      "name": "Wait for the Bing Videos search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s1c",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#sb_form_q"
+        }
+      },
+      "name": "Fill the search box"
+    },
+    {
+      "id": "s1d",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#sb_form_q",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow results to hydrate",
+      "timeout_ms": 2000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "div.mc_vtvc"
+        }
+      },
+      "name": "Wait for video tiles",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst norm = (s) => (s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim();\nconst resolveUrl = (tile, link) => {\n  // Preferred: vrhm JSON on a child div contains the real destination (murl/pgurl).\n  const vrhmEl = tile.querySelector('[vrhm]');\n  if (vrhmEl) {\n    try {\n      const meta = JSON.parse(vrhmEl.getAttribute('vrhm'));\n      const cand = meta.murl || meta.pgurl;\n      if (cand && /^https?:\\/\\//i.test(cand)) return cand;\n    } catch (e) {}\n  }\n  const href = link ? link.getAttribute('href') : null;\n  if (!href) return null;\n  // Fall back to churl query param (often a channel URL, but better than the relative redirector).\n  try {\n    const u = new URL(href, 'https://www.bing.com');\n    const churl = u.searchParams.get('churl');\n    if (churl && /^https?:\\/\\//i.test(churl)) return churl;\n    return u.href; // absolute bing.com URL\n  } catch (e) {\n    return href.startsWith('http') ? href : ('https://www.bing.com' + (href.startsWith('/') ? href : '/' + href));\n  }\n};\nconst tiles = Array.from(document.querySelectorAll('div.mc_vtvc')).slice(0, 20);\nreturn tiles.map((t) => {\n  const link = t.querySelector('a.mc_vtvc_link');\n  const titleEl = t.querySelector('div.mc_vtvc_title');\n  const title = titleEl ? norm(titleEl.textContent) : (link ? norm(link.getAttribute('aria-label') || '').split(/\\s+from\\s+/i)[0] : null);\n  const url = resolveUrl(t, link);\n  const chEl = t.querySelector('.mc_vtvc_meta_row_channel, .b_footnote');\n  const channel = chEl ? norm(chEl.textContent) : null;\n  return { title, url, channel };\n}).filter((r) => r.title && r.url);"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract video tiles with canonical destination URL"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Return up to 20 video tiles from Bing Videos for one search query.",
+    "parameters": {
+      "search_query": "Video search query."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run bing videos-search --param search_query=\"claude code tutorial\"",
+        "description": "Return up to 20 video tiles with title, url, and channel."
+      }
+    ],
+    "returns": [
+      "Array of { title, url, channel }."
+    ],
+    "notes": [
+      "Read-only.",
+      "Drives the Videos landing's real search input rather than hitting `?q=...` directly.",
+      "Bing's video grid hosts YouTube / Vimeo / MSN / native video hotlinks \u2014 follow the `url` to the real source.",
+      "Opens a fresh tab."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "bing/bing_videos_search.json",
+    "legacy_system_id": "bing"
+  }
+}

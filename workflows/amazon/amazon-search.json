@@ -1,0 +1,242 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "amazon/search",
+  "name": "Amazon Product Search",
+  "version": "2.1.0",
+  "system": "amazon",
+  "capability": "amazon.search",
+  "summary": "Search Amazon and extract product listing cards with title, URL, price, and rating metadata.",
+  "description": "Search Amazon and extract product listing cards with title, URL, price, and rating metadata.",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Search term to run on Amazon."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "amazon.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "amazon.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.amazon.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Amazon homepage"
+    },
+    {
+      "id": "s1a",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#twotabsearchtextbox"
+        }
+      },
+      "name": "Wait for the homepage search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s1c",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#twotabsearchtextbox"
+        }
+      },
+      "name": "Fill the homepage search box"
+    },
+    {
+      "id": "s1d",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#twotabsearchtextbox",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for search results hydration",
+      "timeout_ms": 3500
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "[data-component-type='s-search-result'] h2 a, .s-main-slot [data-component-type='s-search-result'] h2"
+        }
+      },
+      "name": "Wait for result cards",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extra wait for lazy-loaded data",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst norm = (s) => (s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim();\nconst origin = location.origin;\nconst cards = Array.from(document.querySelectorAll('[data-component-type=\"s-search-result\"]'));\nconst out = [];\nfor (const card of cards) {\n  const asin = (card.getAttribute('data-asin') || '').trim();\n  const h2 = card.querySelector('h2');\n  if (!h2) continue;\n  const titleSpan = h2.querySelector('span');\n  const title = norm(titleSpan ? titleSpan.innerText : h2.innerText);\n  if (!title) continue;\n  if (card.classList.contains('s-widget-spacing-small') && !asin) continue;\n  let anchor = h2.closest('a[href]');\n  if (!anchor) anchor = card.querySelector('a.a-link-normal[href*=\"/dp/\"], a.a-link-normal[href*=\"/gp/\"]');\n  let rawUrl = anchor ? (anchor.getAttribute('href') || '') : '';\n  let url = '';\n  if (asin) {\n    url = origin + '/dp/' + asin;\n  } else if (rawUrl) {\n    url = rawUrl.startsWith('/') ? origin + rawUrl : rawUrl;\n  }\n  const priceEl = card.querySelector('.a-price .a-offscreen');\n  let price = priceEl ? norm(priceEl.textContent) : '';\n  if (!price) {\n    const whole = card.querySelector('.a-price-whole');\n    if (whole) price = norm(whole.textContent);\n  }\n  if (!price) {\n    const currencyRe = /(?:US\\$|INR|GBP|EUR|CAD|AUD|JPY|CNY|\\$|£|€|¥|₹)\\s?[\\d.,]+/;\n    const candSpans = card.querySelectorAll('span.a-color-base, span.a-color-price, span.a-price');\n    for (const sp of candSpans) {\n      const m = (sp.textContent || '').match(currencyRe);\n      if (m) { price = norm(m[0]); break; }\n    }\n  }\n  let rating = '';\n  const ratingAlt = card.querySelector('.a-icon-star-small .a-icon-alt, .a-icon-star .a-icon-alt');\n  if (ratingAlt) rating = norm(ratingAlt.textContent);\n  if (!rating) {\n    const ariaEl = card.querySelector('[aria-label*=\"out of\"]');\n    if (ariaEl) rating = norm(ariaEl.getAttribute('aria-label') || '');\n  }\n  rating = rating.replace(/,\\s*rating details\\s*$/i, '').trim();\n  let reviewCount = '';\n  const rcAnchor = card.querySelector(\"a.a-link-normal[href*='#customerReviews'], a[href*='customerReviews']\");\n  if (rcAnchor) {\n    const inner = rcAnchor.querySelector('span.a-size-base, span');\n    reviewCount = norm(inner ? inner.textContent : rcAnchor.textContent);\n  }\n  if (!reviewCount) {\n    const ariaRc = card.querySelector('[aria-label$=\"ratings\"], [aria-label$=\"rating\"]');\n    if (ariaRc) reviewCount = norm(ariaRc.getAttribute('aria-label') || '');\n  }\n  reviewCount = reviewCount.replace(/^[()]+|[()]+$/g, '').trim();\n  out.push({ title, product_url: url, asin, price, rating, review_count: reviewCount });\n}\nreturn out;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract search result cards"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "product_url": {
+            "type": "string"
+          },
+          "asin": {
+            "type": "string"
+          },
+          "price": {
+            "type": "string"
+          },
+          "rating": {
+            "type": "string"
+          },
+          "review_count": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search Amazon and extract product listing cards with title, URL, price, and rating metadata.",
+    "parameters": {
+      "search_query": "Search term to run on Amazon."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run amazon search --param search_query=\"usb-c hub\"",
+        "description": "Run a basic Amazon search."
+      }
+    ],
+    "returns": [
+      "Array of search-result cards, each with { title, product_url, asin, price, rating, review_count }."
+    ],
+    "notes": [
+      "Read-only.",
+      "Drives the real homepage search box (`#twotabsearchtextbox`) and submits the form to look like a human rather than a bot hitting `/s?k=...` directly.",
+      "Feed `product_url` into amazon/product-key-facts-reviews for deep extraction."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "amazon/amazon-search.json",
+    "legacy_system_id": "amazon"
+  }
+}

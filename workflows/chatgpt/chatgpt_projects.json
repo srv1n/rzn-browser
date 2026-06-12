@@ -1,0 +1,142 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "chatgpt/projects",
+  "name": "ChatGPT: Projects",
+  "version": "1.0.0",
+  "system": "chatgpt",
+  "capability": "chatgpt.projects",
+  "summary": "List ChatGPT Projects (gizmo g-p-*) or list the conversations inside one project, via the same backend-api JSON the web app uses.",
+  "description": "Discover ChatGPT Projects and their chats. mode=list (default) returns every project (id, name, short_url, ready-to-use project_url, recent_conversation_count) \u2014 chat ids are NOT embedded. mode=conversations + project_id returns that project's conversations (chat_id, title, snippet, timestamps, gizmo_id). Pair with chatgpt_read (read any returned chat_id) and chatgpt_send --param project_id=... (post a new chat into the project).",
+  "help": {
+    "summary": "List ChatGPT Projects, or the conversations within a project.",
+    "examples": [
+      {
+        "command": "rzn-browser run chatgpt projects",
+        "description": "List all projects with their recent conversations."
+      },
+      {
+        "command": "rzn-browser run chatgpt projects --param mode=\"conversations\" --param project_id=\"g-p-6a1cf704378c81918cd8bc23d867e23a\" --param limit=\"20\"",
+        "description": "List the 20 most recent conversations in one project."
+      }
+    ],
+    "parameters": {
+      "mode": "`list` (default) = all projects + recent conversations each. `conversations` = one project's conversations (requires project_id).",
+      "project_id": "Project gizmo id (g-p-...), short_url, or full /g/.../project URL. Required when mode=conversations.",
+      "limit": "Max conversations per project (list mode) or total (conversations mode). Default 10."
+    },
+    "notes": [
+      "Projects are gizmos with id prefix g-p-. Listing uses /backend-api/gizmos/snorlax/sidebar; per-project conversations use /backend-api/gizmos/{id}/conversations.",
+      "Returned chat_id values are ordinary conversation ids \u2014 read them with chatgpt_read and reply with chatgpt_send (set project_id to keep the reply in the project, or pass chat_id to continue the specific thread)."
+    ],
+    "returns": []
+  },
+  "params": {
+    "additional_params": false,
+    "properties": {
+      "mode": {
+        "description": "`list` (default) lists all projects with recent conversations; `conversations` lists one project's conversations (needs project_id).",
+        "kind": "string",
+        "required": false
+      },
+      "project_id": {
+        "description": "Project gizmo id (g-p-...), short_url, or full /g/.../project URL. Required when mode=conversations.",
+        "kind": "string",
+        "required": false
+      },
+      "limit": {
+        "description": "Max conversations per project (list) or total (conversations). Default 10.",
+        "kind": "string",
+        "required": false
+      }
+    }
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "chatgpt.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "chatgpt.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "metadata": {
+    "legacy_system_id": "chatgpt"
+  },
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object"
+    },
+    "output_selector": {
+      "step_id": "s2",
+      "path": "$"
+    }
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://chatgpt.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open ChatGPT to inherit the authenticated session",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the SPA shell + cookies to settle",
+      "timeout_ms": 4000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "args": [
+            "{mode}",
+            "{project_id}",
+            "{limit}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const modeRaw=cleanArg(arg0).toLowerCase();const mode=(modeRaw==='conversations'||modeRaw==='convos')?'conversations':'list';const projectArg=cleanArg(arg1);let limit=parseInt(cleanArg(arg2),10);if(!Number.isFinite(limit)||limit<=0)limit=10;const ses=await fetch('/api/auth/session',{credentials:'include'}).then(r=>r.json()).catch(()=>({}));const token=ses&&ses.accessToken;if(!token)throw new Error('No accessToken in /api/auth/session \u2014 not logged in?');const H={'Authorization':'Bearer '+token,'Accept':'application/json'};const jget=async(u)=>{const r=await fetch(u,{headers:H,credentials:'include'});if(!r.ok)throw new Error('GET '+u+' -> '+r.status);return r.json();};const extractPid=(s)=>{const m=String(s||'').match(/g-p-[a-z0-9]+/i);return m?m[0]:'';};const projUrl=(g)=>'https://chatgpt.com/g/'+(g.short_url||g.id)+'/project';if(mode==='list'){const data=await jget('/backend-api/gizmos/snorlax/sidebar?conversations_per_gizmo='+limit);const items=(data&&data.items)||[];const projects=items.map(it=>{const g=(it.gizmo&&it.gizmo.gizmo)||{};const disp=(it.gizmo&&it.gizmo.display)||{};const recent=((it.conversations&&it.conversations.items)||[]).length;return {project_id:g.id||null,short_url:g.short_url||null,name:disp.name||(g.display&&g.display.name)||null,project_url:projUrl(g),recent_conversation_count:recent};});return {mode:'list',url:location.href,project_count:projects.length,projects,note:'Use mode=conversations --param project_id=<id> to list chat_ids in a project.'};}else{const pid=extractPid(projectArg)||projectArg;if(!pid)throw new Error('project_id is required for mode=conversations');const data=await jget('/backend-api/gizmos/'+encodeURIComponent(pid)+'/conversations?limit='+limit);const items=(data&&(data.items||data.conversations))||[];const conversations=items.map(c=>({chat_id:c.id||c.conversation_id||null,title:c.title||null,create_time:c.create_time||null,update_time:c.update_time||null,snippet:c.snippet||null,gizmo_id:c.gizmo_id||pid}));return {mode:'conversations',url:location.href,project_id:pid,conversation_count:conversations.length,cursor:(data&&data.cursor)||null,conversations};}",
+          "world": "main"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Fetch projects (gizmo sidebar) or a project's conversations",
+      "timeout_ms": 30000
+    }
+  ]
+}

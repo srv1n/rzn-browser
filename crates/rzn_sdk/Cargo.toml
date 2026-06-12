@@ -1,0 +1,43 @@
+[package]
+name = "rzn_sdk"
+version = "0.1.0"
+edition = "2021"
+description = "SDK facade for RZN Browser Native"
+license = "AGPL-3.0-only"
+
+[dependencies]
+dirs = "5.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+tokio = { version = "1.0", features = ["time"], optional = true }
+
+rzn_core = { path = "../rzn_core" }
+rzn_contracts = { path = "../rzn_contracts" }
+rzn_plan = { path = "../rzn_plan", optional = true }
+
+[features]
+default = ["host"]
+
+# Host-side API: orchestrator/planner + browser bridge client wrappers.
+host = ["dep:rzn_plan", "dep:tokio"]
+
+# Native-host utilities: Chrome host manifest generation and installation.
+native_host = []
+
+# Full engine access; not API-stable. Prefer the stable SDK surface unless you
+# are iterating internally.
+unstable = ["host"]
+
+[dev-dependencies]
+tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
+
+[[example]]
+name = "desktop_bridge_sdk"
+path = "examples/desktop_bridge_sdk.rs"
+required-features = ["host"]
+
+[[example]]
+name = "browser_tools_demo"
+path = "examples/browser_tools_demo.rs"
+required-features = ["host"]

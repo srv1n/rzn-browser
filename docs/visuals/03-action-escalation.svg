@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="940" viewBox="0 0 1600 940" role="img" aria-label="RZN Browser — Action Escalation">
+  <defs>
+    
+    <pattern id="dotPattern" width="12" height="12" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="0.7" fill="#d7cfbf" opacity="0.48"/>
+      <circle cx="8" cy="6" r="0.7" fill="#d7cfbf" opacity="0.35"/>
+      <circle cx="5" cy="10" r="0.6" fill="#d7cfbf" opacity="0.28"/>
+    </pattern>
+  
+    
+    <pattern id="paperSpeckle" width="34" height="34" patternUnits="userSpaceOnUse">
+      <circle cx="6" cy="8" r="0.55" fill="#d8d0c0" opacity="0.18"/>
+      <circle cx="18" cy="14" r="0.45" fill="#d8d0c0" opacity="0.14"/>
+      <circle cx="26" cy="22" r="0.5" fill="#d8d0c0" opacity="0.11"/>
+    </pattern>
+  
+  </defs>
+  <rect x="0" y="0" width="1600" height="940" fill="#fbfaf4"/>
+<rect x="0" y="0" width="1600" height="940" fill="url(#paperSpeckle)" opacity="0.55"/>
+<text text-anchor="start" font-family="Georgia, Times New Roman, serif" font-size="40" font-weight="700" fill="#22211d"><tspan x="84" y="92">RZN Browser — Action Escalation</tspan></text>
+<text text-anchor="start" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="16" font-weight="500" fill="#676258"><tspan x="84" y="132">Start with the lightest path. Drop into CDP only when the page forces it.</tspan></text>
+
+    <path d="M 92 370 H 228 Q 250 370 250 392 V 458 Q 250 480 228 480 H 92 Q 70 480 70 458 V 392 Q 70 370 92 370 Z" fill="#f8f7f2"/>
+    
+    <path d="M 92 370 H 228 Q 250 370 250 392 V 458 Q 250 480 228 480 H 92 Q 70 480 70 458 V 392 Q 70 370 92 370 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.2287330930586905 -0.8950757018756121)"/>
+    <path d="M 92 370 H 228 Q 250 370 250 392 V 458 Q 250 480 228 480 H 92 Q 70 480 70 458 V 392 Q 70 370 92 370 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.04940467192791398 0.8658917414490134)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="21" font-weight="700" fill="#22211d"><tspan x="160" y="417.975">Requested</tspan><tspan x="160" y="440.02500000000003">action</tspan></text>
+
+    <path d="M 342 370 H 518 Q 540 370 540 392 V 458 Q 540 480 518 480 H 342 Q 320 480 320 458 V 392 Q 320 370 342 370 Z" fill="#fef7d6"/>
+    
+    <path d="M 342 370 H 518 Q 540 370 540 392 V 458 Q 540 480 518 480 H 342 Q 320 480 320 458 V 392 Q 320 370 342 370 Z" fill="none" stroke="#c8a83a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.020856687566265464 0.05390353482216592)"/>
+    <path d="M 342 370 H 518 Q 540 370 540 392 V 458 Q 540 480 518 480 H 342 Q 320 480 320 458 V 392 Q 320 370 342 370 Z" fill="none" stroke="#c8a83a" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.194613415421918 0.1622837447561324)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="20" font-weight="700" fill="#22211d"><tspan x="430" y="418">DOM-first</tspan><tspan x="430" y="440">handles it?</tspan></text>
+
+    <path d="M 642 195 H 818 Q 840 195 840 217 V 283 Q 840 305 818 305 H 642 Q 620 305 620 283 V 217 Q 620 195 642 195 Z" fill="#f4faeb"/>
+    
+    <path d="M 642 195 H 818 Q 840 195 840 217 V 283 Q 840 305 818 305 H 642 Q 620 305 620 283 V 217 Q 620 195 642 195 Z" fill="none" stroke="#8ac24c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.12187580117024477 -0.09534769286401568)"/>
+    <path d="M 642 195 H 818 Q 840 195 840 217 V 283 Q 840 305 818 305 H 642 Q 620 305 620 283 V 217 Q 620 195 642 195 Z" fill="none" stroke="#8ac24c" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.3900887436233461 -0.2117049269378185)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="21" font-weight="700" fill="#22211d"><tspan x="730" y="242.975">DOM-first</tspan><tspan x="730" y="265.025">action</tspan></text>
+
+    <path d="M 642 520 H 818 Q 840 520 840 542 V 608 Q 840 630 818 630 H 642 Q 620 630 620 608 V 542 Q 620 520 642 520 Z" fill="#fef7d6"/>
+    
+    <path d="M 642 520 H 818 Q 840 520 840 542 V 608 Q 840 630 818 630 H 642 Q 620 630 620 608 V 542 Q 620 520 642 520 Z" fill="none" stroke="#c8a83a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.31006100890226673 0.6047028673812748)"/>
+    <path d="M 642 520 H 818 Q 840 520 840 542 V 608 Q 840 630 818 630 H 642 Q 620 630 620 608 V 542 Q 620 520 642 520 Z" fill="none" stroke="#c8a83a" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.4493888155091553 -0.8119491511490197)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="20" font-weight="700" fill="#22211d"><tspan x="730" y="568">More event</tspan><tspan x="730" y="590">fidelity?</tspan></text>
+
+    <path d="M 942 415 H 1118 Q 1140 415 1140 437 V 503 Q 1140 525 1118 525 H 942 Q 920 525 920 503 V 437 Q 920 415 942 415 Z" fill="#f4faeb"/>
+    
+    <path d="M 942 415 H 1118 Q 1140 415 1140 437 V 503 Q 1140 525 1118 525 H 942 Q 920 525 920 503 V 437 Q 920 415 942 415 Z" fill="none" stroke="#8ac24c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.6318256448954344 0.015925546037033222)"/>
+    <path d="M 942 415 H 1118 Q 1140 415 1140 437 V 503 Q 1140 525 1118 525 H 942 Q 920 525 920 503 V 437 Q 920 415 942 415 Z" fill="none" stroke="#8ac24c" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.2419408618938178 0.07413820303045215)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="20" font-weight="700" fill="#22211d"><tspan x="1030" y="463.5">Scripted DOM</tspan><tspan x="1030" y="484.5">events</tspan></text>
+
+    <path d="M 942 640 H 1118 Q 1140 640 1140 662 V 728 Q 1140 750 1118 750 H 942 Q 920 750 920 728 V 662 Q 920 640 942 640 Z" fill="#fbfaf4"/>
+    
+    <path d="M 942 640 H 1118 Q 1140 640 1140 662 V 728 Q 1140 750 1118 750 H 942 Q 920 750 920 728 V 662 Q 920 640 942 640 Z" fill="none" stroke="#9a9388" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.6353547375183553 -0.7690067995805293)"/>
+    <path d="M 942 640 H 1118 Q 1140 640 1140 662 V 728 Q 1140 750 1118 750 H 942 Q 920 750 920 728 V 662 Q 920 640 942 640 Z" fill="none" stroke="#9a9388" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.15646680076606567 -0.7417300129774957)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="19" font-weight="600" fill="#454039"><tspan x="1030" y="689.025">Short CDP</tspan><tspan x="1030" y="708.975">attach</tspan></text>
+
+    <path d="M 1302 370 H 1478 Q 1500 370 1500 392 V 478 Q 1500 500 1478 500 H 1302 Q 1280 500 1280 478 V 392 Q 1280 370 1302 370 Z" fill="#c8d9f5"/>
+    
+    <path d="M 1302 370 H 1478 Q 1500 370 1500 392 V 478 Q 1500 500 1478 500 H 1302 Q 1280 500 1280 478 V 392 Q 1280 370 1302 370 Z" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.08670765515416856 0.37492282935418186)"/>
+    <path d="M 1302 370 H 1478 Q 1500 370 1500 392 V 478 Q 1500 500 1478 500 H 1302 Q 1280 500 1280 478 V 392 Q 1280 370 1302 370 Z" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.6853829237166792 0.4164758494589479)"/>
+  
+  
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="21" font-weight="800" fill="#22211d"><tspan x="1390" y="427.975">Action</tspan><tspan x="1390" y="450.02500000000003">completes</tspan></text>
+
+    <path d="M 250 425 L 320 425" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.47283898042514927 -0.6127066440414637)"/>
+    <path d="M 250 425 L 320 425" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.18891151431016617 0.32115475824102757)"/>
+  
+    
+    <path d="M 309 431.05 L 320 425" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.09255106961354614 0.034982847212813806) translate(0.8378448892850429 -0.8431754238903523)"/>
+    <path d="M 309 431.05 L 320 425" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.09255106961354614 0.034982847212813806) translate(0.3099653265438974 0.24711735304445026)"/>
+  
+    
+    <path d="M 309 418.95 L 320 425" fill="none" stroke="#22211d" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.09255106961354614 0.034982847212813806) translate(0.18341443547979008 -0.1799114893656224)"/>
+    <path d="M 309 418.95 L 320 425" fill="none" stroke="#22211d" stroke-width="1.364" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.09255106961354614 0.034982847212813806) translate(0.3808659608010202 -0.08318155193701382)"/>
+  
+  
+
+    <path d="M 430 370 L 430 250 L 620 250" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.6080092105083167 -0.33713650368154047)"/>
+    <path d="M 430 370 L 430 250 L 620 250" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.23090219255536792 0.09936935598962005)"/>
+  
+    
+    <path d="M 609 256.05 L 620 250" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.07027804038953034 0.030970137799158692) translate(-0.754126360360533 -0.08192614023573697)"/>
+    <path d="M 609 256.05 L 620 250" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.07027804038953034 0.030970137799158692) translate(0.23078682781197124 0.6538392257876694)"/>
+  
+    
+    <path d="M 609 243.95 L 620 250" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.07027804038953034 0.030970137799158692) translate(0.8047181344125419 0.177544675860554)"/>
+    <path d="M 609 243.95 L 620 250" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.07027804038953034 0.030970137799158692) translate(-0.7822696086019277 -0.3685529877897352)"/>
+  
+  
+
+    <path d="M 430 480 L 430 575 L 620 575" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.29747523176483803 -0.8494249759241939)"/>
+    <path d="M 430 480 L 430 575 L 620 575" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.8531738755758852 -0.12245337087661023)"/>
+  
+    
+    <path d="M 609 581.05 L 620 575" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.32432222699280827 0.15234892976004633) translate(-0.6682646655477583 0.8340714796911924)"/>
+    <path d="M 609 581.05 L 620 575" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.32432222699280827 0.15234892976004633) translate(-0.5060540805570781 -0.009259613743051842)"/>
+  
+    
+    <path d="M 609 568.95 L 620 575" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.32432222699280827 0.15234892976004633) translate(-0.3865366552490741 0.4327196387574076)"/>
+    <path d="M 609 568.95 L 620 575" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.32432222699280827 0.15234892976004633) translate(0.29839662672020506 0.5837526453193277)"/>
+  
+  
+
+    <path d="M 730 520 L 730 470 L 920 470" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.6558338526170701 0.4766435099299998)"/>
+    <path d="M 730 520 L 730 470 L 920 470" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.07309495699591939 0.2574295469094069)"/>
+  
+    
+    <path d="M 909 476.05 L 920 470" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.0428602360188961 -0.047396382526494585) translate(-0.0648246961645782 0.8765645784325898)"/>
+    <path d="M 909 476.05 L 920 470" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.0428602360188961 -0.047396382526494585) translate(-0.027169184759259224 0.09539787489920859)"/>
+  
+    
+    <path d="M 909 463.95 L 920 470" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.0428602360188961 -0.047396382526494585) translate(-0.8799618962220848 0.26106906021013854)"/>
+    <path d="M 909 463.95 L 920 470" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.0428602360188961 -0.047396382526494585) translate(-0.15775265260599558 0.11956904358230525)"/>
+  
+  
+
+    <path d="M 730 630 L 730 695 L 920 695" fill="none" stroke="#9a9388" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.8822056420147418 0.5463202639482915)"/>
+    <path d="M 730 630 L 730 695 L 920 695" fill="none" stroke="#9a9388" stroke-width="1.054" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.7197204470168799 -0.038087569177150726)"/>
+  
+    
+    <path d="M 909 701.05 L 920 695" fill="none" stroke="#9a9388" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(-0.5078921208623797 0.2036233968101443)"/>
+    <path d="M 909 701.05 L 920 695" fill="none" stroke="#9a9388" stroke-width="1.054" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(0.698950800485909 -0.6305850368924439)"/>
+  
+    
+    <path d="M 909 688.95 L 920 695" fill="none" stroke="#9a9388" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(0.8873132443986834 0.7626302457880229)"/>
+    <path d="M 909 688.95 L 920 695" fill="none" stroke="#9a9388" stroke-width="1.054" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.2089481686009094 -0.09890404955949633) translate(-0.3214981711003929 0.7876080532092601)"/>
+  
+  
+
+    <path d="M 840 250 L 1220 250 L 1220 410 L 1280 410" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.8293683816678822 0.8264528129249812)"/>
+    <path d="M 840 250 L 1220 250 L 1220 410 L 1280 410" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.5049165699630976 -0.3578709793277085)"/>
+  
+    
+    <path d="M 1269 416.05 L 1280 410" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.06226644744165244 -0.06910281602758916) translate(0.8903353416826577 -0.6077334660105407)"/>
+    <path d="M 1269 416.05 L 1280 410" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.06226644744165244 -0.06910281602758916) translate(-0.5055344440508633 -0.6831120197195559)"/>
+  
+    
+    <path d="M 1269 403.95 L 1280 410" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.06226644744165244 -0.06910281602758916) translate(0.6732670201454313 0.6998147224076093)"/>
+    <path d="M 1269 403.95 L 1280 410" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.06226644744165244 -0.06910281602758916) translate(-0.00036958535201847553 0.3076206031255425)"/>
+  
+  
+
+    <path d="M 1140 470 L 1210 470 L 1210 435 L 1280 435" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.5528015915304423 0.8662438710685819)"/>
+    <path d="M 1140 470 L 1210 470 L 1210 435 L 1280 435" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.7177449464332313 -0.7905569437891246)"/>
+  
+    
+    <path d="M 1269 441.05 L 1280 435" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.48262151135131715 0.1743030540179461)"/>
+    <path d="M 1269 441.05 L 1280 435" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.17000733660534018 -0.7878602801822127)"/>
+  
+    
+    <path d="M 1269 428.95 L 1280 435" fill="none" stroke="#22211d" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.3231255968101322 -0.22309220640454439) translate(0.7656414009165019 0.3845087078399957)"/>
+    <path d="M 1269 428.95 L 1280 435" fill="none" stroke="#22211d" stroke-width="1.24" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(0.3231255968101322 -0.22309220640454439) translate(-0.5726111995987595 0.7711698846425862)"/>
+  
+  
+
+    <path d="M 1140 695 L 1240 695 L 1240 460 L 1280 460" fill="none" stroke="#9a9388" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(0.5230219577439129 -0.5968674743548036)"/>
+    <path d="M 1140 695 L 1240 695 L 1240 460 L 1280 460" fill="none" stroke="#9a9388" stroke-width="1.054" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.40075263669714334 0.05151018630713222)"/>
+  
+    
+    <path d="M 1269 466.05 L 1280 460" fill="none" stroke="#9a9388" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.4002417416777463 0.22289590006694204)"/>
+    <path d="M 1269 466.05 L 1280 460" fill="none" stroke="#9a9388" stroke-width="1.054" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.48911559535190474 0.6508833857718855)"/>
+  
+    
+    <path d="M 1269 453.95 L 1280 460" fill="none" stroke="#9a9388" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="1" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.49374351776205005 -0.08290150417014952)"/>
+    <path d="M 1269 453.95 L 1280 460" fill="none" stroke="#9a9388" stroke-width="1.054" stroke-linecap="round" stroke-linejoin="round" opacity="0.55" transform="translate(-0.24349303185008464 -0.09745734797324984) translate(0.4134098104666918 0.6059536585584283)"/>
+  
+  
+<rect x="440" y="322" width="40" height="24" rx="10" ry="10" fill="#fbfaf4" opacity="1"/>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="16" font-weight="700" fill="#3f7a18"><tspan x="460" y="340">yes</tspan></text>
+<rect x="442" y="492" width="36" height="24" rx="10" ry="10" fill="#fbfaf4" opacity="1"/>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="16" font-weight="700" fill="#a14a25"><tspan x="460" y="510">no</tspan></text>
+<rect x="740" y="470" width="40" height="24" rx="10" ry="10" fill="#fbfaf4" opacity="1"/>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="16" font-weight="700" fill="#3f7a18"><tspan x="760" y="488">yes</tspan></text>
+<rect x="690" y="654" width="160" height="24" rx="10" ry="10" fill="#fbfaf4" opacity="1"/>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="15" font-weight="700" fill="#a14a25"><tspan x="770" y="670">no / still failing</tspan></text>
+<text text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif" font-size="17" font-weight="500" fill="#454039"><tspan x="800" y="860">RZN uses the lightest path that works, then drops into CDP only for hard cases.</tspan></text>
+<text text-anchor="middle" font-family="SFMono-Regular, ui-monospace, Cascadia Mono, Liberation Mono, monospace" font-size="14" font-weight="600" fill="#676258"><tspan x="800" y="890">Escalation triggers: cross-origin iframes, trusted input, stubborn UI.</tspan></text>
+</svg>

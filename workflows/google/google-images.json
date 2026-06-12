@@ -1,0 +1,246 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "google/images",
+  "name": "Google Images Search",
+  "version": "2.0.0",
+  "system": "google",
+  "capability": "google.images",
+  "summary": "Search Google Images and return title/alt/thumbnail for each card. Full image URLs require per-card clicks (not done here).",
+  "description": "Search Google Images and extract image titles + alt text + thumbnail URIs from the udm=2 results grid.",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Image search query. Aliases query and q work too."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "google.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.google.com/imghp"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to the Google Images homepage"
+    },
+    {
+      "id": "s1a",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "textarea[name='q'], input[name='q']"
+        }
+      },
+      "name": "Wait for the Google Images search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1b",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss consent / popups if present"
+    },
+    {
+      "id": "s1c",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "textarea[name='q'], input[name='q']"
+        }
+      },
+      "name": "Fill the search box"
+    },
+    {
+      "id": "s1d",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "textarea[name='q'], input[name='q']",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Settle: let the grid mount",
+      "timeout_ms": 3000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss common popups"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".czzyk, .H8Rx8c, [role='listitem'] img"
+        }
+      },
+      "name": "Wait for at least one image card",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Settle: let lazy thumbnails paint",
+      "timeout_ms": 2000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "extraction_type": "images",
+          "item_selector": ".czzyk",
+          "fields": [
+            {
+              "name": "alt_text",
+              "selector": "img.YQ4gaf, img",
+              "attribute": "alt"
+            },
+            {
+              "name": "thumbnail_src",
+              "selector": "img.YQ4gaf, img",
+              "attribute": "src"
+            }
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract image cards"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "alt_text": {
+            "type": "string"
+          },
+          "thumbnail_src": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search Google Images and return title/alt/thumbnail for each card. Full image URLs require per-card clicks (not done here).",
+    "parameters": {
+      "search_query": "Image search query. Aliases query and q work too."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run google images --param search_query=\"golden retriever puppy\"",
+        "description": "Basic image search."
+      },
+      {
+        "command": "rzn-browser run google images --param query=\"northern lights aurora\"",
+        "description": "Using the query alias."
+      }
+    ],
+    "returns": [
+      "Array of { alt_text, thumbnail_src }. alt_text doubles as the image caption/title; thumbnail_src is usually a base64 data: URI (often a placeholder transparent GIF for above-the-fold lazy-loaded slots), not the original image URL."
+    ],
+    "notes": [
+      "Drives the Google Images homepage (`/imghp`) search box rather than hitting `/search?udm=2&q=...` directly.",
+      "Google Images now serves under udm=2 (the old tbm=isch redirects there) and hides full image URLs behind a click-to-open side panel. This workflow returns only what's visible in the grid without clicking.",
+      "If you need the original image URL for each result, build a follow-up workflow that clicks each card and reads the side-panel a[href] \u2014 that's a separate (slow, brittle) effort.",
+      "The grid is virtualized; only viewport-visible images get extracted."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "google/google-images.json",
+    "legacy_system_id": "google"
+  }
+}

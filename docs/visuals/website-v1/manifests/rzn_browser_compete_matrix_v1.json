@@ -1,0 +1,124 @@
+{
+  "schema": "clipper.website_visual.manifest.v0.1",
+  "meta": {
+    "id": "rzn_browser_compete_matrix_v1",
+    "page_url": "https://github.com/srv1n/rzn-browser#how-it-compares",
+    "repo": "rzn-browser",
+    "locale": "en_US"
+  },
+  "asset": {
+    "kind": "compare_matrix",
+    "template_id": "editorial.compare_matrix.v1",
+    "width": 1600,
+    "height": 1000
+  },
+  "theme": {
+    "theme_ref": "builtin:editorial_slate_v1"
+  },
+  "copy": {
+    "eyebrow": "Compare browser tools",
+    "title": "Which browser automation stack fits which job?",
+    "subtitle": "These tools solve different jobs. The matrix should make that obvious."
+  },
+  "proof": {
+    "kind": "matrix",
+    "columns": [
+      {
+        "id": "rzn",
+        "label": "RZN Browser"
+      },
+      {
+        "id": "browserbase",
+        "label": "Browserbase"
+      },
+      {
+        "id": "stagehand",
+        "label": "Stagehand"
+      },
+      {
+        "id": "browser_use",
+        "label": "Browser Use"
+      }
+    ],
+    "rows": [
+      {
+        "label": "Drive your logged-in Chrome",
+        "values": {
+          "rzn": "Native fit",
+          "browserbase": "Remote browser instead",
+          "stagehand": "Needs your own stack",
+          "browser_use": "Persistent, not your Chrome"
+        },
+        "winner": "rzn"
+      },
+      {
+        "label": "Build on managed cloud browsers",
+        "values": {
+          "rzn": "Not the point",
+          "browserbase": "Core product",
+          "stagehand": "Pairs with cloud infra",
+          "browser_use": "Cloud exists, less infra-led"
+        },
+        "winner": "browserbase"
+      },
+      {
+        "label": "Embed browser AI in TypeScript",
+        "values": {
+          "rzn": "CLI-first runtime",
+          "browserbase": "Platform APIs",
+          "stagehand": "Best fit",
+          "browser_use": "Broader product surface"
+        },
+        "winner": "stagehand"
+      },
+      {
+        "label": "Need a broad agent and CLI",
+        "values": {
+          "rzn": "Focused local runner",
+          "browserbase": "Infra over operator UX",
+          "stagehand": "Library, not product",
+          "browser_use": "Strongest match"
+        },
+        "winner": "browser_use"
+      }
+    ]
+  },
+  "constraints": {
+    "slots": {
+      "title": {
+        "max_chars": 46,
+        "max_lines": 3
+      },
+      "subtitle": {
+        "max_chars": 78,
+        "max_lines": 2
+      },
+      "proof.rows.label": {
+        "max_chars": 34,
+        "max_lines": 2
+      },
+      "proof.rows.cells": {
+        "max_chars": 28,
+        "max_lines": 2
+      }
+    },
+    "overflow_policy": "fail",
+    "thumbnail_legibility": true
+  },
+  "outputs": [
+    {
+      "format": "png",
+      "path": "rzn_browser_compete_matrix_v1.png"
+    }
+  ],
+  "qa": {
+    "required_checks": [
+      "no_overflow",
+      "no_overlap",
+      "grid_alignment",
+      "font_lock",
+      "thumbnail_legibility"
+    ],
+    "fail_on_warn": true
+  }
+}

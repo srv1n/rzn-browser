@@ -1,0 +1,196 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "google/lens",
+  "name": "Google Lens Reverse Image Search",
+  "version": "2.0.0",
+  "system": "google",
+  "capability": "google.lens",
+  "summary": "Reverse image search via Google Lens (URL-based). Returns visible text or enumerated result items.",
+  "description": "Reverse image search via Google Lens. Two modes: text (visible page text) and items (interactive result links/buttons).",
+  "params": {
+    "properties": {
+      "image_source": {
+        "kind": "string",
+        "required": true,
+        "description": "Publicly accessible image URL. Lens fetches it server-side, so localhost/file:// won't work."
+      },
+      "mode": {
+        "kind": "string",
+        "required": false,
+        "description": "text returns the visible page text (default). items enumerates interactive result links/buttons with text + href + aria-label.",
+        "enum_values": [
+          "text",
+          "items"
+        ],
+        "default": "text"
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "lens.google.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "lens.google.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://lens.google.com/uploadbyurl?url={image_source}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Google Lens upload-by-URL",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for Lens UI",
+      "timeout_ms": 8000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss common popups"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "main, body"
+        }
+      },
+      "name": "Wait for results to render",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "return (() => {\n  const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\n  const mode = (cleanArg(arg0) || 'text').toLowerCase();\n  if (mode === 'items') {\n    const sel = \"main a[href], main button, a[href][aria-label], button[aria-label], [role='button'][aria-label]\";\n    const nodes = Array.from(document.querySelectorAll(sel));\n    const seen = new Set();\n    const items = [];\n    for (const n of nodes) {\n      const href = n.getAttribute('href') || '';\n      const aria = n.getAttribute('aria-label') || '';\n      const text = (n.innerText || '').trim().slice(0, 200);\n      const key = href + '|' + aria + '|' + text;\n      if (seen.has(key)) continue;\n      seen.add(key);\n      if (!aria && !text && !href) continue;\n      items.push({ text, href, aria_label: aria });\n      if (items.length >= 100) break;\n    }\n    return { mode, items };\n  }\n  const main = document.querySelector('main') || document.body;\n  const text = (main.innerText || '').trim().slice(0, 20000);\n  return { mode, text };\n})();",
+          "return_value": true,
+          "args": [
+            "{mode}"
+          ]
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Extract result items or visible text"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "text",
+            "items"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "href": {
+                "type": "string"
+              },
+              "aria_label": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Reverse image search via Google Lens (URL-based). Returns visible text or enumerated result items.",
+    "parameters": {
+      "image_source": "Publicly accessible image URL. Lens fetches it server-side, so localhost/file:// won't work.",
+      "mode": "text returns the visible page text (default). items enumerates interactive result links/buttons with text + href + aria-label."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run google lens --param image_source=\"https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg\"",
+        "description": "Default text mode."
+      },
+      {
+        "command": "rzn-browser run google lens --param image_source=\"https://upload.wikimedia.org/wikipedia/commons/3/3a/Cat03.jpg\" --param mode=items",
+        "description": "Items mode — enumerate clickable Lens result targets."
+      }
+    ],
+    "returns": [
+      "Object with mode and either text (string, truncated to 20k chars) or items (array of {text, href, aria_label}, capped at 100)."
+    ],
+    "notes": [
+      "Local file uploads aren't supported here — Lens needs a fetchable URL. For a local file, separately host it and pass the URL.",
+      "Lens UI is heavily client-rendered; extraction is best-effort and selectors can drift."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "google/google-lens.json",
+    "legacy_system_id": "google"
+  }
+}

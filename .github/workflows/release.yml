@@ -1,0 +1,208 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to publish, e.g. v1.2.3"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release_meta:
+    name: Prepare Release Metadata
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.vars.outputs.tag }}
+      version: ${{ steps.vars.outputs.version }}
+      ref: ${{ steps.vars.outputs.ref }}
+    steps:
+      - name: Resolve tag
+        id: vars
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "[ERROR] Release tags must look like v1.2.3" >&2
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          echo "ref=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ steps.vars.outputs.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Generate release notes
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_ORG_ID: ${{ secrets.OPENAI_ORG_ID }}
+          OPENAI_PROJECT_ID: ${{ secrets.OPENAI_PROJECT_ID }}
+          RZN_RELEASE_NOTES_MODEL: ${{ vars.RZN_RELEASE_NOTES_MODEL }}
+        shell: bash
+        run: |
+          python scripts/release/generate_release_notes.py \
+            --tag "${{ steps.vars.outputs.tag }}" \
+            --output dist/release/release-notes.md \
+            --metadata-output dist/release/release-notes.json
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: dist/release/release-notes.*
+
+  build_runtime:
+    name: Build ${{ matrix.label }}
+    needs: release_meta
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: Linux x64
+            slug: linux-x64
+            runner: ubuntu-latest
+          - label: Windows x64
+            slug: windows-x64
+            runner: windows-latest
+          - label: macOS Intel
+            slug: macos-x64
+            runner: macos-15-intel
+          - label: macOS Apple Silicon
+            slug: macos-arm64
+            runner: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release_meta.outputs.ref }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build platform bundle
+        shell: bash
+        run: |
+          python scripts/release/build_release_artifacts.py \
+            --version "${{ needs.release_meta.outputs.version }}" \
+            --platform "${{ matrix.slug }}" \
+            --no-workflows
+
+      - name: Upload runtime artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.slug }}
+          path: |
+            dist/release/rzn-browser-${{ matrix.slug }}*
+
+  build_workflows:
+    name: Build Workflow Catalog Bundle
+    needs: release_meta
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release_meta.outputs.ref }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Build workflow catalog bundle
+        shell: bash
+        run: |
+          python scripts/release/build_release_artifacts.py \
+            --version "${{ needs.release_meta.outputs.version }}" \
+            --workflows-only
+
+      - name: Upload workflow bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-workflows
+          path: |
+            dist/release/rzn-browser-workflows*
+
+  publish_release:
+    name: Publish GitHub Release
+    needs:
+      - release_meta
+      - build_runtime
+      - build_workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist/release
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.release_meta.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TITLE="RZN Browser ${TAG}"
+
+          if gh release view "$TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$GH_REPO" --title "$TITLE" --notes-file dist/release/release-notes.md
+          else
+            gh release create "$TAG" --repo "$GH_REPO" --title "$TITLE" --notes-file dist/release/release-notes.md
+          fi
+
+          shopt -s nullglob
+          assets=()
+          for asset in dist/release/*; do
+            name="$(basename "$asset")"
+            if [[ "$name" == "release-notes.md" || "$name" == "release-notes.json" ]]; then
+              continue
+            fi
+            assets+=("$asset")
+          done
+
+          if (( ${#assets[@]} == 0 )); then
+            echo "[ERROR] No release assets found" >&2
+            exit 1
+          fi
+
+          gh release upload "$TAG" --repo "$GH_REPO" "${assets[@]}" --clobber

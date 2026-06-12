@@ -1,0 +1,86 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "chatgpt/fetch-estuary-base64",
+  "name": "ChatGPT: Fetch estuary artifact as base64",
+  "version": "0.1.0",
+  "system": "chatgpt",
+  "capability": "chatgpt.fetch_sandbox_artifact",
+  "summary": "Fetch a ChatGPT estuary artifact URL inside the authenticated chatgpt.com browser context and return base64 bytes.",
+  "params": {
+    "properties": {
+      "content_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Signed https://chatgpt.com/backend-api/estuary/content URL."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["chatgpt.com"]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["chatgpt.com"]
+    },
+    {
+      "class": "file_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["local"]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 120000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "name": "Open ChatGPT origin",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://chatgpt.com/"
+        },
+        "side_effects": ["browser_state"]
+      },
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "name": "Fetch artifact",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": ["{content_url}"],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const url=cleanArg(arg0);if(!url)throw new Error('content_url is required');const res=await fetch(url,{credentials:'include'});if(!res.ok)throw new Error('fetch '+res.status);const cd=res.headers.get('content-disposition')||'';const ct=res.headers.get('content-type')||'';const m=cd.match(/filename\\*?=(?:UTF-8'')?\"?([^\";]+)\"?/i);const fileName=m?decodeURIComponent(m[1].replace(/\"/g,'')):'onboarding-plan.zip';const bytes=new Uint8Array(await res.arrayBuffer());let binary='';const chunk=0x8000;for(let i=0;i<bytes.length;i+=chunk){binary+=String.fromCharCode(...bytes.subarray(i,i+chunk));}return{url,status:res.status,content_type:ct,file_name:fileName,size_bytes:bytes.length,base64:btoa(binary)};"
+        },
+        "side_effects": ["external_read"]
+      },
+      "timeout_ms": 120000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object"
+    },
+    "output_selector": {
+      "step_id": "s1",
+      "path": "$"
+    }
+  }
+}

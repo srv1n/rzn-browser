@@ -1,0 +1,45 @@
+{
+  "system_id": "browser_automation",
+  "id": "browser_open_page_get_title_v1",
+  "name": "Open Page and Get Title",
+  "description": "Navigate to a page and read the document title as a simple browser smoke test.",
+  "version": "1.0.0",
+  "last_updated": "2026-03-11T00:00:00Z",
+  "browser_automation": {
+    "description": "Simple proof-of-life workflow for browser automation setup.",
+    "sequences": [
+      {
+        "name": "open_page_and_get_title",
+        "description": "Open a page, wait for body, and read the title element.",
+        "required_variables": [
+          {
+            "name": "page_url",
+            "description": "The page URL to open."
+          }
+        ],
+        "steps": [
+          {
+            "id": "s1",
+            "name": "Navigate to page",
+            "type": "navigate_to_url",
+            "url": "{page_url}"
+          },
+          {
+            "id": "s2",
+            "name": "Wait for page body",
+            "type": "wait_for_element",
+            "selector": "body",
+            "timeout_ms": 10000
+          },
+          {
+            "id": "s3",
+            "name": "Read document title",
+            "type": "get_element_text",
+            "selector": "title",
+            "timeout_ms": 5000
+          }
+        ]
+      }
+    ]
+  }
+}

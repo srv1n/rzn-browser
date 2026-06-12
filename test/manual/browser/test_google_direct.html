@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Google Site Profile Direct Test</title>
+    <style>
+        body { 
+            font-family: monospace; 
+            padding: 40px;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        button { 
+            padding: 10px 20px; 
+            margin: 10px; 
+            cursor: pointer;
+            background: #4285f4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button:hover { background: #357ae8; }
+        #status { 
+            padding: 20px; 
+            margin: 20px 0; 
+            background: #f0f0f0;
+            border-radius: 4px;
+        }
+        #results {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+        .success { color: green; font-weight: bold; }
+        .error { color: red; font-weight: bold; }
+        .info { color: blue; }
+        pre { 
+            background: white; 
+            padding: 10px; 
+            border: 1px solid #ccc;
+            overflow-x: auto;
+        }
+        .step {
+            margin: 10px 0;
+            padding: 10px;
+            background: white;
+            border-left: 3px solid #4285f4;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔍 Google Site Profile Direct Test</h1>
+    
+    <div id="status">Ready to test Google site profile extraction...</div>
+    
+    <div>
+        <button onclick="runGoogleTest()">Test Google Search & Extract</button>
+        <button onclick="testSiteProfile()">Check Site Profile Config</button>
+        <button onclick="testFeatureFlags()">Check Feature Flags</button>
+        <button onclick="clearResults()">Clear Results</button>
+    </div>
+    
+    <div id="results"></div>
+    
+    <script>
+        let stepCount = 0;
+        
+        function updateStatus(msg, type = 'info') {
+            const status = document.getElementById('status');
+            status.className = type;
+            status.innerHTML = msg;
+            console.log(`[TEST:${type}]`, msg);
+        }
+        
+        function addResult(title, content, type = 'info') {
+            const results = document.getElementById('results');
+            const div = document.createElement('div');
+            div.className = 'step';
+            div.innerHTML = `
+                <h3>${++stepCount}. ${title}</h3>
+                <div class="${type}">${content}</div>
+            `;
+            results.appendChild(div);
+        }
+        
+        function clearResults() {
+            document.getElementById('results').innerHTML = '';
+            stepCount = 0;
+            updateStatus('Results cleared', 'info');
+        }
+        
+        async function runGoogleTest() {
+            updateStatus('🚀 Starting Google test...', 'info');
+            clearResults();
+            
+            // Step 1: Check if we're on Google
+            if (!window.location.hostname.includes('google.com')) {
+                addResult('Navigation Check', 
+                    `⚠️ Not on Google! Please navigate to <a href="https://www.google.com" target="_blank">https://www.google.com</a> first`, 
+                    'error');
+                updateStatus('❌ Test failed - not on Google', 'error');
+                return;
+            }
+            
+            addResult('Navigation Check', '✅ On Google.com', 'success');
+            
+            // Step 2: Test site profile detection
+            addResult('Site Profile Check', 'Checking if site profile is detected...', 'info');
+            
+            // Send message to extension to check site profile
+            if (typeof chrome !== 'undefined' && chrome.runtime) {
+                chrome.runtime.sendMessage({
+                    type: 'CHECK_SITE_PROFILE',
+                    url: window.location.href
+                }, response => {
+                    if (chrome.runtime.lastError) {
+                        addResult('Extension Communication', 
+                            `❌ Error: ${chrome.runtime.lastError.message}`, 
+                            'error');
+                        return;
+                    }
+                    
+                    if (response && response.profile) {
+                        addResult('Site Profile Detection', 
+                            `✅ Google profile loaded!<pre>${JSON.stringify(response.profile, null, 2)}</pre>`, 
+                            'success');
+                    } else {
+                        addResult('Site Profile Detection', 
+                            '⚠️ No site profile detected', 
+                            'error');
+                    }
+                });
+            }
+            
+            // Step 3: Fill search box
+            setTimeout(() => {
+                const searchBox = document.querySelector('input[name="q"]:not([type="hidden"]), textarea[name="q"]');
+                if (searchBox) {
+                    searchBox.value = 'OpenAI GPT latest news';
+                    addResult('Search Input', '✅ Filled search box with "OpenAI GPT latest news"', 'success');
+                    
+                    // Step 4: Trigger search
+                    setTimeout(() => {
+                        searchBox.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13 }));
+                        searchBox.form?.submit();
+                        addResult('Search Submission', '✅ Submitted search', 'success');
+                        updateStatus('⏳ Waiting for results...', 'info');
+                        
+                        // Step 5: Extract results after navigation
+                        setTimeout(() => {
+                            extractGoogleResults();
+                        }, 3000);
+                    }, 500);
+                } else {
+                    addResult('Search Input', '❌ Could not find search box', 'error');
+                }
+            }, 1000);
+        }
+        
+        function extractGoogleResults() {
+            updateStatus('🔍 Extracting search results...', 'info');
+            
+            // Use Google site profile selectors
+            const searchContainer = document.querySelector('#search');
+            if (!searchContainer) {
+                addResult('Extraction', '❌ No search results container found', 'error');
+                return;
+            }
+            
+            const results = [];
+            const resultElements = searchContainer.querySelectorAll('[data-ved] > .g, .g');
+            
+            resultElements.forEach((el, idx) => {
+                if (idx >= 5) return; // Limit to 5 results
+                
+                const title = el.querySelector('h3')?.textContent || '';
+                const url = el.querySelector('a[href*="://"]')?.href || '';
+                const snippet = el.querySelector('.VwiC3b, .yXK7lf')?.textContent || '';
+                
+                if (title && url) {
+                    results.push({ title, url, snippet });
+                }
+            });
+            
+            if (results.length > 0) {
+                addResult('Extraction Results', 
+                    `✅ Extracted ${results.length} results using site profile:<pre>${JSON.stringify(results, null, 2)}</pre>`, 
+                    'success');
+                updateStatus('✅ Test completed successfully!', 'success');
+                
+                // Log for extension to capture
+                console.log('[RZN:SITE_PROFILE] Successfully extracted Google results:', results);
+            } else {
+                addResult('Extraction Results', '⚠️ No results extracted', 'error');
+                updateStatus('⚠️ Test completed with warnings', 'error');
+            }
+        }
+        
+        function testSiteProfile() {
+            updateStatus('Checking site profile configuration...', 'info');
+            clearResults();
+            
+            // Send message to check site profiles
+            if (typeof chrome !== 'undefined' && chrome.runtime) {
+                chrome.runtime.sendMessage({
+                    type: 'GET_SITE_PROFILES'
+                }, response => {
+                    if (chrome.runtime.lastError) {
+                        addResult('Site Profiles', 
+                            `❌ Error: ${chrome.runtime.lastError.message}`, 
+                            'error');
+                        return;
+                    }
+                    
+                    if (response && response.profiles) {
+                        addResult('Available Site Profiles', 
+                            `<pre>${JSON.stringify(response.profiles, null, 2)}</pre>`, 
+                            'info');
+                        updateStatus('✅ Site profiles loaded', 'success');
+                    } else {
+                        addResult('Site Profiles', '⚠️ No profiles available', 'error');
+                    }
+                });
+            } else {
+                addResult('Site Profiles', '❌ Chrome runtime not available', 'error');
+            }
+        }
+        
+        function testFeatureFlags() {
+            updateStatus('Checking feature flags...', 'info');
+            clearResults();
+            
+            // Send message to check flags
+            if (typeof chrome !== 'undefined' && chrome.runtime) {
+                chrome.runtime.sendMessage({
+                    type: 'GET_FEATURE_FLAGS',
+                    domain: window.location.hostname
+                }, response => {
+                    if (chrome.runtime.lastError) {
+                        addResult('Feature Flags', 
+                            `❌ Error: ${chrome.runtime.lastError.message}`, 
+                            'error');
+                        return;
+                    }
+                    
+                    if (response && response.flags) {
+                        addResult('Active Feature Flags', 
+                            `<pre>${JSON.stringify(response.flags, null, 2)}</pre>`, 
+                            'info');
+                        updateStatus('✅ Feature flags loaded', 'success');
+                    } else {
+                        addResult('Feature Flags', '⚠️ No flags available', 'error');
+                    }
+                });
+            } else {
+                addResult('Feature Flags', '❌ Chrome runtime not available', 'error');
+            }
+        }
+        
+        // Listen for messages from content script
+        window.addEventListener('message', (event) => {
+            if (event.data && event.data.type === 'RZN_LOG') {
+                console.log('[RZN:PAGE]', event.data);
+            }
+        });
+        
+        // Auto-check on load
+        window.addEventListener('load', () => {
+            if (typeof chrome !== 'undefined' && chrome.runtime) {
+                updateStatus('✅ Chrome runtime available - ready to test', 'success');
+            } else {
+                updateStatus('⚠️ Chrome runtime not available - extension may not be loaded', 'error');
+            }
+        });
+    </script>
+</body>
+</html>

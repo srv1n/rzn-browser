@@ -1,0 +1,257 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "reddit/vote",
+  "name": "Reddit: Vote",
+  "version": "1.0.0",
+  "system": "reddit",
+  "capability": "reddit.vote",
+  "summary": "Cast or clear a vote on a Reddit post or a specific comment. Single tool for upvote, downvote, and clear.",
+  "description": "Cast or clear a vote on a Reddit post or a specific comment within a post. Uses old.reddit.com for deterministic .midcol arrow controls. Idempotent \u2014 already-correct state is a no-op, not an error. Requires an authenticated session; an anonymous click would open a login modal and fail the verification step.",
+  "params": {
+    "properties": {
+      "comment_id": {
+        "kind": "string",
+        "required": false,
+        "description": "Target comment's base36 id \u2014 required when target='comment'. The workflow scopes the vote to #thing_t1_<comment_id> on the post page."
+      },
+      "direction": {
+        "kind": "string",
+        "required": true,
+        "description": "'up' = upvote (flips a downvote to up if currently downvoted). 'down' = downvote (flips an upvote to down). 'clear' = remove any existing vote so the item is unvoted. Idempotent: already-correct state is a no-op, not an error.",
+        "enum_values": [
+          "up",
+          "down",
+          "clear"
+        ]
+      },
+      "post_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Full Reddit post permalink. old.reddit.com is required for selector stability \u2014 pass the old.reddit.com URL even when the user found the post on www.reddit.com. For target=comment this is the parent post URL, not a comment permalink."
+      },
+      "target": {
+        "kind": "string",
+        "required": true,
+        "description": "Vote on the submission itself ('post') or on a specific comment within it ('comment'). When 'comment', comment_id is required.",
+        "enum_values": [
+          "post",
+          "comment"
+        ]
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "old.reddit.com"
+      ]
+    },
+    {
+      "class": "external_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": true,
+      "scopes": [
+        "old.reddit.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "old.reddit.com"
+      ]
+    },
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "old.reddit.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{post_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the target post permalink",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Initial page settle",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#siteTable .thing.link .midcol, #siteTable .thing[data-fullname^='t3_'] .midcol"
+        }
+      },
+      "name": "Wait for the submission's .midcol (post arrows render even when the page is voting on a comment)",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{target}",
+            "{comment_id}",
+            "{direction}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const target = (cleanArg(arg0) || 'post').toLowerCase(); const commentId = cleanArg(arg1); const direction = (cleanArg(arg2) || 'up').toLowerCase(); if (!['post','comment'].includes(target)) throw new Error(\"target must be 'post' or 'comment'\"); if (!['up','down','clear'].includes(direction)) throw new Error(\"direction must be 'up', 'down', or 'clear'\"); if (target === 'comment' && !commentId) throw new Error(\"comment_id is required when target='comment'\"); let node = null; if (target === 'post') { node = document.querySelector(\"#siteTable .thing.link, #siteTable .thing[data-fullname^='t3_']\"); if (!node) throw new Error('post node not found in #siteTable'); } else { node = document.querySelector('#thing_t1_' + commentId); if (!node) throw new Error('comment node #thing_t1_' + commentId + ' not found on page'); } const midcol = node.querySelector(':scope > .midcol'); if (!midcol) throw new Error('.midcol not found on target node \u2014 page layout may have changed'); const upArrow = midcol.querySelector('.arrow.up, .arrow.upmod'); const downArrow = midcol.querySelector('.arrow.down, .arrow.downmod'); if (!upArrow || !downArrow) throw new Error('vote arrows missing on .midcol'); const state = midcol.classList.contains('likes') ? 'up' : midcol.classList.contains('dislikes') ? 'down' : 'unvoted'; return JSON.stringify({ target: target, comment_id: commentId || null, direction: direction, current_state: state, fullname: node.getAttribute('data-fullname') || null });"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Validate inputs and confirm the target node + its arrows are present (fails fast with a clear error before attempting the click)",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{target}",
+            "{comment_id}",
+            "{direction}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const target = (cleanArg(arg0) || 'post').toLowerCase(); const commentId = cleanArg(arg1); const direction = (cleanArg(arg2) || 'up').toLowerCase(); const node = (target === 'post') ? document.querySelector(\"#siteTable .thing.link, #siteTable .thing[data-fullname^='t3_']\") : document.querySelector('#thing_t1_' + commentId); if (!node) throw new Error('target node disappeared between probe and click'); const midcol = node.querySelector(':scope > .midcol'); const state = midcol.classList.contains('likes') ? 'up' : midcol.classList.contains('dislikes') ? 'down' : 'unvoted'; const upArrow = midcol.querySelector('.arrow.up, .arrow.upmod'); const downArrow = midcol.querySelector('.arrow.down, .arrow.downmod'); let action = 'noop'; let clicked = null; if (direction === 'up') { if (state === 'up') { action = 'noop_already_upvoted'; } else { upArrow.click(); clicked = 'up'; action = (state === 'down') ? 'flipped_down_to_up' : 'upvoted'; } } else if (direction === 'down') { if (state === 'down') { action = 'noop_already_downvoted'; } else { downArrow.click(); clicked = 'down'; action = (state === 'up') ? 'flipped_up_to_down' : 'downvoted'; } } else { if (state === 'unvoted') { action = 'noop_already_unvoted'; } else if (state === 'up') { upArrow.click(); clicked = 'up'; action = 'cleared_upvote'; } else { downArrow.click(); clicked = 'down'; action = 'cleared_downvote'; } } return JSON.stringify({ before_state: state, action: action, clicked: clicked });"
+        },
+        "side_effects": [
+          "browser_state",
+          "external_write"
+        ]
+      },
+      "name": "Apply the vote: click the up arrow, down arrow, or active *mod arrow as needed; no-op when already at the desired state",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the vote XHR + DOM class swap to settle",
+      "timeout_ms": 1200
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{target}",
+            "{comment_id}",
+            "{direction}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const target = (cleanArg(arg0) || 'post').toLowerCase(); const commentId = cleanArg(arg1); const direction = (cleanArg(arg2) || 'up').toLowerCase(); const node = (target === 'post') ? document.querySelector(\"#siteTable .thing.link, #siteTable .thing[data-fullname^='t3_']\") : document.querySelector('#thing_t1_' + commentId); if (!node) throw new Error('target node missing after vote'); const midcol = node.querySelector(':scope > .midcol'); const state = midcol.classList.contains('likes') ? 'up' : midcol.classList.contains('dislikes') ? 'down' : 'unvoted'; const want = (direction === 'clear') ? 'unvoted' : direction; if (state !== want) throw new Error('vote did not register: expected ' + want + ', got ' + state + ' \u2014 check that the session is logged in'); const scoreEl = node.querySelector(':scope > .midcol > .score.unvoted, :scope > .midcol > .score.likes, :scope > .midcol > .score.dislikes'); const score = scoreEl ? (scoreEl.getAttribute('title') || scoreEl.textContent || '').trim() : null; return JSON.stringify({ target: target, comment_id: commentId || null, fullname: node.getAttribute('data-fullname') || null, final_state: state, score: score, url: location.href });"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Verify the final vote state matches the requested direction (catches anonymous-session login-modal failures)",
+      "timeout_ms": 10000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "target": { "type": "string", "enum": ["post", "comment"] },
+        "comment_id": { "type": "string", "nullable": true },
+        "fullname": { "type": "string", "nullable": true },
+        "final_state": { "type": "string", "enum": ["up", "down", "unvoted"] },
+        "score": { "type": "string", "nullable": true },
+        "url": { "type": "string" }
+      }
+    },
+    "output_selector": {
+      "step_id": "s7",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Cast or clear a vote on a Reddit post or a specific comment. Single tool for upvote, downvote, and clear.",
+    "parameters": {
+      "comment_id": "Target comment's base36 id \u2014 required when target='comment'. The workflow scopes the vote to #thing_t1_<comment_id> on the post page.",
+      "direction": "'up' = upvote (flips a downvote to up if currently downvoted). 'down' = downvote (flips an upvote to down). 'clear' = remove any existing vote so the item is unvoted. Idempotent: already-correct state is a no-op, not an error.",
+      "post_url": "Full Reddit post permalink. old.reddit.com is required for selector stability \u2014 pass the old.reddit.com URL even when the user found the post on www.reddit.com. For target=comment this is the parent post URL, not a comment permalink.",
+      "target": "Vote on the submission itself ('post') or on a specific comment within it ('comment'). When 'comment', comment_id is required."
+    },
+    "examples": [
+      {
+        "description": "Upvote a specific post",
+        "command": "rzn-browser run reddit vote --param post_url=\"https://old.reddit.com/r/rust/comments/abc123/title/\" --param target=post --param direction=up"
+      },
+      {
+        "description": "Downvote a specific comment within that post",
+        "command": "rzn-browser run reddit vote --param post_url=\"https://old.reddit.com/r/rust/comments/abc123/title/\" --param target=comment --param comment_id=\"l5x9abc\" --param direction=down"
+      },
+      {
+        "description": "Clear an existing vote on a post (return it to unvoted)",
+        "command": "rzn-browser run reddit vote --param post_url=\"https://old.reddit.com/r/rust/comments/abc123/title/\" --param target=post --param direction=clear"
+      }
+    ],
+    "returns": [
+      "JSON { target, comment_id, fullname, final_state ('up'|'down'|'unvoted'), score, url }. Throws if final_state != requested direction (typically a logged-out session)."
+    ],
+    "notes": [
+      "Requires an authenticated old.reddit.com session \u2014 anonymous clicks open a login modal and the verification step throws.",
+      "old.reddit.com only. www.reddit.com / new.reddit.com use a different DOM and are not supported by this workflow.",
+      "Idempotent. Calling direction=up on an already-upvoted item returns success with action='noop_already_upvoted'.",
+      "Score field comes from the .score element's title attribute (exact integer) when available; falls back to the visible text (which Reddit may fuzz)."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "reddit/reddit-vote.json",
+    "legacy_system_id": "reddit"
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "system_id": "chatgpt",
+  "id": "chatgpt_images_download_current_rendered_v1",
+  "name": "ChatGPT Images: Download Current Rendered Image",
+  "description": "Operate on the currently visible ChatGPT Images result in the active tab, open the rendered image, and trigger the save/download control without navigating away.",
+  "domain": "chatgpt.com",
+  "version": "1.0.0",
+  "help": {
+    "summary": "Download the currently visible rendered ChatGPT Images result from the active authenticated ChatGPT tab.",
+    "parameters": [],
+    "examples": [
+      {
+        "description": "Download the current rendered image",
+        "command": "rzn-browser run chatgpt images-download-current-rendered"
+      }
+    ],
+    "returns": "The active tab URL, page title, selected image URL, and save/download label from the clicked control.",
+    "notes": [
+      "Use this after a ChatGPT Images result is already visible in the current tab.",
+      "The save/download click uses explicit CDP eval because browser downloads commonly require a trusted gesture."
+    ]
+  },
+  "browser_automation": {
+    "use_current_tab": false,
+    "description": "Current-tab rendered-image save flow for ChatGPT Images.",
+    "sequences": [
+      {
+        "name": "chatgpt_images_download_current_rendered",
+        "description": "Use the already rendered ChatGPT image card in the current tab and trigger browser save/download.",
+        "required_variables": [],
+        "steps": [
+          {
+            "id": "s0",
+            "name": "Allow the rendered image surface to settle",
+            "type": "wait_for_timeout",
+            "timeout_ms": 800
+          },
+          {
+            "id": "s1",
+            "name": "Wait for visible rendered image",
+            "type": "wait_for_element",
+            "selector": "img",
+            "timeout_ms": 30000
+          },
+          {
+            "id": "s2",
+            "name": "Open the visible rendered image and click save/download",
+            "type": "execute_javascript",
+            "world": "main",
+            "use_cdp_eval": true,
+            "timeout_ms": 20000,
+            "script": "const sleep=(ms)=>new Promise(r=>setTimeout(r,ms)); const normalize=(v)=>(v||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim(); const visible=(n)=>!!(n&&n instanceof Element&&getComputedStyle(n).visibility!=='hidden'&&getComputedStyle(n).display!=='none'&&n.getBoundingClientRect().width>0&&n.getBoundingClientRect().height>0); const labelText=(node)=>normalize([node?.getAttribute?.('aria-label')||'',node?.getAttribute?.('title')||'',node?.getAttribute?.('data-testid')||'',node?.textContent||''].join(' ')).toLowerCase(); const imageUrl=(img)=>{const srcset=String(img.getAttribute('srcset')||'').split(',').map((p)=>p.trim()).filter(Boolean); const srcsetUrl=srcset.length?srcset[srcset.length-1].split(/\\s+/)[0]:''; const raw=img.currentSrc||img.src||img.getAttribute('src')||srcsetUrl||''; try{return raw?new URL(raw,window.location.origin).toString():'';}catch{return raw;}}; const score=(img)=>{const w=img.naturalWidth||img.width||img.clientWidth||0; const h=img.naturalHeight||img.height||img.clientHeight||0; return w*h;}; const candidates=Array.from(document.querySelectorAll('img')).filter((img)=>img instanceof HTMLImageElement&&visible(img)).filter((img)=>{const url=imageUrl(img); if(!url||/^data:/i.test(url)||/avatar|profile|favicon|icon|emoji|spinner|loading/i.test(url)) return false; return score(img)>=60000;}).sort((a,b)=>score(b)-score(a)); if(!candidates.length) throw new Error('No rendered ChatGPT image found in current tab'); const img=candidates[0]; img.setAttribute('data-rzn-chatgpt-rendered-image','1'); try{img.scrollIntoView({block:'center',inline:'center'});}catch{} const clickNode=(node)=>{ if(!node) return false; try{ if(typeof node.scrollIntoView==='function') node.scrollIntoView({block:'center',inline:'center'}); }catch{} try{ if(typeof node.click==='function'){ node.click(); return true; } }catch{} try{ node.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window})); return true; }catch{return false;} }; clickNode(img); await sleep(900); const saveButton=Array.from(document.querySelectorAll('button, [role=\"button\"], a')).filter(visible).find((node)=>{const label=labelText(node); return /save|download/.test(label)&&!/share|copy link|twitter|x\\.com|export/.test(label);}); if(!saveButton) throw new Error('Rendered image viewer save/download button not found'); saveButton.setAttribute('data-rzn-chatgpt-rendered-save','1'); clickNode(saveButton); return {url:window.location.href,title:document.title,image_url:imageUrl(img),save_label:labelText(saveButton)};"
+          },
+          {
+            "id": "s3",
+            "name": "Allow browser download to start",
+            "type": "wait_for_timeout",
+            "timeout_ms": 2500
+          }
+        ]
+      }
+    ]
+  }
+}

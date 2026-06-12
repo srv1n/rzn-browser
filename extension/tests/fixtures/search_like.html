@@ -1,0 +1,65 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Search-Like Fixture</title>
+    <style>
+      body { font-family: sans-serif; margin: 16px; }
+      #results { margin-top: 12px; display: grid; gap: 10px; }
+      .result { border: 1px solid #ddd; border-radius: 8px; padding: 10px; }
+      .title { font-weight: 600; }
+      .meta { color: #666; font-size: 12px; margin-top: 4px; }
+      .link { display: inline-block; margin-top: 6px; }
+      #detail { margin-top: 18px; padding: 12px; border: 1px dashed #bbb; border-radius: 8px; }
+    </style>
+    <script>
+      function showDetail(id, title) {
+        const detail = document.getElementById('detail');
+        detail.setAttribute('data-open-id', id);
+        detail.innerHTML = `
+          <h1 class="detail-title">${title}</h1>
+          <p class="detail-body">Opened detail for <strong>${id}</strong>.</p>
+          <span class="open-id" data-open-id="${id}" style="display:none"></span>
+        `;
+      }
+
+      window.addEventListener('DOMContentLoaded', () => {
+        document.querySelectorAll('[data-open]').forEach((a) => {
+          a.addEventListener('click', (e) => {
+            e.preventDefault();
+            const id = a.getAttribute('data-open');
+            const title = a.getAttribute('data-title') || 'Untitled';
+            showDetail(id, title);
+          });
+        });
+      });
+    </script>
+  </head>
+  <body>
+    <h1>Search-Like Results</h1>
+    <input id="q" placeholder="Search…" />
+
+    <div id="results">
+      <div class="result">
+        <div class="title">Alpha result</div>
+        <div class="meta">alpha.example</div>
+        <a class="link" href="#alpha" data-open="alpha" data-title="Alpha result">Open</a>
+      </div>
+      <div class="result">
+        <div class="title">Beta result</div>
+        <div class="meta">beta.example</div>
+        <a class="link" href="#beta" data-open="beta" data-title="Beta result">Open</a>
+      </div>
+      <div class="result">
+        <div class="title">Gamma result</div>
+        <div class="meta">gamma.example</div>
+        <a class="link" href="#gamma" data-open="gamma" data-title="Gamma result">Open</a>
+      </div>
+    </div>
+
+    <div id="detail" data-open-id="">
+      <h2>Detail (initial)</h2>
+      <p>Click “Open” on a result to populate this section.</p>
+    </div>
+  </body>
+</html>

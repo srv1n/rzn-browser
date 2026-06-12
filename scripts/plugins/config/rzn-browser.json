@@ -1,0 +1,75 @@
+{
+  "id": "rzn-browser",
+  "version": "0.1.0",
+  "name": "RZN Browser",
+  "description": "Browser automation supervisor + native host",
+  "mcp_protocol_version": "2025-06-18",
+  "platforms": [
+    "macos_universal",
+    "windows_x86_64",
+    "linux_x86_64"
+  ],
+  "resources": [
+    "resources/systems/browser_automation"
+  ],
+  "shared_payloads": [
+    {
+      "source": "resources/systems/browser_automation",
+      "dest": "resources/systems/browser_automation"
+    },
+    {
+      "source": "examples/browser_automation",
+      "dest": "examples/browser_automation"
+    }
+  ],
+  "payloads": [
+    {
+      "source": "${RZN_BROWSER_BIN_MACOS}",
+      "dest": "bin/macos/universal/rzn-browser",
+      "platforms": [
+        "macos_universal"
+      ],
+      "mode": "755"
+    },
+    {
+      "source": "${RZN_BROWSER_BIN_WINDOWS}",
+      "dest": "bin/windows/x86_64/rzn-browser.exe",
+      "platforms": [
+        "windows_x86_64"
+      ],
+      "mode": "755"
+    },
+    {
+      "source": "${RZN_BROWSER_BIN_LINUX}",
+      "dest": "bin/linux/x86_64/rzn-browser",
+      "platforms": [
+        "linux_x86_64"
+      ],
+      "mode": "755"
+    },
+    {
+      "source": "${RZN_NATIVE_HOST_BIN_MACOS}",
+      "dest": "bin/macos/universal/rzn-native-host",
+      "platforms": [
+        "macos_universal"
+      ],
+      "mode": "755"
+    },
+    {
+      "source": "${RZN_NATIVE_HOST_BIN_WINDOWS}",
+      "dest": "bin/windows/x86_64/rzn-native-host.exe",
+      "platforms": [
+        "windows_x86_64"
+      ],
+      "mode": "755"
+    },
+    {
+      "source": "${RZN_NATIVE_HOST_BIN_LINUX}",
+      "dest": "bin/linux/x86_64/rzn-native-host",
+      "platforms": [
+        "linux_x86_64"
+      ],
+      "mode": "755"
+    }
+  ]
+}

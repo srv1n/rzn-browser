@@ -1,0 +1,425 @@
+<!--
+  Runtime Architecture · v1 · grid-built · uses iconography
+  Canvas: 1600 × 900   · base unit: 8 px
+  Zones: TASK · PLANNING · DISPATCH · EXECUTION · BRIDGE · CHROME
+  Inter-zone gap: 64 px · Outer margin: 64 px
+  Color slots: ink · surface · accent (RZN) · flow (Chrome)
+  Icons: user · cog · share-2 · cpu · terminal · chrome-glyph
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 900" width="1600" height="900">
+  <defs>
+    <pattern id="boundaryHatch" x="0" y="0" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="10" height="10" fill="#FBFAF4"/>
+      <line x1="0" y1="0" x2="0" y2="10" stroke="#1A1A17" stroke-width="0.4" stroke-opacity="0.14"/>
+    </pattern>
+    <marker id="ah-flow" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1A1A17"/>
+    </marker>
+    <marker id="ah-feedback" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3F6F1A"/>
+    </marker>
+  </defs>
+
+  <!-- Canvas -->
+  <rect width="1600" height="900" fill="#FAFAF7"/>
+
+  <!-- ============================================================ -->
+  <!-- HEADER BAND  (y: 80..240)                                    -->
+  <!-- ============================================================ -->
+  <text x="80" y="104"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700" letter-spacing="2.4"
+        fill="#3A352D">RZN  ·  ARCHITECTURE  ·  02</text>
+
+  <text x="80" y="160"
+        font-family="Inter, -apple-system, system-ui, sans-serif"
+        font-size="36" font-weight="600" letter-spacing="-0.5"
+        fill="#1A1A17">Inside the local runtime.</text>
+
+  <text x="80" y="200"
+        font-family="Inter, -apple-system, system-ui, sans-serif"
+        font-size="16" font-weight="400"
+        fill="#3A352D">Plan, dispatch, run, bridge — how a step travels from your task to the page in your browser.</text>
+
+  <!-- RZN monogram -->
+  <g transform="translate(1488, 80)">
+    <rect x="0" y="0" width="56" height="56" rx="14" fill="#1A1A17"/>
+    <text x="28" y="36" text-anchor="middle"
+          font-family="Inter, sans-serif"
+          font-size="18" font-weight="800" letter-spacing="-0.4"
+          fill="#C7E88F">RZN</text>
+  </g>
+
+  <line x1="80" y1="240" x2="1520" y2="240" stroke="#1A1A17" stroke-width="0.5" stroke-opacity="0.25"/>
+
+  <!-- ============================================================ -->
+  <!-- STAGE LABELS  (y: 240..280)                                  -->
+  <!-- ============================================================ -->
+  <g font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+     font-size="11" font-weight="700" letter-spacing="2.4"
+     fill="#3A352D">
+    <text x="144"  y="264" text-anchor="middle">TASK</text>
+    <text x="388"  y="264" text-anchor="middle">PLANNING</text>
+    <text x="652"  y="264" text-anchor="middle">DISPATCH</text>
+    <text x="968"  y="264" text-anchor="middle">EXECUTION</text>
+    <text x="1264" y="264" text-anchor="middle">BRIDGE</text>
+    <text x="1472" y="264" text-anchor="middle">CHROME</text>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- FLOW BAND  (y: 304..720)                                     -->
+  <!-- ============================================================ -->
+
+  <!-- Trust-boundary container: RZN runtime process -->
+  <!-- x: 264..1368 (w=1104), y: 336..688 (h=352)               -->
+  <g>
+    <rect x="264" y="336" width="1104" height="352" rx="20"
+          fill="url(#boundaryHatch)"
+          stroke="#1A1A17" stroke-width="1" stroke-dasharray="6 4"/>
+    <!-- container label tab -->
+    <rect x="288" y="324" width="232" height="24" rx="6"
+          fill="#FAFAF7" stroke="#1A1A17" stroke-width="0.8"/>
+    <text x="304" y="340"
+          font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+          font-size="11" font-weight="700" letter-spacing="2"
+          fill="#1A1A17">RZN RUNTIME PROCESS</text>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- COMPONENTS                                                   -->
+  <!-- All non-pool components: y=448..576 (h=128), center y=512    -->
+  <!-- Pool: y=368..656 (h=288)                                     -->
+  <!-- ============================================================ -->
+
+  <!-- USER TASK · capsule (neutral surface) -->
+  <!-- x: 64..224 (w=160) · cx=144 -->
+  <g>
+    <rect x="64" y="448" width="160" height="128" rx="64"
+          fill="#F4F1EA" stroke="#1A1A17" stroke-width="1.2"/>
+    <!-- icon: user (Lucide) -->
+    <g transform="translate(132, 472)" fill="none"
+       stroke="#1A1A17" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/>
+      <circle cx="12" cy="7" r="4"/>
+    </g>
+    <text x="144" y="524" text-anchor="middle"
+          font-family="Inter, sans-serif"
+          font-size="17" font-weight="700" letter-spacing="-0.1"
+          fill="#1A1A17">User task</text>
+    <text x="144" y="548" text-anchor="middle"
+          font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+          font-size="12" font-weight="500"
+          fill="#3A352D">CLI · SDK</text>
+  </g>
+
+  <!-- PLANNER · capsule-cylinder (RZN) -->
+  <!-- x: 288..488 (w=200) · cx=388 -->
+  <g>
+    <rect x="288" y="448" width="200" height="128" rx="64"
+          fill="#F4FAEB" stroke="#3F6F1A" stroke-width="1.2"/>
+    <line x1="312" y1="472" x2="312" y2="552" stroke="#3F6F1A" stroke-width="1.2"/>
+    <line x1="464" y1="472" x2="464" y2="552" stroke="#3F6F1A" stroke-width="1.2"/>
+    <!-- icon: cog (Lucide) -->
+    <g transform="translate(376, 472)" fill="none"
+       stroke="#1A1A17" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
+      <circle cx="12" cy="12" r="3"/>
+    </g>
+    <text x="388" y="524" text-anchor="middle"
+          font-family="Inter, sans-serif"
+          font-size="17" font-weight="700" letter-spacing="-0.1"
+          fill="#1A1A17">Planner</text>
+    <text x="388" y="548" text-anchor="middle"
+          font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+          font-size="12" font-weight="600"
+          fill="#26500D">decomposes</text>
+  </g>
+
+  <!-- BROKER · capsule-cylinder (RZN) -->
+  <!-- x: 552..752 (w=200) · cx=652 -->
+  <g>
+    <rect x="552" y="448" width="200" height="128" rx="64"
+          fill="#F4FAEB" stroke="#3F6F1A" stroke-width="1.2"/>
+    <line x1="576" y1="472" x2="576" y2="552" stroke="#3F6F1A" stroke-width="1.2"/>
+    <line x1="728" y1="472" x2="728" y2="552" stroke="#3F6F1A" stroke-width="1.2"/>
+    <!-- icon: share-2 (Lucide) -->
+    <g transform="translate(640, 472)" fill="none"
+       stroke="#1A1A17" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="18" cy="5" r="3"/>
+      <circle cx="6" cy="12" r="3"/>
+      <circle cx="18" cy="19" r="3"/>
+      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/>
+      <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+    </g>
+    <text x="652" y="524" text-anchor="middle"
+          font-family="Inter, sans-serif"
+          font-size="17" font-weight="700" letter-spacing="-0.1"
+          fill="#1A1A17">Broker</text>
+    <text x="652" y="548" text-anchor="middle"
+          font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+          font-size="12" font-weight="600"
+          fill="#26500D">queues + dispatches</text>
+  </g>
+
+  <!-- WORKER POOL · card (RZN, taller for stack) -->
+  <!-- x: 816..1120 (w=304), y: 368..656 (h=288) -->
+  <g>
+    <rect x="816" y="368" width="304" height="288" rx="12"
+          fill="#F4FAEB" stroke="#3F6F1A" stroke-width="1.2"/>
+    <!-- header strip background -->
+    <rect x="816" y="368" width="304" height="32" rx="12"
+          fill="#3F6F1A" fill-opacity="0.08"/>
+    <rect x="816" y="380" width="304" height="20"
+          fill="#3F6F1A" fill-opacity="0.08"/>
+    <text x="968" y="389" text-anchor="middle"
+          font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+          font-size="11" font-weight="700" letter-spacing="2"
+          fill="#26500D">WORKER POOL  ·  × 3 PARALLEL</text>
+
+    <!-- Worker 1 -->
+    <g>
+      <rect x="824" y="412" width="288" height="64" rx="32"
+            fill="#FBFEF4" stroke="#3F6F1A" stroke-width="1"/>
+      <line x1="836" y1="432" x2="836" y2="456" stroke="#3F6F1A" stroke-width="1"/>
+      <line x1="1100" y1="432" x2="1100" y2="456" stroke="#3F6F1A" stroke-width="1"/>
+      <!-- icon: cpu -->
+      <g transform="translate(852, 432)" fill="none"
+         stroke="#1A1A17" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="4" width="16" height="16" rx="2"/>
+        <rect x="9" y="9" width="6" height="6"/>
+        <path d="M9 2v2"/><path d="M15 2v2"/>
+        <path d="M9 20v2"/><path d="M15 20v2"/>
+        <path d="M2 9h2"/><path d="M2 15h2"/>
+        <path d="M20 9h2"/><path d="M20 15h2"/>
+      </g>
+      <text x="892" y="439"
+            font-family="Inter, sans-serif"
+            font-size="14" font-weight="700" letter-spacing="-0.05"
+            fill="#1A1A17">Browser worker</text>
+      <text x="892" y="457"
+            font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+            font-size="11" font-weight="500"
+            fill="#3A352D">runs page actions</text>
+      <!-- index badge -->
+      <circle cx="1080" cy="444" r="11" fill="#3F6F1A"/>
+      <text x="1080" y="448" text-anchor="middle"
+            font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+            font-size="11" font-weight="700"
+            fill="#FAFAF7">1</text>
+    </g>
+
+    <!-- Worker 2 -->
+    <g>
+      <rect x="824" y="496" width="288" height="64" rx="32"
+            fill="#FBFEF4" stroke="#3F6F1A" stroke-width="1"/>
+      <line x1="836" y1="516" x2="836" y2="540" stroke="#3F6F1A" stroke-width="1"/>
+      <line x1="1100" y1="516" x2="1100" y2="540" stroke="#3F6F1A" stroke-width="1"/>
+      <g transform="translate(852, 516)" fill="none"
+         stroke="#1A1A17" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="4" width="16" height="16" rx="2"/>
+        <rect x="9" y="9" width="6" height="6"/>
+        <path d="M9 2v2"/><path d="M15 2v2"/>
+        <path d="M9 20v2"/><path d="M15 20v2"/>
+        <path d="M2 9h2"/><path d="M2 15h2"/>
+        <path d="M20 9h2"/><path d="M20 15h2"/>
+      </g>
+      <text x="892" y="523"
+            font-family="Inter, sans-serif"
+            font-size="14" font-weight="700" letter-spacing="-0.05"
+            fill="#1A1A17">Browser worker</text>
+      <text x="892" y="541"
+            font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+            font-size="11" font-weight="500"
+            fill="#3A352D">runs page actions</text>
+      <circle cx="1080" cy="528" r="11" fill="#3F6F1A"/>
+      <text x="1080" y="532" text-anchor="middle"
+            font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+            font-size="11" font-weight="700"
+            fill="#FAFAF7">2</text>
+    </g>
+
+    <!-- Worker 3 -->
+    <g>
+      <rect x="824" y="580" width="288" height="64" rx="32"
+            fill="#FBFEF4" stroke="#3F6F1A" stroke-width="1"/>
+      <line x1="836" y1="600" x2="836" y2="624" stroke="#3F6F1A" stroke-width="1"/>
+      <line x1="1100" y1="600" x2="1100" y2="624" stroke="#3F6F1A" stroke-width="1"/>
+      <g transform="translate(852, 600)" fill="none"
+         stroke="#1A1A17" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="4" width="16" height="16" rx="2"/>
+        <rect x="9" y="9" width="6" height="6"/>
+        <path d="M9 2v2"/><path d="M15 2v2"/>
+        <path d="M9 20v2"/><path d="M15 20v2"/>
+        <path d="M2 9h2"/><path d="M2 15h2"/>
+        <path d="M20 9h2"/><path d="M20 15h2"/>
+      </g>
+      <text x="892" y="607"
+            font-family="Inter, sans-serif"
+            font-size="14" font-weight="700" letter-spacing="-0.05"
+            fill="#1A1A17">Browser worker</text>
+      <text x="892" y="625"
+            font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+            font-size="11" font-weight="500"
+            fill="#3A352D">runs page actions</text>
+      <circle cx="1080" cy="612" r="11" fill="#3F6F1A"/>
+      <text x="1080" y="616" text-anchor="middle"
+            font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+            font-size="11" font-weight="700"
+            fill="#FAFAF7">3</text>
+    </g>
+  </g>
+
+  <!-- NATIVE HOST · capsule-cylinder (RZN) -->
+  <!-- x: 1184..1344 (w=160) · cx=1264 -->
+  <g>
+    <rect x="1184" y="448" width="160" height="128" rx="64"
+          fill="#F4FAEB" stroke="#3F6F1A" stroke-width="1.2"/>
+    <line x1="1208" y1="472" x2="1208" y2="552" stroke="#3F6F1A" stroke-width="1.2"/>
+    <line x1="1320" y1="472" x2="1320" y2="552" stroke="#3F6F1A" stroke-width="1.2"/>
+    <!-- icon: terminal (Lucide) -->
+    <g transform="translate(1252, 472)" fill="none"
+       stroke="#1A1A17" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="4 17 10 11 4 5"/>
+      <line x1="12" y1="19" x2="20" y2="19"/>
+    </g>
+    <text x="1264" y="524" text-anchor="middle"
+          font-family="Inter, sans-serif"
+          font-size="17" font-weight="700" letter-spacing="-0.1"
+          fill="#1A1A17">Native host</text>
+    <text x="1264" y="548" text-anchor="middle"
+          font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+          font-size="12" font-weight="600"
+          fill="#26500D">OS bridge</text>
+  </g>
+
+  <!-- CHROME EXTENSION · card (external surface, Chrome blue) -->
+  <!-- x: 1408..1536 (w=128) · cx=1472 -->
+  <g>
+    <rect x="1408" y="448" width="128" height="128" rx="12"
+          fill="#E8F0FE" stroke="#1A4596" stroke-width="1.2"/>
+    <!-- chrome multi-color glyph -->
+    <g transform="translate(1472, 484)">
+      <circle r="14" fill="#FAFAF7"/>
+      <path d="M -14 0 A 14 14 0 0 1 7 -12.1 L 3.8 -6.4 A 7.6 7.6 0 0 0 -8.3 4.5 z" fill="#EA4335"/>
+      <path d="M 7 -12.1 A 14 14 0 0 1 7 12.1 L 3.8 6.4 A 7.6 7.6 0 0 0 3.8 -6.4 z" fill="#FBBC04"/>
+      <path d="M 7 12.1 A 14 14 0 0 1 -14 0 L -8.3 -4.5 A 7.6 7.6 0 0 0 3.8 6.4 z" fill="#34A853"/>
+      <circle r="5.7" fill="#4285F4"/>
+      <circle r="5.7" fill="none" stroke="#FAFAF7" stroke-width="1.2"/>
+    </g>
+    <text x="1472" y="524" text-anchor="middle"
+          font-family="Inter, sans-serif"
+          font-size="14" font-weight="700" letter-spacing="-0.05"
+          fill="#1A1A17">Chrome ext.</text>
+    <text x="1472" y="548" text-anchor="middle"
+          font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+          font-size="11" font-weight="600"
+          fill="#1A4596">rides inside</text>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- EDGES   (all flow at center y=512 except feedback)           -->
+  <!-- ============================================================ -->
+
+  <!-- 1. USER → PLANNER (flow) -->
+  <line x1="224" y1="512" x2="284" y2="512"
+        stroke="#1A1A17" stroke-width="1.5" marker-end="url(#ah-flow)"/>
+  <rect x="232" y="494" width="44" height="14" rx="3" fill="#FBFAF4"/>
+  <text x="254" y="504" text-anchor="middle"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700"
+        fill="#1A1A17">task</text>
+
+  <!-- 2. PLANNER → BROKER (flow) -->
+  <line x1="488" y1="512" x2="548" y2="512"
+        stroke="#1A1A17" stroke-width="1.5" marker-end="url(#ah-flow)"/>
+  <rect x="494" y="494" width="48" height="14" rx="3" fill="#FBFAF4"/>
+  <text x="518" y="504" text-anchor="middle"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700"
+        fill="#1A1A17">steps</text>
+
+  <!-- 3. BROKER → POOL (flow) -->
+  <line x1="752" y1="512" x2="812" y2="512"
+        stroke="#1A1A17" stroke-width="1.5" marker-end="url(#ah-flow)"/>
+  <rect x="756" y="494" width="52" height="14" rx="3" fill="#FBFAF4"/>
+  <text x="782" y="504" text-anchor="middle"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700"
+        fill="#1A1A17">fan-out</text>
+
+  <!-- 4. POOL → NATIVE HOST (flow) -->
+  <line x1="1120" y1="512" x2="1180" y2="512"
+        stroke="#1A1A17" stroke-width="1.5" marker-end="url(#ah-flow)"/>
+  <rect x="1124" y="494" width="52" height="14" rx="3" fill="#FBFAF4"/>
+  <text x="1150" y="504" text-anchor="middle"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700"
+        fill="#1A1A17">actions</text>
+
+  <!-- 5. NATIVE HOST → CHROME EXT (flow) -->
+  <line x1="1344" y1="512" x2="1404" y2="512"
+        stroke="#1A1A17" stroke-width="1.5" marker-end="url(#ah-flow)"/>
+  <rect x="1348" y="494" width="52" height="14" rx="3" fill="#FBFAF4"/>
+  <text x="1374" y="504" text-anchor="middle"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="700"
+        fill="#1A1A17">native</text>
+
+  <!-- ============================================================ -->
+  <!-- LEGEND  (y: 720..808)                                        -->
+  <!-- ============================================================ -->
+  <line x1="80" y1="720" x2="1520" y2="720" stroke="#1A1A17" stroke-width="0.5" stroke-opacity="0.25" stroke-dasharray="2 4"/>
+
+  <g transform="translate(80, 752)">
+    <text x="0" y="0"
+          font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+          font-size="11" font-weight="700" letter-spacing="2"
+          fill="#3A352D">LEGEND</text>
+
+    <!-- swatch 1: capsule-cylinder = RZN runtime component -->
+    <g transform="translate(0, 24)">
+      <rect x="0" y="0" width="40" height="20" rx="10" fill="#F4FAEB" stroke="#3F6F1A" stroke-width="1.2"/>
+      <line x1="6" y1="3" x2="6" y2="17" stroke="#3F6F1A" stroke-width="1.2"/>
+      <line x1="34" y1="3" x2="34" y2="17" stroke="#3F6F1A" stroke-width="1.2"/>
+      <text x="52" y="14" font-family="Inter, sans-serif" font-size="13" font-weight="500" fill="#1A1A17">RZN runtime component</text>
+    </g>
+
+    <!-- swatch 2: card with header strip = pool/container -->
+    <g transform="translate(280, 24)">
+      <rect x="0" y="0" width="40" height="20" rx="4" fill="#F4FAEB" stroke="#3F6F1A" stroke-width="1.2"/>
+      <rect x="0" y="0" width="40" height="6" rx="3" fill="#3F6F1A" fill-opacity="0.18"/>
+      <text x="52" y="14" font-family="Inter, sans-serif" font-size="13" font-weight="500" fill="#1A1A17">pool of N (parallelism)</text>
+    </g>
+
+    <!-- swatch 3: external-surface card = Chrome -->
+    <g transform="translate(560, 24)">
+      <rect x="0" y="0" width="40" height="20" rx="4" fill="#E8F0FE" stroke="#1A4596" stroke-width="1.2"/>
+      <text x="52" y="14" font-family="Inter, sans-serif" font-size="13" font-weight="500" fill="#1A1A17">external surface (Chrome)</text>
+    </g>
+
+    <!-- swatch 4: trust-boundary container -->
+    <g transform="translate(840, 24)">
+      <rect x="0" y="0" width="40" height="20" rx="4" fill="url(#boundaryHatch)" stroke="#1A1A17" stroke-width="0.8" stroke-dasharray="3 2"/>
+      <text x="52" y="14" font-family="Inter, sans-serif" font-size="13" font-weight="500" fill="#1A1A17">RZN runtime process</text>
+    </g>
+
+    <!-- swatch 5: index badge = identity -->
+    <g transform="translate(1120, 24)">
+      <circle cx="20" cy="10" r="10" fill="#3F6F1A"/>
+      <text x="20" y="14" text-anchor="middle" font-family="'IBM Plex Mono', monospace" font-size="11" font-weight="700" fill="#FAFAF7">N</text>
+      <text x="40" y="14" font-family="Inter, sans-serif" font-size="13" font-weight="500" fill="#1A1A17">  worker index</text>
+    </g>
+  </g>
+
+  <!-- ============================================================ -->
+  <!-- FOOTER                                                       -->
+  <!-- ============================================================ -->
+  <text x="80" y="876"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="500" letter-spacing="1.5"
+        fill="#6F6A60">RZN BROWSER AUTOMATION  ·  RUNTIME ARCHITECTURE  ·  v1</text>
+  <text x="1520" y="876" text-anchor="end"
+        font-family="'IBM Plex Mono', ui-monospace, Menlo, monospace"
+        font-size="11" font-weight="500" letter-spacing="1.5"
+        fill="#6F6A60">PLANNER  ·  BROKER  ·  WORKERS  ·  BRIDGE</text>
+</svg>

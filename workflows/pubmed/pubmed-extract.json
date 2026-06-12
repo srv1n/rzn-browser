@@ -1,0 +1,282 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "pubmed/extract",
+  "name": "PubMed Extract Workflow",
+  "version": "1.1.0",
+  "system": "pubmed",
+  "capability": "pubmed.extract",
+  "summary": "Open a PubMed article page and extract title, authors+affiliations, abstract, journal, dates, identifiers, and full-text links.",
+  "description": "Navigate to https://pubmed.ncbi.nlm.nih.gov/{pmid}/ and walk the article page to extract title, abstract, journal, publication date, PMID, DOI, PMC id, keywords/MeSH terms, authors with affiliations, cited-by count, and the list of full-text links shown on the page. Use to enrich a known PMID. Do not use to search PubMed (use pubmed search).",
+  "params": {
+    "properties": {
+      "pmid": {
+        "kind": "string",
+        "required": true,
+        "description": "Numeric PubMed ID (e.g. 33495757). Bare digits only — do not include 'PMID:' or a full URL."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "pubmed.ncbi.nlm.nih.gov"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "pubmed.ncbi.nlm.nih.gov"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to paper"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for content",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "get_element_text",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "h1, .heading-title, .article-title, [data-testid='article-title']"
+        }
+      },
+      "name": "Extract title"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "extract_structured_data",
+        "inputs": {
+          "fields": [
+            {
+              "name": "name",
+              "selector": ".full-name, .author-name, a"
+            },
+            {
+              "name": "affiliation",
+              "selector": ".affiliation-name, .affiliation, sup"
+            }
+          ],
+          "item_selector": ".authors-list .authors-list-item, .author, [data-testid='author']"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract authors with affiliations"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const root=document.querySelector('#eng-abstract')||document.querySelector('#abstract .abstract-content')||document.querySelector('div.abstract-content')||document.querySelector('#abstract');let txt='';if(root){const clone=root.cloneNode(true);clone.querySelectorAll('strong,h2,h3,h4,.sub-title,.label,button').forEach(n=>n.remove());txt=norm(clone.textContent);}if(!txt){const m=document.querySelector('meta[name=\"description\"]');if(m)txt=norm(m.getAttribute('content'));}return {text:txt,length:txt.length};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract abstract"
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const sel='.keywords .keyword, .mesh-terms a, [data-testid=\"mesh-term\"]';const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const terms=Array.from(document.querySelectorAll(sel)).map(n=>norm(n.textContent)).filter(Boolean);return terms.map(t=>({term:t}));"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract keywords (returns empty array when none present)"
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const meta=(n)=>{const e=document.querySelector('meta[name=\"'+n+'\"]');return e?e.getAttribute('content'):null};const el=document.querySelector('#full-view-journal-trigger, button.journal-actions-trigger, .journal-actions-trigger, .journal-title');const short=el?norm(el.textContent):'';const full=norm(meta('citation_journal_title')||'');const text=full||short;return {text:text,short:short,full:full};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract journal"
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const meta=(n)=>{const e=document.querySelector('meta[name=\"'+n+'\"]');return e?e.getAttribute('content'):null};const el=document.querySelector('span.cit, .citation .cit, .pub-date');const cit=el?norm(el.textContent):'';const iso=norm(meta('citation_date')||'');return {text:cit||iso,citation:cit,iso:iso};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract publication date"
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const meta=(n)=>{const e=document.querySelector('meta[name=\"'+n+'\"]');return e?e.getAttribute('content'):null};const el=document.querySelector('strong.current-id, .id-pmid .id-link');let v=el?norm(el.textContent):'';if(!v)v=norm(meta('citation_pmid')||'');if(!v){const m=location.pathname.match(/\\/(\\d{5,})\\/?/);if(m)v=m[1];}return {text:v};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract PMID"
+    },
+    {
+      "id": "s10",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const meta=(n)=>{const e=document.querySelector('meta[name=\"'+n+'\"]');return e?e.getAttribute('content'):null};const el=document.querySelector('a.id-link[href*=\"doi.org\"], .id-doi .id-link');let v=el?norm(el.textContent):'';if(!v)v=norm(meta('citation_doi')||'');return {text:v};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract DOI"
+    },
+    {
+      "id": "s11",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const meta=(n)=>{const e=document.querySelector('meta[name=\"'+n+'\"]');return e?e.getAttribute('content'):null};const idLink=Array.from(document.querySelectorAll('a.id-link')).find(a=>/^PMC\\d+/i.test((a.textContent||'').trim()));let v=idLink?norm(idLink.textContent):'';if(!v){const m=meta('citation_pmcid');if(m)v=norm(m);}if(!v){const anchors=document.querySelectorAll('a[href*=\"PMC\"]');for(const a of anchors){const h=a.getAttribute('href')||'';const m=h.match(/PMC\\d+/);if(m){v=m[0];break;}}}return {text:v};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract PMC ID"
+    },
+    {
+      "id": "s12",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const anchors=Array.from(document.querySelectorAll('.full-text-links-list a.link-item, .full-text-links-list .link-item a, .full-text-links a.link-item'));const seen=new Set();const out=[];for(const a of anchors){const href=a.getAttribute('href')||'';if(!href||seen.has(href))continue;seen.add(href);const inner=a.querySelector('.link-name, .source, img[alt]');let source=inner?(inner.textContent||inner.getAttribute('alt')||'').trim():'';if(!source)source=norm(a.textContent);let url=href;if(url&&url.startsWith('/'))url=location.origin+url;out.push({source:source,url:url});}return out;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract full text links"
+    },
+    {
+      "id": "s13",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const cb=document.getElementById('citedby');if(!cb)return {count:0,visible_items:0};const items=cb.querySelectorAll('li.full-docsum, li[data-rid], .full-docsum');const titles=cb.querySelectorAll('a.docsum-title');const more=cb.querySelector('a.show-all-citedby, a[href*=\"linkname=pubmed_pubmed_citedin\"]');return {count:items.length||titles.length,visible_items:items.length,has_more_link:!!more,more_url:more?more.getAttribute('href'):null};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract cited by (visible items + link to full list)"
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s12",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open a PubMed article page and extract title, authors+affiliations, abstract, journal, dates, identifiers, and full-text links.",
+    "parameters": {
+      "pmid": "Numeric PubMed ID (e.g. 33495757). Bare digits only — do not include 'PMID:' or a full URL."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run pubmed extract --param pmid=\"33495757\"",
+        "description": "Fetch the article record for PMID 33495757."
+      }
+    ],
+    "returns": [
+      "Primary output: array of full-text link entries — { source, url } — from the 'Full text links' module. Title, abstract, authors+affiliations, keywords/MeSH, journal, publication date, PMID, DOI, PMC id, and cited-by count are produced by upstream steps (s3..s11, s13) and surface as step-level results rather than the final output."
+    ],
+    "notes": [
+      "Read-only. No login required.",
+      "Selector coverage is broad on purpose because PubMed ships several layout variants — empty fields are common when a particular element is absent on a given record (e.g. no DOI, no PMC).",
+      "Use pubmed search to resolve a query into PMIDs first, then feed PMIDs into this workflow one at a time."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "pubmed/pubmed-extract.json",
+    "legacy_system_id": "pubmed"
+  }
+}
