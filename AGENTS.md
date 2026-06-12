@@ -1,6 +1,8 @@
 ## Git Attribution
 
-Never add AI attribution to commits.
+Never add AI attribution anywhere — commits, PR descriptions, issues, or comments.
+
+No agent or subagent may add itself, Claude, or any other AI tool as a co-author or attribution in any form, anywhere. This binds every agent, including cloud-run and orchestrated subagents.
 
 Do not add:
 - `Co-authored-by` or `Co-Authored-By` trailers for Claude, Anthropic, OpenAI, Codex, or any AI tool.
