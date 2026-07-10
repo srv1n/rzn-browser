@@ -5941,11 +5941,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   
   if (message.cmd === 'execute_step' || message.cmd === CONTENT_SCRIPT_EXECUTE_STEP_CMD) {
     (async () => {
+      // Declared outside the try so the catch handler below can reuse the same
+      // dedup cache key. Previously these lived inside the try, so any handler
+      // throw (e.g. a wait_for_element timeout) made the catch reference an
+      // out-of-scope `executionCacheRequestId`, masking the real error with a
+      // `ReferenceError: executionCacheRequestId is not defined`.
+      const contentLease = contentLeaseId(message);
+      const executionCacheRequestId =
+        message.req_id && contentLease ? `${message.req_id}:${contentLease}` : message.req_id;
       try {
         throwIfContentRequestCancelled(message, 'execute_step message start');
-        const contentLease = contentLeaseId(message);
-        const executionCacheRequestId =
-          message.req_id && contentLease ? `${message.req_id}:${contentLease}` : message.req_id;
         const response = await executeWithSharedRequestDedup(
           executionCacheRequestId,
           stepFingerprint(message.payload?.step),

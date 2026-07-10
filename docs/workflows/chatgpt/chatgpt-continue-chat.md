@@ -1,7 +1,7 @@
 # ChatGPT: Continue Chat
 
 - JSON: `workflows/chatgpt/chatgpt_continue_chat_v1.json`
-- Purpose: Reopen an existing chat, default to `Pro` with `Extended` effort unless overridden, send another prompt, and return immediate post-send state.
+- Purpose: Reopen an existing chat, enforce GPT-5.6 Sol with Pro intelligence, send another prompt, and return immediate post-send state.
 - Required params: `chat_id`, `message_text`
 - Optional params: `model_slug`, `model_effort`
 - Canonical CLI:

@@ -53,7 +53,7 @@ const HEAL_STABILITY_DELAY_MS: u64 = 1_500;
 const HEAL_STABILITY_BRIDGE_WAIT_MS: u64 = 2_500;
 const TOOL_DISPATCH_RECOVERY_WAIT_MS: u64 = 2_500;
 const REQUIRED_EXTENSION_KEEPALIVE_CAPABILITY: &str = "content_keepalive_port";
-const EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION: u64 = 8;
+const EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION: u64 = 9;
 const REQUIRED_EXTENSION_BRIDGE_CAPABILITIES: &[&str] = &[
     "content_keepalive_port",
     "native_host_stdout_heartbeat",
@@ -68,6 +68,8 @@ const REQUIRED_EXTENSION_BRIDGE_CAPABILITIES: &[&str] = &[
     "supervisor_bridge_response_fencing",
     "health_beacon_v2",
     "auxiliary_path_lease_guards",
+    "control_plane_queue_bypass",
+    "watchdog_session_quarantine",
     "port_scoped_disconnect_suppression",
     "native_message_frame_cap",
 ];
@@ -5279,6 +5281,8 @@ mod tests {
             "supervisor_bridge_response_fencing": true,
             "health_beacon_v2": true,
             "auxiliary_path_lease_guards": true,
+            "control_plane_queue_bypass": true,
+            "watchdog_session_quarantine": true,
             "port_scoped_disconnect_suppression": true,
             "native_message_frame_cap": true
         });
@@ -10234,6 +10238,8 @@ mod tests {
                     "supervisor_bridge_response_fencing": true,
                     "health_beacon_v2": true,
                     "auxiliary_path_lease_guards": true,
+                    "control_plane_queue_bypass": true,
+                    "watchdog_session_quarantine": true,
                     "port_scoped_disconnect_suppression": true,
                     "native_message_frame_cap": true
                 }

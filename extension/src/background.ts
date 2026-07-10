@@ -496,7 +496,7 @@ const EXTENSION_WORKER_BOOT_ID =
     ? `extension-worker-${crypto.randomUUID()}`
     : `extension-worker-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const CLOUD_ACTOR_CONFIG_VERSION = 'rzn.cloud.actor_config.v1';
-const RZN_BRIDGE_CONTRACT_VERSION = 8;
+const RZN_BRIDGE_CONTRACT_VERSION = 9;
 const CLOUD_UI_NATIVE_TIMEOUT_MS = 10_000;
 const CLOUD_UI_PAIRING_TTL_SECS = 600;
 type NativeControlCallback = {
@@ -653,6 +653,7 @@ let lastNativeHostPid: number | null = null;
 const WATCHDOG_STALE_RESPONSE_TTL_MS = 120_000;
 const brokerWatchdogTimedOutLeaseIds = new Set<string>();
 const brokerWatchdogTimedOutRequestIds = new Set<string>();
+const CONTROL_PLANE_BROKER_COMMANDS = new Set(['ping']);
 type BrokerRequestLease = {
   leaseId: string;
   requestId: string;
@@ -673,6 +674,11 @@ const brokerRequestLeaseKeysByRequestId = new Map<string, Set<string>>();
 let lastBrokerWatchdogTimeoutMs: number | null = null;
 let lastBrokerWatchdogRequestId: string | null = null;
 let lastBrokerWatchdogSessionId: string | null = null;
+let lastBrokerWatchdogQuarantineMs: number | null = null;
+let lastBrokerWatchdogQuarantineSessionId: string | null = null;
+let lastBrokerWatchdogQuarantineReason: string | null = null;
+let brokerWatchdogQuarantineCount = 0;
+let brokerWatchdogBridgeRestartCount = 0;
 
 function clearHeartbeat() {
   if (heartbeatTimer !== null) {
@@ -837,6 +843,7 @@ function markBrokerRequestTimedOut(requestId: string, lease?: BrokerRequestLease
 }
 
 const DEFAULT_WORKFLOW_SESSION_ID = 'default';
+const CONTROL_PLANE_WORKFLOW_SESSION_ID = '__control_plane';
 const WORKFLOW_SESSION_STORAGE_KEY = 'workflow_sessions_v1';
 
 interface WorkflowSessionState {
@@ -1045,6 +1052,14 @@ function brokerRequestId(message: BrokerMessage): string | undefined {
 
 function brokerCommandName(message: BrokerMessage): string {
   return message.cmd || message.action || 'unknown';
+}
+
+function brokerDispatchCommandName(message: BrokerMessage): string {
+  return message.cmd || (message.action === 'perform_task' ? 'execute_workflow' : message.action) || 'unknown';
+}
+
+function isBrokerControlPlaneMessage(message: BrokerMessage): boolean {
+  return CONTROL_PLANE_BROKER_COMMANDS.has(brokerDispatchCommandName(message));
 }
 
 function createBrokerLeaseId(): string {
@@ -3412,6 +3427,98 @@ function brokerMessageWatchdogMs(message: BrokerMessage): number {
   return BROKER_WATCHDOG_DEFAULT_MS;
 }
 
+async function quarantineWorkflowSessionAfterWatchdog(
+  lease: BrokerRequestLease | null,
+  sessionId: string,
+  reason: string
+): Promise<void> {
+  const workflowSessionId = normalizeSessionId(lease?.workflowSessionId || sessionId);
+  lastBrokerWatchdogQuarantineMs = Date.now();
+  lastBrokerWatchdogQuarantineSessionId = workflowSessionId;
+  lastBrokerWatchdogQuarantineReason = reason;
+  brokerWatchdogQuarantineCount += 1;
+
+  try {
+    await releaseCdpSessionResources(workflowSessionId);
+  } catch (error) {
+    console.warn('[NativeReconnect] Failed to release CDP resources after broker watchdog timeout', {
+      session_id: workflowSessionId,
+      error: (error as any)?.message || String(error),
+    });
+  }
+
+  if (isDefaultWorkflowSession(workflowSessionId)) {
+    console.warn('[NativeReconnect] Quarantined default workflow session after watchdog timeout', {
+      session_id: workflowSessionId,
+      reason,
+    });
+    return;
+  }
+
+  try {
+    const result = await disposeWorkflowSession(workflowSessionId);
+    console.warn('[NativeReconnect] Quarantined workflow session after watchdog timeout', {
+      session_id: workflowSessionId,
+      tab_closed: result.closed,
+      tab_id: result.tabId,
+      reason,
+    });
+  } catch (error) {
+    console.warn('[NativeReconnect] Failed to dispose workflow session after broker watchdog timeout', {
+      session_id: workflowSessionId,
+      error: (error as any)?.message || String(error),
+    });
+  }
+}
+
+async function recoverAfterBrokerWatchdogTimeout(
+  lease: BrokerRequestLease | null,
+  sessionId: string,
+  reason: string
+): Promise<void> {
+  await quarantineWorkflowSessionAfterWatchdog(lease, sessionId, reason);
+
+  if (RZN_PAGE_TEST_BRIDGE_ENABLED && (globalThis as any).__rznTestNativeControlPlaneHealthy === true) {
+    lastNativeRoundtripPingMs = Date.now();
+    missedNativeHeartbeats = 0;
+    console.warn('[NativeReconnect] Test hook marked native control plane healthy after broker watchdog timeout', {
+      session_id: normalizeSessionId(lease?.workflowSessionId || sessionId),
+      reason,
+    });
+    return;
+  }
+
+  if (!nativePort) {
+    console.warn('[NativeReconnect] Broker watchdog quarantine completed after native port was already disconnected', {
+      session_id: normalizeSessionId(lease?.workflowSessionId || sessionId),
+      reason,
+    });
+    return;
+  }
+
+  try {
+    await callNativeHostControl(
+      'ping',
+      { source: 'broker_watchdog_recovery' },
+      { timeoutMs: HEARTBEAT_TIMEOUT_MS, responseCmd: 'ping_response' }
+    );
+    lastNativeRoundtripPingMs = Date.now();
+    missedNativeHeartbeats = 0;
+    console.warn('[NativeReconnect] Broker watchdog recovered by quarantining the workflow session; native port kept alive', {
+      session_id: normalizeSessionId(lease?.workflowSessionId || sessionId),
+      reason,
+    });
+  } catch (error) {
+    brokerWatchdogBridgeRestartCount += 1;
+    console.warn('[NativeReconnect] Broker watchdog quarantine could not prove native control-plane health; restarting native port', {
+      session_id: normalizeSessionId(lease?.workflowSessionId || sessionId),
+      reason,
+      error: (error as any)?.message || String(error),
+    });
+    disconnectNativePortAfterResponseFlush(`${reason}; native control ping failed`);
+  }
+}
+
 async function handleBrokerMessageWithWatchdog(
   message: BrokerMessage,
   sessionId?: string,
@@ -3466,7 +3573,7 @@ async function handleBrokerMessageWithWatchdog(
           error: `Extension broker handler timed out after ${watchdogMs}ms`,
         }, { allowAfterWatchdog: true });
       }
-      disconnectNativePortAfterResponseFlush('broker handler watchdog timeout');
+      void recoverAfterBrokerWatchdogTimeout(lease, workflowSessionId, 'broker handler watchdog timeout');
       resolve();
     }, watchdogMs) as unknown as number;
   });
@@ -3498,6 +3605,39 @@ async function handleBrokerMessageWithWatchdog(
     });
     return;
   }
+}
+
+function dispatchBrokerMessageWithWatchdog(
+  message: BrokerMessage,
+  sourceNativePortEpoch: number = nativePortEpoch,
+  handlerFn?: (
+    message: BrokerMessage,
+    sessionId: string,
+    brokerLease: BrokerRequestLease | null
+  ) => Promise<void>
+): Promise<void> {
+  const isControlPlane = isBrokerControlPlaneMessage(message);
+  const sessionId = isControlPlane ? CONTROL_PLANE_WORKFLOW_SESSION_ID : resolveSessionId(message);
+  const run = () =>
+    handleBrokerMessageWithWatchdog(
+      message,
+      sessionId,
+      sourceNativePortEpoch,
+      handlerFn || handleBrokerMessage
+    );
+
+  if (isControlPlane) {
+    return run().catch(err => {
+      console.error('[RZN] control-plane broker message handler error:', err);
+    });
+  }
+
+  const state = getWorkflowSessionState(sessionId);
+  const queued = state.queue.then(run);
+  state.queue = queued.catch(err => {
+    console.error('[RZN] broker message handler error:', err);
+  });
+  return queued;
 }
 
 // Connect to native messaging host
@@ -3566,13 +3706,7 @@ function connectToNative(): void {
         if (maybeResolveNativeControlCallback(message)) {
           return;
         }
-        const sessionId = resolveSessionId(message);
-        const state = getWorkflowSessionState(sessionId);
-        state.queue = state.queue
-          .then(() => handleBrokerMessageWithWatchdog(message, sessionId, portEpoch))
-          .catch(err => {
-            console.error('[RZN] broker message handler error:', err);
-          });
+        void dispatchBrokerMessageWithWatchdog(message, portEpoch);
       });
     }
 
@@ -3836,6 +3970,11 @@ async function handleBrokerMessage(
         last_broker_watchdog_timeout_ms: lastBrokerWatchdogTimeoutMs,
         last_broker_watchdog_request_id: lastBrokerWatchdogRequestId,
         last_broker_watchdog_session_id: lastBrokerWatchdogSessionId,
+        last_broker_watchdog_quarantine_ms: lastBrokerWatchdogQuarantineMs,
+        last_broker_watchdog_quarantine_session_id: lastBrokerWatchdogQuarantineSessionId,
+        last_broker_watchdog_quarantine_reason: lastBrokerWatchdogQuarantineReason,
+        broker_watchdog_quarantine_count: brokerWatchdogQuarantineCount,
+        broker_watchdog_bridge_restart_count: brokerWatchdogBridgeRestartCount,
         capabilities: {
           content_keepalive_port: true,
           content_keepalive_port_name: CONTENT_KEEPALIVE_PORT_NAME,
@@ -3853,6 +3992,8 @@ async function handleBrokerMessage(
           supervisor_bridge_response_fencing: true,
           health_beacon_v2: true,
           auxiliary_path_lease_guards: true,
+          control_plane_queue_bypass: true,
+          watchdog_session_quarantine: true,
           port_scoped_disconnect_suppression: true,
           native_message_frame_cap: true,
         },
@@ -6069,12 +6210,16 @@ if (RZN_PAGE_TEST_BRIDGE_ENABLED) {
   (globalThis as any).__rznTestHandleBrokerMessageWithWatchdog = async (message: any, sessionId?: string) => {
   await loadWorkflowSessionsFromStorage();
   const { normalizedMessage, correlationId } = normalizeTestBrokerMessage(message);
-  const workflowSessionId = normalizeSessionId(sessionId || resolveSessionId(normalizedMessage as BrokerMessage));
+  if (sessionId && !extractSessionIdCandidate(normalizedMessage as BrokerMessage)) {
+    normalizedMessage.payload = {
+      ...(normalizedMessage.payload || {}),
+      session_id: normalizeSessionId(sessionId),
+    };
+  }
   const responsePromise = waitForTestBrokerResponse(
     correlationId,
     Math.max(20000, brokerMessageWatchdogMs(normalizedMessage as BrokerMessage) + 5000),
   );
-  const state = getWorkflowSessionState(workflowSessionId);
   const testHandler =
     normalizedMessage.cmd === '__rzn_test_sleep_then_mutate'
       ? async (
@@ -6100,15 +6245,11 @@ if (RZN_PAGE_TEST_BRIDGE_ENABLED) {
           );
         }
       : undefined;
-  const queued = state.queue.then(() =>
-    handleBrokerMessageWithWatchdog(
-      normalizedMessage as BrokerMessage,
-      workflowSessionId,
-      nativePortEpoch,
-      testHandler
-    )
-  );
-  state.queue = queued.catch(err => {
+  void dispatchBrokerMessageWithWatchdog(
+    normalizedMessage as BrokerMessage,
+    nativePortEpoch,
+    testHandler
+  ).catch(err => {
     console.error('[RZN] test broker message handler error:', err);
   });
   return await responsePromise;

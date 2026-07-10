@@ -1,7 +1,7 @@
 # ChatGPT Web App Workflows
 
 ## Overview
-- Goal: Add a deterministic `workflows/chatgpt` pack for the ChatGPT web app that covers the operator actions we actually need: start a fresh chat and send a prompt, default that send path to `Pro` with `Extended` effort unless overridden, upload a file/image into a fresh chat, reopen a chat and wait for the latest assistant response, continue an existing chat, export the visible transcript, export full-thread transcript plus file/image asset metadata, and run an Images-specific flow that can generate two variations, poll for completion, and hand local downloads off to a thin wrapper.
+- Goal: Add a deterministic `workflows/chatgpt` pack for the ChatGPT web app that covers the operator actions we actually need: start a fresh chat and send a prompt on GPT-5.6 Sol with Pro intelligence, upload a file/image into a fresh chat, reopen a chat and wait for the latest assistant response, continue an existing chat, export the visible transcript, export full-thread transcript plus file/image asset metadata, and run an Images-specific flow that can generate two variations, poll for completion, and hand local downloads off to a thin wrapper.
 - Constraints: The ChatGPT web UI is a fast-moving SPA, the useful path depends on an already-authenticated Chrome session, model-picker and attachment markup are unstable, image URLs may only be knowable after the latest assistant turn stabilizes, and the feature must stay workflow-level rather than introducing `chatgpt.com` rules into shared executor code.
 
 ## Flow Diagrams
@@ -78,9 +78,8 @@ load route
   -> auth/session present?
     -> no: fail with surface-not-ready signal
     -> yes: find composer or thread
-      -> requested model?
-        -> no: apply default Pro -> Extended policy on send flows
-        -> yes: best-effort model picker traversal
+      -> enforce GPT-5.6 Sol in the model submenu
+      -> enforce Pro in the Intelligence menu
       -> requested attachment?
         -> no: continue
         -> yes: reveal file input -> upload via generic upload_file step
@@ -92,7 +91,7 @@ load route
 ## Decision Record
 - Keep the implementation in workflow JSON. ChatGPT selectors are site-specific and unstable, so the right place for that logic is `execute_javascript` inside the pack, not shared Rust or extension heuristics.
 - Use explicit dedicated workflow tabs. These flows reuse the operator's logged-in Chrome profile without stealing the browser's active tab.
-- Default send flows to `Pro` with `Extended` effort. That matches the primary operator preference while still allowing explicit overrides via `model_slug` and `model_effort`.
+- Lock send flows to GPT-5.6 Sol with Pro intelligence. Conflicting overrides fail closed.
 - Keep model and effort selection in the workflow. The picker is site-specific and changes often, so the right place for that traversal is the ChatGPT pack rather than generic engine code.
 - Use the generic `upload_file` step for attachments after a ChatGPT-specific prep script stamps the live file input with a stable temporary selector.
 - Return `chat_id` as the stable handle. That gives downstream callers a concrete key for polling, continuation, and transcript export.
@@ -115,8 +114,10 @@ load route
   - `docs/workflows/chatgpt/*.md`: Docs-site workflow pages.
 - Data contracts:
   - `chat_id`: extracted from `location.pathname` when the route matches `/c/<id>`.
-  - `model_slug`: optional operator-supplied display token used for fuzzy matching in the model picker. Send flows default to `Pro` when omitted.
-  - `model_effort`: optional operator-supplied effort token. When the selected model is `Pro`, send flows default to `Extended` when omitted.
+  - `model_slug`: optional exact guard; only `GPT-5.6 Sol` is accepted and it is the default.
+  - `model_version`: optional exact guard; only `5.6` is accepted and it is the default.
+  - `model_effort`: optional intelligence guard; only `Pro` is accepted and it is the default.
+  - `require_exact_model`: optional guard that defaults to true; false is rejected.
   - `message_text`: prompt body sent into the composer.
   - `attachment_file_path`: absolute local path to a single file/image for the attachment flow.
   - `variation_count`: optional desired image count for the Images flows. The wrapper defaults this to `2`.
@@ -130,10 +131,9 @@ load route
   - CLI/native runner parameter substitution injects variables into workflow JSON and exposes script params via `window.__rzn_params`.
   - Main-world `execute_javascript` handles the ChatGPT-specific DOM traversal and extraction.
 - Key calls and event flow:
-  - The send flows normalize the page into a composer-ready state, traverse the model picker with a `Pro -> Extended` default unless overridden, populate the prompt box via native setters, and trigger send from the nearest enabled submit control.
-- **Model + effort commits run through CDP `Input.dispatchMouseEvent`, not synthetic clicks (2026-05-11 rewrite).** The current ChatGPT effort RadioGroup is a controlled radix component that gates state on `isTrusted=true`; synthetic dispatch closes the menu without flipping `aria-checked`. `chatgpt_send.json` now opens the menu in a JS step, stamps the target radio with a unique id (`#rzn-target-model`, `#rzn-target-effort`), and commits via `click_element` with `inputs.use_cdp:true`. A follow-up JS step reopens the menu, parses `<Model>• <Effort>` from the checked top-level testid, and throws `model_selection_verify_failed` on mismatch so silent fallbacks (e.g. Pro Extended degrading to Pro Standard) cannot pass undetected. When no effort change is needed (Instant model, or current effort already matches), the prep step stamps a hidden no-op `<div>` so the `click_element` step still has a valid target.
-- **Top-level model testids are versioned** (`model-switcher-gpt-5-5`, `-thinking`, `-pro` today). The picker matches by visible label (Instant / Thinking / Pro) under a `[data-testid^="model-switcher-gpt-"]` filter so the workflow survives `5.5 → 5.6` renames without an edit.
-- **Effort submenu radios carry no testid** — match by visible text (`Standard`, `Extended`, `Light`, `Heavy`). Available effort levels per model: Pro → Standard | Extended; Thinking → Light | Standard | Extended | Heavy; Instant → no effort submenu.
+  - The send flow normalizes the page into a composer-ready state, selects GPT-5.6 Sol in the nested model submenu, selects Pro in the Intelligence menu, verifies both, populates the prompt box via native setters, and triggers send from the nearest enabled submit control.
+- **Model + intelligence commits run through CDP `Input.dispatchMouseEvent`, not synthetic clicks.** Both controlled radio groups gate state on trusted input. `chatgpt_send.json` stamps the GPT-5.6 Sol and Pro radios, commits each with `click_element` and `inputs.use_cdp:true`, then reopens both menus and fails on any mismatch.
+- **Visible labels are the contract.** The workflow matches `GPT-5.6 Sol` in the model submenu and `Pro` in Intelligence rather than depending on versioned testids.
   - The attachment flow uses a prep script to find or reveal ChatGPT's file input, stamps it with `#rzn-chatgpt-upload-input`, then uses the generic `upload_file` step to set the local file path before sending.
 - The read flows derive turn containers from `data-message-author-role` first, then fall back to broader conversation-turn/article selectors.
 - The full-thread exporter also records per-turn asset references plus top-level aggregated `assets.files` and `assets.images`, which gives downstream helpers a deterministic surface for local downloads.
@@ -151,7 +151,7 @@ load route
 - [x] Define the four-operation ChatGPT workflow surface
 - [x] Add `workflows/chatgpt` JSON workflows
 - [x] Add pack docs and a feature scratchpad
-- [x] Add default `Pro -> Extended` selection on ChatGPT send flows
+- [x] Lock ChatGPT send flows to GPT-5.6 Sol / Pro
 - [x] Add a fresh-chat attachment workflow for local files/images
 - [x] Add ChatGPT Images start, attachment-start, and poll workflows
 - [x] Add a local ChatGPT Images wrapper for polling + downloads + caller-controlled file names

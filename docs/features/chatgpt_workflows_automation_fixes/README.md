@@ -125,7 +125,7 @@ Priority order (smallest fix → largest unblock first):
 - The `reddit-*` workflows work correctly under the same automation pipeline. Whatever pattern they use for tab handling is the pattern the chatgpt pack should match.
 - `chat_id` extraction logic from `location.pathname` matching `/c/<uuid>` works when reached. Keep that — just surface it earlier and on failure paths.
 - Generic `upload_file` step + ChatGPT-specific DOM prep (per `chatgpt_web_app_workflows`) is the right attachment pattern. Don't reimplement.
-- Operator-supplied model/effort overrides (`model_slug`, `model_effort`) and the `Pro -> Extended` default. Don't touch.
+- Exact GPT-5.6 Sol / Pro model guards (`model_slug`, `model_version`, `model_effort`, `require_exact_model`). Don't weaken them.
 
 ## Tried & Didn't Work
 - Relying on plain `<img>` tags + `naturalWidth*naturalHeight` heuristic on ChatGPT-Images turns: misses the current UI (zero matches even when 7 images are visually present).

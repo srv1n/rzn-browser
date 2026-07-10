@@ -29,9 +29,22 @@ function findBackgroundWorker(context: BrowserContext): Worker | undefined {
   return context.serviceWorkers().find(w => w.url().includes('/background.js'));
 }
 
-async function waitForBackgroundHelper(context: BrowserContext, helperName: string): Promise<Worker> {
+async function waitForBackgroundHelper(
+  context: BrowserContext,
+  helperName: string,
+  timeout = 30000,
+): Promise<Worker> {
+  let worker = findBackgroundWorker(context);
+  if (!worker) {
+    try {
+      worker = await context.waitForEvent('serviceworker', { timeout });
+    } catch {
+      worker = undefined;
+    }
+  }
+
   await expect.poll(async () => {
-    const worker = findBackgroundWorker(context);
+    worker = worker || findBackgroundWorker(context);
     if (!worker) return false;
     try {
       return await worker.evaluate(
@@ -41,9 +54,8 @@ async function waitForBackgroundHelper(context: BrowserContext, helperName: stri
     } catch {
       return false;
     }
-  }, { timeout: 10000 }).toBeTruthy();
+  }, { timeout }).toBeTruthy();
 
-  const worker = findBackgroundWorker(context);
   if (!worker) {
     throw new Error('Missing extension background service worker');
   }
@@ -243,6 +255,7 @@ test.describe('Multi-workflow concurrency e2e', () => {
   });
 
   test('watchdog releases same-session queue before timed-out handler unwinds', async () => {
+    test.setTimeout(120000);
     const extensionPath = path.resolve(__dirname, '../../dist/chrome');
     const userDataDir = path.resolve(__dirname, '../../.pw-user-data-watchdog-queue');
     fs.rmSync(userDataDir, { recursive: true, force: true });
@@ -256,109 +269,149 @@ test.describe('Multi-workflow concurrency e2e', () => {
       ],
     });
 
-    const srv = await startServer(CONCURRENCY_HTML);
-    const page = await context.newPage();
-    await page.goto(`${srv.url}?bootstrap=watchdog`);
+    let srv: Awaited<ReturnType<typeof startServer>> | null = null;
+    try {
+      srv = await startServer(CONCURRENCY_HTML);
+      const page = await context.newPage();
+      await page.goto(`${srv.url}?bootstrap=watchdog`);
+      await page.waitForFunction(() => typeof (window as any).__rznExecuteStep === 'function', { timeout: 30000 });
 
-    const worker = await waitForBackgroundHelper(context, '__rznTestHandleBrokerMessageWithWatchdog');
+      const worker = await waitForBackgroundHelper(
+        context,
+        '__rznTestHandleBrokerMessageWithWatchdog',
+        30000,
+      );
 
-    await worker.evaluate(() => {
-      (globalThis as any).__rznTestLateMutationCount = 0;
-      (globalThis as any).__rznTestFirstWatchdogResult = null;
-      const sessionId = 'watchdog-queue-session';
-      const handle = (globalThis as any).__rznTestHandleBrokerMessageWithWatchdog;
-      if (typeof handle !== 'function') {
-        throw new Error('Missing __rznTestHandleBrokerMessageWithWatchdog');
+      await worker.evaluate(() => {
+        (globalThis as any).__rznTestLateMutationCount = 0;
+        (globalThis as any).__rznTestFirstWatchdogResult = null;
+        (globalThis as any).__rznTestNativeControlPlaneHealthy = true;
+        const sessionId = 'watchdog-queue-session';
+        const handle = (globalThis as any).__rznTestHandleBrokerMessageWithWatchdog;
+        if (typeof handle !== 'function') {
+          throw new Error('Missing __rznTestHandleBrokerMessageWithWatchdog');
+        }
+        void handle({
+          cmd: '__rzn_test_sleep_then_mutate',
+          req_id: 'watchdog-zombie-a',
+          payload: {
+            session_id: sessionId,
+            timeout_ms: 1200,
+            sleep_ms: 3000,
+          },
+        }, sessionId)
+          .then((response: any) => {
+            (globalThis as any).__rznTestFirstWatchdogResult = { response };
+          })
+          .catch((error: any) => {
+            (globalThis as any).__rznTestFirstWatchdogResult = {
+              error: error?.message || String(error),
+            };
+          });
+      });
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const secondStartedAt = Date.now();
+      await worker.evaluate(() => {
+        (globalThis as any).__rznTestSecondWatchdogResult = null;
+        const handle = (globalThis as any).__rznTestHandleBrokerMessageWithWatchdog;
+        if (typeof handle !== 'function') {
+          throw new Error('Missing __rznTestHandleBrokerMessageWithWatchdog');
+        }
+        void handle({
+          cmd: 'ping',
+          req_id: 'watchdog-next-b',
+          payload: {
+            session_id: 'watchdog-queue-session',
+            timeout_ms: 5000,
+          },
+        }, 'watchdog-queue-session')
+          .then((response: any) => {
+            (globalThis as any).__rznTestSecondWatchdogResult = { response };
+          })
+          .catch((error: any) => {
+            (globalThis as any).__rznTestSecondWatchdogResult = {
+              error: error?.message || String(error),
+            };
+          });
+      });
+      const second = await (async () => {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          const result = await worker.evaluate(() => (globalThis as any).__rznTestSecondWatchdogResult || null);
+          if (result) return { timedOut: false, ...result } as any;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return { timedOut: true } as any;
+      })();
+      const secondElapsedMs = Date.now() - secondStartedAt;
+
+      const firstResponse = await (async () => {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          const result = await worker.evaluate(() => (globalThis as any).__rznTestFirstWatchdogResult || null);
+          if (result) return { timedOut: false, ...result } as any;
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return { timedOut: true } as any;
+      })();
+
+      const postWatchdogHealth = await (async () => {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          const response = await worker.evaluate(async () => {
+            const handle = (globalThis as any).__rznTestHandleBrokerMessageWithWatchdog;
+            return await handle({
+              cmd: 'ping',
+              req_id: `watchdog-health-${Date.now()}`,
+              payload: {
+                session_id: 'watchdog-queue-session',
+                timeout_ms: 1000,
+              },
+            }, 'watchdog-queue-session');
+          });
+          if (Number(response?.result?.broker_watchdog_quarantine_count || 0) >= 1) {
+            return response;
+          }
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return null;
+      })();
+
+      await new Promise(resolve => setTimeout(resolve, 2300));
+      const lateMutationCount = await worker.evaluate(() =>
+        Number((globalThis as any).__rznTestLateMutationCount || 0)
+      );
+
+      const result = {
+        first: firstResponse.response,
+        firstTimedOut: firstResponse.timedOut,
+        firstError: firstResponse.error,
+        second: second.response,
+        secondTimedOut: second.timedOut,
+        secondElapsedMs,
+        postWatchdogHealth,
+        lateMutationCount,
+      };
+
+      expect(result.firstTimedOut).toBe(false);
+      expect(result.secondTimedOut).toBe(false);
+      expect(result.first?.success).toBe(false);
+      expect(result.first?.error_code).toBe('BROKER_WATCHDOG_TIMEOUT');
+      expect(result.second?.success).toBe(true);
+      expect(result.second?.result?.capabilities?.control_plane_queue_bypass).toBe(true);
+      expect(result.secondElapsedMs).toBeLessThan(1000);
+      expect(result.postWatchdogHealth?.success).toBe(true);
+      expect(result.postWatchdogHealth?.result?.broker_watchdog_quarantine_count).toBeGreaterThanOrEqual(1);
+      expect(result.postWatchdogHealth?.result?.broker_watchdog_bridge_restart_count).toBe(0);
+      expect(result.lateMutationCount).toBe(0);
+
+    } finally {
+      await context.close().catch(() => {});
+      fs.rmSync(userDataDir, { recursive: true, force: true });
+      if (srv) {
+        await srv.close().catch(() => {});
       }
-      void handle({
-        cmd: '__rzn_test_sleep_then_mutate',
-        req_id: 'watchdog-zombie-a',
-        payload: {
-          session_id: sessionId,
-          timeout_ms: 1200,
-          sleep_ms: 3000,
-        },
-      }, sessionId)
-        .then((response: any) => {
-          (globalThis as any).__rznTestFirstWatchdogResult = { response };
-        })
-        .catch((error: any) => {
-          (globalThis as any).__rznTestFirstWatchdogResult = {
-            error: error?.message || String(error),
-          };
-        });
-    });
-
-    await new Promise(resolve => setTimeout(resolve, 50));
-    const secondStartedAt = Date.now();
-    await worker.evaluate(() => {
-      (globalThis as any).__rznTestSecondWatchdogResult = null;
-      const handle = (globalThis as any).__rznTestHandleBrokerMessageWithWatchdog;
-      if (typeof handle !== 'function') {
-        throw new Error('Missing __rznTestHandleBrokerMessageWithWatchdog');
-      }
-      void handle({
-        cmd: 'ping',
-        req_id: 'watchdog-next-b',
-        payload: {
-          session_id: 'watchdog-queue-session',
-          timeout_ms: 5000,
-        },
-      }, 'watchdog-queue-session')
-        .then((response: any) => {
-          (globalThis as any).__rznTestSecondWatchdogResult = { response };
-        })
-        .catch((error: any) => {
-          (globalThis as any).__rznTestSecondWatchdogResult = {
-            error: error?.message || String(error),
-          };
-        });
-    });
-    const second = await (async () => {
-      const deadline = Date.now() + 5000;
-      while (Date.now() < deadline) {
-        const result = await worker.evaluate(() => (globalThis as any).__rznTestSecondWatchdogResult || null);
-        if (result) return { timedOut: false, ...result } as any;
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      return { timedOut: true } as any;
-    })();
-    const secondElapsedMs = Date.now() - secondStartedAt;
-
-    const firstResponse = await (async () => {
-      const deadline = Date.now() + 5000;
-      while (Date.now() < deadline) {
-        const result = await worker.evaluate(() => (globalThis as any).__rznTestFirstWatchdogResult || null);
-        if (result) return { timedOut: false, ...result } as any;
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      return { timedOut: true } as any;
-    })();
-
-    await new Promise(resolve => setTimeout(resolve, 2300));
-    const lateMutationCount = await worker.evaluate(() =>
-      Number((globalThis as any).__rznTestLateMutationCount || 0)
-    );
-
-    const result = {
-      first: firstResponse.response,
-      firstTimedOut: firstResponse.timedOut,
-      firstError: firstResponse.error,
-      second: second.response,
-      secondTimedOut: second.timedOut,
-      secondElapsedMs,
-      lateMutationCount,
-    };
-
-    expect(result.firstTimedOut).toBe(false);
-    expect(result.secondTimedOut).toBe(false);
-    expect(result.first?.success).toBe(false);
-    expect(result.first?.error_code).toBe('BROKER_WATCHDOG_TIMEOUT');
-    expect(result.second?.success).toBe(true);
-    expect(result.secondElapsedMs).toBeLessThan(2200);
-    expect(result.lateMutationCount).toBe(0);
-
-    await context.close();
-    await srv.close();
+    }
   });
 });

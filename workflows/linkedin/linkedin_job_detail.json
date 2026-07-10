@@ -1,0 +1,185 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "linkedin/job_detail",
+  "name": "LinkedIn: Job Detail",
+  "version": "1.0.0",
+  "system": "linkedin",
+  "capability": "linkedin.jobs.detail",
+  "summary": "Open one LinkedIn job posting by id read-only and return title, company, meta line, full description, and apply type.",
+  "description": "Open a single LinkedIn job posting (/jobs/view/<id>/) in the existing session and return its details: title, company name and company URL, the meta line (location / posted / applicants), the full job description text, the apply-button label, and the resolved job URL. Read-only: never clicks Apply or Easy Apply. Use linkedin_jobs_search to discover job_ids.",
+  "params": {
+    "properties": {
+      "job_id": {
+        "kind": "string",
+        "required": true,
+        "description": "Numeric LinkedIn job id (the <id> in /jobs/view/<id>/)."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": true,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.linkedin.com/jobs/view/{job_id}/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the job posting in the existing session",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the job page to hydrate",
+      "timeout_ms": 3000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the job detail surface to render",
+      "timeout_ms": 3000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{job_id}"
+          ],
+          "script": "const c=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};\nconst jid=c(arg0);\nconst norm=(v)=>(v||'').replace(/ /g,' ').replace(/[ \\t]+/g,' ').replace(/\\n{3,}/g,'\\n\\n').trim();\nconst bt=document.body.innerText||'';\nlet title=(document.title||'').split(' | ')[0].trim();\nif(!title){const h=document.querySelector('h1');title=h?norm(h.innerText):'';}\nconst compEl=document.querySelector('a[href*=\"/company/\"]');\nlet company=compEl?norm(compEl.innerText):'';\nif(!company){const parts=(document.title||'').split(' | ');company=parts.length>1?parts[1].trim():'';}\nconst stripQ=(href)=>{if(!href)return '';try{const u=new URL(href,location.origin);return u.origin+u.pathname;}catch(e){return href;}};\nconst company_url=compEl?stripQ(compEl.getAttribute('href')):'';\nlet description='';\nconst m=bt.search(/About the job/i);\nif(m>=0){description=norm(bt.slice(m).replace(/^About the job\\s*/i,''));}else{description=norm(bt);}\nconst cuts=[/\\nPeople also viewed/i,/\\nSimilar jobs/i,/\\nMore jobs/i,/\\nJobs you may be interested/i,/\\nSet alert/i];\nfor(const re of cuts){const i=description.search(re);if(i>0)description=description.slice(0,i);}\ndescription=description.trim().slice(0,6000);\nlet meta='';\nconst ai=bt.search(/About the job/i);\nif(ai>0){const head=bt.slice(0,ai);const lines=head.split('\\n').map((s)=>norm(s)).filter(Boolean);const ti=lines.indexOf(title);const after=ti>=0?lines.slice(ti+1):lines;meta=after.slice(0,3).join(' · ');}\nlet apply_type='';\nconst ab=[...document.querySelectorAll('button,a')].find((b)=>/^(Easy Apply|Apply)$/i.test((b.innerText||'').trim()));\napply_type=ab?norm(ab.innerText):'';\nreturn {job_id:jid,title:title,company:company,company_url:company_url,meta:meta,description:description,apply_type:apply_type,job_url:location.href};",
+          "use_cdp_eval": true
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract job detail (title, company, meta, description, apply_type)",
+      "timeout_ms": 20000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "company": {
+          "type": "string"
+        },
+        "company_url": {
+          "type": "string"
+        },
+        "meta": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "apply_type": {
+          "type": "string"
+        },
+        "job_url": {
+          "type": "string"
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s4",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open one LinkedIn job posting by id read-only and return its details.",
+    "parameters": {
+      "job_id": "Numeric LinkedIn job id (the <id> in /jobs/view/<id>/)."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run linkedin job-detail --param job_id=\"3901234567\"",
+        "description": "Return the title, company, meta line, description, and apply type for job 3901234567."
+      }
+    ],
+    "returns": [
+      "Object: { job_id, title, company, company_url, meta, description, apply_type, job_url }. meta is the \"<location> · <posted> · <applicants>\" line."
+    ],
+    "notes": [
+      "Read-only. Never clicks Apply or Easy Apply.",
+      "Requires an existing logged-in LinkedIn session.",
+      "Discover job_ids with linkedin_jobs_search."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "linkedin/job_detail.json",
+    "legacy_system_id": "linkedin"
+  }
+}

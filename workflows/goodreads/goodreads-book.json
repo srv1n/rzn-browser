@@ -1,0 +1,200 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "goodreads/book",
+  "name": "Goodreads: Book Details + Reviews",
+  "version": "1.0.0",
+  "system": "goodreads",
+  "capability": "goodreads.book.details.reviews",
+  "summary": "Open a Goodreads book page and return rich metadata (rating, genres, ISBN, pages, format, cover), the rating histogram, the first page of community reviews (~30), and similar-book URLs.",
+  "description": "Reads the schema.org ld+json Book block plus the React DOM on a Goodreads /book/show/ page. Returns book chrome, the 5-star ratings histogram, genres, the visible community reviews (Goodreads server-renders ~30), and the 'Readers also enjoyed' book URLs. Pure read. For the full recommendation list with titles/ratings use goodreads/similar; for sorted/filtered or deeper reviews use goodreads/reviews.",
+  "params": {
+    "properties": {
+      "book_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Full Goodreads book URL, e.g. https://www.goodreads.com/book/show/29993569-raising-a-secure-child (from goodreads/search). Query strings and #anchors are ignored."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{book_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to the book page"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "h1[data-testid='bookTitle'], article.ReviewCard, h1"
+        }
+      },
+      "name": "Wait for book chrome",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow late content to render",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "script": "const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const origin=location.origin;const cleanPath=(h)=>{const m=(h||'').match(/\\/book\\/show\\/[^?#]+/);return m?m[0]:'';};const q=(s)=>document.querySelector(s);const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));for(let i=0;i<8;i++){if(document.querySelectorAll('article.ReviewCard').length)break;const rh=Array.from(document.querySelectorAll('h2,h3')).find(x=>/community reviews/i.test(x.textContent||''));if(rh)rh.scrollIntoView({block:'center'});window.scrollTo(0,document.body.scrollHeight);await sleep(700);}let ld={};for(const el of document.querySelectorAll(`script[type='application/ld+json']`)){try{const j=JSON.parse(el.textContent);if(j['@type']==='Book'){ld=j;break;}}catch(e){}}const agg=ld.aggregateRating||{};let authors=[];if(Array.isArray(ld.author))authors=ld.author.map(a=>norm(a&&a.name)).filter(Boolean);else if(ld.author&&ld.author.name)authors=[norm(ld.author.name)];if(!authors.length){const sa=new Set();document.querySelectorAll('.ContributorLink__name').forEach(e=>{const n=norm(e.textContent);if(n&&!sa.has(n)){sa.add(n);authors.push(n);}});}const title=norm(q(`h1[data-testid='bookTitle']`)?.textContent)||norm(ld.name)||norm(q('h1')?.textContent);const description=norm(q(`[data-testid='description'] .Formatted`)?.textContent)||norm(q(`[data-testid='description']`)?.textContent);const genres=[...new Set(Array.from(document.querySelectorAll(`[data-testid='genresList'] a`)).map(a=>norm(a.textContent)).filter(Boolean))];const breakdown=[];document.querySelectorAll('.RatingsHistogram label, .RatingsHistogram__bar').forEach(el=>{const t=norm(el.textContent);const m=t.match(/^(\\d)\\s*stars?\\s*([\\d,]+)\\s*\\(([^)]+)\\)/);if(m)breakdown.push({stars:m[1],count:m[2].replace(/,/g,''),percent:m[3]});});const numOnly=(s)=>{const m=(s||'').match(/[\\d,]+/);return m?m[0].replace(/,/g,''):'N/A';};const reviews=Array.from(document.querySelectorAll('article.ReviewCard')).map(card=>{const al=card.getAttribute('aria-label')||'';const author=norm((al.match(/^Review by (.+)$/i)||[])[1])||norm(card.querySelector('.ReviewerProfile__name a')?.textContent);const ra=card.querySelector(`[aria-label*='out of 5']`)?.getAttribute('aria-label')||'';const rm=ra.match(/(\\d)\\s*out of/i);const row=card.querySelector('.ReviewCard__row a');const date=norm(row?.textContent);const rp=(row?.getAttribute('href')||'').match(/\\/review\\/show\\/\\d+/);const body=norm(card.querySelector('.TruncatedContent__text')?.textContent);const lk=(card.textContent.match(/(\\d[\\d,]*)\\s+likes?/i)||[])[1];return {author:author||'N/A',rating:rm?rm[1]:'N/A',date:date||'N/A',likes:lk?lk.replace(/,/g,''):'0',body:body||'N/A',review_url:rp?origin+rp[0]:'N/A'};});let simScope=document;const sh=Array.from(document.querySelectorAll('h2,h3')).find(x=>/readers also enjoyed/i.test(norm(x.textContent)));if(sh)simScope=sh.closest('div')?.parentElement||document;const seedPath=cleanPath(location.pathname);const su=new Set();const similar_urls=[];for(const a of simScope.querySelectorAll(`a[href*='/book/show/']`)){const p=cleanPath(a.getAttribute('href'));if(!p||p===seedPath||su.has(p))continue;su.add(p);similar_urls.push(origin+p);}return {book:{title:title,author:authors.join(', ')||'N/A',url:location.href.replace(/[?#].*$/,''),avg_rating:String(agg.ratingValue||norm(q(`[data-testid='ratingValue']`)?.textContent)||'N/A'),ratings_count:agg.ratingCount?String(agg.ratingCount):numOnly(q(`[data-testid='ratingsCount']`)?.textContent),reviews_count:agg.reviewCount?String(agg.reviewCount):numOnly(q(`[data-testid='reviewsCount']`)?.textContent),pages:ld.numberOfPages?String(ld.numberOfPages):'N/A',format:ld.bookFormat||'N/A',isbn:ld.isbn||'N/A',language:ld.inLanguage||'N/A',cover_image:ld.image||'N/A',first_published:norm(q(`[data-testid='publicationInfo']`)?.textContent)||'N/A',description:description||'N/A'},rating_breakdown:breakdown,genres:genres,reviews_loaded:reviews.length,reviews:reviews,similar_urls:similar_urls};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract metadata, histogram, genres, reviews, similar URLs",
+      "timeout_ms": 30000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "book": {
+          "type": "object",
+          "properties": {
+            "title": { "type": "string" },
+            "author": { "type": "string" },
+            "url": { "type": "string" },
+            "avg_rating": { "type": "string" },
+            "ratings_count": { "type": "string" },
+            "reviews_count": { "type": "string" },
+            "pages": { "type": "string" },
+            "format": { "type": "string" },
+            "isbn": { "type": "string" },
+            "language": { "type": "string" },
+            "cover_image": { "type": "string" },
+            "first_published": { "type": "string" },
+            "description": { "type": "string" }
+          }
+        },
+        "rating_breakdown": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "stars": { "type": "string" },
+              "count": { "type": "string" },
+              "percent": { "type": "string" }
+            }
+          }
+        },
+        "genres": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "reviews_loaded": { "type": "integer" },
+        "reviews": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "author": { "type": "string" },
+              "rating": { "type": "string" },
+              "date": { "type": "string" },
+              "likes": { "type": "string" },
+              "body": { "type": "string" },
+              "review_url": { "type": "string" }
+            }
+          }
+        },
+        "similar_urls": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Book metadata + rating histogram + visible reviews + similar-book URLs for one Goodreads book.",
+    "parameters": {
+      "book_url": "Full Goodreads /book/show/ URL."
+    },
+    "examples": [
+      {
+        "description": "Fetch a book's details and first page of reviews",
+        "command": "rzn-browser run goodreads book --param book_url=\"https://www.goodreads.com/book/show/29993569-raising-a-secure-child\""
+      }
+    ],
+    "returns": [
+      "Object: { book: { title, author, url, avg_rating, ratings_count, reviews_count, pages, format, isbn, language, cover_image, first_published, description }, rating_breakdown: [{ stars, count, percent }], genres: [..], reviews_loaded, reviews: [{ author, rating, date, likes, body, review_url }], similar_urls: [..] }."
+    ],
+    "notes": [
+      "Metadata comes from the schema.org ld+json Book block first, then falls back to data-testid DOM nodes.",
+      "Goodreads server-renders ~30 community reviews; rating is 'N/A' on cards where the reviewer left text but no star rating. For sorted/filtered or (when logged in) deeper reviews use goodreads/reviews.",
+      "similar_urls are the 'Readers also enjoyed' book URLs (titles are not reliably attached on the carousel); pass any of them back into goodreads/book, or use goodreads/similar for a titled, rated recommendation list."
+    ]
+  }
+}

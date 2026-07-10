@@ -40,7 +40,7 @@ supervisor
   sends: cmd="ping"
   waits: DEFAULT_BRIDGE_PROBE_TIMEOUT_MS = 1500
   expects:
-    result.bridge_contract_version >= 8
+    result.bridge_contract_version >= 9
     result.capabilities.content_keepalive_port = true
     result.capabilities.native_host_stdout_heartbeat = true
     result.capabilities.native_roundtrip_ping_health = true
@@ -54,6 +54,8 @@ supervisor
     result.capabilities.supervisor_bridge_response_fencing = true
     result.capabilities.health_beacon_v2 = true
     result.capabilities.auxiliary_path_lease_guards = true
+    result.capabilities.control_plane_queue_bypass = true
+    result.capabilities.watchdog_session_quarantine = true
     result.capabilities.port_scoped_disconnect_suppression = true
     result.capabilities.native_message_frame_cap = true
 
@@ -90,7 +92,7 @@ Possible causes:
       "native_host_bridge_connected": true,
       "native_host_bridge_responsive": false,
       "probe_transport_ok": false,
-      "expected_bridge_contract_version": 8,
+      "expected_bridge_contract_version": 9,
       "loaded_bridge_contract_version": 7,
       "bridge_contract_version_ok": false,
       "expected_capabilities": {
@@ -102,6 +104,8 @@ Possible causes:
         "supervisor_bridge_response_fencing": true,
         "health_beacon_v2": true,
         "auxiliary_path_lease_guards": true,
+        "control_plane_queue_bypass": true,
+        "watchdog_session_quarantine": true,
         "native_message_frame_cap": true
       },
       "loaded_capabilities": {},
@@ -123,7 +127,7 @@ Readiness also separates bridge facts that used to be blurred together:
 | `native_host_bridge.connected` | Supervisor currently has a native-host bridge handle. |
 | `native_host_bridge.transport_ok` | Active ping reached a responsive extension/native-host transport. |
 | `native_host_bridge.required_capabilities_ok` | Loaded extension satisfies the current bridge contract version and required capability gate. |
-| `native_host_bridge.capability_policy.mode` | Current policy; today this is `global_readiness_gate` for bridge contract v8 and the required bridge hardening capabilities. |
+| `native_host_bridge.capability_policy.mode` | Current policy; today this is `global_readiness_gate` for bridge contract v9 and the required bridge hardening capabilities. |
 
 Skipped or absent probes do not satisfy the global readiness gate. Without an
 active ping response, transport and required capability health are reported as
@@ -260,6 +264,7 @@ The long-term design must be platform-neutral above the install boundary:
 - The external architecture review found one remaining correctness hole after stale responses were fenced: stale side effects from auxiliary broker paths could still continue after watchdog cancellation. Contract v6 closed that smaller but nasty gap by requiring `auxiliary_path_lease_guards`; direct DOM snapshot/observe/send-to-tab/CDP/AX-tree/content-readiness paths now resolve tabs through lease-aware helpers, guard browser mutations, attach lease metadata to content messages, and clean up late-created tabs/windows when an aborted side effect resolves after cancellation. Supervisor bridge replacement now drains all pending calls for the retired bridge with typed `NATIVE_HOST_DISCONNECTED` errors instead of leaving sibling requests to hit their own outer timeout.
 - Contract v7 adds `watchdog_queue_unblock`: when the broker watchdog wins, the session queue is released immediately while the old handler unwinds detached under lease/session/native-port fences. The watchdog disconnect path now schedules reconnect after the old port is actually torn down, and native-host pending response correlation is keyed by request id before envelope validation so malformed extension responses complete with `EXTENSION_PROTOCOL_ERROR` instead of timing out.
 - Contract v8 adds the visible epoch chain and callback/response fencing required by the architecture review: supervisor boot id, supervisor bridge epoch/id, native-host boot id/pid, extension worker boot id, native-port epoch, recent heartbeat age/sequence, and active request diagnostics are carried through ping/readiness health. Extension native-control callbacks are fenced by native-port epoch, supervisor response completion is fenced by owning bridge id/epoch, and native host keeps one active supervisor owner at a time.
+- Contract v9 keeps health/control-plane messages out of workflow queues and changes broker-watchdog recovery from unconditional native-port teardown to session quarantine first. A timed-out job invalidates its session epoch, cancels active content work, releases CDP resources, disposes dedicated workflow tabs, and then proves native control-plane health with a native-host ping. The extension only restarts the native port if that control-plane check fails, so one wedged job does not make unrelated producers restart a healthy bridge.
 
 ### Ordered work
 
@@ -277,7 +282,7 @@ The long-term design must be platform-neutral above the install boundary:
 - [x] `BRR-T-0003` - Retire stale native-host bridge handles on probe timeout. Supervisor timeout handling clears the cached bridge, and focused regression coverage proves readiness timeout updates later status away from the stale connected handle.
 - [x] `BRR-T-0004` - Classify bridge readiness failures with typed diagnostics. `runtime.ensure_ready` now reports typed causes and observed probe/build/capability facts, and the CLI run preflight renders the mapped action text.
 - [x] `BRR-T-0005` - Decouple readiness capability checks from bridge transport health. Readiness now reports transport and required-capability health separately, with an explicit global keepalive gate policy and stale-bundle metadata.
-- [ ] `BRR-T-0006` - Add sub-30s bridge heartbeat and health beacon. First zombie-recovery slice implemented and code gates pass; rework adds native-host stdout heartbeat for MV3 idle/slow-load eviction, preserves last failure cause/error after successful ping, fences stale responses and high-risk side effects across native-port/session/request lease epochs, guards auxiliary broker side-effect paths under bridge contract v6, releases same-session queues immediately after watchdog under bridge contract v7, carries/fences the full supervisor/native-host/extension epoch chain under bridge contract v8, propagates content-script cancellation, hard-gates stale extension bundles by bridge contract/capability map, self-retires native host on stdout pipe failure, drains retired supervisor bridge pending calls with typed errors, enforces Chrome's host-to-browser native-message size cap with artifact fallback for oversized supervisor responses, closes the heal-probe/workflow-dispatch desync with a heal stability probe plus dispatch-time readiness retry, and fixes the timeout layering race that let the CLI timeout before the bridge watchdog error surfaced.
+- [ ] `BRR-T-0006` - Add sub-30s bridge heartbeat and health beacon. First zombie-recovery slice implemented and code gates pass; rework adds native-host stdout heartbeat for MV3 idle/slow-load eviction, preserves last failure cause/error after successful ping, fences stale responses and high-risk side effects across native-port/session/request lease epochs, guards auxiliary broker side-effect paths under bridge contract v6, releases same-session queues immediately after watchdog under bridge contract v7, carries/fences the full supervisor/native-host/extension epoch chain under bridge contract v8, keeps control-plane pings out of workflow queues and quarantines timed-out sessions before native-port restart under bridge contract v9, propagates content-script cancellation, hard-gates stale extension bundles by bridge contract/capability map, self-retires native host on stdout pipe failure, drains retired supervisor bridge pending calls with typed errors, enforces Chrome's host-to-browser native-message size cap with artifact fallback for oversized supervisor responses, closes the heal-probe/workflow-dispatch desync with a heal stability probe plus dispatch-time readiness retry, and fixes the timeout layering race that let the CLI timeout before the bridge watchdog error surfaced.
 - [ ] `BRR-T-0007` - Add supervisor queue and profile bridge scheduler. Backlog follow-up for multi-producer fairness, idempotency, backpressure, event fanout, and per-tab CDP/debugger leases.
 - [ ] `BRR-T-0008` - Add macOS and Windows bridge install doctor parity. Backlog follow-up for platform registration, binary/build fingerprinting, and install diagnostics.
 

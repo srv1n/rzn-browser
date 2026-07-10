@@ -1,0 +1,331 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "libgen/download",
+  "name": "Libgen: Book Download",
+  "version": "1.0.0",
+  "system": "libgen",
+  "capability": "libgen.download",
+  "summary": "Search a Libgen mirror for a book, pick the best match in the requested format (default epub), resolve its direct download URL, and emit it as attachment_urls for --download-dir.",
+  "description": "End-to-end: drives the Libgen homepage search box, reads the results table, selects the best candidate whose extension matches `format` (default epub, optionally constrained by `language`, choosing the `result_index`-th match), then resolves the file's real download link from the mirror's own ads.php page via a same-origin fetch and returns it as `attachment_urls` (plus `download_url` and chosen metadata). Pair with `--download-dir <folder>` so the CLI downloads the file into <folder>/attachments/. Returns found=false with a status/error when no matching format or download link is found, so callers can flag and retry with another base_url/format.",
+  "params": {
+    "properties": {
+      "query": {
+        "kind": "string",
+        "required": true,
+        "description": "Book to find: title, author, or both (e.g. 'Brave New World Huxley'). Searches all columns."
+      },
+      "base_url": {
+        "kind": "string",
+        "required": false,
+        "default": "https://libgen.li/",
+        "description": "Base URL of the Libgen mirror (libgen.li-family layout). Defaults to https://libgen.li/. Override when the domain rotates (https://libgen.gs/, https://libgen.la/, ...). Include the trailing slash."
+      },
+      "format": {
+        "kind": "string",
+        "required": false,
+        "default": "epub",
+        "description": "Desired file extension, matched exactly against the Ext. column. Defaults to epub. Common: epub, pdf, mobi, azw3, djvu."
+      },
+      "language": {
+        "kind": "string",
+        "required": false,
+        "default": "",
+        "description": "Optional language preference (e.g. English). When set and at least one matching-format row has that language, selection is restricted to it; otherwise ignored."
+      },
+      "result_index": {
+        "kind": "integer",
+        "required": false,
+        "default": 0,
+        "min": 0,
+        "max": 99,
+        "description": "Which matching candidate to pick (0 = first/best). Use libgen/search first to inspect candidates, then pick a different index here."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li"
+      ]
+    },
+    {
+      "class": "download",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li"
+      ]
+    },
+    {
+      "class": "file_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": []
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 120000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{base_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to the Libgen mirror homepage",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "input[name='req']"
+        }
+      },
+      "name": "Wait for the search box",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[name='req']"
+        }
+      },
+      "name": "Type the query into the search box"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[name='req']",
+          "text": "{query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#tablelibgen tbody tr"
+        }
+      },
+      "name": "Wait for the results table",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the table settle",
+      "timeout_ms": 800
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "const p = window.__rzn_params || {};\nconst norm = (s) => (s || '').replace(/ /g, ' ').replace(/\\s+/g, ' ').trim();\nconst fmt = (norm(p.format) || 'epub').toLowerCase();\nconst lang = norm(p.language).toLowerCase();\nlet idx = parseInt(p.result_index, 10);\nif (!Number.isFinite(idx) || idx < 0) idx = 0;\nconst origin = location.origin;\nconst abs = (h) => { if (!h) return ''; try { return new URL(h, origin).href; } catch (e) { return ''; } };\nconst md5re = /md5=([a-fA-F0-9]{32})/;\nconst t = document.querySelector('#tablelibgen');\nif (!t) {\n  return { found: false, status: 'no_table', error: 'No #tablelibgen results table on this page. base_url may not be a libgen.li-family mirror.', attachment_urls: [] };\n}\nconst rows = Array.from(t.querySelectorAll('tbody tr'));\nconst cands = [];\nconst seenFormats = new Set();\nfor (const r of rows) {\n  const c = r.children;\n  if (c.length < 9) continue;\n  const titleA = c[0].querySelector('a[href*=\"edition.php\"]') || c[0].querySelector('a[href*=\"file.php\"]') || c[0].querySelector('a');\n  const title = norm(titleA ? titleA.textContent : c[0].textContent);\n  if (!title) continue;\n  const ext = norm(c[7].textContent).toLowerCase();\n  if (ext) seenFormats.add(ext);\n  let md5 = '';\n  for (const a of Array.from(c[8].querySelectorAll('a'))) {\n    const m = (a.getAttribute('href') || '').match(md5re);\n    if (m) { md5 = m[1].toLowerCase(); break; }\n  }\n  cands.push({ title: title, author: norm(c[1].textContent), publisher: norm(c[2].textContent), year: norm(c[3].textContent), language: norm(c[4].textContent), size: norm(c[6].textContent), ext: ext, md5: md5 });\n}\nlet pool = cands.filter((x) => x.ext === fmt && x.md5);\nif (!pool.length) {\n  return { found: false, status: 'no_format_match', error: 'No \"' + fmt + '\" result with a libgen.li mirror for this query.', available_formats: Array.from(seenFormats).sort(), result_count: cands.length, attachment_urls: [] };\n}\nif (lang) {\n  const byLang = pool.filter((x) => x.language.toLowerCase() === lang);\n  if (byLang.length) pool = byLang;\n}\nif (idx >= pool.length) idx = 0;\nconst chosen = pool[idx];\nlet getUrl = '';\nlet mirrorErr = '';\ntry {\n  const html = await fetch(origin + '/ads.php?md5=' + chosen.md5, { credentials: 'include' }).then((r) => r.text());\n  const doc = new DOMParser().parseFromString(html, 'text/html');\n  const links = Array.from(doc.querySelectorAll('a'));\n  let getA = links.find((a) => norm(a.textContent).toUpperCase() === 'GET');\n  if (!getA) getA = links.find((a) => /get\\.php\\?/i.test(a.getAttribute('href') || ''));\n  if (getA) getUrl = abs(getA.getAttribute('href'));\n} catch (e) { mirrorErr = String(e); }\nif (!getUrl) {\n  return { found: false, status: 'no_download_link', error: 'Found the book but could not resolve a download link on the mirror page.' + (mirrorErr ? ' (' + mirrorErr + ')' : ''), chosen: chosen, attachment_urls: [] };\n}\nconst safe = (chosen.title || 'book').replace(/[\\\\/:*?\"<>|]+/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 120);\nconst filename = safe + '.' + fmt;\nreturn { found: true, status: 'ok', chosen: { title: chosen.title, author: chosen.author, publisher: chosen.publisher, year: chosen.year, language: chosen.language, size: chosen.size, ext: chosen.ext, md5: chosen.md5 }, download_url: getUrl, attachment_urls: [{ url: getUrl, filename: filename }] };"
+        },
+        "side_effects": [
+          "read_only",
+          "external_read",
+          "network_access"
+        ]
+      },
+      "name": "Pick the best format match and resolve its download URL",
+      "timeout_ms": 45000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": true
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "found": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "available_formats": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "download_url": {
+          "type": "string"
+        },
+        "chosen": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "author": {
+              "type": "string"
+            },
+            "publisher": {
+              "type": "string"
+            },
+            "year": {
+              "type": "string"
+            },
+            "language": {
+              "type": "string"
+            },
+            "size": {
+              "type": "string"
+            },
+            "ext": {
+              "type": "string"
+            },
+            "md5": {
+              "type": "string"
+            }
+          }
+        },
+        "attachment_urls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s8",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Find a book on Libgen and resolve its direct download URL (default epub). Use with --download-dir to save the file.",
+    "parameters": {
+      "query": "Title and/or author.",
+      "base_url": "Libgen mirror base URL (default https://libgen.li/).",
+      "format": "Desired extension (default epub).",
+      "language": "Optional language preference.",
+      "result_index": "Which matching candidate to pick (0 = first)."
+    },
+    "examples": [
+      {
+        "description": "Download an epub into ~/Books/bnw/",
+        "command": "rzn-browser run libgen download --param query=\"Brave New World Huxley\" --download-dir ~/Books/bnw"
+      },
+      {
+        "description": "Prefer a PDF, English, on a different mirror",
+        "command": "rzn-browser run libgen download --param query=\"Sapiens Harari\" --param format=pdf --param language=English --param base_url=\"https://libgen.gs/\" --download-dir ~/Books/sapiens"
+      },
+      {
+        "description": "Pick the 2nd matching candidate",
+        "command": "rzn-browser run libgen download --param query=\"Dune Herbert\" --param result_index=1 --download-dir ~/Books/dune"
+      }
+    ],
+    "returns": [
+      "Object: { found, status, chosen{title,author,...,md5}, download_url, attachment_urls:[{url,filename}] }. Run with --download-dir <folder> to save the file to <folder>/attachments/.",
+      "found=false carries status (no_table | no_format_match | no_download_link) and error; no_format_match also lists available_formats so you can retry with a different format. no_table usually means base_url is not a libgen.li-family mirror — try another base_url."
+    ],
+    "notes": [
+      "Resolves the file's real link from the mirror's own ads.php page (same-origin fetch with session cookies) to get a fresh download key.",
+      "The actual file fetch is performed by the CLI when you pass --download-dir; it requires network access from the same machine/IP that resolved the link.",
+      "Search drives the homepage box (default form searches title/author/series/year/publisher/isbn).",
+      "Targets the libgen.li-family layout (libgen.li/.gs/.la/.vg/.pm). The libgen.rs/.is family uses a different page structure and is not supported by this workflow.",
+      "No CDP; all JS runs in the page main world."
+    ]
+  }
+}

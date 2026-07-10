@@ -18,6 +18,11 @@ Usage:
   run_workflow.sh apple_ads_keyword_suggest --organization-id "<org_id>" --campaign-id "<campaign_id>" --adgroup-id "<adgroup_id>" --adam-id "<adam_id>" --query "<keyword_seed>" [--show-log]
   run_workflow.sh apple_ads_portal_report --report-type "<report_type>" --start-date "<YYYY-MM-DD>" --end-date "<YYYY-MM-DD>" [--organization-id "<org_id>"] [--campaign-id "<campaign_id>"] [--show-log]
   run_workflow.sh appstore_search_snapshot --term "<search_term>" [--country "us"] [--show-log]
+  run_workflow.sh goodreads_search --query "<search_query>" [--show-log]
+  run_workflow.sh goodreads_shelf --shelf "<shelf_slug>" [--max-pages "1"] [--show-log]
+  run_workflow.sh goodreads_book --book-url "<book_url>" [--show-log]
+  run_workflow.sh goodreads_reviews --book-url "<book_url>" [--coverage "by_rating"] [--max-clicks "0"] [--show-log]
+  run_workflow.sh goodreads_similar --book-url "<book_url>" [--show-log]
 
 Commands:
   amazon_search           Run workflows/amazon/amazon-search.json
@@ -34,6 +39,11 @@ Commands:
   apple_ads_keyword_suggest Run workflows/generated/aso/apple-ads-keyword-suggest-same-origin.json
   apple_ads_portal_report Run workflows/generated/aso/apple-ads-portal-report.json
   appstore_search_snapshot Run workflows/generated/aso/appstore-search-snapshot.json
+  goodreads_search        Run workflows/goodreads/goodreads-search.json
+  goodreads_shelf         Run workflows/goodreads/goodreads-shelf.json
+  goodreads_book          Run workflows/goodreads/goodreads-book.json
+  goodreads_reviews       Run workflows/goodreads/goodreads-reviews.json
+  goodreads_similar       Run workflows/goodreads/goodreads-similar.json
 
 Common options:
   --query <value>
@@ -50,6 +60,11 @@ Common options:
   --campaign-id <value>
   --term <value>
   --country <value>
+  --shelf <value>
+  --book-url <value>
+  --max-pages <value>
+  --coverage <value>
+  --max-clicks <value>
   --show-log               Print raw run log to stderr
 USAGE
 }
@@ -98,6 +113,11 @@ ORGANIZATION_ID=""
 CAMPAIGN_ID=""
 TERM_VALUE=""
 COUNTRY=""
+SHELF=""
+BOOK_URL=""
+MAX_PAGES=""
+COVERAGE=""
+MAX_CLICKS=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -155,6 +175,26 @@ while [ "$#" -gt 0 ]; do
       ;;
     --country)
       COUNTRY="${2:-}"
+      shift 2
+      ;;
+    --shelf)
+      SHELF="${2:-}"
+      shift 2
+      ;;
+    --book-url)
+      BOOK_URL="${2:-}"
+      shift 2
+      ;;
+    --max-pages)
+      MAX_PAGES="${2:-}"
+      shift 2
+      ;;
+    --coverage)
+      COVERAGE="${2:-}"
+      shift 2
+      ;;
+    --max-clicks)
+      MAX_CLICKS="${2:-}"
       shift 2
       ;;
     --show-log)
@@ -285,6 +325,40 @@ case "$COMMAND" in
     add_param "term" "$TERM_VALUE"
     add_param "country" "$COUNTRY"
     ;;
+  goodreads_search)
+    WORKFLOW="workflows/goodreads/goodreads-search.json"
+    require_value "--query" "$QUERY_VALUE"
+    add_param "search_query" "$QUERY_VALUE"
+    ;;
+  goodreads_shelf)
+    WORKFLOW="workflows/goodreads/goodreads-shelf.json"
+    require_value "--shelf" "$SHELF"
+    add_param "shelf" "$SHELF"
+    if [ -n "$MAX_PAGES" ]; then
+      add_param "max_pages" "$MAX_PAGES"
+    fi
+    ;;
+  goodreads_book)
+    WORKFLOW="workflows/goodreads/goodreads-book.json"
+    require_value "--book-url" "$BOOK_URL"
+    add_param "book_url" "$BOOK_URL"
+    ;;
+  goodreads_reviews)
+    WORKFLOW="workflows/goodreads/goodreads-reviews.json"
+    require_value "--book-url" "$BOOK_URL"
+    add_param "book_url" "$BOOK_URL"
+    if [ -n "$COVERAGE" ]; then
+      add_param "coverage" "$COVERAGE"
+    fi
+    if [ -n "$MAX_CLICKS" ]; then
+      add_param "max_clicks" "$MAX_CLICKS"
+    fi
+    ;;
+  goodreads_similar)
+    WORKFLOW="workflows/goodreads/goodreads-similar.json"
+    require_value "--book-url" "$BOOK_URL"
+    add_param "book_url" "$BOOK_URL"
+    ;;
   *)
     echo "Unknown command: $COMMAND" >&2
     usage
@@ -396,6 +470,8 @@ jq -n \
         elif (($x.result.recommendations // null) | type) == "array" then ($x.result.recommendations | length)
         elif (($x.result.data // null) | type) == "array" then ($x.result.data | length)
         else (([$x.result | to_entries[] | select(.value | type == "array") | (.value | length)] | first) // 0) end
+      elif (($x.output // null) | type) == "object" and (($x.output.result // null) | type) == "object" then
+        (([$x.output.result | to_entries[] | select(.value | type == "array") | (.value | length)] | max) // 0)
       else (([$x | to_entries[] | select(.value | type == "array") | (.value | length)] | first) // 0) end
     else
       0

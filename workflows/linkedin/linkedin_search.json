@@ -1,0 +1,331 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "linkedin/search",
+  "name": "LinkedIn: Search",
+  "version": "1.0.0",
+  "system": "linkedin",
+  "capability": "linkedin.search",
+  "summary": "Search LinkedIn (people, posts, or companies) read-only by driving the real global typeahead and return flat result cards.",
+  "description": "Open the LinkedIn feed, type the query into the global search typeahead, press Enter, switch to the requested vertical tab (People / Posts / Companies), scroll, and return a flat array of result cards. Read-only. Use for a quick read of who or what matches a query. Drives the real UI (homepage -> typeahead -> Enter) rather than a /search URL to avoid bot fingerprints.",
+  "params": {
+    "properties": {
+      "query": {
+        "kind": "string",
+        "required": true,
+        "description": "Search text to type into the LinkedIn global search box."
+      },
+      "vertical": {
+        "kind": "string",
+        "required": false,
+        "default": "people",
+        "enum_values": [
+          "people",
+          "content",
+          "companies"
+        ],
+        "description": "Which results vertical to extract: people, content (Posts), or companies. Defaults to people."
+      },
+      "max_results": {
+        "kind": "integer",
+        "required": false,
+        "default": 20,
+        "min": 1,
+        "max": 50,
+        "description": "Upper bound on extracted result cards. Defaults to 20, max 50."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": true,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.linkedin.com/feed/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the LinkedIn feed in a fresh tab",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the feed to hydrate",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "[data-testid=\"typeahead-input\"]"
+        }
+      },
+      "name": "Focus the global search typeahead",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "type_text",
+        "inputs": {
+          "use_native_input": false,
+          "delay_ms": 35,
+          "typing_speed": "medium"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "[data-testid=\"typeahead-input\"]",
+          "text": "{query}"
+        }
+      },
+      "name": "Type the query into the typeahead",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "[data-testid=\"typeahead-input\"]",
+          "text": "{query}"
+        }
+      },
+      "name": "Press Enter to run the search",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the search results page to load",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const vertical=(cleanArg(arg0)||'people').toLowerCase();const want=vertical==='content'?'Posts':(vertical==='companies'?'Companies':'People');let clicked='';const nodes=Array.from(document.querySelectorAll('main button, main a, button, a'));for(const n of nodes){const t=(n.innerText||n.textContent||'').replace(/\\s+/g,' ').trim();if(t===want){try{n.click();clicked=want;break;}catch(e){}}}return {vertical_clicked:clicked};",
+          "args": [
+            "{vertical}"
+          ],
+          "use_cdp_eval": true
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Click the requested vertical tab (People / Posts / Companies)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the vertical results to load",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present after switching vertical"
+    },
+    {
+      "id": "s10",
+      "action": {
+        "kind": "infinite_scroll",
+        "inputs": {
+          "max_scrolls": 8,
+          "scroll_delay": 1500,
+          "target_selector": "main a[href*='/in/'], main a[href*='/company/'], main [data-testid='expandable-text-box']",
+          "target_count": 30
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll to load more result cards",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s11",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};\nconst norm=(s)=>(s||'').replace(/ /g,' ').replace(/\\s+/g,' ').trim();\nconst rawLines=(el)=>(el?(el.innerText||el.textContent||''):'').split('\\n').map((l)=>l.replace(/ /g,' ').replace(/\\s+/g,' ').trim()).filter(Boolean);\nconst max=Math.max(1,Math.min(50,parseInt(cleanArg(arg0)||'20',10)||20));\nconst vertical=(cleanArg(arg1)||'people').toLowerCase();\nconst stripQ=(u)=>{try{const x=new URL(u,location.origin);let p=x.pathname;if(p.length>1&&p.endsWith('/'))p=p.slice(0,-1);return x.origin+p;}catch(e){return u||'';}};\nconst isDeg=(l)=>/^•?\\s*(1st|2nd|3rd\\+?)\\b/i.test(l)||/^•\\s/.test(l);\nconst isAct=(l)=>/^(Connect|Follow|Message|Pending|Save|Saved|Following|Remove connection|Unfollow)$/i.test(l);\nconst out=[];const seen=new Set();\nif(vertical==='companies'){\n  const links=[...document.querySelectorAll('main a[href*=\"/company/\"]')];\n  for(const a of links){const href=a.getAttribute('href')||'';if(href.indexOf('/company/')===-1)continue;if(a.children.length===1&&a.children[0].tagName==='IMG')continue;const ls=rawLines(a);if(!ls.length)continue;const key=stripQ(href);if(seen.has(key))continue;const name=ls[0];if(!name)continue;seen.add(key);let industry='';for(let i=1;i<ls.length;i++){const l=ls[i];if(l===name||isAct(l)||isDeg(l))continue;industry=l;break;}out.push({name:name,industry:industry,company_url:key});if(out.length>=max)break;}\n}else if(vertical==='content'){\n  const btns=[...document.querySelectorAll('button[aria-label^=\"Open control menu for post by \"]')];\n  for(const btn of btns){const author=norm((btn.getAttribute('aria-label')||'').replace('Open control menu for post by ',''));let card=btn.parentElement;let hops=0;while(card&&hops<15&&!card.querySelector('[data-testid=\"expandable-text-box\"]')){card=card.parentElement;hops++;}const textEl=card?card.querySelector('[data-testid=\"expandable-text-box\"]'):null;const text=textEl?norm(textEl.innerText||textEl.textContent||''):'';if(!text)continue;const key=author+'|'+text.slice(0,60);if(seen.has(key))continue;seen.add(key);out.push({author:author,text:text,post_url:''});if(out.length>=max)break;}\n}else{\n  const links=[...document.querySelectorAll('main a[href*=\"/in/\"]')];\n  for(const a of links){const href=a.getAttribute('href')||'';if(href.indexOf('/in/')===-1)continue;if(a.children.length===1&&a.children[0].tagName==='IMG')continue;const ls=rawLines(a);if(ls.length<1)continue;const key=stripQ(href);if(seen.has(key))continue;let name=ls[0].replace(/\\s*•.*$/,'').trim();if(!name||/^view\\b/i.test(name))continue;seen.add(key);let location='';for(let i=1;i<ls.length;i++){const l=ls[i];if(/^Current:/i.test(l))continue;if(l.indexOf(',')>=0&&l.length<80&&!isDeg(l)&&!isAct(l)){location=l;break;}}let headline='';const cur=ls.find((l)=>/^Current:/i.test(l));if(cur){headline=cur.replace(/^Current:\\s*/i,'').trim();}else{for(let i=1;i<ls.length;i++){const l=ls[i];if(l===name||isDeg(l)||isAct(l)||l===location)continue;headline=l;break;}}out.push({name:name,headline:headline,location:location,profile_url:key});if(out.length>=max)break;}\n}\nreturn out;",
+          "args": [
+            "{max_results}",
+            "{vertical}"
+          ],
+          "use_cdp_eval": true
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract result cards for the selected vertical",
+      "timeout_ms": 20000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "headline": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "profile_url": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "post_url": {
+            "type": "string"
+          },
+          "industry": {
+            "type": "string"
+          },
+          "company_url": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s11",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search LinkedIn (people, posts, or companies) read-only by driving the real global typeahead.",
+    "parameters": {
+      "query": "Search text to type into the LinkedIn global search box.",
+      "vertical": "Results vertical: people | content (Posts) | companies. Defaults to people.",
+      "max_results": "Upper bound on extracted result cards. Defaults to 20, max 50."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run linkedin search --param query=\"digital learning\"",
+        "description": "Return up to 20 People results for the query."
+      },
+      {
+        "command": "rzn-browser run linkedin search --param query=\"learning consultant\" --param vertical=\"content\" --param max_results=30",
+        "description": "Return up to 30 Posts (content) results."
+      },
+      {
+        "command": "rzn-browser run linkedin search --param query=\"learning\" --param vertical=\"companies\"",
+        "description": "Return company results for the query."
+      }
+    ],
+    "returns": [
+      "Array of flat cards. people: {name, headline, location, profile_url}. content: {author, text, post_url}. companies: {name, industry, company_url}."
+    ],
+    "notes": [
+      "Read-only. Never connects, messages, follows, or posts.",
+      "Drives the real UI: feed -> global typeahead -> Enter -> vertical tab, not a /search URL.",
+      "post_url is empty for the content vertical (LinkedIn does not expose per-post permalinks as hrefs in feed cards).",
+      "Results are deduped by canonical href (query string stripped) and capped at max_results."
+    ]
+  },
+  "metadata": {
+    "legacy_system_id": "linkedin"
+  }
+}

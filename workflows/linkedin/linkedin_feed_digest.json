@@ -1,0 +1,210 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "linkedin/feed_digest",
+  "name": "LinkedIn: Feed Digest",
+  "version": "1.0.0",
+  "system": "linkedin",
+  "capability": "linkedin.feed.digest",
+  "summary": "Scroll the logged-in LinkedIn home feed read-only and return up to max_posts recent posts with author, body text, and reaction/comment/repost counts.",
+  "description": "Open the logged-in LinkedIn home feed (/feed/) in the existing session, scroll to load posts, and return a flat array of recent feed posts. Each item carries the author name, author profile/company URL, the post body text, and visible reaction/comment/repost counts. Read-only: never likes, comments, reposts, or connects. Use linkedin_open to expand a single post with its comments.",
+  "params": {
+    "properties": {
+      "max_posts": {
+        "kind": "integer",
+        "required": false,
+        "description": "Maximum number of feed posts to return. Defaults to 20. Hard cap 50 (the feed is virtualized and the scroll is bounded).",
+        "default": 20,
+        "min": 1,
+        "max": 50
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": true,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.linkedin.com/feed/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the LinkedIn home feed in the existing session",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the feed to hydrate",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "[data-testid=\"mainFeed\"]"
+        }
+      },
+      "name": "Wait for the main feed wrapper",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "infinite_scroll",
+        "inputs": {
+          "max_scrolls": 10,
+          "scroll_delay": 1500,
+          "target_selector": "button[aria-label^=\"Open control menu for post by \"]",
+          "target_count": 25
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll until roughly max_posts posts are loaded",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const c=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};\nlet max=parseInt(c(arg0),10);if(!Number.isFinite(max)||max<1)max=20;if(max>50)max=50;\nconst norm=(v)=>(v||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();\nconst PREFIX='Open control menu for post by ';\nconst cleanUrl=(a)=>{if(!a)return '';try{const u=new URL(a.getAttribute('href'),location.origin);return u.origin+u.pathname;}catch(e){return a.getAttribute('href')||'';}};\nconst cardOf=(btn)=>{let card=btn;for(let i=0;i<18;i++){if(!card.parentElement)break;card=card.parentElement;if(card.querySelector('[data-testid=\"expandable-text-box\"]')&&card.querySelector('button[aria-label=\"Comment\"]'))return card;}return null;};\nconst wordCount=(txt,re)=>{const m=(txt||'').match(re);return m?m[1].replace(/,/g,''):null;};\nconst bareAfterBox=(card,box)=>{const nums=[];card.querySelectorAll('*').forEach((e)=>{if(e.childElementCount===0){const t=(e.innerText||'').trim();if(/^[\\d,]{1,7}$/.test(t)){if(!box||((box.compareDocumentPosition(e)&Node.DOCUMENT_POSITION_FOLLOWING)&&!box.contains(e)))nums.push(t.replace(/,/g,''));}}});return nums;};\nconst btns=[...document.querySelectorAll('button[aria-label^=\"Open control menu for post by \"]')];\nconst out=[];const seen=new Set();\nfor(const btn of btns){\n  const card=cardOf(btn);if(!card||seen.has(card))continue;\n  const box=card.querySelector('[data-testid=\"expandable-text-box\"]');\n  const text=norm(box?box.innerText:'');if(!text)continue;seen.add(card);\n  const author=norm((btn.getAttribute('aria-label')||'').slice(PREFIX.length));\n  const links=[...card.querySelectorAll('a[href*=\"/in/\"],a[href*=\"/company/\"]')];\n  let link=links.find((a)=>norm(a.innerText)===author);\n  if(!link)link=links.find((a)=>{const t=norm(a.innerText);return t&&(author.indexOf(t)>=0||t.indexOf(author)>=0);});\n  if(!link)link=links[0];\n  const cardText=norm(card.innerText||'');const bare=bareAfterBox(card,box);\n  const reactions=wordCount(cardText,/([\\d,]+)\\s*reactions?/i)||bare[0]||'0';\n  const comments=wordCount(cardText,/([\\d,]+)\\s*comments?/i)||bare[1]||'0';\n  const reposts=wordCount(cardText,/([\\d,]+)\\s*reposts?/i)||bare[2]||'0';\n  out.push({author:author,author_url:cleanUrl(link),text:text,reactions:reactions,comments:comments,reposts:reposts});\n  if(out.length>=max)break;\n}\nreturn out;",
+          "args": [
+            "{max_posts}"
+          ],
+          "use_cdp_eval": true
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract feed posts (author, text, counts)",
+      "timeout_ms": 30000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "author": {
+            "type": "string"
+          },
+          "author_url": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "reactions": {
+            "type": "string"
+          },
+          "comments": {
+            "type": "string"
+          },
+          "reposts": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Scroll the logged-in LinkedIn home feed read-only and return up to max_posts recent posts.",
+    "parameters": {
+      "max_posts": "Maximum number of feed posts to return. Default 20, max 50."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run linkedin feed-digest",
+        "description": "Return up to 20 recent posts from your LinkedIn home feed."
+      },
+      {
+        "command": "rzn-browser run linkedin feed-digest --param max_posts=40",
+        "description": "Return up to 40 recent feed posts."
+      }
+    ],
+    "returns": [
+      "Array of feed posts: { author, author_url, text, reactions, comments, reposts } (counts are strings, default \"0\")."
+    ],
+    "notes": [
+      "Read-only. Never likes, comments, reposts, or connects.",
+      "Requires an existing logged-in LinkedIn session.",
+      "The feed is virtualized; very large max_posts values may return fewer items than requested.",
+      "Use linkedin_open to expand a single post with its comment thread."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "linkedin/feed_digest.json",
+    "legacy_system_id": "linkedin"
+  }
+}

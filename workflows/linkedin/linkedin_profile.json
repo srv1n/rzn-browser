@@ -1,0 +1,208 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "linkedin/profile",
+  "name": "LinkedIn: Profile",
+  "version": "1.0.0",
+  "system": "linkedin",
+  "capability": "linkedin.profile",
+  "summary": "Open a LinkedIn profile read-only (by vanity slug or full /in/ URL) and return name, headline, location, about, experience, and education.",
+  "description": "Resolve a LinkedIn profile slug or full /in/ URL to a canonical profile URL, open it, and return a structured top-card plus About / Experience / Education summary. Read-only. Use for a quick read of who someone is and where they have worked. Degrades gracefully (missing fields become empty string or empty array).",
+  "params": {
+    "properties": {
+      "profile": {
+        "kind": "string",
+        "required": true,
+        "description": "A LinkedIn vanity slug (e.g. jay-klause-3a2a75419) OR a full https://www.linkedin.com/in/<slug>/ URL."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": true,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.linkedin.com/feed/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open a same-origin LinkedIn tab so canonical navigation is cookie-safe",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};let raw=cleanArg(arg0);let slug=raw;if(raw.indexOf('/in/')!==-1){let after=raw.split('/in/')[1]||'';slug=after.split('?')[0].split('/')[0];}else{slug=raw.replace(/^@+/,'').split('?')[0].split('/')[0];}if(!slug)slug=raw;const url='https://www.linkedin.com/in/'+slug+'/';setTimeout(()=>location.assign(url),0);return {profile_url:url};",
+          "args": [
+            "{profile}"
+          ],
+          "use_cdp_eval": true
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Resolve the slug or URL to a canonical /in/<slug>/ URL and navigate",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the profile page to hydrate",
+      "timeout_ms": 3000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the profile top card to render",
+      "timeout_ms": 3500
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const norm=(s)=>(s||'').replace(/ /g,' ').replace(/\\s+/g,' ').trim();\nconst ded=(s)=>{if(!s)return s;const n=s.length;if(n%2===0){const h=s.slice(0,n/2);if(h===s.slice(n/2))return h.trim();}return s;};\nconst PH=/show your qualifications|recruiter inmail|2x more likely|^school$|degree, field of study|^add (a |an )?\\w|^field of study|enhance profile|verify where you/i;\nconst name=norm((document.title||'').split(' | ')[0]);\nconst skip=/^(0 notifications|Skip to|Home|My Network|Jobs|Messaging|Notifications|Me|For Business|Try Premium|Enhance profile|Add section|Add profile|Open to|Add verification|More|Message|Connect|Follow|Pending|·|\\d+(\\s|$))/i;\nconst bodyLines=[];const seenL=new Set();\n(document.body.innerText||'').split('\\n').forEach((l)=>{l=ded(norm(l));if(l&&!seenL.has(l)){seenL.add(l);bodyLines.push(l);}});\nlet headline='',loc='';const ni=bodyLines.indexOf(name);\nfor(let i=(ni>=0?ni+1:0);i<bodyLines.length;i++){const l=bodyLines[i];if(!l||l===name||skip.test(l))continue;if(!headline){headline=l;continue;}if(!loc&&l.indexOf(',')>=0&&l.length<90){loc=l;break;}}\nconst h2s=[...document.querySelectorAll('h2')];\nconst secByLabel=(label)=>h2s.find((h)=>norm(ded(h.innerText||''))===label)||null;\nconst cardOf=(h2)=>{let el=h2;for(let i=0;i<6;i++){if(!el.parentElement)break;el=el.parentElement;if((el.innerText||'').length>(norm(h2.innerText||'').length+40))return el;}return h2.parentElement||h2;};\nconst entriesFrom=(label)=>{const h=secByLabel(label);if(!h)return [];const card=cardOf(h);const res=[];const pushE=(lines)=>{const dd=[];for(const l of lines){const x=ded(norm(l));if(x&&dd[dd.length-1]!==x&&!/^(show all|see more|·)/i.test(x)&&!PH.test(x))dd.push(x);}const take=dd.slice(0,3).join(' — ');if(take&&!PH.test(take)&&res.indexOf(take)<0)res.push(take);};const lis=[...card.querySelectorAll('li')];if(lis.length){for(const li of lis){pushE((li.innerText||'').split('\\n'));if(res.length>=8)break;}}else{const lines=(card.innerText||'').split('\\n').map((l)=>ded(norm(l))).filter(Boolean);const hi=lines.indexOf(norm(label));const after=hi>=0?lines.slice(hi+1):lines;for(let i=0;i<after.length&&res.length<8;i+=3){pushE(after.slice(i,i+3));}}return res.slice(0,8);};\nconst aboutH=secByLabel('About');let about='';if(aboutH){const card=cardOf(aboutH);about=norm((card.innerText||'').replace(/^About\\s*/i,''));if(PH.test(about))about='';if(about.length>1500)about=about.slice(0,1500);}\nconst experience=entriesFrom('Experience');\nconst education=entriesFrom('Education');\nreturn {profile_url:location.href,name:name,headline:headline,location:loc,about:about,experience:experience,education:education};",
+          "use_cdp_eval": true
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract top card, About, Experience, and Education",
+      "timeout_ms": 20000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "profile_url": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "headline": {
+          "type": "string"
+        },
+        "location": {
+          "type": "string"
+        },
+        "about": {
+          "type": "string"
+        },
+        "experience": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "education": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open a LinkedIn profile read-only and return name, headline, location, about, experience, and education.",
+    "parameters": {
+      "profile": "A LinkedIn vanity slug (e.g. jay-klause-3a2a75419) OR a full /in/ URL."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run linkedin profile --param profile=\"jay-klause-3a2a75419\"",
+        "description": "Open the profile by vanity slug and return its structured summary."
+      },
+      {
+        "command": "rzn-browser run linkedin profile --param profile=\"https://www.linkedin.com/in/jay-klause-3a2a75419/\"",
+        "description": "Same, passing a full /in/ URL (the slug is extracted automatically)."
+      }
+    ],
+    "returns": [
+      "{ profile_url, name, headline, location, about, experience[], education[] } where experience and education are arrays of short strings (<=8)."
+    ],
+    "notes": [
+      "Read-only. Never connects, messages, follows, or posts.",
+      "Tolerates both a bare vanity slug and a full /in/ URL; the canonical URL is computed in-page before navigating.",
+      "Sections are located by their visible H2 heading text (About / Experience / Education) since LinkedIn class names are hashed per deploy.",
+      "Missing fields degrade to empty string or empty array."
+    ]
+  },
+  "metadata": {
+    "legacy_system_id": "linkedin"
+  }
+}

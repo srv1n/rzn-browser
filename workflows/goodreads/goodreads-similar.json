@@ -1,0 +1,182 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "goodreads/similar",
+  "name": "Goodreads: Similar Books (Recommendations)",
+  "version": "1.0.0",
+  "system": "goodreads",
+  "capability": "goodreads.similar",
+  "summary": "Given a Goodreads book, return the full 'Readers also enjoyed' recommendation list with title, author, average rating, ratings count, and URL.",
+  "description": "Opens a book page, resolves its /book/similar/<work_id> link, fetches that server-rendered recommendation page same-origin, and parses the .responsiveBook entries into a clean recommendation list. This is the read-only proxy for Goodreads recommendations seeded from a book you like (personalized account recommendations require login). Feed any book_url back into goodreads/book for details.",
+  "params": {
+    "properties": {
+      "book_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Full Goodreads book URL whose recommendations you want, e.g. https://www.goodreads.com/book/show/29993569-raising-a-secure-child. Query strings and #anchors are ignored."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{book_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to the seed book page"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "a[href*='/book/similar/'], h1[data-testid='bookTitle'], h1"
+        }
+      },
+      "name": "Wait for book chrome / similar link",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow late content to render",
+      "timeout_ms": 1200
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "script": "const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const origin=location.origin;const cleanPath=(h)=>{const m=(h||'').match(/\\/book\\/show\\/[^?#]+/);return m?m[0]:'';};const seedPath=cleanPath(location.pathname);const seedTitle=norm(document.querySelector(`h1[data-testid='bookTitle']`)?.textContent)||norm(document.querySelector('h1')?.textContent);const simHref=Array.from(document.querySelectorAll(`a[href*='/book/similar/']`)).map(a=>a.getAttribute('href')).find(Boolean);let result;if(!simHref){result={seed_title:seedTitle||'N/A',similar_url:'N/A',count:0,recommendations:[]};}else{const simUrl=simHref.startsWith('http')?simHref:origin+simHref;const res=await fetch(simUrl,{credentials:'same-origin'});const html=await res.text();const doc=new DOMParser().parseFromString(html,'text/html');const items=Array.from(doc.querySelectorAll('.responsiveBook'));const out=[];const seen=new Set();for(const it of items){const a=it.querySelector(`a[href*='/book/show/']`);if(!a)continue;const p=cleanPath(a.getAttribute('href'));if(!p||p===seedPath||seen.has(p))continue;const img=it.querySelector('img');const title=(img?norm(img.getAttribute('alt')):'')||'';const author=norm(it.querySelector(`a[href*='/author/show/']`)?.textContent);const t=norm(it.textContent);const rm=t.match(/([0-9.]+)\\s*avg\\.?\\s*rating/i);const cm=t.match(/avg\\.?\\s*rating[^0-9]*([0-9.,k]+)\\s*ratings?/i);seen.add(p);out.push({title:title||'N/A',author:author||'N/A',avg_rating:rm?rm[1]:'N/A',ratings_count:cm?cm[1].replace(/,/g,''):'N/A',book_url:origin+p});}result={seed_title:seedTitle||'N/A',similar_url:simUrl.replace(/[?#].*$/,''),count:out.length,recommendations:out};}return result;"
+        },
+        "side_effects": [
+          "read_only",
+          "network_access",
+          "external_read"
+        ]
+      },
+      "name": "Resolve and parse the similar-books page",
+      "timeout_ms": 45000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "seed_title": { "type": "string" },
+        "similar_url": { "type": "string" },
+        "count": { "type": "integer" },
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "author": { "type": "string" },
+              "avg_rating": { "type": "string" },
+              "ratings_count": { "type": "string" },
+              "book_url": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Full 'Readers also enjoyed' recommendation list for a Goodreads book.",
+    "parameters": {
+      "book_url": "Full Goodreads /book/show/ URL to seed recommendations from."
+    },
+    "examples": [
+      {
+        "description": "Get recommendations seeded from a book",
+        "command": "rzn-browser run goodreads similar --param book_url=\"https://www.goodreads.com/book/show/29993569-raising-a-secure-child\""
+      }
+    ],
+    "returns": [
+      "Object: { seed_title, similar_url, count, recommendations: [{ title, author, avg_rating, ratings_count, book_url }] }."
+    ],
+    "notes": [
+      "Reads the book page, then fetches its /book/similar/<work_id> page (server-rendered) and parses .responsiveBook entries.",
+      "This is the seeded-by-a-book recommendation surface; account-personalized recommendations on /recommendations require a logged-in Goodreads session and are not covered here.",
+      "ratings_count may be a compact form like '47.1k' as Goodreads renders it on the similar page."
+    ]
+  }
+}

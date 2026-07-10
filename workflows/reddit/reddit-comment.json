@@ -2,7 +2,7 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "reddit/comment",
   "name": "Reddit: Comment",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "system": "reddit",
   "capability": "reddit.comment",
   "summary": "Post or draft a Reddit comment \u2014 top-level on a post URL, a reply on a specific comment, or a quick comment on the front page's first post.",
@@ -205,6 +205,24 @@
       },
       "name": "If target is comment_id, click the reply link on that specific comment and wait for its nested form",
       "timeout_ms": 20000
+    },
+    {
+      "id": "s6b",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "args": [
+            "{target}",
+            "{comment_id}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const target = cleanArg(arg0) || 'post_url'; const commentId = cleanArg(arg1); let ta = null; if (target === 'comment_id' && commentId) { const node = document.querySelector('#thing_t1_' + commentId); ta = node ? node.querySelector(\"div.child form textarea[name='text']\") : null; } if (!ta) { ta = document.querySelector(\"form#commentform textarea[name='text'], form.usertext-edit textarea[name='text'], textarea[name='text']\"); } const hasBox = !!ta; const body = ((document.body && document.body.innerText) || '').toLowerCase(); const gates = [['thread is archived','archived'],['post is archived','archived'],['has been locked','locked'],['comments are locked','locked'],['you are banned','banned'],['you have been banned','banned'],['banned from posting','banned'],['banned from participating','banned'],['enough karma','karma_gate'],['karma to comment','karma_gate'],['karma to post','karma_gate'],['account is too new','account_age_gate'],['account too new','account_age_gate'],['you must be at least','account_age_gate'],['doing that too much','rate_limited'],['approved submitter','restricted'],['must be a member','restricted']]; let gate = ''; for (const g of gates) { if (body.indexOf(g[0]) !== -1) { gate = g[1]; break; } } if (!hasBox && gate) { return { stop_workflow: true, stop_reason: 'comment_gated', gated: true, gate_reason: gate, has_comment_box: false }; } return { gated: false, has_comment_box: hasBox, gate_reason: gate || null };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Gate check: if the comment editor is absent AND the page shows a lock/archive/karma/account-age/rate-limit banner, stop with stop_reason=comment_gated. Distinguishes an account or thread gate from a DOM race (a race instead surfaces as the s7 wait_for_element timeout).",
+      "timeout_ms": 4000
     },
     {
       "id": "s7",

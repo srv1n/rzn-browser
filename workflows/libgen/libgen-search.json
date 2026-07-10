@@ -1,0 +1,278 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "libgen/search",
+  "name": "Libgen: Book Search",
+  "version": "1.0.0",
+  "system": "libgen",
+  "capability": "libgen.search",
+  "summary": "Search a Libgen (libgen.li-family) mirror by title/author/ISBN and return candidate book rows with format, size, language, md5, and mirror/file URLs.",
+  "description": "Drives the real Libgen search box on the homepage (type -> submit) and reads the server-rendered results table (table#tablelibgen). Returns one row per file with title, author, publisher, year, language, pages, size, extension, md5, the edition page URL, and the file detail URL. Optionally filters to a single format (e.g. epub). Pure read; feed a chosen row's query/format into libgen/download. The base mirror URL is configurable because Libgen domains rotate.",
+  "params": {
+    "properties": {
+      "query": {
+        "kind": "string",
+        "required": true,
+        "description": "Search text: book title, author, or ISBN. Searches all columns (title, author, series, year, publisher, isbn), so 'title author' works well."
+      },
+      "base_url": {
+        "kind": "string",
+        "required": false,
+        "default": "https://libgen.li/",
+        "description": "Base URL of the Libgen mirror to use (libgen.li-family layout). Defaults to https://libgen.li/. Override when the domain rotates, e.g. https://libgen.gs/ or https://libgen.la/. Include the trailing slash."
+      },
+      "format": {
+        "kind": "string",
+        "required": false,
+        "default": "",
+        "description": "Optional extension filter, lowercased and matched exactly against the Ext. column (e.g. epub, pdf, mobi, azw3, djvu). Empty (default) returns all formats."
+      },
+      "limit": {
+        "kind": "integer",
+        "required": false,
+        "default": 25,
+        "min": 1,
+        "max": 100,
+        "description": "Maximum number of rows to return. Defaults to 25 (one results page). Hard cap 100."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{base_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to the Libgen mirror homepage",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "input[name='req']"
+        }
+      },
+      "name": "Wait for the search box",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[name='req']"
+        }
+      },
+      "name": "Type the query into the search box"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[name='req']",
+          "text": "{query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#tablelibgen tbody tr"
+        }
+      },
+      "name": "Wait for the results table",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the table settle",
+      "timeout_ms": 800
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "const p = window.__rzn_params || {};\nconst norm = (s) => (s || '').replace(/ /g, ' ').replace(/\\s+/g, ' ').trim();\nconst fmt = norm(p.format).toLowerCase();\nlet lim = parseInt(p.limit, 10);\nif (!Number.isFinite(lim) || lim < 1) lim = 25;\nif (lim > 100) lim = 100;\nconst origin = location.origin;\nconst abs = (h) => { if (!h) return ''; try { return new URL(h, origin).href; } catch (e) { return ''; } };\nconst md5re = /md5=([a-fA-F0-9]{32})/;\nconst t = document.querySelector('#tablelibgen');\nif (!t) {\n  return { layout_ok: false, error: 'No #tablelibgen results table on this page. base_url may not be a libgen.li-family mirror.', query: norm(p.query) || null, format: fmt || null, count: 0, results: [] };\n}\nconst rows = Array.from(t.querySelectorAll('tbody tr'));\nconst out = [];\nfor (const r of rows) {\n  const c = r.children;\n  if (c.length < 9) continue;\n  const titleA = c[0].querySelector('a[href*=\"edition.php\"]') || c[0].querySelector('a[href*=\"file.php\"]') || c[0].querySelector('a');\n  const title = norm(titleA ? titleA.textContent : c[0].textContent);\n  if (!title) continue;\n  const ext = norm(c[7].textContent).toLowerCase();\n  if (fmt && ext !== fmt) continue;\n  let md5 = '';\n  for (const a of Array.from(c[8].querySelectorAll('a'))) {\n    const m = (a.getAttribute('href') || '').match(md5re);\n    if (m) { md5 = m[1].toLowerCase(); break; }\n  }\n  const edA = c[0].querySelector('a[href*=\"edition.php\"]');\n  const flA = c[6].querySelector('a[href*=\"file.php\"]');\n  out.push({\n    title: title,\n    author: norm(c[1].textContent),\n    publisher: norm(c[2].textContent),\n    year: norm(c[3].textContent),\n    language: norm(c[4].textContent),\n    pages: norm(c[5].textContent),\n    size: norm(c[6].textContent),\n    ext: ext,\n    md5: md5,\n    edition_url: abs(edA ? edA.getAttribute('href') : ''),\n    file_url: abs(flA ? flA.getAttribute('href') : '')\n  });\n  if (out.length >= lim) break;\n}\nreturn { layout_ok: true, query: norm(p.query) || null, format: fmt || null, count: out.length, results: out };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract candidate book rows",
+      "timeout_ms": 30000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "layout_ok": {
+          "type": "boolean"
+        },
+        "query": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "publisher": {
+                "type": "string"
+              },
+              "year": {
+                "type": "string"
+              },
+              "language": {
+                "type": "string"
+              },
+              "pages": {
+                "type": "string"
+              },
+              "size": {
+                "type": "string"
+              },
+              "ext": {
+                "type": "string"
+              },
+              "md5": {
+                "type": "string"
+              },
+              "edition_url": {
+                "type": "string"
+              },
+              "file_url": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s8",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search a Libgen mirror; returns candidate book rows with md5 + format.",
+    "parameters": {
+      "query": "Title, author, or ISBN.",
+      "base_url": "Libgen mirror base URL (default https://libgen.li/).",
+      "format": "Optional exact extension filter (epub, pdf, ...).",
+      "limit": "Max rows (default 25, cap 100)."
+    },
+    "examples": [
+      {
+        "description": "Find epub editions of a title",
+        "command": "rzn-browser run libgen search --param query=\"Brave New World Huxley\" --param format=epub"
+      },
+      {
+        "description": "Search a different mirror when libgen.li is down",
+        "command": "rzn-browser run libgen search --param query=\"Sapiens Harari\" --param base_url=\"https://libgen.gs/\""
+      }
+    ],
+    "returns": [
+      "Object: { layout_ok, query, format, count, results: [{ title, author, publisher, year, language, pages, size, ext, md5, edition_url, file_url }] }. layout_ok=false means base_url is not a libgen.li-family mirror — try another base_url."
+    ],
+    "notes": [
+      "Drives the homepage search box and submits the form (the default form searches all columns: title/author/series/year/publisher/isbn).",
+      "md5 is parsed from the row's native libgen.li mirror link; feed query+format into libgen/download to fetch the file.",
+      "If layout_ok is false the mirror DOM was not recognized — pass a different base_url.",
+      "No CDP; all JS runs in the page main world."
+    ]
+  }
+}

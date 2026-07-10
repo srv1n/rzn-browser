@@ -1,0 +1,209 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "goodreads/shelf",
+  "name": "Goodreads: Shelf / Genre Top Books",
+  "version": "1.0.0",
+  "system": "goodreads",
+  "capability": "goodreads.shelf",
+  "summary": "List the most-popular books on a Goodreads shelf/genre (e.g. parenting, self-help, philosophy), paginated. Returns title, author, URL, average rating, ratings count, and publication year.",
+  "description": "Opens /shelf/show/<shelf> (popularity-ranked) and reads the classic server-rendered listing (a.bookTitle / a.authorName / .greyText). Walks up to max_pages additional pages via same-origin fetch and returns a deduplicated, ranked book list. This is the discovery entry point for 'top books in a field' — feed each book_url into goodreads/book, goodreads/reviews, or goodreads/similar.",
+  "params": {
+    "properties": {
+      "shelf": {
+        "kind": "string",
+        "required": true,
+        "description": "Shelf / genre slug as it appears in /shelf/show/<slug>, e.g. 'parenting', 'self-help', 'philosophy', 'psychology', 'business'. Multi-word shelves use hyphens."
+      },
+      "max_pages": {
+        "kind": "integer",
+        "required": false,
+        "default": 1,
+        "min": 1,
+        "max": 5,
+        "description": "How many pages to collect (50 books per page). Default 1 (top 50). Pass up to 5 for the top 250."
+      },
+      "start_page": {
+        "kind": "integer",
+        "required": false,
+        "default": 1,
+        "min": 1,
+        "max": 25,
+        "description": "First shelf page to collect (1-based). Default 1. Use this to fetch one clean 50-book page at a time (e.g. start_page=2, max_pages=1 returns books 51-100) and avoid the ~50-row result-array cap when you need more than 50 books across several calls."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.goodreads.com/shelf/show/{shelf}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to the shelf page"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "a.bookTitle"
+        }
+      },
+      "name": "Wait for the book listing",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow listing to settle",
+      "timeout_ms": 1000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "{shelf}",
+            "{max_pages}",
+            "{start_page}"
+          ],
+          "script": "const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const origin=location.origin;const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const cleanPath=(h)=>{const m=(h||'').match(/\\/book\\/show\\/[^?#]+/);return m?m[0]:'';};const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const shelfArg=cleanArg(arg0);const maxPages=Math.min(Math.max(parseInt(cleanArg(arg1)||'1',10)||1,1),5);const startPage=Math.min(Math.max(parseInt(cleanArg(arg2)||'1',10)||1,1),25);const parseDoc=(root)=>{const out=[];for(const a of root.querySelectorAll('a.bookTitle')){const cont=a.closest('.elementList')||a.parentElement||root;const path=cleanPath(a.getAttribute('href'));if(!path)continue;const author=norm(cont.querySelector('a.authorName')?.textContent);const grey=norm(cont.querySelector('.greyText.smallText')?.textContent);const rm=grey.match(/avg rating ([\\d.]+)/i);const cm=grey.match(/([\\d,]+) ratings?/i);const pm=grey.match(/published (\\d{4})/i);out.push({title:norm(a.textContent),author:author||'N/A',book_url:origin+path,avg_rating:rm?rm[1]:'N/A',ratings_count:cm?cm[1].replace(/,/g,''):'N/A',published:pm?pm[1]:'N/A'});}return out;};const seen=new Set();const books=[];const addAll=(arr)=>{for(const b of arr){if(seen.has(b.book_url))continue;seen.add(b.book_url);books.push(b);}};let pagesWalked=0;const base=origin+location.pathname.replace(/[?#].*$/,'');const endPage=startPage+maxPages-1;for(let p=startPage;p<=endPage;p++){let doc;if(p===1){doc=document;}else{const r=await fetch(base+'?page='+p,{credentials:'same-origin'});if(!r.ok)break;const html=await r.text();doc=new DOMParser().parseFromString(html,'text/html');}const arr=parseDoc(doc);if(!arr.length)break;addAll(arr);pagesWalked++;await sleep(400);}const shelfName=shelfArg||(location.pathname.match(/\\/shelf\\/show\\/([^/?#]+)/)||[])[1]||'N/A';return {shelf:shelfName,pages_walked:pagesWalked,count:books.length,books:books};"
+        },
+        "side_effects": [
+          "read_only",
+          "network_access",
+          "external_read"
+        ]
+      },
+      "name": "Extract ranked book listing; walk extra pages if requested",
+      "timeout_ms": 60000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "shelf": { "type": "string" },
+        "pages_walked": { "type": "integer" },
+        "count": { "type": "integer" },
+        "books": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "author": { "type": "string" },
+              "book_url": { "type": "string" },
+              "avg_rating": { "type": "string" },
+              "ratings_count": { "type": "string" },
+              "published": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Popularity-ranked book list for a Goodreads shelf/genre, paginated.",
+    "parameters": {
+      "shelf": "Shelf/genre slug from /shelf/show/<slug> (e.g. parenting, self-help, philosophy).",
+      "max_pages": "Pages to collect, 50 books each (1-5). Default 1."
+    },
+    "examples": [
+      {
+        "description": "Top 50 parenting books",
+        "command": "rzn-browser run goodreads shelf --param shelf=\"parenting\""
+      },
+      {
+        "description": "Top 150 self-help books",
+        "command": "rzn-browser run goodreads shelf --param shelf=\"self-help\" --param max_pages=\"3\""
+      }
+    ],
+    "returns": [
+      "Object: { shelf, pages_walked, count, books: [{ title, author, book_url, avg_rating, ratings_count, published }] }. Books are ordered by Goodreads' shelf popularity. Feed book_url into goodreads/book, goodreads/reviews, or goodreads/similar."
+    ],
+    "notes": [
+      "Shelves are server-rendered classic pages; pagination uses ?page=<n> via same-origin fetch (more reliable than clicking).",
+      "Results are deduplicated by book URL across pages.",
+      "Shelf popularity ranking is Goodreads' own (how many users shelved the book), a good proxy for 'top books in a field'."
+    ]
+  }
+}

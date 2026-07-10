@@ -68,3 +68,6 @@ tusker/Attachments/
 
 # Chrome Web Store submission drafts (assets, screenshots, copy — not for git)
 chrome-store-submission/
+
+# Goodreads research skill run output
+goodreads-research-out/

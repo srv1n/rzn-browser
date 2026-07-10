@@ -1,0 +1,226 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "goodreads/reviews",
+  "name": "Goodreads: Collect Book Reviews",
+  "version": "1.1.0",
+  "system": "goodreads",
+  "capability": "goodreads.reviews",
+  "summary": "Collect community reviews for a book (author, rating, date, likes, body, URL). Supports login-free by-rating coverage (one ~30-review page per star, 5..1) and, when signed in, best-effort 'Show more reviews' pagination.",
+  "description": "Navigates to <book>/reviews and extracts every loaded ReviewCard. coverage='page' (default) reads the first page (~30). coverage='by_rating' clicks each star bucket in the histogram (5,4,3,2,1) and collects each bucket's reviews, deduplicated by review URL — this is the login-free way to capture the full opinion spectrum including critical 1-2 star reviews (up to ~150 total). max_clicks additionally walks 'Show more reviews' within the current view, which only loads more when the operator's Chrome profile is signed in to Goodreads. Pure read.",
+  "params": {
+    "properties": {
+      "book_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Full Goodreads book URL, e.g. https://www.goodreads.com/book/show/29993569-raising-a-secure-child. The workflow appends /reviews automatically. Query strings and #anchors are ignored."
+      },
+      "coverage": {
+        "kind": "string",
+        "required": false,
+        "default": "page",
+        "description": "'page' = first page only (~30, Goodreads' popular order). 'by_rating' = collect one page per star rating (5,4,3,2,1) and dedupe, capturing positive and critical reviews (up to ~150). Login-free."
+      },
+      "max_clicks": {
+        "kind": "integer",
+        "required": false,
+        "default": 0,
+        "min": 0,
+        "max": 20,
+        "description": "Times to click 'Show more reviews' to load extra pages within the current view. Adds ~30 per successful click but only works when signed in to Goodreads; the loop stops as soon as a click adds nothing. Combine with coverage='by_rating' to go deep per star when signed in."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 150000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{book_url}/reviews"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to the reviews page"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "article.ReviewCard"
+        }
+      },
+      "name": "Wait for review cards",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow review cards to settle",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "{max_clicks}",
+            "{coverage}"
+          ],
+          "script": "const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const origin=location.origin;const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const maxClicks=Math.min(Math.max(parseInt(cleanArg(arg0)||'0',10)||0,0),20);const coverage=(cleanArg(arg1)||'page').toLowerCase()==='by_rating'?'by_rating':'page';const dismiss=()=>{const dlg=document.querySelector(`[role='dialog'], .Overlay__window`);if(dlg){const x=Array.from(dlg.querySelectorAll('button')).find(b=>/close/i.test(b.getAttribute('aria-label')||''));if(x){x.click();}else{document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',keyCode:27,bubbles:true}));}}};const findMore=()=>Array.from(document.querySelectorAll('button')).find(b=>/show more reviews/i.test(norm(b.textContent)));const paginate=async()=>{let c=0;for(let i=0;i<maxClicks;i++){const before=document.querySelectorAll('article.ReviewCard').length;const b=findMore();if(!b)break;b.scrollIntoView({block:'center'});b.click();await sleep(2200);dismiss();await sleep(400);c++;if(document.querySelectorAll('article.ReviewCard').length<=before)break;}return c;};const clickStar=(n)=>{const want=n+' star';const el=Array.from(document.querySelectorAll('.RatingsHistogram__labelTitle')).find(e=>norm(e.textContent).startsWith(want));if(el){el.click();return true;}return false;};const applyStar=async(n)=>{if(!clickStar(n))return false;for(let i=0;i<12;i++){await sleep(600);const cards=document.querySelectorAll('article.ReviewCard');if(cards.length){const a=cards[0].querySelector(`[aria-label*='out of 5']`)?.getAttribute('aria-label')||'';const m=a.match(/(\\d)\\s*out of/i);if(m&&m[1]===String(n))return true;}}return true;};const map=new Map();const extractInto=()=>{for(const card of document.querySelectorAll('article.ReviewCard')){const al=card.getAttribute('aria-label')||'';const author=norm((al.match(/^Review by (.+)$/i)||[])[1])||norm(card.querySelector('.ReviewerProfile__name a')?.textContent);const ra=card.querySelector(`[aria-label*='out of 5']`)?.getAttribute('aria-label')||'';const rm=ra.match(/(\\d)\\s*out of/i);const row=card.querySelector('.ReviewCard__row a');const date=norm(row?.textContent);const rp=(row?.getAttribute('href')||'').match(/\\/review\\/show\\/\\d+/);const review_url=rp?origin+rp[0]:'N/A';const body=norm(card.querySelector('.TruncatedContent__text')?.textContent);const lk=(card.textContent.match(/(\\d[\\d,]*)\\s+likes?/i)||[])[1];const obj={author:author||'N/A',rating:rm?rm[1]:'N/A',date:date||'N/A',likes:lk?lk.replace(/,/g,''):'0',body:body?body.slice(0,700):'N/A',review_url:review_url};const key=rp?rp[0]:(obj.author+'|'+obj.date+'|'+obj.body.slice(0,40));if(map.has(key))continue;map.set(key,obj);}};for(let i=0;i<8;i++){if(document.querySelectorAll('article.ReviewCard').length)break;window.scrollTo(0,document.body.scrollHeight);await sleep(700);}let totalClicks=0;const facets=[];if(coverage==='by_rating'){for(const n of [1,2,3,4,5]){await applyStar(n);totalClicks+=await paginate();const sz=map.size;extractInto();facets.push({rating:String(n),collected:String(map.size-sz)});}}else{totalClicks=await paginate();extractInto();}let total='N/A';try{const d=JSON.parse(document.getElementById('__NEXT_DATA__').textContent);const gr=d.props.pageProps.apolloState.ROOT_QUERY.getReviews;if(gr&&gr.totalCount!=null)total=String(gr.totalCount);}catch(e){}const all=[...map.values()];let outReviews;if(coverage==='by_rating'){const byR={};for(const r of all){(byR[r.rating]=byR[r.rating]||[]).push(r);}outReviews=[];for(const n of ['1','2','3','4','5','N/A']){for(const r of (byR[n]||[]).slice(0,10))outReviews.push(r);}}else{outReviews=all.slice(0,50);}return {reviews_url:location.href.replace(/[?#].*$/,''),total_count:total,coverage:coverage,facets:facets,pagination_clicks:totalClicks,reviews_loaded:all.length,reviews_returned:outReviews.length,reviews:outReviews};"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only",
+          "network_access",
+          "external_read"
+        ]
+      },
+      "name": "Collect reviews (page or by-rating coverage; best-effort pagination)",
+      "timeout_ms": 120000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "reviews_url": { "type": "string" },
+        "total_count": { "type": "string" },
+        "coverage": { "type": "string" },
+        "facets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "rating": { "type": "string" },
+              "collected": { "type": "string" }
+            }
+          }
+        },
+        "pagination_clicks": { "type": "integer" },
+        "reviews_loaded": { "type": "integer" },
+        "reviews_returned": { "type": "integer" },
+        "reviews": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "author": { "type": "string" },
+              "rating": { "type": "string" },
+              "date": { "type": "string" },
+              "likes": { "type": "string" },
+              "body": { "type": "string" },
+              "review_url": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Collect community reviews; login-free by-rating coverage, plus signed-in deep pagination.",
+    "parameters": {
+      "book_url": "Full Goodreads /book/show/ URL (/reviews is appended automatically).",
+      "coverage": "'page' (first ~30) or 'by_rating' (one page per star 5..1, deduped, ~150 max). Login-free.",
+      "max_clicks": "Times to click 'Show more reviews' within the current view (0-20). Only effective when signed in to Goodreads."
+    },
+    "examples": [
+      {
+        "description": "First page of reviews (~30)",
+        "command": "rzn-browser run goodreads reviews --param book_url=\"https://www.goodreads.com/book/show/29993569-raising-a-secure-child\""
+      },
+      {
+        "description": "Full opinion spectrum incl. critical reviews (login-free)",
+        "command": "rzn-browser run goodreads reviews --param book_url=\"https://www.goodreads.com/book/show/29993569-raising-a-secure-child\" --param coverage=\"by_rating\""
+      },
+      {
+        "description": "Signed in: walk deep within each star bucket",
+        "command": "rzn-browser run goodreads reviews --param book_url=\"https://www.goodreads.com/book/show/29993569-raising-a-secure-child\" --param coverage=\"by_rating\" --param max_clicks=\"10\""
+      }
+    ],
+    "returns": [
+      "Object: { reviews_url, total_count, coverage, facets: [{ rating, collected }], pagination_clicks, reviews_loaded, reviews_returned, reviews: [{ author, rating, date, likes, body, review_url }] }. reviews_loaded is how many were seen; reviews_returned is how many are in the array. Deduplicated by review URL. total_count is Goodreads' reported text-review total."
+    ],
+    "notes": [
+      "coverage='by_rating' clicks each histogram star bucket (works logged out, no sign-up wall) and is the recommended way to capture both praise and criticism for opinion synthesis.",
+      "The execute_javascript result bridge caps a returned array at ~50 items, so by_rating returns a balanced sample of up to 10 reviews per star bucket (critical ratings first), even though reviews_loaded counts every review seen. body is trimmed to 700 chars.",
+      "Logged out, 'Show more reviews' opens a sign-up wall and loads nothing, so max_clicks is a no-op; each star bucket still yields its first ~30. Signed in, each click loads ~30 more within the active bucket.",
+      "rating is 'N/A' for cards where the reviewer wrote text but left no star rating."
+    ]
+  }
+}

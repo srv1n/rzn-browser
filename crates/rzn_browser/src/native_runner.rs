@@ -22,6 +22,24 @@ fn should_handle_step_locally(step_type: &str) -> bool {
     step_type == "wait_for_timeout"
 }
 
+/// True when the executor step declares an `external_write` side effect, either
+/// at the top level (manifest steps) or nested under `action` (legacy steps).
+fn step_has_external_write(step: &Value) -> bool {
+    let contains_external_write = |value: Option<&Value>| {
+        value
+            .and_then(Value::as_array)
+            .map(|classes| {
+                classes
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .any(|class| class.eq_ignore_ascii_case("external_write"))
+            })
+            .unwrap_or(false)
+    };
+    contains_external_write(step.get("side_effects"))
+        || contains_external_write(step.get("action").and_then(|action| action.get("side_effects")))
+}
+
 fn is_transient_step_error(err_str: &str) -> bool {
     let lower = err_str.to_ascii_lowercase();
     lower.contains("receiving end does not exist")
@@ -200,15 +218,55 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
                 workflow.runtime_context.as_ref(),
             );
             let payload = with_browser_target(payload, config.browser_target.as_ref());
+            // A step that performs an external write may have already applied its
+            // side effect (e.g. posted a comment) even when the transport times out
+            // before the response comes back. Retrying such a step risks a duplicate
+            // write, so these fail fast instead of looping on transient errors.
+            let step_writes_externally = step_has_external_write(&executor_step);
+            // Hard per-step watchdog. Bounds the CLI's wall-clock wait to the step's
+            // own timeout budget so a single hung step cannot hold the single-instance
+            // browser queue open for the supervisor's global 10-minute ceiling.
+            let step_watchdog_ms = rpc_timeout_ms.saturating_add(rpc_grace_ms);
             let deadline = tokio::time::Instant::now() + Duration::from_millis(rpc_timeout_ms);
             let stop_reason: Option<String>;
             loop {
-                let response = supervisor::call(
-                    supervisor_config.clone(),
-                    "browser.execute_step",
-                    with_timeout(payload.clone(), rpc_timeout_ms),
+                let response = match tokio::time::timeout(
+                    Duration::from_millis(step_watchdog_ms),
+                    supervisor::call(
+                        supervisor_config.clone(),
+                        "browser.execute_step",
+                        with_timeout(payload.clone(), rpc_timeout_ms),
+                    ),
                 )
-                .await?;
+                .await
+                {
+                    Ok(result) => result?,
+                    Err(_) => {
+                        if config.snapshot_mode == SnapshotMode::OnError {
+                            let _ =
+                                take_supervisor_snapshot(&supervisor_config, session_id.as_deref())
+                                    .await;
+                        }
+                        let error = format!(
+                            "per-step watchdog fired after {}ms; supervisor.execute_step did not return",
+                            step_watchdog_ms
+                        );
+                        let report_context = build_failure_context(
+                            &workflow.report_workflow,
+                            Path::new(&config.workflow_path),
+                            &executor_step,
+                            idx,
+                            &error,
+                        );
+                        return Err(anyhow!(WorkflowRunFailure {
+                            message: format!(
+                                "step {} ({}) timed out after {}ms",
+                                step_id, step_type, step_watchdog_ms
+                            ),
+                            report_context,
+                        }));
+                    }
+                };
                 let success = response_success(&response);
 
                 if success {
@@ -220,7 +278,7 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
 
                 let err_str = response.get("error").and_then(|v| v.as_str()).unwrap_or("");
                 let transient = is_transient_step_error(err_str);
-                if transient && tokio::time::Instant::now() < deadline {
+                if transient && !step_writes_externally && tokio::time::Instant::now() < deadline {
                     tokio::time::sleep(Duration::from_millis(350)).await;
                     continue;
                 }
@@ -1603,7 +1661,7 @@ mod tests {
         is_transient_step_error, load_runtime_context_for_workflow, load_workflow_for_run,
         load_workflow_value, record_step_output, response_success, select_workflow_output,
         should_auto_heal_run_readiness, should_handle_step_locally, step_execution_payload,
-        with_browser_target, RuntimeStep, WorkflowRuntimeContext,
+        step_has_external_write, with_browser_target, RuntimeStep, WorkflowRuntimeContext,
     };
     use serde_json::{json, Value};
     use std::collections::HashMap;
@@ -1637,6 +1695,28 @@ mod tests {
             "Native-host extension bridge timeout after 40000ms"
         ));
         assert!(!is_transient_step_error("Selector not found"));
+    }
+
+    #[test]
+    fn external_write_steps_are_detected_for_no_retry() {
+        // Manifest steps carry side_effects at the top level.
+        assert!(step_has_external_write(&json!({
+            "id": "s9",
+            "type": "execute_javascript",
+            "side_effects": ["browser_state", "external_write"],
+        })));
+        // Legacy steps may nest them under `action`.
+        assert!(step_has_external_write(&json!({
+            "id": "s9",
+            "action": { "side_effects": ["external_write"] },
+        })));
+        // Read-only / state-only steps must remain retriable.
+        assert!(!step_has_external_write(&json!({
+            "id": "s7",
+            "type": "wait_for_element",
+            "side_effects": ["read_only"],
+        })));
+        assert!(!step_has_external_write(&json!({ "id": "s1" })));
     }
 
     #[tokio::test]

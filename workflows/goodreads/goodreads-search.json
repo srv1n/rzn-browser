@@ -1,0 +1,217 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "goodreads/search",
+  "name": "Goodreads: Book Search",
+  "version": "1.0.0",
+  "system": "goodreads",
+  "capability": "goodreads.search",
+  "summary": "Search Goodreads by keyword/title/author and return book candidate rows with title, URL, author, average rating, and ratings count.",
+  "description": "Drives the real Goodreads navbar search box (homepage -> type -> submit) and reads the classic server-rendered results table (tr[itemtype*='Book']). Returns one row per book with the canonical /book/show/<id>-slug URL to feed into goodreads/book, goodreads/reviews, or goodreads/similar. Pure read.",
+  "params": {
+    "properties": {
+      "search_query": {
+        "kind": "string",
+        "required": true,
+        "description": "Title, author, ISBN, or keyword. Defaults to Goodreads' book search surface (showing N books)."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "goodreads.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.goodreads.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to Goodreads homepage"
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "input.searchBox__input--navbar[name='q']"
+        }
+      },
+      "name": "Wait for navbar search box",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{search_query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input.searchBox__input--navbar[name='q']"
+        }
+      },
+      "name": "Type the query into the navbar search box"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input.searchBox__input--navbar[name='q']",
+          "text": "{search_query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "tr[itemtype*='Book'] a.bookTitle"
+        }
+      },
+      "name": "Wait for the results table",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow rating widgets to settle",
+      "timeout_ms": 1200
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "{search_query}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const origin=location.origin;const cleanPath=(h)=>{const m=(h||'').match(/\\/book\\/show\\/[^?#]+/);return m?m[0]:'';};const rows=Array.from(document.querySelectorAll(\"tr[itemtype*='Book']\"));const out=[];for(const r of rows){const a=r.querySelector('a.bookTitle');if(!a)continue;const title=norm(a.textContent);const path=cleanPath(a.getAttribute('href'));if(!title||!path)continue;const author=norm(r.querySelector('a.authorName')?.textContent);const mini=norm(r.querySelector('.minirating')?.textContent);const rm=mini.match(/([0-9.]+)\\s*avg rating/i);const cm=mini.match(/([0-9,]+)\\s*ratings?/i);out.push({title:title,book_url:origin+path,author:author||'N/A',avg_rating:rm?rm[1]:'N/A',ratings_count:cm?cm[1].replace(/,/g,''):'N/A'});}return {query:cleanArg(arg0)||null,count:out.length,results:out};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract book result rows",
+      "timeout_ms": 30000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "query": { "type": "string" },
+        "count": { "type": "integer" },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "book_url": { "type": "string" },
+              "author": { "type": "string" },
+              "avg_rating": { "type": "string" },
+              "ratings_count": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s8",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search Goodreads by keyword/title/author; returns book candidate rows.",
+    "parameters": {
+      "search_query": "Title, author, ISBN, or keyword."
+    },
+    "examples": [
+      {
+        "description": "Find a book by title",
+        "command": "rzn-browser run goodreads search --param search_query=\"raising a secure child\""
+      },
+      {
+        "description": "Find books by an author",
+        "command": "rzn-browser run goodreads search --param search_query=\"Daniel J. Siegel\""
+      }
+    ],
+    "returns": [
+      "Object: { query, count, results: [{ title, book_url, author, avg_rating, ratings_count }] }. Feed book_url into goodreads/book, goodreads/reviews, or goodreads/similar."
+    ],
+    "notes": [
+      "Drives the real navbar search box and submits the form (looks human; avoids hitting /search?q= directly).",
+      "Results come from Goodreads' classic server-rendered table (~20 rows per page).",
+      "avg_rating / ratings_count are parsed from the .minirating cell; either may be 'N/A' for sparsely-rated books."
+    ]
+  }
+}

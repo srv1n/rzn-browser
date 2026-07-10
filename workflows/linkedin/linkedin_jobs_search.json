@@ -1,0 +1,292 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "linkedin/jobs_search",
+  "name": "LinkedIn: Jobs Search",
+  "version": "1.0.0",
+  "system": "linkedin",
+  "capability": "linkedin.jobs.search",
+  "summary": "Search LinkedIn Jobs read-only and return up to max_jobs result cards with title, company, location, job URL, and footer flags.",
+  "description": "Open LinkedIn Jobs (/jobs/) in the existing session, build a filtered jobs-search URL from keywords/location/date_posted/remote, scroll the result list, and return a flat array of job cards. Each item carries job_id, title, company, location, an absolute /jobs/view/ URL, and footer flags (Promoted / Easy Apply / Viewed). Read-only: never applies, saves, or messages. Use linkedin_job_detail to expand one job by id.",
+  "params": {
+    "properties": {
+      "keywords": {
+        "kind": "string",
+        "required": true,
+        "description": "Job search keywords (e.g. \"learning consultant\"). URL-encoded automatically."
+      },
+      "location": {
+        "kind": "string",
+        "required": false,
+        "description": "Location filter (e.g. \"Bengaluru\"). Omit for any location."
+      },
+      "date_posted": {
+        "kind": "string",
+        "required": false,
+        "description": "How recently the job was posted. Maps to the f_TPR filter. Defaults to any.",
+        "default": "any",
+        "enum_values": [
+          "any",
+          "past_month",
+          "past_week",
+          "past_24h"
+        ]
+      },
+      "remote": {
+        "kind": "string",
+        "required": false,
+        "description": "On-site / remote / hybrid filter. Maps to the f_WT filter. Defaults to any.",
+        "default": "any",
+        "enum_values": [
+          "any",
+          "on_site",
+          "remote",
+          "hybrid"
+        ]
+      },
+      "max_jobs": {
+        "kind": "integer",
+        "required": false,
+        "description": "Maximum number of job cards to return. Defaults to 25. Hard cap 50.",
+        "default": 25,
+        "min": 1,
+        "max": 50
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": true,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.linkedin.com/jobs/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open LinkedIn Jobs in the existing session (bootstrap tab before execute_javascript)",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the jobs home to hydrate",
+      "timeout_ms": 2000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{keywords}",
+            "{location}",
+            "{\"date_posted\":\"{date_posted}\",\"remote\":\"{remote}\"}"
+          ],
+          "script": "const c=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;}; const kw=c(arg0); const loc=c(arg1); let opt={}; try{opt=JSON.parse(c(arg2)||'{}');}catch(e){opt={};} const dp=c(opt.date_posted); const rm=c(opt.remote); const params=new URLSearchParams(); params.set('keywords',kw); if(loc)params.set('location',loc); const tpr={past_month:'r2592000',past_week:'r604800',past_24h:'r86400'}; if(tpr[dp])params.set('f_TPR',tpr[dp]); const wt={on_site:'1',remote:'2',hybrid:'3'}; if(wt[rm])params.set('f_WT',wt[rm]); const url='https://www.linkedin.com/jobs/search/?'+params.toString(); setTimeout(()=>location.assign(url),0); return {search_url:url};",
+          "use_cdp_eval": true
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Build the filtered jobs-search URL and navigate to it",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow jobs search results to hydrate",
+      "timeout_ms": 3000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present after navigation"
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "li[data-occludable-job-id]"
+        }
+      },
+      "name": "Wait for the job result cards",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "infinite_scroll",
+        "inputs": {
+          "max_scrolls": 8,
+          "scroll_delay": 1500,
+          "target_selector": "li[data-occludable-job-id]",
+          "target_count": 30
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll until roughly max_jobs cards are loaded",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{max_jobs}"
+          ],
+          "script": "const c=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;}; let max=parseInt(c(arg0),10); if(!Number.isFinite(max)||max<1)max=25; if(max>50)max=50; const norm=(v)=>(v||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim(); const txt=(el)=>el?norm(el.innerText||el.textContent||''):''; const firstLine=(el)=>{if(!el)return '';return norm((el.innerText||el.textContent||'').split('\\n')[0]);}; const cleanUrl=(a)=>{if(!a)return '';try{const u=new URL(a.getAttribute('href'),location.origin);return u.origin+u.pathname;}catch(e){return a.getAttribute('href')||'';}}; const cards=Array.from(document.querySelectorAll('li[data-occludable-job-id]')); const out=[]; const seen=new Set(); for(const li of cards){ const id=li.getAttribute('data-occludable-job-id')||''; if(!id||seen.has(id))continue; const titleEl=li.querySelector('a.job-card-container__link')||li.querySelector('a.job-card-list__title')||li.querySelector('.artdeco-entity-lockup__title'); const title=firstLine(titleEl); const company=txt(li.querySelector('.artdeco-entity-lockup__subtitle')); const location=txt(li.querySelector('.artdeco-entity-lockup__caption')); const job_url=cleanUrl(li.querySelector('a[href*=\"/jobs/view/\"]')); const footer=li.querySelector('.job-card-container__footer-wrapper'); const flags=footer?((footer.innerText||footer.textContent||'').replace(/\\s*\\n+\\s*/g,' / ').replace(/[ \\t]+/g,' ').trim()):''; seen.add(id); out.push({job_id:id,title:title,company:company,location:location,job_url:job_url,flags:flags}); if(out.length>=max)break; } return out;",
+          "use_cdp_eval": true
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract job cards (job_id, title, company, location, job_url, flags)",
+      "timeout_ms": 20000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "company": {
+            "type": "string"
+          },
+          "location": {
+            "type": "string"
+          },
+          "job_url": {
+            "type": "string"
+          },
+          "flags": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s8",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search LinkedIn Jobs read-only and return up to max_jobs result cards.",
+    "parameters": {
+      "keywords": "Job search keywords (e.g. \"learning consultant\"). Required. URL-encoded automatically.",
+      "location": "Location filter (e.g. \"Bengaluru\"). Omit for any location.",
+      "date_posted": "any | past_month | past_week | past_24h. Maps to f_TPR. Default any.",
+      "remote": "any | on_site | remote | hybrid. Maps to f_WT. Default any.",
+      "max_jobs": "Maximum number of job cards to return. Default 25, max 50."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run linkedin jobs-search --param keywords=\"learning consultant\" --param location=\"Bengaluru\"",
+        "description": "Return up to 25 jobs matching \"learning consultant\" in Bengaluru."
+      },
+      {
+        "command": "rzn-browser run linkedin jobs-search --param keywords=\"digital learning\" --param date_posted=\"past_week\" --param remote=\"remote\" --param max_jobs=40",
+        "description": "Up to 40 remote \"digital learning\" jobs posted in the past week."
+      }
+    ],
+    "returns": [
+      "Array of job cards: { job_id, title, company, location, job_url, flags } (flags is the footer line, e.g. \"Promoted / Easy Apply\")."
+    ],
+    "notes": [
+      "Read-only. Never applies, saves, or messages.",
+      "Requires an existing logged-in LinkedIn session.",
+      "date_posted maps to f_TPR (r2592000 / r604800 / r86400); remote maps to f_WT (1 / 2 / 3).",
+      "Use linkedin_job_detail to expand a single job by job_id."
+    ]
+  },
+  "metadata": {
+    "migrated_from": "linkedin/jobs_search.json",
+    "legacy_system_id": "linkedin"
+  }
+}
