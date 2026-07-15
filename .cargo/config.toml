@@ -1,0 +1,4 @@
+[build]
+# Keeps Rust compilation cached even if Cargo is reached from a legacy helper.
+# The Makefile supplies the absolute path and fails early when sccache is absent.
+rustc-wrapper = "sccache"

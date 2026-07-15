@@ -1,3 +1,4 @@
+use crate::run_store::{AppendRun, RunStore};
 use crate::supervisor::{self, SupervisorConfig};
 use anyhow::Result;
 use clap::Args;
@@ -83,6 +84,8 @@ impl BrowserRuntimeMcpBackend for SupervisorBackend {
     ) -> BackendFuture<'a, Result<Value>> {
         Box::pin(async move {
             self.ensure_ready().await?;
+            let started_at = chrono::Utc::now().timestamp_millis();
+            let stored_params = arguments.clone();
             let (method, params) = (
                 "tools/call",
                 json!({
@@ -93,6 +96,32 @@ impl BrowserRuntimeMcpBackend for SupervisorBackend {
             );
             let structured = supervisor::call(self.config.clone(), method, params).await?;
             let run_result = supervisor::run_result_for_tool(tool_name, &structured);
+            if let Ok(typed) =
+                serde_json::from_value::<rzn_contracts::v2::RunResultV2>(run_result.clone())
+            {
+                let base = self
+                    .config
+                    .app_base
+                    .clone()
+                    .unwrap_or_else(rzn_core::runtime_paths::default_app_base_dir);
+                let appended = RunStore::open(base).and_then(|store| {
+                    store
+                        .append(AppendRun {
+                            origin: "mcp",
+                            workflow_hash: None,
+                            started_at,
+                            ended_at: chrono::Utc::now().timestamp_millis(),
+                            params: &stored_params,
+                            result: &typed,
+                        })
+                        .map(|_| ())
+                });
+                if appended.is_ok() {
+                    let _ =
+                        supervisor::call(self.config.clone(), "status.snapshot.refresh", json!({}))
+                            .await;
+                }
+            }
             let is_error =
                 run_result.get("status").and_then(|value| value.as_str()) != Some("succeeded");
             Ok(build_tool_result(

@@ -1,12 +1,20 @@
 # RZN Browser Automation Makefile
 
-.PHONY: help build build-rust build-ext clean codebasezip logs-clear logs-follow logs-show test test-basic test-google test-dom test-dom-units dev setup install reload-ext \
+.PHONY: help build build-rust build-ext clean codebasezip logs-clear logs-follow logs-show test test-basic test-google test-dom test-dom-units ads-smoke dev setup install reload-ext rust \
 	test-ext-e2e-install test-ext-e2e-run test-ext-e2e phase2 phase3 phase3-openai \
 	index sg-find-stream sg-guards context-snippets agent-run agent-validate scope scope-q reducers-index invariants schema-check \
 	plugins-keygen plugins-build-rzn-browser-macos plugins-verify plugins-publish-rzn-browser-local plugins-publish-rzn-browser-cloud plugins-publish-rzn-browser-prod plugins-publish-rzn-browser-all bundle-macos-share \
 	release release-artifacts x-export-threads
 
 RZN_BROWSER ?= rzn-browser
+SCCACHE ?= $(shell command -v sccache 2>/dev/null)
+
+ifeq ($(strip $(SCCACHE)),)
+$(error sccache is required for Rust builds; install it and ensure it is on PATH)
+endif
+
+# Every recipe, including recipes that call helper scripts, inherits this wrapper.
+export RUSTC_WRAPPER := $(SCCACHE)
 
 # Default target
 help:
@@ -16,6 +24,7 @@ help:
 	@echo "  make build         - Build everything (Rust + Extension)"
 	@echo "  make build-rust    - Build only Rust components"
 	@echo "  make build-ext     - Build only browser extension"
+	@echo "  make rust ARGS='check -p <crate>' - Run a focused Cargo command through Make"
 	@echo "  make clean         - Clean all build artifacts"
 	@echo "  make codebasezip   - Create dated lean source ZIP for external code review"
 	@echo ""
@@ -35,6 +44,7 @@ help:
 	@echo "  make test          - Run all Rust tests"
 	@echo "  make test-basic    - Run basic test workflow"
 	@echo "  make test-google   - Run Google search test"
+	@echo "  make ads-smoke     - Ads packs live smoke lane (selector-drift check; exits non-zero on degraded output)"
 	@echo "  make schema-check  - Verify actions schema ↔ generated types"
 	@echo "  make test-ext-e2e  - Build + run extension Playwright e2e"
 	@echo "  make phase3        - Run autonomous (dummy LLM) end-to-end"
@@ -235,6 +245,14 @@ test:
 	@echo "🧪 Running Rust tests..."
 	cargo test
 
+# Focused Rust checks/tests/runs. Example: make rust ARGS='test -p rzn_plan'.
+rust:
+	@if [ -z "$(strip $(ARGS))" ]; then \
+		echo "Usage: make rust ARGS='<cargo subcommand and arguments>'"; \
+		exit 2; \
+	fi
+	@cargo $(ARGS)
+
 # Test basic workflow
 test-basic: ensure-logd
 	RZN_LOG_ENABLED=1 ./scripts/logger.sh run workflows/test-basic.json
@@ -389,6 +407,22 @@ appstore-snapshot:
 		exit 1; \
 	fi
 	@./skills/appstore-search-snapshot/scripts/run.sh --term "$(TERM)" $(if $(COUNTRY),--country "$(COUNTRY)",) $(ARGS)
+
+# Ads packs smoke lane (ADI-T-0004): run each ads pack at a small cap and validate
+# its manifest against schema/ads-manifest-v1.json + a per-source field baseline.
+# Exits non-zero on empty / schema-invalid / degraded output, so a site changing
+# its markup (selector drift) fails loudly. Suggested cadence: daily (scheduled)
+# and before a release. Needs Chrome + the RZN extension (live runs).
+# The offline schema/field checks run with no browser via:
+#   cargo test -p rzn_core --test ads_smoke_test --test ads_manifest_contract
+ads-smoke:
+	@cargo build -q -p rzn_core --bin ads-smoke
+	@fail=0; \
+	echo "🔎 Meta Ad Library (keyword) smoke..."; \
+	rzn-browser run meta_ad_library search --param query=shoes --param country=US --param cap=5 2>&1 | ./target/debug/ads-smoke - || fail=1; \
+	echo "🔎 Google Ads Transparency smoke..."; \
+	rzn-browser run google_ads_transparency search --param advertiser=Nike --param cap=5 2>&1 | ./target/debug/ads-smoke - || fail=1; \
+	exit $$fail
 
 # Reload extension (requires extension ID)
 reload-ext:

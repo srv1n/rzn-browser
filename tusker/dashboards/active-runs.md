@@ -6,6 +6,12 @@
 
 | Task | Runtime state | Owner | Branch | Expires |
 |---|---|---|---|---|
+| [[ADI-T-0001]] | `stale` | srv1n | `main` | `2026-07-11T04:01:28Z` |
+| [[ADI-T-0002]] | `stale` | srv1n | `main` | `2026-07-11T05:16:46Z` |
+| [[ADI-T-0003]] | `stale` | srv1n | `main` | `2026-07-11T03:32:40Z` |
+| [[ADI-T-0004]] | `stale` | srv1n | `main` | `2026-07-11T05:00:09Z` |
+| [[EUI-T-0002]] | `active` | codex-root-20260713 | `main` | `2026-07-13T07:26:17Z` |
+| [[EUI-T-0006]] | `active` | codex-root-20260713 | `main` | `2026-07-13T07:26:16Z` |
 | [[MBR-T-0019]] | `stale` | agent:codex | `main` | `2026-05-29T21:01:43Z` |
 | [[MBR-T-0020]] | `stale` | agent:sarav | `main` | `2026-05-29T21:11:25Z` |
 | [[MBR-T-0021]] | `stale` | agent:sarav | `main` | `2026-05-29T21:17:05Z` |

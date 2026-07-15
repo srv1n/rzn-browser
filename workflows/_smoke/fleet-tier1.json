@@ -1,0 +1,48 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "_smoke/fleet-tier1",
+  "name": "Fleet transport smoke",
+  "version": "1.0.0",
+  "system": "_smoke",
+  "capability": "fleet.transport_smoke",
+  "summary": "A single local wait used to exercise the fleet transport path.",
+  "params": {
+    "properties": {},
+    "additional_params": false
+  },
+  "side_effects": [],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 5000
+  },
+  "steps": [
+    {
+      "id": "wait",
+      "name": "Wait briefly without browser side effects",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {}
+      },
+      "timeout_ms": 10
+    }
+  ],
+  "result": {
+    "include_debug": false,
+    "artifact_policy": {
+      "prefer_downloads": false
+    }
+  },
+  "help": {
+    "summary": "Exercise fleet manifest delivery and the shared runner without browser side effects.",
+    "parameters": {},
+    "examples": [],
+    "returns": [
+      "No output. In no-browser Tier 1 the required session-open fails before this step, producing the expected failed result."
+    ],
+    "notes": [
+      "This fixture is only for scripts/fleet_smoke.sh."
+    ]
+  }
+}

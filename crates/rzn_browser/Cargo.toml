@@ -30,10 +30,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "std"] }
 dirs = "5.0"
 dotenvy = "0.15"
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 # Dependencies for Titanium CLI
 anyhow = "1.0"
-reqwest = { version = "0.11", features = ["json"] }
+async-trait = "0.1"
+reqwest = { version = "0.11", features = ["json", "stream"] }
 colored = "2.0"
 comfy-table = "7.2.2"
 axum = { version = "0.7", features = ["json", "ws", "macros"] }
@@ -52,3 +54,7 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json", "stream"] }

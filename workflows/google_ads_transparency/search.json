@@ -1,0 +1,294 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "google_ads_transparency/search",
+  "name": "Google Ads Transparency Center: Advertiser Search",
+  "version": "1.0.0",
+  "system": "google_ads_transparency",
+  "capability": "google_ads_transparency.search",
+  "summary": "Search the Google Ads Transparency Center by advertiser name and enumerate that advertiser's ads (creative id, format, first/last shown dates, preview) into a source-discriminated manifest.",
+  "description": "Drives the real Ads Transparency Center UI (homepage search box -> advertiser typeahead -> click suggestion) to resolve an advertiser, then reads that advertiser's creatives from the site's own SearchService.SearchCreatives RPC via a same-origin fetch (page xsrf token, region-scoped). Paginates by the response cursor up to a configurable cap. Pure read. Emits a manifest validating against schema/ads-manifest-v1.json with source=google_ads_transparency.",
+  "params": {
+    "properties": {
+      "advertiser": {
+        "kind": "string",
+        "required": true,
+        "description": "Advertiser name to search for, e.g. 'Nike' or 'Booking.com'. Typed into the real search box; the top advertiser suggestion is selected."
+      },
+      "region": {
+        "kind": "string",
+        "required": false,
+        "default": "US",
+        "description": "Region to scope ads to. v1 supports 'US' (returns an error naming supported regions otherwise). Recorded in the manifest query."
+      },
+      "cap": {
+        "kind": "integer",
+        "required": false,
+        "default": 30,
+        "min": 1,
+        "max": 300,
+        "description": "Maximum ads to collect. Pagination follows the RPC cursor and stops cleanly at the cap; truncated=true when more were available."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "scopes": [
+        "adstransparency.google.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "scopes": [
+        "adstransparency.google.com"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "scopes": [
+        "adstransparency.google.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "extension",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://adstransparency.google.com/?region={region}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open Ads Transparency Center home",
+      "timeout_ms": 45000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "input.input-area"
+        }
+      },
+      "name": "Wait for search box",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s2b",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the search app hydrate",
+      "timeout_ms": 1800
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{advertiser}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input.input-area"
+        }
+      },
+      "name": "Type advertiser name"
+    },
+    {
+      "id": "s4b",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Debounce before suggestions",
+      "timeout_ms": 1200
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "material-select-item.item"
+        }
+      },
+      "name": "Wait for search suggestions",
+      "timeout_ms": 35000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "material-select-item.item:has([class*=\"advertiser-suggestion\"])"
+        }
+      },
+      "name": "Select top advertiser suggestion"
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "a[href*='/creative/']"
+        }
+      },
+      "name": "Wait for advertiser creatives to load",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Settle",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "return_value": true,
+          "script": "const P = window.__rzn_params || {};\nconst region = String(P.region || 'US').toUpperCase();\nlet cap = parseInt(P.cap, 10);\nif (!Number.isFinite(cap) || cap < 1) cap = 30;\nif (cap > 300) cap = 300;\nconst advName = String(P.advertiser || '');\nconst REGION_CODES = { US: { a: 2840, b: 2356 } };\n\nlet advId = (location.pathname.match(/AR\\d+/) || [])[0] || '';\nif (!advId) {\n  const a = document.querySelector('a[href*=\"/creative/\"]');\n  if (a) { const mm = (a.getAttribute('href') || '').match(/AR\\d+/); if (mm) advId = mm[0]; }\n}\nconst html = document.documentElement.innerHTML;\nconst tok = ((html.match(/xsrfToken:\\s*'([^']+)'/) || [])[1]) || '';\n\nconst base = { source: 'google_ads_transparency', query: { advertiser: advName || null, advertiser_id: advId || null, region: region }, cap: cap, count: 0, truncated: false, advertiser_name: advName || null, advertiser_id: advId || null, ads: [] };\nif (!advId) { base.error = 'advertiser_not_resolved'; return base; }\nif (!tok) { base.error = 'xsrf_token_missing'; return base; }\nif (!REGION_CODES[region]) { base.error = 'region_not_supported:' + region + ' (supported: ' + Object.keys(REGION_CODES).join(',') + ')'; return base; }\n\nconst rc = REGION_CODES[region];\nconst url = '/anji/_/rpc/SearchService/SearchCreatives?authuser=0';\nconst H = { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8', 'x-framework-xsrf-token': tok };\nconst pageSize = Math.min(cap, 40);\nconst call = async (cursor) => {\n  const req = { '2': pageSize, '3': { '8': [rc.a], '12': { '1': '', '2': true }, '13': { '1': [advId] } }, '7': { '1': 1, '2': pageSize, '3': rc.b } };\n  if (cursor) req['4'] = cursor;\n  const r = await fetch(url, { method: 'POST', headers: H, body: 'f.req=' + encodeURIComponent(JSON.stringify(req)), credentials: 'include' });\n  const txt = await r.text();\n  let j = null; try { j = JSON.parse(txt); } catch (e) {}\n  return { status: r.status, j: j };\n};\nconst toDate = (sec) => { const n = parseInt(sec, 10); if (!Number.isFinite(n) || n <= 0) return null; try { return new Date(n * 1000).toISOString().slice(0, 10); } catch (e) { return null; } };\nconst mapCreative = (c) => {\n  const id = c['2'] || null;\n  const content = JSON.stringify(c['3'] || '');\n  const urls = content.match(/https?:\\/\\/[^\\s\"'\\\\)]+/g) || [];\n  const preview = urls.find(u => /simgad|googlevideo|ytimg|tpc\\.googlesyndication|lh3\\.googleusercontent/.test(u)) || urls[0] || null;\n  let media = 'unknown';\n  if (/<video|<iframe|youtube|ytimg|googlevideo|\\.mp4/i.test(content)) media = 'video';\n  else if (/<img|simgad/i.test(content)) media = 'image';\n  else { const stripped = content.replace(/<[^>]+>/g, ' ').replace(/[\\\\{}\\[\\]\":,]/g, ' ').replace(/\\s+/g, ' ').trim(); media = stripped.length > 1 ? 'text' : 'unknown'; }\n  let copy = null;\n  if (media === 'text') { copy = content.replace(/<[^>]+>/g, ' ').replace(/[{}\\[\\]\"\\\\]/g, ' ').replace(/\\s+/g, ' ').trim().slice(0, 2000) || null; }\n  return { id: id, advertiser_id: c['1'] || advId, advertiser_name: c['12'] || advName || null, media_type: media, format_code: (c['4'] != null ? c['4'] : null), first_shown: toDate(c['6'] && c['6']['1']), last_shown: toDate(c['7'] && c['7']['1']), copy: copy, url: id ? ('https://adstransparency.google.com/advertiser/' + advId + '/creative/' + id + '?region=' + region) : null, preview_url: preview };\n};\n\nconst ads = [];\nlet cursor = null, hitCap = false, guard = 0, overshoot = false, totalAvail = null;\nwhile (guard < 60) {\n  guard++;\n  const res = await call(cursor);\n  if (res.status !== 200 || !res.j || !Array.isArray(res.j['1'])) break;\n  if (res.j['5'] != null) totalAvail = res.j['5'];\n  const batch = res.j['1'];\n  for (const c of batch) ads.push(mapCreative(c));\n  cursor = res.j['2'] || null;\n  if (ads.length >= cap) { hitCap = true; if (ads.length > cap) overshoot = true; break; }\n  if (!cursor || batch.length === 0) break;\n}\nconst truncated = hitCap && (!!cursor || overshoot);\nif (ads.length > cap) ads.length = cap;\n\nreturn { source: 'google_ads_transparency', query: { advertiser: advName || null, advertiser_id: advId, region: region }, cap: cap, count: ads.length, truncated: truncated, total_available: (totalAvail != null ? Number(totalAvail) : null), advertiser_name: (ads[0] && ads[0].advertiser_name) || advName || null, advertiser_id: advId, ads: ads };"
+        },
+        "side_effects": [
+          "external_read"
+        ]
+      },
+      "name": "Enumerate ads via SearchCreatives RPC",
+      "timeout_ms": 45000
+    }
+  ],
+  "result": {
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "required": [
+        "source",
+        "query",
+        "count",
+        "ads"
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "query": {
+          "type": "object"
+        },
+        "cap": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "count": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "ads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s9",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search Google Ads Transparency Center by advertiser and list that advertiser's ads.",
+    "parameters": {
+      "advertiser": "Advertiser name to search (drives the real typeahead).",
+      "region": "Region scope; v1 supports US (default).",
+      "cap": "Max ads to collect (default 30, hard cap 300)."
+    },
+    "examples": [
+      {
+        "description": "List up to 30 Nike ads in the US",
+        "command": "rzn-browser run google_ads_transparency search --param advertiser=\"Nike\""
+      },
+      {
+        "description": "Small page to verify the cap",
+        "command": "rzn-browser run google_ads_transparency search --param advertiser=\"Booking.com\" --param cap=10"
+      }
+    ],
+    "returns": [
+      "Object: { source, query{advertiser,advertiser_id,region}, cap, count, truncated, total_available, advertiser_name, advertiser_id, ads:[{ id, advertiser_id, advertiser_name, media_type, format_code, first_shown, last_shown, copy, url, preview_url }] }. On failure to resolve, count=0 and an 'error' string is set."
+    ],
+    "notes": [
+      "Drives the homepage search box and clicks the top advertiser suggestion (real UI), then reads the site's own SearchService.SearchCreatives RPC via same-origin fetch with the page xsrf token.",
+      "media_type is derived from the creative content (image/video/text); format_code is the raw source code.",
+      "first_shown/last_shown are ISO dates (yyyy-mm-dd) converted from the RPC's unix timestamps.",
+      "No CDP; all JS runs in the page main world."
+    ]
+  }
+}

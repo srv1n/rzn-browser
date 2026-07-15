@@ -3,10 +3,10 @@ set -euo pipefail
 
 TARGET="${1:-all}"
 case "$TARGET" in
-    all|chrome|edge|chromium) ;;
+    all|chrome|edge|chromium|firefox) ;;
     *)
         echo "Unsupported extension build target: ${TARGET}" >&2
-        echo "Expected one of: all, chrome, edge, chromium" >&2
+        echo "Expected one of: all, chrome, edge, chromium, firefox" >&2
         exit 2
         ;;
 esac
@@ -22,7 +22,7 @@ echo "Using RZN_BUILD_SIGNATURE=${RZN_BUILD_SIGNATURE}"
 
 TARGETS=("$TARGET")
 if [ "$TARGET" = "all" ]; then
-    TARGETS=(chrome edge chromium)
+    TARGETS=(chrome edge chromium firefox)
     rm -rf "${SCRIPT_DIR}/dist"
     mkdir -p "${SCRIPT_DIR}/dist"
 fi
@@ -53,6 +53,9 @@ build_target() {
 
     echo "Building popup..."
     bun x vite build --config vite.config.popup.ts
+
+    echo "Building dashboard..."
+    bun x vite build --config vite.config.dashboard.ts
 
     echo "Renaming built files..."
     if [ -f "${build_dir}/background.iife.js" ]; then

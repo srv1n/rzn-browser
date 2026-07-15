@@ -905,6 +905,18 @@ pub struct RunResultV2 {
     pub debug: Option<DebugBundleV1>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<RunErrorV1>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure_summary: Option<FailureSummaryV1>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FailureSummaryV1 {
+    pub error_class: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failing_step_index: Option<usize>,
+    pub fingerprint: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1244,5 +1256,22 @@ mod tests {
         ] {
             assert!(TabRefV1::parse(value).is_err(), "{value} should fail");
         }
+    }
+
+    #[test]
+    fn run_result_failure_summary_is_additive() {
+        let old = serde_json::json!({"version":RUN_RESULT_VERSION,"run_id":"r","workflow_id":"w","status":"failed"});
+        let parsed: RunResultV2 = serde_json::from_value(old).expect("old result remains valid");
+        assert!(parsed.failure_summary.is_none());
+        let mut with = parsed;
+        with.failure_summary = Some(FailureSummaryV1 {
+            error_class: "timeout".into(),
+            failing_step_index: Some(2),
+            fingerprint: "abc".into(),
+            message: "timed out".into(),
+        });
+        let round: RunResultV2 =
+            serde_json::from_value(serde_json::to_value(with).unwrap()).unwrap();
+        assert_eq!(round.failure_summary.unwrap().error_class, "timeout");
     }
 }

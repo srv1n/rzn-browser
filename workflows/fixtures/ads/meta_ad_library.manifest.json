@@ -1,0 +1,52 @@
+{
+  "ads": [
+    {
+      "advertiser_id": "15087023444",
+      "advertiser_name": "Nike",
+      "copy": "Celebra tu cumpleaños con Nike y obtén acceso a productos exclusivos, MSI, envío y devoluciones gratis el resto del año. ITUNES.APPLE.COM Nike Download Nike: Shoes, Apparel, Stories by Nike, Inc on the App Store. See screenshots, ratings and reviews, user tips, and more apps like Nike: Shoes, Apparel,… Install Now",
+      "first_shown": "2026-03-16",
+      "id": "1869276447125570",
+      "last_shown": null,
+      "media_type": "image",
+      "preview_url": "https://scontent.fblr1-8.fna.fbcdn.net/v/t39.35426-6/653698415_2061146204431020_6839713762725782143_n.jpg?stp=dst-jpg_s600x600_tt6&_nc_cat=110&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=c53f8f&_nc_ohc=7QAV2Oyok9kQ7kNvwE9Khh7&_nc_oc=Adqy7wcbf_1kRxAc4B-pKeVAnFezIW1V-NVmgUzEUM0JJtCo6ypNhQtX6VTGbwo1m54&_nc_zt=14&_nc_ht=scontent.fblr1-8.fna&_nc_gid=l6edtAjfuq3a794sF9_JaQ&_nc_ss=7b289&oh=00_AQBh4wlkQ--hnxMacikEPLDEdnwt180XPdkbVy7v-uN3-g&oe=6A576A70",
+      "started_at": "2026-03-16",
+      "url": "https://www.facebook.com/ads/library/?id=1869276447125570"
+    },
+    {
+      "advertiser_id": "15087023444",
+      "advertiser_name": "Nike",
+      "copy": "Celebra tu cumpleaños con Nike y obtén acceso a productos exclusivos, MSI, envío y devoluciones gratis el resto del año. PLAY.GOOGLE.COM Nike Unlock the latest from Nike & Jordan. Shop sneakers & apparel for all athletes. Shop Now",
+      "first_shown": "2026-03-16",
+      "id": "1249043200627555",
+      "last_shown": null,
+      "media_type": "image",
+      "preview_url": "https://scontent.fblr1-7.fna.fbcdn.net/v/t39.35426-6/651901665_1357716429494973_8601566360271931614_n.jpg?stp=dst-jpg_s600x600_tt6&_nc_cat=101&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=c53f8f&_nc_ohc=PjTzJsvXg5EQ7kNvwGIgBdr&_nc_oc=AdrKs_Mddfbo4IKV8Rt4F2iYdGar16SGSF9zAiGoEIqUn6L7ggN7fEHcqWm4BysH8PA&_nc_zt=14&_nc_ht=scontent.fblr1-7.fna&_nc_gid=l6edtAjfuq3a794sF9_JaQ&_nc_ss=7b289&oh=00_AQCtGdAgzLpSfihvSxxy8SVPpUF5R_Kl1Ph_WmG-aaHQ9Q&oe=6A579076",
+      "started_at": "2026-03-16",
+      "url": "https://www.facebook.com/ads/library/?id=1249043200627555"
+    },
+    {
+      "advertiser_id": "15087023444",
+      "advertiser_name": "Nike",
+      "copy": "Get the gear that goes hard on and off the field. NIKE.COM Nike Air Monarch IV Shop Now",
+      "first_shown": "2025-06-19",
+      "id": "1016451784037642",
+      "last_shown": null,
+      "media_type": "image",
+      "preview_url": "https://scontent.fblr1-9.fna.fbcdn.net/v/t39.35426-6/509290535_730168202720612_5631758797674183318_n.jpg?stp=dst-jpg_s600x600_tt6&_nc_cat=109&_nc_map=urlgen_bucketless&ccb=1-7&_nc_sid=c53f8f&_nc_ohc=LFv2BbstHqkQ7kNvwHdLVz2&_nc_oc=Ado-6qYWDVVoeAT4ozaUhCYp23u90UCYMFMB_0AA3f0AHnU5g0-yCL7dhRyazD0EQdg&_nc_zt=14&_nc_ht=scontent.fblr1-9.fna&_nc_gid=l6edtAjfuq3a794sF9_JaQ&_nc_ss=7b289&oh=00_AQBl1pbNHuU-y-4c2FV5BH2x_ZX-NkEFkwTwVILXmJZ6BA&oe=6A575B81",
+      "started_at": "2025-06-19",
+      "url": "https://www.facebook.com/ads/library/?id=1016451784037642"
+    }
+  ],
+  "advertiser_id": "15087023444",
+  "advertiser_name": "Nike",
+  "cap": 3,
+  "count": 3,
+  "mode": "advertiser",
+  "query": {
+    "advertiser": "Nike",
+    "advertiser_id": "15087023444",
+    "region": "US"
+  },
+  "source": "meta_ad_library",
+  "truncated": true
+}

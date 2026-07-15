@@ -20,7 +20,8 @@ use rzn_core::runtime_paths::{
 use rzn_core::secure_files::{set_secret_file_permissions, write_secret_file};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -31,7 +32,14 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
+use crate::run_store::{RunListFilter, RunStore};
+use crate::settings::SettingsStore;
 use crate::supervisor_cloud::{self, CloudDispatchRequest, SupervisorCloudActor};
+use crate::supervisor_control::SupervisorControl;
+use crate::workflow_runner::{
+    execute_workflow, load_workflow_for_run, RunEventSink, RunOptions, SessionSpec, SnapshotMode,
+    StepTransport, TransportError,
+};
 
 pub(crate) const RZN_LOCAL_PROTOCOL_VERSION: &str = "rzn.local.v1";
 const SUPERVISOR_LOCK_FILENAME: &str = "rzn-supervisor.lock";
@@ -146,7 +154,9 @@ pub(crate) struct SupervisorClientStatus {
     pub result: Value,
 }
 
-struct SupervisorState {
+// FLA-T-0003: `pub(crate)` so the in-process fleet loop's `StepTransport` can
+// drive the same dispatch funnel the CLI/cloud paths use. Fields stay private.
+pub(crate) struct SupervisorState {
     config: SupervisorConfig,
     paths: SupervisorPaths,
     supervisor_boot_id: String,
@@ -157,6 +167,9 @@ struct SupervisorState {
     last_registered_bridge_id: Mutex<Option<String>>,
     cloud_actor: Option<SupervisorCloudActor>,
     sessions: Mutex<HashMap<String, BrowserSessionRecord>>,
+    run_store: RunStore,
+    control: SupervisorControl,
+    settings: SettingsStore,
     shutdown: AtomicBool,
 }
 
@@ -583,6 +596,50 @@ fn inherit_browser_target_params(source: &Value, target: &mut Value) {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+struct BrowserSessionLifecycle {
+    origin: Option<String>,
+    run_id: Option<String>,
+    job_id: Option<String>,
+}
+
+impl BrowserSessionLifecycle {
+    fn from_session_open(params: &Value) -> Self {
+        let value = |key: &str| {
+            params
+                .get(key)
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        };
+        Self {
+            origin: value("origin"),
+            run_id: value("run_id"),
+            job_id: value("job_id"),
+        }
+    }
+
+    fn is_fleet(&self) -> bool {
+        self.origin.as_deref() == Some("fleet")
+    }
+
+    fn add_to(&self, params: &mut Value) {
+        let Some(object) = params.as_object_mut() else {
+            return;
+        };
+        if let Some(origin) = &self.origin {
+            object.insert("origin".to_string(), Value::String(origin.clone()));
+        }
+        if let Some(run_id) = &self.run_id {
+            object.insert("run_id".to_string(), Value::String(run_id.clone()));
+        }
+        if let Some(job_id) = &self.job_id {
+            object.insert("job_id".to_string(), Value::String(job_id.clone()));
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct BrowserSessionRecord {
     session_id: String,
     bridge_id: String,
@@ -591,6 +648,7 @@ struct BrowserSessionRecord {
     browser: Option<String>,
     caller_origin: Option<String>,
     caller_extension_id: Option<String>,
+    lifecycle: BrowserSessionLifecycle,
     created_at_ms: u64,
     last_activity_at_ms: u64,
     disconnected_at_ms: Option<u64>,
@@ -600,7 +658,11 @@ struct BrowserSessionRecord {
 }
 
 impl BrowserSessionRecord {
-    fn from_resolved(session_id: String, resolved: &ResolvedBridgeTarget) -> Self {
+    fn from_resolved(
+        session_id: String,
+        resolved: &ResolvedBridgeTarget,
+        lifecycle: BrowserSessionLifecycle,
+    ) -> Self {
         let now = now_ms();
         Self {
             session_id,
@@ -610,6 +672,7 @@ impl BrowserSessionRecord {
             browser: resolved.bridge.metadata.extension_target.clone(),
             caller_origin: resolved.bridge.metadata.caller_origin.clone(),
             caller_extension_id: resolved.bridge.metadata.caller_extension_id.clone(),
+            lifecycle,
             created_at_ms: now,
             last_activity_at_ms: now,
             disconnected_at_ms: None,
@@ -1207,8 +1270,11 @@ impl NativeBridgeHealth {
 }
 
 impl SupervisorState {
-    fn new(config: SupervisorConfig) -> Self {
+    pub(crate) fn new(config: SupervisorConfig) -> Self {
         let paths = SupervisorPaths::for_config(&config);
+        let run_store = RunStore::open(&paths.app_base).expect("create supervisor run store");
+        let control = SupervisorControl::open(&paths.app_base);
+        let settings = SettingsStore::open(paths.app_base.clone());
         let supervisor_boot_id = format!("supervisor-{}", Uuid::new_v4());
         Self {
             config,
@@ -1221,6 +1287,9 @@ impl SupervisorState {
             last_registered_bridge_id: Mutex::new(None),
             cloud_actor: None,
             sessions: Mutex::new(HashMap::new()),
+            run_store,
+            control,
+            settings,
             shutdown: AtomicBool::new(false),
         }
     }
@@ -1237,6 +1306,151 @@ impl SupervisorState {
 
     async fn has_native_bridge(&self) -> bool {
         self.native_bridge_count().await > 0
+    }
+
+    async fn has_extension_connection(&self) -> bool {
+        self.native_bridges.lock().await.values().any(|bridge| {
+            bridge.metadata.extension_reported_id.is_some()
+                || bridge.metadata.caller_extension_id.is_some()
+        })
+    }
+
+    pub(crate) async fn emit_fleet_run_notice(
+        &self,
+        job_id: &str,
+        workflow_id: &str,
+        phase: &str,
+        error_class: Option<&str>,
+    ) {
+        let settings = self.settings.get();
+        if !fleet_notice_enabled(&settings, phase) {
+            return;
+        }
+        if !self.has_native_bridge().await {
+            return;
+        }
+        let payload = fleet_run_notice_payload(job_id, workflow_id, phase, error_class);
+        let _ = self
+            .try_call_native_bridge_raw("fleet_run_notice", payload, None, Some(500), None)
+            .await;
+    }
+    pub(crate) fn automation_paused(&self) -> bool {
+        self.control.paused()
+    }
+
+    pub(crate) fn append_run_and_refresh(
+        &self,
+        run: crate::run_store::AppendRun<'_>,
+    ) -> Result<()> {
+        self.run_store.append(run)?;
+        self.control.refresh_snapshot_cache(&self.run_store)
+    }
+
+    fn resolve_local_workflow(&self, workflow_id: &str) -> Result<PathBuf> {
+        let direct = PathBuf::from(workflow_id);
+        if direct.is_file() {
+            return Ok(direct);
+        }
+        let cached = self.paths.app_base.join("workflow_cache").join(workflow_id);
+        if let Ok(entries) = std::fs::read_dir(&cached) {
+            if let Some(path) = entries
+                .filter_map(Result::ok)
+                .map(|e| e.path())
+                .filter(|p| p.extension().and_then(|x| x.to_str()) == Some("json"))
+                .max_by_key(|p| p.metadata().and_then(|m| m.modified()).ok())
+            {
+                return Ok(path);
+            }
+        }
+        for candidate in [
+            PathBuf::from("workflows")
+                .join(workflow_id)
+                .join("workflow.json"),
+            PathBuf::from("workflows")
+                .join(workflow_id)
+                .join("manifest.json"),
+            PathBuf::from("workflows").join(format!("{workflow_id}.json")),
+        ] {
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+        Err(anyhow!("workflow not found: {workflow_id}"))
+    }
+
+    async fn start_local_run(&self, workflow_id: &str, raw_params: Value) -> Result<Value> {
+        if self.control.paused() {
+            return Err(anyhow!("automation is paused"));
+        }
+        if self.control.now_running() != Value::Null {
+            return Err(anyhow!("a run is already in progress"));
+        }
+        let path = self.resolve_local_workflow(workflow_id)?;
+        let params: HashMap<String, String> = raw_params
+            .as_object()
+            .into_iter()
+            .flatten()
+            .map(|(k, v)| {
+                (
+                    k.clone(),
+                    v.as_str()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| v.to_string()),
+                )
+            })
+            .collect();
+        let workflow = load_workflow_for_run(&path.to_string_lossy(), &params)?;
+        let resolved_id = workflow
+            .runtime_context
+            .as_ref()
+            .map(|x| x.workflow_id.clone())
+            .unwrap_or_else(|| workflow_id.to_string());
+        let total = workflow.steps.len();
+        let run_id = format!("local-{}", Uuid::new_v4());
+        let started_at = chrono::Utc::now().timestamp_millis();
+        self.control.begin_run(
+            run_id.clone(),
+            resolved_id.clone(),
+            "local_cli".into(),
+            total,
+        );
+        let transport = ControlTransport { state: self };
+        let sink = ControlSink {
+            control: &self.control,
+        };
+        let opts = RunOptions {
+            run_id: run_id.clone(),
+            workflow_hash: workflow_file_hash(&path).ok(),
+            params,
+            deadline: None,
+            session: SessionSpec::default(),
+            snapshot_mode: SnapshotMode::OnError,
+            workflow_path: path.to_string_lossy().into_owned(),
+        };
+        let mut result = execute_workflow(&transport, &sink, workflow, opts).await;
+        if result.status != rzn_contracts::v2::RunStatusV2::Succeeded
+            && result.failure_summary.is_none()
+        {
+            let error = result.error.as_ref();
+            result.failure_summary = Some(crate::workflow_health::failure_summary(
+                &workflow_file_hash(&path).unwrap_or_default(),
+                None,
+                error.map_or("unknown", |e| e.code.as_str()),
+                error.map_or("workflow failed", |e| e.message.as_str()),
+            ));
+        }
+        self.control.end_run();
+        let hash = workflow_file_hash(&path).ok();
+        self.run_store.append(crate::run_store::AppendRun {
+            origin: "local_cli",
+            workflow_hash: hash.as_deref(),
+            started_at,
+            ended_at: chrono::Utc::now().timestamp_millis(),
+            params: &raw_params,
+            result: &result,
+        })?;
+        self.control.refresh_snapshot_cache(&self.run_store)?;
+        Ok(json!({"run_id":run_id}))
     }
 
     async fn current_native_bridge(&self) -> Option<NativeHostBridge> {
@@ -1653,7 +1867,8 @@ impl SupervisorState {
         }
     }
 
-    async fn dispatch(&self, method: &str, params: Value) -> Result<Value> {
+    // FLA-T-0003: `pub(crate)` so the fleet loop's in-process transport can call it.
+    pub(crate) async fn dispatch(&self, method: &str, params: Value) -> Result<Value> {
         match method {
             "runtime.hello" | "runtime.status" => Ok(self.runtime_status().await),
             "browser.targets" | "runtime.bridges" => Ok(self.browser_targets().await),
@@ -1662,6 +1877,144 @@ impl SupervisorState {
             "cloud.status" => Ok(self.cloud_status().await),
             "cloud.set_config" => self.cloud_set_config(params).await,
             "cloud.clear_config" => self.cloud_clear_config().await,
+            // FLA-T-0003: fleet poll-loop local RPCs (read-only status + disable).
+            "fleet.status" => Ok(crate::supervisor_fleet::fleet_status_rpc()),
+            "fleet.disable" => Ok(crate::supervisor_fleet::fleet_disable_rpc()),
+            "runs.list" => {
+                let filter: RunListFilter =
+                    serde_json::from_value(params).context("invalid runs.list filters")?;
+                let (total, runs) = self.run_store.list(filter)?;
+                Ok(json!({ "ok": true, "total": total, "runs": runs }))
+            }
+            "runs.get" => {
+                let run_id = params
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("runs.get missing params.run_id"))?;
+                match self.run_store.get(run_id)? {
+                    Some((record, result)) => {
+                        Ok(json!({ "ok": true, "record": record, "result": result }))
+                    }
+                    None => Ok(json!({ "ok": false, "error": "run_not_found", "run_id": run_id })),
+                }
+            }
+            "workflows.health" => {
+                let (_, runs) = self.run_store.list(RunListFilter {
+                    limit: 200,
+                    ..Default::default()
+                })?;
+                Ok(json!({ "workflows": crate::workflow_health::snapshots(runs) }))
+            }
+            "automation.pause" => self.control.pause(
+                params
+                    .get("cancel_current")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            ),
+            "automation.resume" => self.control.resume(),
+            "runs.cancel" => Ok(self.control.cancel()),
+            "runs.start" | "runs.replay" if self.control.paused() => {
+                Err(anyhow!("automation is paused"))
+            }
+            "runs.start" => {
+                let id = params
+                    .get("workflow_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("missing workflow_id"))?
+                    .to_string();
+                self.start_local_run(
+                    &id,
+                    params.get("params").cloned().unwrap_or_else(|| json!({})),
+                )
+                .await
+            }
+            "runs.replay" => {
+                let id = params
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("missing run_id"))?;
+                let (record, _) = self
+                    .run_store
+                    .get(id)?
+                    .ok_or_else(|| anyhow!("run not found: {id}"))?;
+                let replay_params = self
+                    .run_store
+                    .read_params(id)?
+                    .ok_or_else(|| anyhow!("stored params not found: {id}"))?;
+                self.start_local_run(&record.workflow_id, replay_params)
+                    .await
+            }
+            "native_host.rpc" => {
+                let method = params
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("missing native-host RPC method"))?;
+                if !native_host_rpc_allowed(method) {
+                    return Err(anyhow!("native-host RPC method not allowed: {method}"));
+                }
+                Box::pin(self.dispatch(
+                    method,
+                    params.get("params").cloned().unwrap_or_else(|| json!({})),
+                ))
+                .await
+            }
+            "runs.get_failure_context" => {
+                let id = params
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("missing run_id"))?;
+                crate::supervisor_control::failure_context(&self.paths.app_base, id)
+            }
+            "status.snapshot" => crate::supervisor_control::status_snapshot(
+                &self.run_store,
+                &self.control,
+                self.has_native_bridge().await,
+                self.has_extension_connection().await,
+                crate::supervisor_fleet::fleet_status_rpc()
+                    .get("fleet")
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            ),
+            "status.snapshot.refresh" => {
+                self.control.refresh_snapshot_cache(&self.run_store)?;
+                Ok(json!({"ok": true}))
+            }
+            "logs.tail" => Ok(
+                json!({"entries":self.control.logs.tail(params.get("limit").and_then(Value::as_u64).unwrap_or(100) as usize,params.get("level").and_then(Value::as_str),params.get("component").and_then(Value::as_str),params.get("run_id").and_then(Value::as_str))}),
+            ),
+            "fleet.enroll" => {
+                let server = params
+                    .get("server_url")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("missing server_url"))?;
+                let code = params
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("missing code"))?;
+                crate::fleet_cli::enroll_from_rpc(server, code).await
+            }
+            "fleet.unenroll" => crate::fleet_cli::unenroll_from_rpc(),
+            "diagnostics.export" => crate::supervisor_control::export_diagnostics(
+                &self.paths.app_base,
+                &self.run_store,
+                &self.control.logs,
+            ),
+            "settings.get" => Ok(serde_json::to_value(self.settings.get())?),
+            "settings.set" => {
+                let patch = params.get("patch").cloned().unwrap_or(params);
+                Ok(serde_json::to_value(self.settings.patch(patch)?)?)
+            }
+            "workflows.list" => {
+                let (_, runs) = self.run_store.list(RunListFilter {
+                    limit: 200,
+                    ..Default::default()
+                })?;
+                let health = crate::workflow_health::snapshots(runs);
+                let local = local_workflow_list_entries()?;
+                let cached =
+                    cached_workflow_list_entries(&self.paths.app_base.join("workflow_cache"))?;
+                Ok(json!({"workflows": merge_workflow_list(local, cached, health)}))
+            }
             "runtime.shutdown" => {
                 self.shutdown.store(true, Ordering::SeqCst);
                 Ok(json!({ "ok": true, "shutdown": true }))
@@ -2488,6 +2841,7 @@ impl SupervisorState {
 
     async fn try_session_open(&self, params: Value) -> Result<Option<Value>> {
         let mut params = params;
+        let lifecycle = BrowserSessionLifecycle::from_session_open(&params);
         let target = normalized_bridge_target_from_params(&mut params)?;
         let Some(resolved_target) = self.resolve_native_bridge_target(&target, true).await? else {
             return Ok(None);
@@ -2496,7 +2850,7 @@ impl SupervisorState {
 
         let session_id = Uuid::new_v4().to_string();
         let session_record =
-            BrowserSessionRecord::from_resolved(session_id.clone(), &resolved_target);
+            BrowserSessionRecord::from_resolved(session_id.clone(), &resolved_target, lifecycle);
         self.sessions
             .lock()
             .await
@@ -2512,7 +2866,7 @@ impl SupervisorState {
                 "session_id": session_id,
                 "step": { "type": "navigate_to_url", "url": url }
             });
-            if let Some(result) = self.try_call_native_bridge("execute_step", payload).await? {
+            if let Some(result) = self.try_execute_step(payload).await? {
                 let response = json!({
                     "ok": true,
                     "session_id": session_id,
@@ -2545,7 +2899,7 @@ impl SupervisorState {
         )))
     }
 
-    async fn try_session_close(&self, params: Value) -> Result<Option<Value>> {
+    async fn try_session_close(&self, mut params: Value) -> Result<Option<Value>> {
         let session_id = params
             .get("session_id")
             .and_then(|value| value.as_str())
@@ -2559,7 +2913,20 @@ impl SupervisorState {
             )));
         }
 
-        // Best-effort: ask the extension to close the dedicated workflow tab so
+        let lifecycle = self
+            .sessions
+            .lock()
+            .await
+            .get(&session_id)
+            .map(|session| session.lifecycle.clone());
+        if let Some(lifecycle) = lifecycle.filter(BrowserSessionLifecycle::is_fleet) {
+            lifecycle.add_to(&mut params);
+            let failed = params.get("outcome").and_then(Value::as_str) == Some("failed");
+            params["keep_window"] =
+                Value::Bool(failed && self.settings.get().fleet_keep_window_on_failure);
+        }
+
+        // Best-effort: ask the extension to close the dedicated tab/window so
         // each `rzn-browser run` invocation cleans up after itself. Failures
         // here (no extension connected, tab already gone) are non-fatal.
         let extension_result = self
@@ -2610,7 +2977,18 @@ impl SupervisorState {
         Ok(Some(with_run_result("browser.poll_events", response, true)))
     }
 
-    async fn try_execute_step(&self, params: Value) -> Result<Option<Value>> {
+    async fn try_execute_step(&self, mut params: Value) -> Result<Option<Value>> {
+        if let Some(session_id) = params.get("session_id").and_then(Value::as_str) {
+            if let Some(lifecycle) = self
+                .sessions
+                .lock()
+                .await
+                .get(session_id)
+                .map(|session| session.lifecycle.clone())
+            {
+                lifecycle.add_to(&mut params);
+            }
+        }
         match self.try_call_native_bridge("execute_step", params).await {
             Ok(value) => Ok(value),
             Err(err) if is_native_bridge_transient_dispatch_error(&err.to_string()) => {
@@ -3424,6 +3802,248 @@ impl SupervisorState {
     }
 }
 
+struct ControlTransport<'a> {
+    state: &'a SupervisorState,
+}
+#[async_trait::async_trait]
+impl StepTransport for ControlTransport<'_> {
+    async fn call(
+        &self,
+        method: &str,
+        params: Value,
+        timeout_ms: u64,
+    ) -> std::result::Result<Value, TransportError> {
+        if method == "browser.execute_step" && self.state.control.cancel_requested() {
+            return Err(TransportError::Call(anyhow!("run cancelled before step")));
+        }
+        let call = self.state.dispatch(method, params);
+        if timeout_ms == 0 {
+            call.await.map_err(TransportError::Call)
+        } else {
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), call).await {
+                Ok(v) => v.map_err(TransportError::Call),
+                Err(_) => Err(TransportError::Timeout),
+            }
+        }
+    }
+}
+struct ControlSink<'a> {
+    control: &'a SupervisorControl,
+}
+impl RunEventSink for ControlSink<'_> {
+    fn on_step_start(&self, idx: usize, total: usize, _id: &str, _kind: &str) {
+        self.control.step(idx, total);
+    }
+}
+fn workflow_file_hash(path: &Path) -> Result<String> {
+    Ok(hex::encode(Sha256::digest(std::fs::read(path)?)))
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+struct WorkflowListEntry {
+    workflow_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+    source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    workflow_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    last_run_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    health: Option<Value>,
+}
+
+fn local_workflow_list_entries() -> Result<Vec<WorkflowListEntry>> {
+    let entries = crate::workflow_catalog::list_named_workflows_with_query(
+        &crate::workflow_catalog::WorkflowCatalogQuery::default(),
+    )?;
+    Ok(entries
+        .into_iter()
+        .map(|entry| {
+            let path = PathBuf::from(&entry.path);
+            let manifest = std::fs::read(&path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
+            WorkflowListEntry {
+                workflow_id: entry.id,
+                name: entry.name,
+                source: "local".into(),
+                workflow_hash: workflow_file_hash(&path).ok(),
+                version: manifest
+                    .as_ref()
+                    .and_then(|value| value.get("version"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                last_run_at: None,
+                health: None,
+            }
+        })
+        .collect())
+}
+
+fn cached_workflow_list_entries(root: &Path) -> Result<Vec<WorkflowListEntry>> {
+    let directories = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("read workflow cache {}", root.display()))
+        }
+    };
+    let mut rows = Vec::new();
+    for directory in directories.flatten() {
+        let path = directory.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(workflow_id) = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        let Some(manifest_path) = std::fs::read_dir(&path)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(std::result::Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+            .max_by_key(|path| {
+                path.metadata()
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+            })
+        else {
+            continue;
+        };
+        let manifest = match std::fs::read(&manifest_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        {
+            Some(manifest) => manifest,
+            None => continue,
+        };
+        rows.push(WorkflowListEntry {
+            workflow_id,
+            name: manifest
+                .get("name")
+                .or_else(|| manifest.get("summary"))
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            source: "server_cache".into(),
+            workflow_hash: manifest_path
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(str::to_string),
+            version: manifest
+                .get("version")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            last_run_at: None,
+            health: None,
+        });
+    }
+    Ok(rows)
+}
+
+fn merge_workflow_list(
+    local: Vec<WorkflowListEntry>,
+    cached: Vec<WorkflowListEntry>,
+    health: Vec<Value>,
+) -> Vec<WorkflowListEntry> {
+    let mut rows = BTreeMap::new();
+    for row in local.into_iter().chain(cached) {
+        // Cached manifests win because resolve_local_workflow checks the server
+        // cache before repo-local candidates for the same workflow_id.
+        rows.insert(row.workflow_id.clone(), row);
+    }
+    let mut health_by_workflow: HashMap<String, Vec<Value>> = HashMap::new();
+    for snapshot in health {
+        if let Some(workflow_id) = snapshot.get("workflow_id").and_then(Value::as_str) {
+            health_by_workflow
+                .entry(workflow_id.to_string())
+                .or_default()
+                .push(snapshot);
+        }
+    }
+    for row in rows.values_mut() {
+        let Some(snapshots) = health_by_workflow.get(&row.workflow_id) else {
+            continue;
+        };
+        let matching = row.workflow_hash.as_deref().and_then(|expected| {
+            snapshots.iter().find(|snapshot| {
+                snapshot
+                    .get("workflow_hash")
+                    .and_then(Value::as_str)
+                    .map(|actual| strip_sha256_prefix(actual) == strip_sha256_prefix(expected))
+                    .unwrap_or(false)
+            })
+        });
+        let snapshot = matching.or_else(|| {
+            snapshots.iter().max_by_key(|snapshot| {
+                snapshot
+                    .get("last_run_at")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(i64::MIN)
+            })
+        });
+        if let Some(snapshot) = snapshot {
+            row.last_run_at = snapshot.get("last_run_at").and_then(Value::as_i64);
+            row.health = snapshot.get("health").cloned();
+        }
+    }
+    rows.into_values().collect()
+}
+
+fn strip_sha256_prefix(value: &str) -> &str {
+    value.strip_prefix("sha256:").unwrap_or(value)
+}
+fn native_host_rpc_allowed(method: &str) -> bool {
+    matches!(
+        method,
+        "runtime.status"
+            | "browser.targets"
+            | "runtime.bridges"
+            | "fleet.status"
+            | "fleet.disable"
+            | "fleet.enroll"
+            | "fleet.unenroll"
+            | "runs.list"
+            | "runs.get"
+            | "runs.start"
+            | "runs.replay"
+            | "runs.cancel"
+            | "runs.get_failure_context"
+            | "workflows.health"
+            | "workflows.list"
+            | "automation.pause"
+            | "automation.resume"
+            | "status.snapshot"
+            | "logs.tail"
+            | "diagnostics.export"
+            | "settings.get"
+            | "settings.set"
+    )
+}
+pub(crate) fn fleet_notice_enabled(settings: &crate::settings::Settings, phase: &str) -> bool {
+    settings.notifications_enabled && (settings.notify_on == "all" || phase == "failed")
+}
+pub(crate) fn fleet_run_notice_payload(
+    job_id: &str,
+    workflow_id: &str,
+    phase: &str,
+    error_class: Option<&str>,
+) -> Value {
+    let mut payload = json!({"job_id":job_id,"workflow_id":workflow_id,"phase":phase});
+    if let Some(class) = error_class {
+        payload["error_class"] = json!(class);
+    }
+    payload
+}
+
 fn cloud_command_payload(
     envelope: &CloudCommandEnvelopeV1,
     command: &CloudBrowserCommandV1,
@@ -3622,6 +4242,7 @@ fn build_run_result(tool_name: &str, response: &Value, include_debug: bool) -> R
             raw: Some(response.clone()),
         }),
         error: run_error(response, &status),
+        failure_summary: None,
     }
 }
 
@@ -4236,12 +4857,45 @@ pub(crate) async fn serve(config: SupervisorConfig) -> Result<SupervisorServeRep
     let (cloud_dispatch_tx, cloud_dispatch_rx) = mpsc::unbounded_channel::<CloudDispatchRequest>();
     let cloud_actor = supervisor_cloud::spawn_cloud_actor(cloud_dispatch_tx);
     let state = Arc::new(SupervisorState::with_cloud_actor(config, cloud_actor));
+    {
+        use tracing_subscriber::prelude::*;
+        let _ = tracing_subscriber::registry()
+            .with(state.control.logs.clone())
+            .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+            .try_init();
+    }
     tokio::spawn(handle_cloud_dispatch_requests(
         state.clone(),
         cloud_dispatch_rx,
     ));
     prepare_paths(&state.paths)?;
     let _process_lock = acquire_supervisor_process_lock(&state.paths)?;
+    let retention = state.settings.get();
+    let _ = state.run_store.gc(crate::run_store::GcPolicy {
+        max_count: retention.run_retention_count,
+        max_age_days: retention.run_retention_days,
+        now_ms: chrono::Utc::now().timestamp_millis(),
+    });
+    state.control.refresh_snapshot_cache(&state.run_store)?;
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(24 * 60 * 60)).await;
+                let retention = state.settings.get();
+                let _ = state.run_store.gc(crate::run_store::GcPolicy {
+                    max_count: retention.run_retention_count,
+                    max_age_days: retention.run_retention_days,
+                    now_ms: chrono::Utc::now().timestamp_millis(),
+                });
+                let _ = state.control.refresh_snapshot_cache(&state.run_store);
+            }
+        });
+    }
+
+    // FLA-T-0003: start the fleet poll loop when this device is enrolled
+    // (`fleet_config.json` present). A no-op for local-only supervisors.
+    crate::supervisor_fleet::maybe_spawn_fleet_loop(state.clone());
 
     if state.paths.socket_path.exists() {
         match SupervisorClient::connect_with_paths(state.paths.clone()).await {
@@ -5189,6 +5843,50 @@ mod tests {
         SupervisorConfig {
             app_base: Some(PathBuf::from("/tmp/rzn-supervisor-test")),
         }
+    }
+
+    fn workflow_list_fixture(id: &str, source: &str, hash: &str) -> WorkflowListEntry {
+        WorkflowListEntry {
+            workflow_id: id.into(),
+            name: Some(id.into()),
+            source: source.into(),
+            workflow_hash: Some(hash.into()),
+            version: Some("1".into()),
+            last_run_at: None,
+            health: None,
+        }
+    }
+
+    #[test]
+    fn workflows_list_merges_local_cache_health_and_never_run_rows() {
+        let local = vec![
+            workflow_list_fixture("local-only", "local", "local-hash"),
+            workflow_list_fixture("both", "local", "old-hash"),
+            workflow_list_fixture("never-run", "local", "never-hash"),
+        ];
+        let cached = vec![
+            workflow_list_fixture("cache-only", "server_cache", "cache-hash"),
+            workflow_list_fixture("both", "server_cache", "new-hash"),
+        ];
+        let health = vec![
+            json!({"workflow_id":"local-only","workflow_hash":"local-hash","last_run_at":10,"health":{"flag":"healthy"}}),
+            json!({"workflow_id":"cache-only","workflow_hash":"sha256:cache-hash","last_run_at":20,"health":{"flag":"degraded"}}),
+            json!({"workflow_id":"both","workflow_hash":"new-hash","last_run_at":30,"health":{"flag":"broken"}}),
+        ];
+
+        let rows = merge_workflow_list(local, cached, health);
+        assert_eq!(rows.len(), 4);
+        let by_id: HashMap<_, _> = rows
+            .into_iter()
+            .map(|row| (row.workflow_id.clone(), row))
+            .collect();
+        assert_eq!(by_id["local-only"].source, "local");
+        assert_eq!(by_id["cache-only"].source, "server_cache");
+        assert_eq!(by_id["both"].source, "server_cache");
+        assert_eq!(by_id["both"].last_run_at, Some(30));
+        assert_eq!(by_id["both"].health.as_ref().unwrap()["flag"], "broken");
+        assert!(by_id["never-run"].last_run_at.is_none());
+        assert!(by_id["never-run"].health.is_none());
     }
 
     #[tokio::test]
@@ -8357,6 +9055,11 @@ mod tests {
             browser: Some("chrome".to_string()),
             caller_origin: Some("chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/".to_string()),
             caller_extension_id: Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()),
+            lifecycle: BrowserSessionLifecycle {
+                origin: None,
+                run_id: None,
+                job_id: None,
+            },
             created_at_ms: 1,
             last_activity_at_ms: 2,
             disconnected_at_ms: None,
@@ -8532,6 +9235,179 @@ mod tests {
             })
             .sum();
         assert!(total_resolutions > 0);
+    }
+
+    #[tokio::test]
+    async fn fleet_session_lifecycle_reaches_extension_and_resolves_keep_window() {
+        let state = Arc::new(SupervisorState::new(test_config()));
+        state
+            .settings
+            .patch(json!({ "fleet_keep_window_on_failure": true }))
+            .expect("enable failed-window retention");
+        let (chrome_tx, mut chrome_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        register_bridge_with_target_for_test(
+            &state,
+            "chrome-bridge",
+            chrome_tx,
+            "chrome-instance",
+            "chrome",
+        )
+        .await;
+
+        let opened = state
+            .dispatch(
+                "browser.session_open",
+                json!({ "origin": "fleet", "run_id": "fleet-run-1", "job_id": "job-1" }),
+            )
+            .await
+            .expect("fleet session opens");
+        let session_id = opened
+            .get("session_id")
+            .and_then(Value::as_str)
+            .expect("fleet session id")
+            .to_string();
+
+        let execute = tokio::spawn({
+            let state = state.clone();
+            let session_id = session_id.clone();
+            async move {
+                state
+                    .dispatch(
+                        "browser.execute_step",
+                        json!({ "session_id": session_id, "step": { "type": "open_new_tab", "url": "https://example.com" } }),
+                    )
+                    .await
+            }
+        });
+        let execute_request: Value = serde_json::from_slice(
+            &chrome_rx
+                .recv()
+                .await
+                .expect("fleet step reaches extension"),
+        )
+        .expect("fleet step json");
+        assert_eq!(
+            execute_request.pointer("/params/payload/origin"),
+            Some(&json!("fleet"))
+        );
+        assert_eq!(
+            execute_request.pointer("/params/payload/run_id"),
+            Some(&json!("fleet-run-1"))
+        );
+        assert_eq!(
+            execute_request.pointer("/params/payload/job_id"),
+            Some(&json!("job-1"))
+        );
+        let execute_id = execute_request
+            .get("id")
+            .and_then(value_id_string)
+            .expect("step id");
+        assert!(
+            complete_bridge_response_for_test(
+                &state,
+                "chrome-bridge",
+                &json!({ "jsonrpc": "2.0", "id": execute_id, "result": { "success": true } }),
+            )
+            .await
+        );
+        execute
+            .await
+            .expect("fleet step joins")
+            .expect("fleet step succeeds");
+
+        let close = tokio::spawn({
+            let state = state.clone();
+            async move {
+                state
+                    .dispatch(
+                        "browser.session_close",
+                        json!({ "session_id": session_id, "outcome": "failed" }),
+                    )
+                    .await
+            }
+        });
+        let close_request: Value = serde_json::from_slice(
+            &chrome_rx
+                .recv()
+                .await
+                .expect("fleet close reaches extension"),
+        )
+        .expect("fleet close json");
+        assert_eq!(
+            close_request.pointer("/params/payload/origin"),
+            Some(&json!("fleet"))
+        );
+        assert_eq!(
+            close_request.pointer("/params/payload/outcome"),
+            Some(&json!("failed"))
+        );
+        assert_eq!(
+            close_request.pointer("/params/payload/keep_window"),
+            Some(&json!(true))
+        );
+        let close_id = close_request
+            .get("id")
+            .and_then(value_id_string)
+            .expect("close id");
+        assert!(
+            complete_bridge_response_for_test(
+                &state,
+                "chrome-bridge",
+                &json!({ "jsonrpc": "2.0", "id": close_id, "result": { "success": true } }),
+            )
+            .await
+        );
+        close
+            .await
+            .expect("fleet close joins")
+            .expect("fleet close succeeds");
+
+        let local = state
+            .dispatch("browser.session_open", json!({}))
+            .await
+            .expect("local session opens");
+        let local_session_id = local
+            .get("session_id")
+            .and_then(Value::as_str)
+            .expect("local session id");
+        let local_execute = tokio::spawn({
+            let state = state.clone();
+            let session_id = local_session_id.to_string();
+            async move {
+                state
+                    .dispatch(
+                        "browser.execute_step",
+                        json!({ "session_id": session_id, "step": { "type": "open_new_tab" } }),
+                    )
+                    .await
+            }
+        });
+        let local_request: Value = serde_json::from_slice(
+            &chrome_rx
+                .recv()
+                .await
+                .expect("local step reaches extension"),
+        )
+        .expect("local step json");
+        assert!(local_request.pointer("/params/payload/origin").is_none());
+        assert!(local_request.pointer("/params/payload/run_id").is_none());
+        assert!(local_request.pointer("/params/payload/job_id").is_none());
+        let local_id = local_request
+            .get("id")
+            .and_then(value_id_string)
+            .expect("local step id");
+        assert!(
+            complete_bridge_response_for_test(
+                &state,
+                "chrome-bridge",
+                &json!({ "jsonrpc": "2.0", "id": local_id, "result": { "success": true } }),
+            )
+            .await
+        );
+        local_execute
+            .await
+            .expect("local step joins")
+            .expect("local step succeeds");
     }
 
     #[tokio::test]

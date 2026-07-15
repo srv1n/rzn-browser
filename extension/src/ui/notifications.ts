@@ -1,0 +1,4 @@
+export type FleetRunNotice={job_id:string;run_id?:string;workflow_id:string;phase:'started'|'succeeded'|'failed';error_class?:string};
+const prefix='rzn-fleet:';
+export async function handleFleetRunNotice(n:FleetRunNotice):Promise<string|null>{if(n.phase==='succeeded')return null;const id=`${prefix}${n.run_id||n.job_id}`;const title=`Fleet job: ${n.workflow_id}`;const message=n.phase==='started'?`${n.workflow_id} started`:`${n.workflow_id} failed (${n.error_class||'unknown'})`;chrome.notifications.create(id,{type:'basic',iconUrl:'icons/brain-128.png',title,message});return id;}
+export function installFleetNotificationClickHandler():void{chrome.notifications.onClicked.addListener(id=>{if(!id.startsWith(prefix))return;const run=id.slice(prefix.length);void chrome.tabs.create({url:chrome.runtime.getURL(`dashboard.html#runs/${encodeURIComponent(run)}`)});});}

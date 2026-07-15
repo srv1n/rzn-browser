@@ -1,0 +1,267 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "meta_ad_library/search",
+  "name": "Meta Ad Library: Search & Enumerate Ads",
+  "version": "1.0.0",
+  "system": "meta_ad_library",
+  "capability": "meta_ad_library.search",
+  "summary": "Search the public Meta Ad Library by keyword or by advertiser and enumerate matching ads (library id, started date, media type, ad copy) into a source-discriminated manifest.",
+  "description": "Reads the public Meta Ad Library (facebook.com/ads/library) using Meta's documented URL parameters. mode=keyword does a keyword+country search; mode=advertiser resolves the advertiser's Facebook Page id (from the keyword result, or an explicit page_id) and scopes to view_all_page_id so all ads belong to that advertiser. Scrapes ad cards from the rendered DOM (parsed by the stable 'Library ID' / 'Started running on' / 'Sponsored' text anchors), scroll-accumulating up to a configurable cap. Pure read. Emits a manifest validating against schema/ads-manifest-v1.json with source=meta_ad_library.",
+  "params": {
+    "properties": {
+      "query": {
+        "kind": "string",
+        "required": true,
+        "description": "Search term: a keyword (mode=keyword) or an advertiser name (mode=advertiser). Recorded in the manifest query."
+      },
+      "mode": {
+        "kind": "string",
+        "required": false,
+        "default": "keyword",
+        "description": "'keyword' = keyword+country search. 'advertiser' = scope to one advertiser's ads (resolves the Page id from the query, or uses page_id)."
+      },
+      "country": {
+        "kind": "string",
+        "required": false,
+        "default": "US",
+        "description": "ISO country code the Ad Library requires before searching (e.g. US, GB, IN). Recorded in the manifest query as region."
+      },
+      "page_id": {
+        "kind": "string",
+        "required": false,
+        "default": "",
+        "description": "Advertiser Facebook Page id for precise advertiser scoping (mode=advertiser). When set, skips name resolution."
+      },
+      "cap": {
+        "kind": "integer",
+        "required": false,
+        "default": 30,
+        "min": 1,
+        "max": 300,
+        "description": "Maximum ads to collect. Scroll-accumulates and stops cleanly at the cap; truncated=true when more were available."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "facebook.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "facebook.com"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "facebook.com"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "fbcdn.net"
+      ]
+    },
+    {
+      "class": "download",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "fbcdn.net"
+      ]
+    },
+    {
+      "class": "file_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "local"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "extension",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 200000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country={country}&q={query}&search_type=keyword_unordered&media_type=all"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open Ad Library search",
+      "timeout_ms": 45000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Settle results",
+      "timeout_ms": 6000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "return_value": true,
+          "script": "const P = window.__rzn_params || {};\nconst mode = String(P.mode || 'keyword').toLowerCase();\nconst country = String(P.country || 'US').toUpperCase();\nconst query = String(P.query || '');\n// privacy-preserving: decline optional cookies if a consent dialog is present\ntry {\n  const decline = Array.from(document.querySelectorAll('[role=\"button\"],button'))\n    .find(b => /decline optional cookies|only allow essential|decline/i.test(b.textContent || ''));\n  if (decline) decline.click();\n} catch (e) {}\nif (mode !== 'advertiser') return { navigated: false, page_id: null };\n\nlet pageId = String(P.page_id || '').replace(/[^0-9]/g, '');\nif (!pageId) {\n  // Resolve the searched advertiser's Facebook Page id: pick the ad card whose\n  // advertiser name matches the query, then read the page_id nearest that card's\n  // Library ID in the page data (both live in the same ad JSON node).\n  const cut = (s, n) => { s = (s || '').replace(/\\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) : s; };\n  const oneLib = (el) => ((el.innerText || '').match(/Library ID/gi) || []).length === 1;\n  const labels = Array.from(document.querySelectorAll('*')).filter(e =>\n    Array.from(e.childNodes || []).some(n => n.nodeType === 3 && /Library ID/i.test(n.textContent || '')));\n  const seen = new Set(); const cards = [];\n  for (const lab of labels) { let c = lab; while (c.parentElement && oneLib(c.parentElement)) c = c.parentElement; if (!seen.has(c)) { seen.add(c); cards.push(c); } }\n  const mini = cards.map(card => {\n    const txt = card.innerText || '';\n    const id = (txt.match(/Library ID:?\\s*(\\d{5,})/) || [])[1] || null;\n    const sp = txt.split(/\\bSponsored\\b/); let adv = null;\n    if (sp.length > 1) { const bl = sp[0].trim().split('\\n').filter(Boolean); adv = cut(bl[bl.length - 1], 60); }\n    return { id: id, adv: adv };\n  }).filter(c => c.id && c.adv);\n  const ql = query.toLowerCase();\n  const match = mini.find(c => c.adv.toLowerCase() === ql)\n    || mini.find(c => c.adv.toLowerCase().indexOf(ql) >= 0)\n    || mini.find(c => ql.indexOf(c.adv.toLowerCase()) >= 0);\n  if (match) {\n    const html = document.documentElement.innerHTML;\n    let idx = html.indexOf('\"' + match.id + '\"'); if (idx < 0) idx = html.indexOf(match.id);\n    if (idx >= 0) {\n      const W = 8000; const w = html.slice(Math.max(0, idx - W), idx + W); const rel = Math.min(idx, W);\n      let best = null, bd = 1e9; const re = /page_id[\"\\\\]{0,2}\\s*:\\s*[\"\\\\]{0,2}(\\d{5,})/g; let mm;\n      while ((mm = re.exec(w)) !== null) { const d = Math.abs(mm.index - rel); if (d < bd) { bd = d; best = mm[1]; } }\n      pageId = best || '';\n    }\n  }\n}\nif (pageId) {\n  location.assign('https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=' + encodeURIComponent(country) + '&view_all_page_id=' + pageId + '&media_type=all');\n  return { navigated: true, page_id: pageId };\n}\nreturn { navigated: false, page_id: null, warning: 'advertiser_unresolved' };"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Resolve advertiser scope (may re-navigate)",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for scoped results",
+      "timeout_ms": 6000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "return_value": true,
+          "script": "const P = window.__rzn_params || {};\nconst mode = String(P.mode || 'keyword').toLowerCase();\nconst country = String(P.country || 'US').toUpperCase();\nconst query = String(P.query || '');\nlet cap = parseInt(P.cap, 10);\nif (!Number.isFinite(cap) || cap < 1) cap = 30;\nif (cap > 300) cap = 300;\n\nconst sleep = (ms) => new Promise(r => setTimeout(r, ms));\nconst cut = (s, n) => { s = (s || '').replace(/\\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n) : s; };\nconst oneLib = (el) => ((el.innerText || '').match(/Library ID/gi) || []).length === 1;\nconst toISO = (raw) => { if (!raw) return null; const d = new Date(raw); return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10); };\nconst findCards = () => {\n  const labels = Array.from(document.querySelectorAll('*')).filter(e =>\n    Array.from(e.childNodes || []).some(n => n.nodeType === 3 && /Library ID/i.test(n.textContent || '')));\n  const seen = new Set(); const cards = [];\n  for (const lab of labels) { let c = lab; while (c.parentElement && oneLib(c.parentElement)) c = c.parentElement; if (!seen.has(c)) { seen.add(c); cards.push(c); } }\n  return cards;\n};\nconst preview = (card) => {\n  const hit = Array.from(card.querySelectorAll('img')).map(i => i.getAttribute('src') || '')\n    .find(s => /scontent|fbcdn/i.test(s) && !/s60x60|p60x60|static\\.xx/i.test(s));\n  return hit || null;\n};\nconst parse = (card) => {\n  const txt = card.innerText || '';\n  const id = (txt.match(/Library ID:?\\s*(\\d{5,})/) || [])[1] || null;\n  if (!id) return null;\n  const status = /\\bInactive\\b/i.test(txt) ? 'inactive' : (/\\bActive\\b/i.test(txt) ? 'active' : null);\n  const sr = (txt.match(/Started running on\\s+(\\d{1,2}\\s+\\w{3,}\\s+\\d{4})/) || [])[1] || null;\n  const iso = toISO(sr);\n  const sp = txt.split(/\\bSponsored\\b/); let adv = null, copy = null;\n  if (sp.length > 1) { const bl = sp[0].trim().split('\\n').filter(Boolean); adv = cut(bl[bl.length - 1], 80); copy = cut(sp[1], 2000) || null; }\n  const vid = card.querySelector('video');\n  const media = vid ? 'video' : (card.querySelector('img') ? 'image' : 'text');\n  const prev = preview(card);\n  const asset_url = vid ? (vid.getAttribute('src') || vid.currentSrc || prev) : prev;\n  const asset_ext = vid ? 'mp4' : 'jpg';\n  return { id: id, advertiser_id: null, advertiser_name: adv, media_type: media, first_shown: iso, started_at: iso, last_shown: null, copy: copy, url: 'https://www.facebook.com/ads/library/?id=' + id, preview_url: prev, asset_url: asset_url, asset_ext: asset_ext };\n};\n\nconst collected = new Map();\n// Add a newly-seen ad, or upgrade a previously-captured image asset to the real\n// video URL once the lazily-mounted <video> element exposes its src.\nconst ingest = () => {\n  for (const card of findCards()) {\n    const r = parse(card);\n    if (!r) continue;\n    const ex = collected.get(r.id);\n    if (!ex) { collected.set(r.id, r); }\n    else if (r.asset_ext === 'mp4' && ex.asset_ext !== 'mp4') {\n      ex.asset_url = r.asset_url; ex.asset_ext = 'mp4'; ex.media_type = 'video';\n    }\n  }\n};\nlet stagnant = 0, brokeOnCap = false, lastY = -1;\n// Gradual scroll (~one viewport/step) so each card passes through the mount zone\n// while we ingest; a fast jump-to-bottom skips lazily-loaded <video> srcs.\nfor (let iter = 0; iter < 150 && stagnant < 5; iter++) {\n  ingest();\n  if (collected.size >= cap) { brokeOnCap = true; break; }\n  const before = collected.size;\n  window.scrollBy(0, Math.floor(window.innerHeight * 0.8));\n  await sleep(900);\n  const y = window.scrollY;\n  if (collected.size === before && y === lastY) stagnant++; else stagnant = 0;\n  lastY = y;\n}\ningest();\n\nlet ads = Array.from(collected.values());\nconst truncated = brokeOnCap;\nif (ads.length > cap) ads = ads.slice(0, cap);\nconst pid = (location.href.match(/view_all_page_id=(\\d+)/) || [])[1] || null;\nif (pid) ads.forEach(a => { a.advertiser_id = pid; });\nconst q = (mode === 'advertiser')\n  ? { advertiser: query || null, advertiser_id: pid, region: country }\n  : { keyword: query || null, region: country };\n// Asset refs for `--download-dir` capture (ADI-T-0002): one per ad with a media URL.\nconst attachment_urls = ads\n  .filter(a => a.asset_url)\n  .map(a => ({ url: a.asset_url, filename: a.id + '.' + a.asset_ext }));\nreturn { source: 'meta_ad_library', query: q, mode: mode, cap: cap, count: ads.length, truncated: truncated, advertiser_name: (mode === 'advertiser' && ads[0]) ? ads[0].advertiser_name : null, advertiser_id: pid, ads: ads, attachment_urls: attachment_urls };"
+        },
+        "side_effects": [
+          "external_read"
+        ]
+      },
+      "name": "Scroll-accumulate and parse ad cards",
+      "timeout_ms": 160000
+    }
+  ],
+  "result": {
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "required": [
+        "source",
+        "query",
+        "count",
+        "ads"
+      ],
+      "properties": {
+        "source": {
+          "type": "string"
+        },
+        "query": {
+          "type": "object"
+        },
+        "cap": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "count": {
+          "type": "integer"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "ads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "id"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Search the Meta Ad Library by keyword or advertiser and list matching ads.",
+    "parameters": {
+      "query": "Keyword (mode=keyword) or advertiser name (mode=advertiser).",
+      "mode": "keyword (default) or advertiser.",
+      "country": "ISO country code (default US).",
+      "page_id": "Advertiser Facebook Page id for precise advertiser scoping.",
+      "cap": "Max ads to collect (default 30, hard cap 300)."
+    },
+    "examples": [
+      {
+        "description": "Keyword search in the US",
+        "command": "rzn-browser run meta_ad_library search --param query=\"running shoes\" --param country=US"
+      },
+      {
+        "description": "All ads for an advertiser",
+        "command": "rzn-browser run meta_ad_library search --param query=\"Nike\" --param mode=advertiser"
+      },
+      {
+        "description": "Precise advertiser scope by Page id",
+        "command": "rzn-browser run meta_ad_library search --param query=\"Nike\" --param mode=advertiser --param page_id=15087023444 --param cap=50"
+      }
+    ],
+    "returns": [
+      "Object: { source, query, mode, cap, count, truncated, advertiser_name, advertiser_id, ads:[{ id, advertiser_id, advertiser_name, media_type, first_shown, started_at, last_shown, copy, url, preview_url }] }."
+    ],
+    "notes": [
+      "Uses Meta's documented Ad Library URL parameters (the search box is a non-fillable React component); scrapes ad cards from the rendered DOM.",
+      "started_at/first_shown are ISO dates parsed from the card's 'Started running on' text; last_shown is null (Meta cards show only the start date).",
+      "media_type is image/video/text from the card content; copy is the ad's primary text.",
+      "advertiser mode resolves the Page id from the keyword result (most frequent page_id) unless page_id is given; all returned ads then belong to that advertiser.",
+      "No CDP; all JS runs in the page main world."
+    ]
+  }
+}

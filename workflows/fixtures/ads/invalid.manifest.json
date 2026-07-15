@@ -1,0 +1,50 @@
+{
+  "ads": [
+    {
+      "advertiser_id": "AR16735076323512287233",
+      "advertiser_name": "Nike, Inc.",
+      "copy": null,
+      "first_shown": "2023-05-01",
+      "format_code": 1,
+      "last_shown": "2026-07-11",
+      "media_type": "image",
+      "preview_url": "https://tpc.googlesyndication.com/archive/simgad/6486945144496172146",
+      "url": "https://adstransparency.google.com/advertiser/AR16735076323512287233/creative/CR00378902083572596737?region=US"
+    },
+    {
+      "advertiser_id": "AR16735076323512287233",
+      "advertiser_name": "Nike, Inc.",
+      "copy": null,
+      "first_shown": "2022-11-30",
+      "format_code": 1,
+      "id": "CR07492981871379218433",
+      "last_shown": "2026-07-11",
+      "media_type": "image",
+      "preview_url": "https://tpc.googlesyndication.com/archive/simgad/13447730708114548880",
+      "url": "https://adstransparency.google.com/advertiser/AR16735076323512287233/creative/CR07492981871379218433?region=US"
+    },
+    {
+      "advertiser_id": "AR16735076323512287233",
+      "advertiser_name": "Nike, Inc.",
+      "copy": null,
+      "first_shown": "2023-11-16",
+      "format_code": 1,
+      "id": "CR06167249677558218753",
+      "last_shown": "2026-07-11",
+      "media_type": "image",
+      "preview_url": "https://tpc.googlesyndication.com/archive/simgad/14654599115089922800",
+      "url": "https://adstransparency.google.com/advertiser/AR16735076323512287233/creative/CR06167249677558218753?region=US"
+    }
+  ],
+  "advertiser_id": "AR16735076323512287233",
+  "advertiser_name": "Nike, Inc.",
+  "cap": 3,
+  "count": 3,
+  "query": {
+    "advertiser": "Nike",
+    "advertiser_id": "AR16735076323512287233",
+    "region": "US"
+  },
+  "total_available": 10000,
+  "truncated": true
+}

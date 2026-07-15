@@ -11,6 +11,35 @@ Do not add:
 
 All commits must use the human's configured Git identity unless the human explicitly gives a different identity in the current turn.
 
+## Build Policy
+
+This applies in the primary checkout and in every Git worktree.
+
+- Use `make` for every build, check, test, or run that can compile project code. Do not invoke `cargo`, `bun`, or another build tool directly.
+- Use the existing focused targets where possible: `make build`, `make build-rust`, `make build-ext`, or `make test`. For a focused Rust command, use `make rust ARGS='check -p <crate>'` (or another Cargo subcommand in `ARGS`).
+- `sccache` is required for Rust compilation. The Makefile and `.cargo/config.toml` enforce it; do not override `RUSTC_WRAPPER` or disable the cache.
+
+## Execution modes
+
+### Interactive work
+
+A Codex or Claude session opened directly by the user implements the requested work itself.
+
+Use Tusker for task contracts, packets, dependencies, proof, gates, review, and lifecycle state. Interactive work may inspect a tracked task with:
+
+- `tusker show <TASK-ID> --capsule`
+- `tusker packet <TASK-ID> --for agent`
+
+Do not start the Tusker daemon, dispatch automation, or launch nested `codex exec`/`claude -p` workers unless the user explicitly requests automation.
+
+### Automated work
+
+Tusker automation is opt-in. Use `tusker automation plan`, dispatch, or the resident daemon only when the user explicitly asks to automate, dispatch, queue, or run unattended work.
+
+A process carrying `TUSKER_ATTEMPT_ID` is a dispatched worker. It must follow the claimed-run protocol, work only its claimed task, and must not spawn another runner.
+
+`tusker automation plan` is read-only and does not authorize dispatch by itself.
+
 <!-- tusker:epic-index:begin -->
 ## Tusker
 

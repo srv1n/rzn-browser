@@ -6,7 +6,24 @@
 
 | Task | Wave | Risk | Next action |
 |---|---|---|---|
+| [[ADI-T-0001]] |  | medium | Review evidence and close or return to rework. |
+| [[ADI-T-0002]] |  | medium | Review evidence and close or return to rework. |
+| [[ADI-T-0003]] |  | medium | Review evidence and close or return to rework. |
+| [[ADI-T-0004]] |  | low | Review evidence and close or return to rework. |
 | [[BRR-T-0009]] |  | medium | Review evidence and close or return to rework. |
+| [[EUI-T-0001]] |  | medium | Review evidence and close or return to rework. |
+| [[EUI-T-0002]] |  | medium | Review evidence and close or return to rework. |
+| [[EUI-T-0003]] |  | medium | Review evidence and close or return to rework. |
+| [[EUI-T-0004]] |  | medium | Review evidence and close or return to rework. |
+| [[EUI-T-0005]] |  | low | Review evidence and close or return to rework. |
+| [[EUI-T-0006]] |  | low | Review evidence and close or return to rework. |
+| [[EUI-T-0007]] |  | medium | Review evidence and close or return to rework. |
+| [[EUI-T-0009]] |  | medium | Review evidence and close or return to rework. |
+| [[FLA-T-0001]] |  | medium | Review evidence and close or return to rework. |
+| [[FLA-T-0002]] |  | high | Review evidence and close or return to rework. |
+| [[FLA-T-0003]] |  | high | Review evidence and close or return to rework. |
+| [[FLA-T-0004]] |  | medium | Review evidence and close or return to rework. |
+| [[FLA-T-0005]] |  | medium | Review evidence and close or return to rework. |
 | [[MBR-T-0001]] |  | medium | Review evidence and close or return to rework. |
 | [[MBR-T-0002]] |  | medium | Review evidence and close or return to rework. |
 | [[MBR-T-0003]] |  | medium | Review evidence and close or return to rework. |

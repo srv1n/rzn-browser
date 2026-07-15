@@ -17,6 +17,9 @@ import { buildScriptEvalBody } from './scriptingEvalBody';
 import { tabNavigationChanged, type TabNavigationState } from './tabNavigation';
 import { RZN_BUILD_SIGNATURE, RZN_EXTENSION_TARGET, RZN_PAGE_TEST_BRIDGE_ENABLED } from './buildInfo';
 import { normalizeCloudServerUrl } from './cloudTransport';
+import {handleFleetRunNotice,installFleetNotificationClickHandler} from './ui/notifications';
+import { FleetWindowRegistry } from './ui/fleetWindow';
+import { badgeForState } from './ui/badge';
 import {
   activeLeaseExpirationsAfterStartup,
   cdpTargetTabIdsToDetachOnStartup,
@@ -630,6 +633,8 @@ const RECONNECT_MAX_DELAY_MS = 15000;
 const RECONNECT_ALARM_NAME = 'rzn_native_reconnect';
 const NATIVE_KEEPALIVE_ALARM_NAME = 'rzn_native_keepalive';
 const NATIVE_KEEPALIVE_PERIOD_MINUTES = 0.5;
+const AUTOMATION_BADGE_ALARM_NAME = 'rzn_automation_badge';
+const AUTOMATION_BADGE_PERIOD_MINUTES = 0.5;
 const CONTENT_KEEPALIVE_PORT_NAME = 'rzn_content_keepalive';
 const CONTENT_KEEPALIVE_EXPECTED_INTERVAL_MS = 15_000;
 const CONTENT_KEEPALIVE_ACK_MIN_INTERVAL_MS = 10_000;
@@ -762,6 +767,16 @@ function ensureNativeKeepaliveAlarm() {
   }
 }
 
+function ensureAutomationBadgeAlarm() {
+  try {
+    chrome.alarms?.create?.(AUTOMATION_BADGE_ALARM_NAME, {
+      periodInMinutes: AUTOMATION_BADGE_PERIOD_MINUTES,
+    });
+  } catch (error) {
+    console.warn('[AutomationBadge] Failed to schedule refresh alarm:', error);
+  }
+}
+
 function scheduleReconnect() {
   // Avoid duplicate timers
   if (reconnectTimer !== null) return;
@@ -845,6 +860,7 @@ function markBrokerRequestTimedOut(requestId: string, lease?: BrokerRequestLease
 const DEFAULT_WORKFLOW_SESSION_ID = 'default';
 const CONTROL_PLANE_WORKFLOW_SESSION_ID = '__control_plane';
 const WORKFLOW_SESSION_STORAGE_KEY = 'workflow_sessions_v1';
+const fleetWindows = new FleetWindowRegistry();
 
 interface WorkflowSessionState {
   workflowTabId?: number;
@@ -1016,6 +1032,21 @@ function refreshWorkflowSessionUrl(sessionId: string, tabId: number | undefined)
 
 async function getActiveTabIdOrThrow(action: string): Promise<number> {
   return await getActiveBrowserTabId(action);
+}
+
+function rememberFleetSession(message: BrokerMessage, workflowSessionId: string): void {
+  fleetWindows.rememberSession({
+    sessionId: workflowSessionId,
+    origin: message.payload?.origin ?? message.data?.origin,
+    runId: message.payload?.run_id ?? message.data?.run_id,
+  });
+}
+
+async function createWorkflowTab(
+  workflowSessionId: string,
+  properties: chrome.tabs.CreateProperties,
+): Promise<chrome.tabs.Tab> {
+  return await fleetWindows.createTab(workflowSessionId, properties);
 }
 
 function getWorkflowSessionState(sessionId: string): WorkflowSessionState {
@@ -1735,13 +1766,25 @@ async function setFlagsForMessage(message: BrokerMessage): Promise<{
 // Close the dedicated tab bound to a session (if any), prune the session
 // state, and return whether a tab was actually closed. Used by session_close
 // so callers don't accumulate ghost tabs across `rzn-browser run` invocations.
-async function disposeWorkflowSession(sessionId: string): Promise<{ closed: boolean; tabId?: number }> {
+async function disposeWorkflowSession(
+  sessionId: string,
+  keepFleetWindow = false,
+): Promise<{ closed: boolean; tabId?: number }> {
   const normalized = normalizeSessionId(sessionId);
   const state = workflowSessions.get(normalized);
   const tabId = state?.workflowTabId;
 
+  const fleetCleanup = await fleetWindows.closeSession(
+    normalized,
+    keepFleetWindow,
+  );
+
   workflowSessions.delete(normalized);
   scheduleWorkflowSessionsPersist();
+
+  if (fleetCleanup.handled) {
+    return { closed: fleetCleanup.closed, tabId };
+  }
 
   if (tabId === undefined) {
     return { closed: false };
@@ -3706,6 +3749,7 @@ function connectToNative(): void {
         if (maybeResolveNativeControlCallback(message)) {
           return;
         }
+        if(message.cmd==='fleet_run_notice'){void handleFleetRunNotice(message.payload as any);return;}
         void dispatchBrokerMessageWithWatchdog(message, portEpoch);
       });
     }
@@ -3769,6 +3813,8 @@ function connectToNative(): void {
     scheduleReconnect();
   }
 }
+
+installFleetNotificationClickHandler();
 
 // Handle delta DOM messages for efficient updates
 function handleDeltaMessage(message: BrokerMessage): void {
@@ -3851,6 +3897,7 @@ async function handleBrokerMessage(
   await loadWorkflowSessionsFromStorage();
   assertBrokerLeaseCurrent(brokerLease, 'after workflow session load');
   const workflowSessionId = normalizeSessionId(sessionId || resolveSessionId(message));
+  rememberFleetSession(message, workflowSessionId);
   let workflowTabId = getWorkflowTabId(workflowSessionId);
   const requestedTabId = resolveRequestedTabId(message);
   if (requestedTabId !== undefined) {
@@ -4007,7 +4054,7 @@ async function handleBrokerMessage(
       const result = await guardedBrokerSideEffect(
         brokerLease,
         'disposeWorkflowSession session_close',
-        () => disposeWorkflowSession(workflowSessionId)
+        () => disposeWorkflowSession(workflowSessionId, message.payload?.keep_window === true)
       );
       sendResponseToBroker({
         req_id: isOrchestratorFormat ? undefined : requestId,
@@ -4320,7 +4367,9 @@ async function handleBrokerMessage(
         stepType !== 'close_current_tab';
       const prefersCurrentTab =
         messageEnvelopeUsesCurrentTab(message) || messageStepUsesCurrentTab(message);
-      const mayUseCurrentTab = sessionMayUseActiveTab(workflowSessionId, prefersCurrentTab);
+      const mayUseCurrentTab =
+        !fleetWindows.isFleetSession(workflowSessionId) &&
+        sessionMayUseActiveTab(workflowSessionId, prefersCurrentTab);
 
       // First check if we have a stored workflow tab
       if (workflowTabId !== undefined && requiresExistingTab) {
@@ -4383,7 +4432,7 @@ async function handleBrokerMessage(
             newTab = await guardedBrokerSideEffect(
               brokerLease,
               'chrome.tabs.create dedicated workflow tab',
-              () => chrome.tabs.create({ url: 'https://www.example.com', active: true })
+              () => createWorkflowTab(workflowSessionId, { url: 'https://www.example.com', active: true })
             );
           } catch (err: any) {
             // chrome.tabs.create fails with "No current window" when no Chrome
@@ -4433,7 +4482,7 @@ async function handleBrokerMessage(
           const newTab = await guardedBrokerSideEffect(
             brokerLease,
             'chrome.tabs.create open_new_tab',
-            () => chrome.tabs.create({ url, active: true })
+            () => createWorkflowTab(workflowSessionId, { url, active: true })
           );
           tabId = newTab.id!;
           commitWorkflowTabIdForLease(
@@ -4507,7 +4556,7 @@ async function handleBrokerMessage(
             const newTab = await guardedBrokerSideEffect(
               brokerLease,
               'chrome.tabs.create navigate_to_url',
-              () => chrome.tabs.create({ url, active: true })
+              () => createWorkflowTab(workflowSessionId, { url, active: true })
             );
             tabId = newTab.id!;
             commitWorkflowTabIdForLease(
@@ -6029,10 +6078,12 @@ if (chrome.runtime?.onInstalled?.addListener) {
 // Initialize CDP integration with safe defaults
 cdpIntegration.initialize();
 initializeCdpLeaseDurability();
+ensureAutomationBadgeAlarm();
 
 if (chrome.runtime?.onStartup?.addListener) {
   chrome.runtime.onStartup.addListener(() => {
     initializeCdpLeaseDurability();
+    ensureAutomationBadgeAlarm();
   });
 }
 
@@ -6071,6 +6122,23 @@ if (chrome.alarms?.onAlarm?.addListener) {
       if (nativePort) return;
       console.log('[NativeKeepalive] Alarm fired; native port missing, attempting reconnect');
       connectToNative();
+      return;
+    }
+
+    if (alarm?.name === AUTOMATION_BADGE_ALARM_NAME) {
+      void (async () => {
+        try {
+          const response: any = await callNativeHostControl(
+            'supervisor_rpc',
+            { method: 'status.snapshot', params: {} },
+            { timeoutMs: 10_000 },
+          );
+          if (!response?.success) throw new Error(response?.error || 'No supervisor response');
+          await updateAutomationBadge(response.result);
+        } catch {
+          await updateAutomationBadge(null);
+        }
+      })();
     }
   });
 }
@@ -6332,7 +6400,9 @@ async function executeWorkflow(
     setWorkflowTabId(workflowSessionId, tabId);
     assertBrokerLeaseCurrent(brokerLease, 'after workflow tab id commit');
   };
-  const mayUseActiveTab = sessionMayUseActiveTab(workflowSessionId, preferCurrentTab);
+  const mayUseActiveTab =
+    !fleetWindows.isFleetSession(workflowSessionId) &&
+    sessionMayUseActiveTab(workflowSessionId, preferCurrentTab);
   const sessionTabIdRaw = (message as any)?.data?.current_tab_id;
   if (typeof sessionTabIdRaw === 'number') {
     workflowTabId = sessionTabIdRaw;
@@ -6406,7 +6476,7 @@ async function executeWorkflow(
         const newTab = await guardedBrokerSideEffect(
           brokerLease,
           'chrome.tabs.create dedicated workflow tab',
-          () => chrome.tabs.create({
+          () => createWorkflowTab(workflowSessionId, {
             url: 'about:blank',
             active: true,
           })
@@ -6498,7 +6568,7 @@ async function executeWorkflow(
           const newTab = await guardedBrokerSideEffect(
             brokerLease,
             'chrome.tabs.create workflow open_new_tab',
-            () => chrome.tabs.create({ url, active: true })
+            () => createWorkflowTab(workflowSessionId, { url, active: true })
           );
           const tabId = newTab.id!;
           console.log(`Opened new tab for workflow: ${tabId} (${url})`);
@@ -6648,7 +6718,7 @@ async function executeWorkflow(
             const newTab = await guardedBrokerSideEffect(
               brokerLease,
               'chrome.tabs.create workflow navigate_to_url',
-              () => chrome.tabs.create({ url: step.url, active: true })
+              () => createWorkflowTab(workflowSessionId, { url: step.url, active: true })
             );
             tabId = newTab.id!;
             console.log(`Created new workflow tab ID: ${tabId}`);
@@ -7633,9 +7703,16 @@ function requireContentSender(
   return false;
 }
 
+async function updateAutomationBadge(snapshot:any|null){const b=badgeForState(snapshot?{reachable:true,paused:snapshot.paused,runningCount:snapshot.now_running?1:0,lastRunFailed:snapshot.recent_runs?.[0]?.status==='failed',flaggedWorkflows:snapshot.flagged_workflows}:{reachable:false});await chrome.action.setBadgeText({text:b.text});await chrome.action.setBadgeBackgroundColor({color:b.color});}
+
 // Handle native input messages from content script
 if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.cmd === 'supervisor_rpc') {
+    if (!requirePopupSender(message.cmd, sender, sendResponse)) return false;
+    (async()=>{try{const response:any=await callNativeHostControl('supervisor_rpc',message.payload||{}, {timeoutMs:10000});if(message.payload?.method==='status.snapshot')void updateAutomationBadge(response.result);sendResponse(response);}catch(error:any){void updateAutomationBadge(null);sendResponse({success:false,error:error?.message||String(error)});}})();
+    return true;
+  }
   // Forward content logs into native logger and console
   if (message && message.type === 'CONTENT_LOG') {
     try {

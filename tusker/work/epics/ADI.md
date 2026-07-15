@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-10T04:06:45Z"
-updated_at: "2026-07-10T04:20:00Z"
-state_rev: "sha256:02b7feda58d677ce93da0e5f85f5a6fde98fafeca0479479c23e27a26977b4f8"
+updated_at: "2026-07-11T03:16:46Z"
+state_rev: "sha256:9d47338c561c970db7339116f2a121a4a57c86f51d2c4d7ada5b943dfdd1ac2d"
 ---
 
 # ADI · Ads intelligence browser workflow packs
@@ -44,10 +44,10 @@ TBD.
 
 | Task | Status | Next owner | Next action |
 |---|---|---|---|
-| [[ADI-T-0001]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[ADI-T-0002]] | backlog | blocked_dependency | Wait for dependency ADI-T-0001 to reach review with satisfied proof or done. |
-| [[ADI-T-0003]] | ready | agent | Execute the task contract and satisfy proof mode. |
-| [[ADI-T-0004]] | backlog | blocked_dependency | Wait for dependency ADI-T-0001 to reach review with satisfied proof or done. |
+| [[ADI-T-0001]] | review | reviewer | Review evidence and close or return to rework. |
+| [[ADI-T-0002]] | review | reviewer | Review evidence and close or return to rework. |
+| [[ADI-T-0003]] | review | reviewer | Review evidence and close or return to rework. |
+| [[ADI-T-0004]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 

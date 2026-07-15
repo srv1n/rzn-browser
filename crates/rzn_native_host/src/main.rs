@@ -847,10 +847,27 @@ async fn forward_supervisor_cloud_control_command(
     token_arg: Option<String>,
 ) -> Option<Result<Value>> {
     let cmd = request.get("cmd").and_then(|value| value.as_str())?;
-    let method = cloud_supervisor_method(cmd)?;
-    let params = request.get("payload").cloned().unwrap_or_else(|| json!({}));
+    let payload = request.get("payload").cloned().unwrap_or_else(|| json!({}));
+    let method = if cmd == "supervisor_rpc" {
+        payload.get("method").and_then(Value::as_str)?.to_string()
+    } else {
+        cloud_supervisor_method(cmd)?.to_string()
+    };
+    let params = if cmd == "supervisor_rpc" {
+        payload.get("params").cloned().unwrap_or_else(|| json!({}))
+    } else {
+        payload
+    };
+    let (method, params) = if cmd == "supervisor_rpc" {
+        (
+            "native_host.rpc".to_string(),
+            json!({"method": method, "params": params}),
+        )
+    } else {
+        (method, params)
+    };
     Some(
-        call_supervisor_client(socket_arg, token_arg, method, params)
+        call_supervisor_client(socket_arg, token_arg, &method, params)
             .await
             .map(|result| build_native_control_response(request, cmd, true, result, None)),
     )

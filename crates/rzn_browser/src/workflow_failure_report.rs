@@ -70,6 +70,9 @@ pub struct WorkflowFailureReportContext {
 pub struct WorkflowRunFailure {
     pub message: String,
     pub report_context: WorkflowFailureReportContext,
+    pub failing_step_index: usize,
+    pub failure_capture: Option<Value>,
+    pub classification_message: String,
 }
 
 impl fmt::Display for WorkflowRunFailure {

@@ -1,0 +1,1 @@
+import path from 'path';import {defineConfig} from 'vite';export default defineConfig({build:{target:'es2020',outDir:process.env.RZN_EXTENSION_OUT_DIR||'dist',emptyOutDir:false,rollupOptions:{input:{dashboard:path.resolve(__dirname,'dashboard.html')}}}});

@@ -11,6 +11,7 @@
     "build:chrome": "bun run scripts/generate-types.ts && ./build.sh chrome",
     "build:edge": "bun run scripts/generate-types.ts && ./build.sh edge",
     "build:chromium": "bun run scripts/generate-types.ts && ./build.sh chromium",
+    "build:firefox": "bun run scripts/generate-types.ts && ./build.sh firefox",
     "clean": "rm -rf .build dist dist-chrome dist-edge dist-chromium dist-firefox",
     "package": "bun run build && bun run package:chrome && bun run package:edge && bun run package:chromium",
     "package:chrome": "bun run build:chrome && tar -czf dist/rzn-browser-extension-chrome.tar.gz -C dist chrome",

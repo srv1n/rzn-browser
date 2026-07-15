@@ -1,3 +1,4 @@
+pub mod ads_smoke;
 pub mod errors;
 pub mod executor;
 pub mod framing;

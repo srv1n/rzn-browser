@@ -1,0 +1,110 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://rzn.browser/schema/ads-manifest-v1.json",
+  "title": "RZN Ads Intelligence Manifest v1",
+  "description": "Shared output envelope for ads-library workflow packs (Google Ads Transparency Center, Meta Ad Library). Both packs normalize their scraped ads into this canonical, source-discriminated shape so downstream consumers and contract tests can treat them uniformly. Field naming is canonical; per-source aliases are documented in each field. Objects are kept shallow (arrays of flat records) to survive the engine's result-bridge depth cap.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["source", "query", "count", "ads"],
+  "properties": {
+    "source": {
+      "description": "Which ad library produced this manifest. Discriminates otherwise-identical records.",
+      "type": "string",
+      "enum": ["google_ads_transparency", "meta_ad_library"]
+    },
+    "query": {
+      "description": "The search that produced this manifest, echoed back for provenance and to satisfy the 'records the query in the manifest' acceptance.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "advertiser": {
+          "type": ["string", "null"],
+          "description": "Advertiser name searched for (if the search was by advertiser)."
+        },
+        "advertiser_id": {
+          "type": ["string", "null"],
+          "description": "Resolved advertiser id (Google AR... / Meta page id) when enumeration was scoped to one advertiser."
+        },
+        "keyword": {
+          "type": ["string", "null"],
+          "description": "Free-text keyword searched for (if the search was by keyword)."
+        },
+        "region": {
+          "type": ["string", "null"],
+          "description": "Region/country the library was scoped to (e.g. 'US'). Required by both UIs before searching."
+        }
+      }
+    },
+    "cap": {
+      "description": "The configured maximum number of ads the run was allowed to collect. Present when pagination was capped.",
+      "type": ["integer", "null"],
+      "minimum": 1
+    },
+    "count": {
+      "description": "Number of ads actually collected in this manifest (== ads.length).",
+      "type": "integer",
+      "minimum": 0
+    },
+    "truncated": {
+      "description": "True if more ads were available than the cap allowed and enumeration stopped at the cap.",
+      "type": "boolean"
+    },
+    "advertiser_name": {
+      "description": "Top-level advertiser context when the whole manifest is one advertiser's ads.",
+      "type": ["string", "null"]
+    },
+    "advertiser_id": {
+      "description": "Top-level advertiser id when the whole manifest is one advertiser's ads.",
+      "type": ["string", "null"]
+    },
+    "ads": {
+      "description": "The collected ads. One flat record per ad. Keep records flat (no nested objects) to survive the result-bridge depth cap.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id"],
+        "properties": {
+          "id": {
+            "description": "Stable ad/creative id. Google: creative id (CR...). Meta: ad archive id.",
+            "type": "string",
+            "minLength": 1
+          },
+          "advertiser_id": {
+            "type": ["string", "null"],
+            "description": "Advertiser id owning this ad. Google AR... / Meta page id."
+          },
+          "advertiser_name": {
+            "type": ["string", "null"],
+            "description": "Advertiser display name."
+          },
+          "media_type": {
+            "description": "Canonical creative type. Google 'format' and Meta 'media_type' both map here.",
+            "type": ["string", "null"],
+            "enum": ["text", "image", "video", "carousel", "unknown", null]
+          },
+          "first_shown": {
+            "description": "Date the ad first ran, ISO-ish string as surfaced by the source. Meta 'started_at' maps here.",
+            "type": ["string", "null"]
+          },
+          "last_shown": {
+            "description": "Date the ad was last seen running, if surfaced.",
+            "type": ["string", "null"]
+          },
+          "copy": {
+            "description": "Ad body/creative text where available (Meta ad copy; Google text-ad copy).",
+            "type": ["string", "null"]
+          },
+          "url": {
+            "description": "Canonical link to this ad's detail page in the source library.",
+            "type": ["string", "null"]
+          },
+          "preview_url": {
+            "description": "Thumbnail/preview image or video URL for the creative, when exposed on the listing.",
+            "type": ["string", "null"]
+          }
+        }
+      }
+    }
+  }
+}

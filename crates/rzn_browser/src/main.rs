@@ -9,15 +9,24 @@
 )]
 
 mod cloud;
+mod fleet_cli;
+mod log_buffer;
 mod mcp_browser;
 mod native_runner;
 mod result_formatter;
+mod run_store;
+mod settings;
 mod skill_installer;
 mod supervisor;
 mod supervisor_cloud;
+mod supervisor_control;
+mod supervisor_fleet;
+mod workflow_cache;
 mod workflow_catalog;
 mod workflow_failure_report;
+mod workflow_health;
 mod workflow_params;
+mod workflow_runner;
 
 use anyhow::Context;
 use clap::{ArgAction, Args, Parser, Subcommand, ValueEnum};
@@ -28,6 +37,7 @@ use comfy_table::{
     presets::{ASCII_FULL, UTF8_FULL_CONDENSED},
     Attribute, Cell, Color, ContentArrangement, Table,
 };
+use fleet_cli::{handle_fleet_commands, FleetCommands};
 use mcp_browser::{run_browser_mcp_server, BrowserMcpArgs};
 use native_runner::{SnapshotMode, SupervisorRunConfig};
 use rzn_contracts::v2::{
@@ -178,6 +188,10 @@ enum Commands {
     /// Hosted cloud control plane operations
     #[command(subcommand)]
     Cloud(CloudCommands),
+
+    /// Fleet device enrollment and status (join this laptop to a fleet)
+    #[command(subcommand)]
+    Fleet(FleetCommands),
 
     /// Install, list, and uninstall browser native-host registrations
     #[command(name = "native-host", subcommand)]
@@ -1423,6 +1437,12 @@ async fn main() {
         Commands::Cloud(cmd) => {
             if let Err(e) = handle_cloud_commands(cmd).await {
                 eprintln!("❌ cloud command failed: {}", e);
+                process::exit(1);
+            }
+        }
+        Commands::Fleet(cmd) => {
+            if let Err(e) = handle_fleet_commands(cmd).await {
+                eprintln!("❌ fleet command failed: {}", e);
                 process::exit(1);
             }
         }
@@ -3748,6 +3768,7 @@ async fn download_payload_assets(payload: &Value, dir: &Path) -> anyhow::Result<
 
     let mut manifest = Vec::new();
     let mut downloaded = 0usize;
+    let mut skipped = 0usize;
     for (kind, urls, fallback_ext) in [
         ("image", images, "jpg"),
         ("video", videos, "mp4"),
@@ -3765,14 +3786,27 @@ async fn download_payload_assets(payload: &Value, dir: &Path) -> anyhow::Result<
                 index + 1,
                 filename_from_url(url, fallback_ext)
             ));
-            match download_one(&client, url, &dest).await {
-                Ok(bytes) => {
-                    downloaded += 1;
+            match rzn_browser::asset_download::download_asset(
+                &client,
+                url,
+                &dest,
+                rzn_browser::asset_download::DEFAULT_ASSET_MAX_BYTES,
+            )
+            .await
+            {
+                Ok(outcome) => {
+                    if outcome.skipped {
+                        skipped += 1;
+                    } else {
+                        downloaded += 1;
+                    }
                     manifest.push(json!({
                         "kind": kind,
                         "url": url,
                         "path": dest.strip_prefix(dir).unwrap_or(&dest).to_string_lossy(),
-                        "bytes": bytes
+                        "bytes": outcome.bytes,
+                        "sha256": outcome.sha256,
+                        "skipped": outcome.skipped
                     }));
                 }
                 Err(err) => {
@@ -3799,14 +3833,27 @@ async fn download_payload_assets(payload: &Value, dir: &Path) -> anyhow::Result<
                 .map(|f| sanitize_filename_segment(f, 160))
                 .unwrap_or_else(|| filename_from_url(&asset.url, "bin"));
             let dest = subdir.join(format!("{:03}_{}", index + 1, name));
-            match download_one(&client, &asset.url, &dest).await {
-                Ok(bytes) => {
-                    downloaded += 1;
+            match rzn_browser::asset_download::download_asset(
+                &client,
+                &asset.url,
+                &dest,
+                rzn_browser::asset_download::DEFAULT_ASSET_MAX_BYTES,
+            )
+            .await
+            {
+                Ok(outcome) => {
+                    if outcome.skipped {
+                        skipped += 1;
+                    } else {
+                        downloaded += 1;
+                    }
                     manifest.push(json!({
                         "kind": "attachment",
                         "url": asset.url,
                         "path": dest.strip_prefix(dir).unwrap_or(&dest).to_string_lossy(),
-                        "bytes": bytes
+                        "bytes": outcome.bytes,
+                        "sha256": outcome.sha256,
+                        "skipped": outcome.skipped
                     }));
                 }
                 Err(err) => {
@@ -3826,6 +3873,7 @@ async fn download_payload_assets(payload: &Value, dir: &Path) -> anyhow::Result<
         &manifest_path,
         serde_json::to_string_pretty(&json!({
             "downloaded": downloaded,
+            "skipped": skipped,
             "items": manifest
         }))?,
     )
@@ -3833,24 +3881,6 @@ async fn download_payload_assets(payload: &Value, dir: &Path) -> anyhow::Result<
     .with_context(|| format!("write {}", manifest_path.display()))?;
     println!("[OK] Wrote download manifest: {}", manifest_path.display());
     Ok(())
-}
-
-async fn download_one(client: &reqwest::Client, url: &str, dest: &Path) -> anyhow::Result<u64> {
-    let bytes = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("GET {url}"))?
-        .error_for_status()
-        .with_context(|| format!("status {url}"))?
-        .bytes()
-        .await
-        .with_context(|| format!("read body {url}"))?;
-    let len = bytes.len() as u64;
-    tokio::fs::write(dest, &bytes)
-        .await
-        .with_context(|| format!("write {}", dest.display()))?;
-    Ok(len)
 }
 
 async fn handle_supervisor_run(args: SupervisorRunArgs) -> anyhow::Result<()> {
