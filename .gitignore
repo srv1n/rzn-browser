@@ -59,12 +59,12 @@ workflows/generated/
 output/
 artifacts/
 
-# Tusker generated/runtime state
-tusker/_generated/
-tusker/events/
-tusker/attempts/
-tusker/evidence/
-tusker/Attachments/
+# Local task tracker state (kept on disk, not published)
+tusker/
+
+# Internal planning notes, not public docs
+docs/repo_cleanup_audit/
+.github/issues/
 
 # Chrome Web Store submission drafts (assets, screenshots, copy — not for git)
 chrome-store-submission/
