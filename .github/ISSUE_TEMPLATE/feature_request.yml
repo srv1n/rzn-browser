@@ -1,0 +1,51 @@
+name: Feature request
+description: Propose a new workflow, a new site pack, or a runtime capability
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If you want a workflow for a site and are willing to write it, you may not need this —
+        a workflow is one JSON file under `workflows/<system>/`. See
+        [CONTRIBUTING.md](https://github.com/srv1n/rzn-browser/blob/main/CONTRIBUTING.md).
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What kind of request
+      options:
+        - New workflow for a site already in the catalog
+        - New site pack
+        - CLI or runtime capability
+        - Agent / MCP integration
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: The concrete outcome you want
+      description: One system, one user outcome. What would you run, and what should come back?
+      placeholder: |
+        `rzn-browser run <system> <workflow> --param ...` returns ...
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why the current tools do not cover it
+      description: What you do today instead, and where it falls down.
+  - type: dropdown
+    id: side-effects
+    attributes:
+      label: Would this read or write
+      description: Write flows need a draft/review gate before any irreversible action.
+      options:
+        - Read-only
+        - Writes (posts, sends, or changes remote state)
+        - Not sure
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution
+      options:
+        - label: I would be willing to write this workflow myself

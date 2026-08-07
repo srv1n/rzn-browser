@@ -1,0 +1,62 @@
+name: Workflow broken
+description: A shipped workflow stopped working because the site changed
+title: "[broken] <system> <workflow>"
+labels: ["workflow-broken"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Sites change their DOM and workflows drift. These reports are how the catalog stays
+        current — thanks for filing one.
+  - type: input
+    id: site
+    attributes:
+      label: Site / system
+      description: The system namespace the workflow lives under.
+      placeholder: google
+    validations:
+      required: true
+  - type: input
+    id: workflow
+    attributes:
+      label: Workflow id
+      description: As shown by `rzn-browser list <system>`.
+      placeholder: search
+    validations:
+      required: true
+  - type: textarea
+    id: report-command
+    attributes:
+      label: Report command from the CLI
+      description: |
+        When a workflow fails, the CLI prints a self-contained
+        `rzn-browser report workflow-broken ...` command. Paste it here as-is. It contains only
+        the visible non-private fields — system, workflow, version, failing step, error class,
+        app version, platform.
+      render: shell
+      placeholder: |
+        rzn-browser report workflow-broken \
+          --product rzn-browser \
+          --flow-kind workflow \
+          --system google \
+          --workflow google/search-v1 \
+          --version 2026-04-24.1 \
+          --step search_button \
+          --error button_not_found \
+          --app-version 0.8.3 \
+          --platform macos
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What should have happened
+      description: What the workflow normally returns, and what you saw instead.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I am signed into this site in the Chrome profile RZN drives
+        - label: The same steps work when I do them by hand in that browser
+        - label: I am on the latest release (or built from current `main`)
