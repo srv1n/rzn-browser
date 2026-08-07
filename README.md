@@ -2,11 +2,24 @@
 
 [![CI](https://github.com/srv1n/rzn-browser/actions/workflows/ci.yml/badge.svg)](https://github.com/srv1n/rzn-browser/actions/workflows/ci.yml)
 
-RZN Browser is a CLI-based browser automation tool. It can open websites, click buttons, fill forms, extract data, run repeatable workflows, or let an LLM drive and complete ambiguous browser tasks.
+**Zero-token browser automation.**
 
-It runs page actions through a Chrome extension and falls back to CDP for harder cases. You can drive it from the CLI, from an MCP-based agent, or by running saved workflows directly.
+- Google, Maps, Scholar, and Trends searches
+- G2, Capterra, Amazon, and App Store reviews
+- Goodreads books, ratings, and review histograms
+- LinkedIn feed, profiles, people search, and jobs
+- Reddit threads, X posts, Hacker News
+- Your own ChatGPT and Claude chat logs
+- Meta Ad Library and Google Ads Transparency
 
-RZN is strongest when you want a local browser tool with built-in workflow packs, not just a blank browser SDK.
+Claude Code, Codex, Gemini CLI, OpenCode, or any agent that can run a CLI drives these as one-command, pre-built workflows. Zero extra tokens; the page is never re-derived.
+
+- ~100 workflows across 25 sites, replayed deterministically in seconds
+- Your signed-in Chrome: real sessions, real logins
+- Chrome extension first; short CDP fallback
+- An LLM figures a site out once (`llm-auto`); replays never need a model
+
+**Not for** mass scraping or anonymous crawling. Personal automation: one signed-in person's repeatable tasks.
 
 <p>
   <img src="docs/visuals/01-product-overview.png" alt="RZN Browser product overview showing the CLI, runtime, native host, Chrome extension, and target web app" width="100%">
