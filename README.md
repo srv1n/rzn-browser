@@ -1,5 +1,7 @@
 # RZN Browser
 
+[![CI](https://github.com/srv1n/rzn-browser/actions/workflows/ci.yml/badge.svg)](https://github.com/srv1n/rzn-browser/actions/workflows/ci.yml)
+
 RZN Browser is a CLI-based browser automation tool. It can open websites, click buttons, fill forms, extract data, run repeatable workflows, or let an LLM drive and complete ambiguous browser tasks.
 
 It runs page actions through a Chrome extension and falls back to CDP for harder cases. You can drive it from the CLI, from an MCP-based agent, or by running saved workflows directly.
@@ -92,6 +94,11 @@ Meta Ad Library and Google Ads Transparency emit a shared ad manifest shape, so 
 
 - First path: use the extension and page actions.
 - Second path: use CDP for the cases the first path cannot handle.
+
+<p>
+  <img src="docs/visuals/03-action-escalation.png" alt="Action escalation ladder: same-origin DOM actions first, scripted event fallback second, short CDP attach last" width="100%">
+</p>
+
 - Use fixed workflows when the task is known.
 - Use `llm-auto` when the task is still fuzzy.
 
