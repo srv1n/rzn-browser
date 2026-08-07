@@ -9,6 +9,7 @@
   "params": {
     "properties": {
       "chat_id": { "kind": "string", "required": true, "description": "ChatGPT conversation id." },
+      "chat_url": { "kind": "string", "required": true, "description": "Stored full ChatGPT conversation URL; preserves a Project route." },
       "file_name": { "kind": "string", "required": true, "description": "Visible assistant artifact file name, for example onboarding-plan.zip." }
     },
     "additional_params": false
@@ -21,8 +22,8 @@
   "steps": [
     {
       "id": "s0",
-      "name": "Open conversation",
-      "action": { "kind": "navigate_to_url", "inputs": { "url": "https://chatgpt.com/c/{chat_id}" }, "side_effects": ["browser_state"] },
+      "name": "Open the stored conversation URL directly",
+      "action": { "kind": "navigate_to_url", "inputs": { "url": "{chat_url}", "skip_if_url_contains": "/c/{chat_id}" }, "side_effects": ["browser_state"] },
       "timeout_ms": 60000
     },
     {

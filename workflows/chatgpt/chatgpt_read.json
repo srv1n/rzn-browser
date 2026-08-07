@@ -14,6 +14,11 @@
         "required": true,
         "description": "ChatGPT conversation id (the part after /c/ in the URL)."
       },
+      "chat_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Exact stored ChatGPT conversation URL. Open this URL directly; do not start at chatgpt.com first."
+      },
       "download_attachments": {
         "kind": "boolean",
         "required": false,
@@ -99,7 +104,8 @@
       "action": {
         "kind": "navigate_to_url",
         "inputs": {
-          "url": "https://chatgpt.com/c/{chat_id}"
+          "url": "{chat_url}",
+          "skip_if_url_contains": "/c/{chat_id}"
         },
         "side_effects": [
           "browser_state"
@@ -157,6 +163,7 @@
     "summary": "Read a ChatGPT chat (latest reply, full transcript, or full mapping with metadata) via the backend-api JSON. One workflow with a `mode` flag.",
     "parameters": {
       "chat_id": "ChatGPT conversation id (the part after /c/ in the URL).",
+      "chat_url": "Exact stored ChatGPT conversation URL; opened directly, including Project routes.",
       "download_attachments": "If true, download every file attachment — both user uploads and assistant-generated sandbox outputs (code-interpreter patches/zips) — bundled into ONE zip (chatgpt-attachments-<chat_id>.zip) in the browser Downloads folder. Avoids Chrome's multi-download gate. Defaults to true.",
       "include_system": "Only meaningful when mode=transcript. If true, include system/tool turns in the messages array. Defaults to false.",
       "mode": "What to return. `latest` = just the last user message + every assistant turn after it (final reply + any planning turns) + a streaming flag. `transcript` (default) = user/assistant turns as clean markdown. `full` = every node in the mapping with raw parts, metadata, and parent/child refs.",
@@ -165,19 +172,19 @@
     "examples": [
       {
         "description": "Default — clean markdown transcript with attachments downloaded.",
-        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\""
+        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param chat_url=\"https://chatgpt.com/c/01234567-89ab-cdef-0123-456789abcdef\""
       },
       {
         "description": "Just the latest assistant response (poll-friendly).",
-        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param mode=\"latest\""
+        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param chat_url=\"https://chatgpt.com/c/01234567-89ab-cdef-0123-456789abcdef\" --param mode=\"latest\""
       },
       {
         "description": "Complete mapping including system/tool turns + per-message metadata.",
-        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param mode=\"full\""
+        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param chat_url=\"https://chatgpt.com/c/01234567-89ab-cdef-0123-456789abcdef\" --param mode=\"full\""
       },
       {
         "description": "Transcript without downloading attachments.",
-        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param download_attachments=false"
+        "command": "rzn-browser run chatgpt read --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param chat_url=\"https://chatgpt.com/c/01234567-89ab-cdef-0123-456789abcdef\" --param download_attachments=false"
       }
     ],
     "returns": [

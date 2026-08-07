@@ -12,6 +12,11 @@
         "kind": "string",
         "required": true,
         "description": "Signed https://chatgpt.com/backend-api/estuary/content URL."
+      },
+      "chat_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Stored full ChatGPT conversation URL used as the authenticated fetch context."
       }
     },
     "additional_params": false
@@ -45,11 +50,12 @@
   "steps": [
     {
       "id": "s0",
-      "name": "Open ChatGPT origin",
+      "name": "Open the stored conversation URL directly",
       "action": {
         "kind": "navigate_to_url",
         "inputs": {
-          "url": "https://chatgpt.com/"
+          "url": "{chat_url}",
+          "skip_if_url_contains": "{chat_url}"
         },
         "side_effects": ["browser_state"]
       },

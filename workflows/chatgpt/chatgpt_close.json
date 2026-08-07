@@ -1,0 +1,59 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "chatgpt/close",
+  "name": "ChatGPT: Close Retained Tab",
+  "version": "1.0.0",
+  "system": "chatgpt",
+  "capability": "chatgpt.close",
+  "summary": "Close exactly the retained ChatGPT tab named by --tab-ref.",
+  "description": "Terminal cleanup for a ChatGPT handoff tab retained with --keep-tab-open. The caller must provide --tab-ref; its browser instance and numeric tab id are resolved together before the extension removes that exact tab. A tab that is already gone is a successful no-op.",
+  "params": { "properties": {}, "additional_params": false },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["chatgpt.com"]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 30000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "close_current_tab",
+        "inputs": {},
+        "side_effects": ["browser_state"]
+      },
+      "name": "Close the tab bound by --tab-ref",
+      "timeout_ms": 15000
+    }
+  ],
+  "result": {
+    "artifact_policy": { "prefer_downloads": false },
+    "include_debug": false,
+    "output_schema": { "type": "object" },
+    "output_selector": { "step_id": "s0", "path": "$.result" }
+  },
+  "help": {
+    "summary": "Close one retained ChatGPT handoff tab by exact tab reference.",
+    "parameters": {},
+    "examples": [
+      {
+        "description": "Close the retained tab without touching a same-numbered tab in another browser instance.",
+        "command": "rzn-browser run chatgpt close --tab-ref=\"rzn://browser/chrome-instance/tab/42\""
+      }
+    ],
+    "returns": ["{ tabId, closed, already_missing }. already_missing=true is a successful idempotent cleanup."],
+    "notes": ["This workflow has no current-tab or active-tab fallback. Omit --tab-ref and it reports no_tab_id_available rather than closing an unrelated tab."]
+  },
+  "metadata": {
+    "migrated_from": "chatgpt/chatgpt_close.json",
+    "legacy_system_id": "chatgpt"
+  }
+}
