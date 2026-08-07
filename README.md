@@ -12,18 +12,21 @@ RZN is strongest when you want a local browser tool with built-in workflow packs
 
 ## Workflow Packs
 
-RZN ships with built-in workflow packs. For sites that need authentication, assume you are already signed in and use your normal browser session.
+RZN ships with roughly 100 built-in workflows across 25 sites. For sites that need authentication, assume you are already signed in and use your normal browser session.
 
 ### Search & Research
 
 | Icon | System | Capabilities |
 | --- | --- | --- |
-| <img alt="Google" src="https://www.google.com/s2/favicons?sz=64&domain=google.com" width="24" height="24"> | Google | Search, Maps, News, Scholar, Images, Trends, Flights, Hotels, Weather |
-| <img alt="Bing" src="https://www.google.com/s2/favicons?sz=64&domain=bing.com" width="24" height="24"> | Bing | Search, news, and image workflows |
-| <img alt="YouTube" src="https://www.google.com/s2/favicons?sz=64&domain=youtube.com" width="24" height="24"> | YouTube | Search and video discovery |
+| <img alt="Google" src="https://www.google.com/s2/favicons?sz=64&domain=google.com" width="24" height="24"> | Google | Search, Maps, Maps directions, Scholar, Images, Lens, Trends, Flights, Hotels, Weather, Finance, Translate |
+| <img alt="Bing" src="https://www.google.com/s2/favicons?sz=64&domain=bing.com" width="24" height="24"> | Bing | Web, news, video, and image search, plus bulk image download |
+| <img alt="YouTube" src="https://www.google.com/s2/favicons?sz=64&domain=youtube.com" width="24" height="24"> | YouTube | Search, channel browsing, playlist contents, and watch-page metadata with recommendations and comments |
 | <img alt="PubMed" src="https://www.google.com/s2/favicons?sz=64&domain=pubmed.ncbi.nlm.nih.gov" width="24" height="24"> | PubMed | Search and paper extraction |
 | <img alt="arXiv" src="https://www.google.com/s2/favicons?sz=64&domain=arxiv.org" width="24" height="24"> | arXiv | Search and preprint extraction |
 | <img alt="ScienceDirect" src="https://www.google.com/s2/favicons?sz=64&domain=sciencedirect.com" width="24" height="24"> | ScienceDirect | Search and paper access workflows |
+| <img alt="Goodreads" src="https://www.google.com/s2/favicons?sz=64&domain=goodreads.com" width="24" height="24"> | Goodreads | Book search, book detail with rating histogram, shelf ranking, reviews, and similar-book lists |
+| <img alt="Libgen" src="https://www.google.com/s2/favicons?sz=64&domain=libgen.li" width="24" height="24"> | Libgen | Mirror search and direct download resolution |
+| <img alt="Yahoo Finance" src="https://www.google.com/s2/favicons?sz=64&domain=finance.yahoo.com" width="24" height="24"> | Yahoo Finance | Quote lookup for stocks, ETFs, indices, crypto, forex, and futures, plus ticker news |
 
 ### Shopping, Travel & Reviews
 
@@ -36,21 +39,32 @@ RZN ships with built-in workflow packs. For sites that need authentication, assu
 | <img alt="App Store" src="https://www.google.com/s2/favicons?sz=64&domain=apps.apple.com" width="24" height="24"> | App Store | App search and app details |
 | <img alt="Airbnb" src="https://www.google.com/s2/favicons?sz=64&domain=airbnb.com" width="24" height="24"> | Airbnb | Search workflows |
 
+### Ads & Market Intelligence
+
+| Icon | System | Capabilities |
+| --- | --- | --- |
+| <img alt="Meta Ad Library" src="https://www.google.com/s2/favicons?sz=64&domain=facebook.com" width="24" height="24"> | Meta Ad Library | Search live ads by keyword or by advertiser |
+| <img alt="Google Ads Transparency" src="https://www.google.com/s2/favicons?sz=64&domain=google.com" width="24" height="24"> | Google Ads Transparency | List an advertiser's ads from the Transparency Center |
+| <img alt="Apple Ads" src="https://www.google.com/s2/favicons?sz=64&domain=ads.apple.com" width="24" height="24"> | Apple Ads | Keyword suggestions with popularity signals, recommendation cards, and campaign/ad-group reports for the signed-in org |
+
+Meta Ad Library and Google Ads Transparency emit a shared ad manifest shape, so results from both can be compared without per-pack conversion.
+
 ### AI Apps
 
 | Icon | System | Capabilities |
 | --- | --- | --- |
-| <img alt="ChatGPT" src="https://www.google.com/s2/favicons?sz=64&domain=chatgpt.com" width="24" height="24"> | ChatGPT | New chats, continue chats, export chats, recent chats, image generation and downloads |
-| <img alt="Claude" src="https://www.google.com/s2/favicons?sz=64&domain=claude.ai" width="24" height="24"> | Claude | Recent chats, replies, and full chat export |
+| <img alt="ChatGPT" src="https://www.google.com/s2/favicons?sz=64&domain=chatgpt.com" width="24" height="24"> | ChatGPT | Send to a new or existing chat with attachments, model and effort selection, and a tool toggle; read transcripts, list recent chats, browse Projects, generate and download images, and resolve artifact URLs |
+| <img alt="Claude" src="https://www.google.com/s2/favicons?sz=64&domain=claude.ai" width="24" height="24"> | Claude | Send with attachments and model selection, list recent chats, and export a full thread |
 
 ### Social & Communities
 
 | Icon | System | Capabilities |
 | --- | --- | --- |
-| <img alt="X" src="https://www.google.com/s2/favicons?sz=64&domain=x.com" width="24" height="24"> | X | Timeline reads, thread export, post drafts, likes, replies, inbox, and DMs |
-| <img alt="Reddit" src="https://www.google.com/s2/favicons?sz=64&domain=reddit.com" width="24" height="24"> | Reddit | Inbox, chats, comment flows, drafts, and replies |
+| <img alt="X" src="https://www.google.com/s2/favicons?sz=64&domain=x.com" width="24" height="24"> | X | Home timeline and profile digests, post search, unified read of any post/article/thread as markdown, plus posts, replies, likes, and DMs behind approval gates |
+| <img alt="Reddit" src="https://www.google.com/s2/favicons?sz=64&domain=reddit.com" width="24" height="24"> | Reddit | Search, profile history, message inbox, submit in any post kind, comment, reply, vote, flair lookup, and DM drafts |
 | <img alt="Hacker News" src="https://www.google.com/s2/favicons?sz=64&domain=news.ycombinator.com" width="24" height="24"> | Hacker News | Submit, comment, reply, and draft-first write flows |
-| <img alt="Instagram" src="https://www.google.com/s2/favicons?sz=64&domain=instagram.com" width="24" height="24"> | Instagram | Profile posts and post asset extraction |
+| <img alt="Instagram" src="https://www.google.com/s2/favicons?sz=64&domain=instagram.com" width="24" height="24"> | Instagram | Search accounts/hashtags/places, profile post discovery, post extraction with media and comments, plus follow, like, comment, and DM |
+| <img alt="LinkedIn" src="https://www.google.com/s2/favicons?sz=64&domain=linkedin.com" width="24" height="24"> | LinkedIn | Read-only feed digest, people/post/company search, profile read, post permalink with comments, job search, job detail, and your own jobs |
 
 ## Best Fit
 
@@ -58,14 +72,17 @@ RZN ships with built-in workflow packs. For sites that need authentication, assu
 - Built-in workflow packs instead of starting from a blank SDK
 - Repeatable browser tasks that you want to save and rerun
 - LLM-driven browser tasks when the flow is still ambiguous
-- Signed-in product surfaces like ChatGPT, Claude, X, Reddit, and Instagram
+- Signed-in product surfaces like ChatGPT, Claude, X, Reddit, LinkedIn, and Instagram
+- Ad and market research across Meta, Google, and Apple ad surfaces
 
 ## Not For
 
-- Cloud browser infrastructure
+- Rented cloud browsers, or anything that runs without your own signed-in browser
 - Mainstream test automation
-- Large-scale scraping fleets
+- Large-scale anonymous scraping
 - Teams looking for a general-purpose browser SDK first
+
+`fleet` and `cloud` do not contradict this. Both coordinate machines you already own — enrolling your own laptops so work can be dispatched to whichever one holds the right session. Every action still runs in a real browser you are signed into.
 
 ## How It Works
 
@@ -233,17 +250,50 @@ If you want the same runtime to go autonomous instead of following a fixed workf
 rzn-browser llm-auto "Search Google for browser automation and extract the top results"
 ```
 
+### Run Options Worth Knowing
+
+```sh
+# write the result to a file instead of stdout
+rzn-browser run x open --param url="https://x.com/..." --output-file thread.md
+
+# download every asset the result references, with a manifest.json alongside
+rzn-browser run libgen download --param query="..." --download-dir ./books
+
+# leave the tab open and reuse that exact tab on the next run
+rzn-browser run chatgpt send --param message_text="..." --keep-tab-open
+rzn-browser run chatgpt read --tab-ref "rzn://browser/<instance>/tab/<id>" --param chat_id="..."
+
+# capture a snapshot when a step fails
+rzn-browser run google search --param search_query="..." --snapshot on-error
+```
+
+A workflow must declare `file_write` in its side effects to use `--output-file` or `--download-dir`; the CLI refuses the post-processing otherwise rather than writing behind the manifest's back.
+
+## Beyond Workflows
+
+The same runtime exposes a few surfaces that are not fixed workflows:
+
+| command | what it does |
+| --- | --- |
+| `rzn-browser llm-auto "<task>"` | LLM drives the browser when the flow is still ambiguous |
+| `rzn-browser observe` | returns candidate selectors for a page, no LLM required |
+| `rzn-browser quick-extract` | fast code-first extraction for common sites |
+| `rzn-browser act` / `extract-schema` | single planned action, or structured extraction from a DOM inventory |
+| `rzn-browser mcp` | serve the runtime to an MCP-based agent over stdio |
+| `rzn-browser fleet enroll` | join this machine to a fleet of your own devices |
+| `rzn-browser report workflow-broken` | report a workflow whose selectors have drifted |
+
+The extension also ships a dashboard for runs, logs, workflows, fleet status, and settings — useful when you want to watch a run rather than read its JSON.
+
 ## Workflow Catalog
 
-| icon | system name | workflows |
-| --- | --- | --- |
-| <img alt="Google" src="https://www.google.com/s2/favicons?sz=64&domain=google.com" width="24" height="24"> | Google | Search and related flows under `google/*` |
-| <img alt="Bing" src="https://www.google.com/s2/favicons?sz=64&domain=bing.com" width="24" height="24"> | Bing | Search/image-style flows under `bing/*` |
-| <img alt="Hacker News" src="https://www.google.com/s2/favicons?sz=64&domain=news.ycombinator.com" width="24" height="24"> | Hacker News | Read, draft, and comment flows under `hn/*` |
-| <img alt="Instagram" src="https://www.google.com/s2/favicons?sz=64&domain=instagram.com" width="24" height="24"> | Instagram | Profile/post asset flows under `instagram/*` |
-| <img alt="X" src="https://www.google.com/s2/favicons?sz=64&domain=x.com" width="24" height="24"> | X | Session-aware extraction flows under `x/*` |
-| <img alt="ChatGPT" src="https://www.google.com/s2/favicons?sz=64&domain=chatgpt.com" width="24" height="24"> | ChatGPT | ChatGPT web app flows under `chatgpt/*` |
-| <img alt="Examples" src="extension/public/icons/brain-32.png" width="24" height="24"> | Examples | Packaged examples under `examples/*` |
+Every shipped system lives under `workflows/<system>/`, and the packs above are the human-readable index. For the authoritative list on your machine — including anything you have imported yourself — ask the CLI rather than a table that can drift:
+
+```sh
+rzn-browser list                 # every system
+rzn-browser list linkedin        # one system's workflows
+rzn-browser list chatgpt send    # full help for one workflow
+```
 
 Useful commands:
 
@@ -352,7 +402,9 @@ The easiest way to get a workflow accepted is to keep the value obvious:
 ## Example Flows
 
 - Search and extract results from Google, Bing, or YouTube.
-- Reuse a logged-in session on X, Reddit, ChatGPT, Instagram, or Hacker News.
+- Reuse a logged-in session on X, Reddit, ChatGPT, LinkedIn, Instagram, or Hacker News.
+- Pull an advertiser's live creatives from the Meta Ad Library and Google Ads Transparency Center into one comparable shape.
+- Hand a task to ChatGPT with attachments and a chosen model and effort, then read the reply back.
 - Interact with UI inside embedded cross-origin frames without swapping tools.
 - Draft comments or messages for review before submit.
 - Mix deterministic workflows with agent-style tasks in the same browser runtime.
