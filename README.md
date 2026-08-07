@@ -454,4 +454,9 @@ For deeper setup and architecture details, see [docs/BROWSER_DEV_LOOP.md](docs/B
 
 ## License
 
-GNU AGPLv3 (`AGPL-3.0-only`). See [LICENSE](LICENSE).
+Two licenses, split by what the code is for:
+
+- **Runtime** (`crates/`, `extension/`) — GNU AGPLv3 (`AGPL-3.0-only`). See [LICENSE](LICENSE).
+- **Workflow catalog** (`workflows/`), **agent skills** (`skills/`), and **schemas** (`schema/`) — MIT. See [workflows/LICENSE](workflows/LICENSE), [skills/LICENSE](skills/LICENSE), [schema/LICENSE](schema/LICENSE).
+
+Workflows and skills exist to be copied, remixed, and redistributed, so they carry a license that gets out of the way.
