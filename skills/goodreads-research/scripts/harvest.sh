@@ -18,6 +18,50 @@ SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]
 # ---- result helpers -------------------------------------------------------
 res() { sed -n '/^{/,$p' "$1" 2>/dev/null; }   # strip rzn-browser pretty-tree prefix
 slug() { sed -E 's#.*/book/show/([^/?#]+).*#\1#' <<<"$1"; }
+cap_words() { printf '%s' "$2" | awk -v n="$1" '{m=(NF>n?n:NF); for(i=1;i<=m;i++) printf (i>1?" ":"")$i}'; }
+
+# title_match <goodreads_title> <local_filename>
+# True when the candidate's MAIN title (subtitle dropped) is mostly contained in the
+# filename. Guards the shortened-query fallback: "Anne Lamott" happily returns
+# "Bird by Bird", and "The Montessori Toddler A" returns a different Montessori book.
+# knockoff <goodreads_title> <local_filename>
+# True when the candidate reads as a summary/study-guide cash-in but the local file
+# does not — i.e. the real book never surfaced and we grabbed its knockoff.
+# Deliberately narrow ("analysis of", not "analysis"; no "guide to", which matches
+# real titles like "Good Inside: A Guide to ...").
+KNOCKOFF_RE='summary|analysis of|workbook|study guide|joosr|conversation starters|key takeaways|quicklet|sidekick|cliffsnotes|instaread|sparknotes'
+knockoff() {
+  grep -Eiq "$KNOCKOFF_RE" <<<"$1" || return 1   # candidate is not a knockoff
+  grep -Eiq "$KNOCKOFF_RE" <<<"$2" && return 1   # the file itself IS a summary: fine
+  return 0
+}
+
+title_match() {
+  awk -v cand="$1" -v orig="$2" 'BEGIN{
+    sub(/[:([].*$/,"",cand)                       # main title only
+    cand=tolower(cand); orig=tolower(orig)
+    gsub(/[^a-z0-9]+/," ",cand); gsub(/[^a-z0-9]+/," ",orig)
+    n=split(cand,w," "); if(n==0) exit 1
+    split(orig,o," "); for(i in o) seen[o[i]]=1
+    hit=0; for(i=1;i<=n;i++) if(seen[w[i]]) hit++
+    exit (hit*10 >= n*7) ? 0 : 1                  # >=70% of the main title present
+  }'
+}
+
+# pick the canonical book out of a search result file: drop summary/study-guide
+# knockoffs, then prefer the most-rated match (the real book dwarfs summaries).
+# echoes "<book_url>\t<title>", or a bare tab when there is no usable hit.
+pick_book() {
+  jq -r '
+    ([.output.result.results[]?
+       | select(((.title//"")|ascii_downcase)
+           | test("summary|analysis|workbook|study guide|guide to|joosr|conversation starters|key takeaways|quicklet|sidekick|cliffsnotes|instaread|sparknotes";"i") | not)]
+    ) as $clean
+    | (if ($clean|length)>0 then $clean else (.output.result.results // []) end)
+    | sort_by(((.ratings_count//"0")|tostring|gsub(",";"")|(tonumber? // 0)))
+    | reverse | (.[0] // {})
+    | ((.book_url // "")+"\t"+(.title // ""))' "$1" 2>/dev/null
+}
 
 # ===========================================================================
 # WORKER MODE: harvest one book. Re-invoked by xargs; reads DB/RAW from env.
@@ -205,9 +249,12 @@ if [ -n "$LOCAL_DIR" ]; then
         | sed -E 's/[_]+/ /g; s/[—–]/ /g' \
         | sed -E 's/[[:space:]]*-[[:space:]]*$//' \
         | sed -E 's/  +/ /g; s/^[[:space:]]+|[[:space:]]+$//g')"
-    q="${q//\'/}"; q="${q// - / }"   # flatten author/title dash
+    qraw="${q//\'/}"
+    # title part = text after the first " - " (drops the author prefix libgen puts first)
+    qtitle="${qraw#* - }"; qtitle="${qtitle// - / }"
+    q="${qraw// - / }"                # flatten author/title dash
     # cap to first 12 words: long author+title+subtitle queries return nothing or rank summaries first
-    q="$(printf '%s' "$q" | awk '{n=(NF>12?12:NF); for(i=1;i<=n;i++) printf (i>1?" ":"")$i}')"
+    q="$(cap_words 12 "$q")"
     [ -z "$q" ] && continue
     key="$(echo "$q" | tr 'A-Z' 'a-z')"
     if [ -n "${seen_q[$key]:-}" ]; then
@@ -217,19 +264,27 @@ if [ -n "$LOCAL_DIR" ]; then
     fi
     seen_q[$key]=1
     sf="$RAW/search_$(echo "$key" | tr -c 'a-z0-9' '_' | cut -c1-40).json"
-    "$CLI" run goodreads search --param search_query="$q" 2>/dev/null | res /dev/stdin > "$sf"
-    sleep "$(( 3 + RANDOM%3 ))"
-    # pick the canonical book: drop summary/study-guide knockoffs, then prefer the
-    # most-rated match (the real book dwarfs summaries in ratings_count).
-    pick="$(jq -r '
-      ([.output.result.results[]?
-         | select(((.title//"")|ascii_downcase)
-             | test("summary|analysis|workbook|study guide|guide to|joosr|conversation starters|key takeaways|quicklet|sidekick|cliffsnotes|instaread|sparknotes";"i") | not)]
-      ) as $clean
-      | (if ($clean|length)>0 then $clean else (.output.result.results // []) end)
-      | sort_by(((.ratings_count//"0")|tostring|gsub(",";"")|(tonumber? // 0)))
-      | reverse | (.[0] // {})
-      | ((.book_url // "")+"\t"+(.title // ""))' "$sf" 2>/dev/null)"
+    # Goodreads returns nothing for long author+title+subtitle strings, so fall back to
+    # progressively shorter variants (title only, then the first few title words).
+    pick=""; tried=""
+    for qv in "$q" "$(cap_words 8 "$qtitle")" "$(cap_words 4 "$qtitle")"; do
+      [ -z "$qv" ] && continue
+      [ -n "$pick" ] && break
+      case "$tried" in *"|$qv|"*) continue;; esac
+      tried="$tried|$qv|"
+      "$CLI" run goodreads search --param search_query="$qv" 2>/dev/null | res /dev/stdin > "$sf"
+      sleep "$(( 3 + RANDOM%3 ))"
+      cand="$(pick_book "$sf")"
+      [ -n "${cand%%$'\t'*}" ] || continue
+      # a short query always returns *something*: only accept a hit whose title
+      # actually corresponds to this file, or we mis-link unrelated books.
+      if ! title_match "${cand#*$'\t'}" "$fname" || knockoff "${cand#*$'\t'}" "$fname"; then
+        log "local: \"$qv\" -> rejected (${cand#*$'\t'})"
+        continue
+      fi
+      pick="$cand"
+      [ "$qv" != "$q" ] && log "local: retry \"$qv\" hit"
+    done
     rurl="${pick%%$'\t'*}"
     rtitle="${pick#*$'\t'}"; rtitle="${rtitle//\'/}"
     rid=""; [ -n "$rurl" ] && rid="$(slug "$rurl")"
