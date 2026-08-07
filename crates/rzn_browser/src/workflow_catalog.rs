@@ -593,18 +593,10 @@ pub fn resolve_workflow_reference(reference: &str) -> Result<PathBuf> {
     let flat_alias = slugify(trimmed);
 
     let entries = collect_workflow_entries()?;
-    for entry in &entries {
-        if normalized_input == entry.id
-            || normalized_no_ext == entry.id
-            || normalized_input == entry.relative_path
-            || normalized_no_ext == entry.relative_stem
-            || normalized_input == entry.file_name
-            || normalized_no_ext == strip_json_ext(&entry.file_name)
-            || flat_alias == entry.legacy_alias
-            || flat_alias == slugify(&entry.id)
-        {
-            return Ok(entry.path.clone());
-        }
+    if let Some(entry) =
+        find_matching_workflow_entry(&entries, &normalized_input, &normalized_no_ext, &flat_alias)
+    {
+        return Ok(entry.path.clone());
     }
 
     let matching_system_entries = entries
@@ -646,6 +638,29 @@ pub fn resolve_workflow_reference(reference: &str) -> Result<PathBuf> {
         "workflow '{}' was not found as a file path or installed workflow id",
         reference
     ))
+}
+
+fn find_matching_workflow_entry<'a>(
+    entries: &'a [WorkflowEntry],
+    normalized_input: &str,
+    normalized_no_ext: &str,
+    flat_alias: &str,
+) -> Option<&'a WorkflowEntry> {
+    entries
+        .iter()
+        .find(|entry| {
+            normalized_input == entry.id
+                || normalized_no_ext == entry.id
+                || normalized_input == entry.relative_path
+                || normalized_no_ext == entry.relative_stem
+                || normalized_input == entry.file_name
+                || normalized_no_ext == strip_json_ext(&entry.file_name)
+        })
+        .or_else(|| {
+            entries
+                .iter()
+                .find(|entry| flat_alias == entry.legacy_alias || flat_alias == slugify(&entry.id))
+        })
 }
 
 pub fn compose_workflow_reference(primary: &str, secondary: Option<&str>) -> Result<String> {
@@ -785,8 +800,23 @@ fn validate_workflow_file(path: &Path) -> Result<()> {
         .map(|sequences| !sequences.is_empty())
         .unwrap_or(false);
     if !has_sequences {
+        if is_manifest_value(&value) {
+            return validate_manifest_value(&value)
+                .map(|_| ())
+                .map_err(|issues| {
+                    anyhow!(
+                        "invalid workflow manifest {}: {}",
+                        path.display(),
+                        issues
+                            .into_iter()
+                            .map(|issue| format!("{}: {}", issue.field, issue.message))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    )
+                });
+        }
         return Err(anyhow!(
-            "invalid workflow {}: expected browser_automation.sequences[]",
+            "invalid workflow {}: expected a workflow manifest or browser_automation.sequences[]",
             path.display()
         ));
     }
@@ -1928,12 +1958,12 @@ mod tests {
         build_named_workflow_entries, collect_capability_entries_from_records,
         collect_capability_manifest_records_from_root, collect_json_files,
         detect_catalog_source_root, effective_capability_entries,
-        effective_capability_manifest_record_paths, install_builtin_catalog_to_root,
-        is_archive_catalog_path, is_fixture_catalog_path, is_manifest_value,
-        normalize_capability_id, push_duplicate_capability_route_issues,
+        effective_capability_manifest_record_paths, find_matching_workflow_entry,
+        install_builtin_catalog_to_root, is_archive_catalog_path, is_fixture_catalog_path,
+        is_manifest_value, normalize_capability_id, push_duplicate_capability_route_issues,
         resolve_manifest_workflow_path, resolve_workflow_reference, validate_manifest_contracts,
-        CapabilityCatalogEntry, CapabilityCatalogQuery, CapabilityManifestRecord,
-        CatalogValidationLevel, WorkflowCatalogQuery, WorkflowEntry,
+        validate_workflow_file, CapabilityCatalogEntry, CapabilityCatalogQuery,
+        CapabilityManifestRecord, CatalogValidationLevel, WorkflowCatalogQuery, WorkflowEntry,
     };
     use std::collections::BTreeSet;
     use std::fs;
@@ -1956,6 +1986,13 @@ mod tests {
             "synthetic manifest fixtures intentionally model narrow test cases",
         ),
     ];
+
+    #[test]
+    fn workflow_add_validation_accepts_current_manifests() {
+        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        validate_workflow_file(&repo_root.join("workflows/chatgpt/chatgpt_send.json"))
+            .expect("current workflow manifests must be importable into the user catalog");
+    }
 
     #[test]
     fn workflow_validate_all_manifests_under_workflows_glob() {
@@ -2116,6 +2153,20 @@ mod tests {
             name: None,
             description: None,
         }
+    }
+
+    #[test]
+    fn exact_workflow_id_beats_an_earlier_legacy_alias() {
+        let mut legacy = sample_entry("chatgpt", "send-thread", "user", "legacy");
+        legacy.legacy_alias = "chatgpt-send".to_string();
+        let exact = sample_entry("chatgpt", "send", "builtin", "exact");
+        let entries = vec![legacy, exact];
+
+        let selected =
+            find_matching_workflow_entry(&entries, "chatgpt/send", "chatgpt/send", "chatgpt-send")
+                .expect("resolve exact workflow id");
+        assert_eq!(selected.id, "chatgpt/send");
+        assert_eq!(selected.source, "builtin");
     }
 
     fn sample_capability_entry(

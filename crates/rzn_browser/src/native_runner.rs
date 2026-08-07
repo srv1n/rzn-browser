@@ -10,6 +10,7 @@
 
 use crate::run_store::{AppendRun, RunStore};
 use crate::supervisor;
+use crate::workflow_failure_report::WorkflowRunFailure;
 use crate::workflow_runner::{
     load_workflow_for_run, parse_env_bool, response_error_message, response_success, run_workflow,
     validate_steps, with_browser_target, RunEventSink, RunOptions, SessionSpec, StepTransport,
@@ -35,6 +36,8 @@ pub struct SupervisorRunConfig {
     pub snapshot_mode: SnapshotMode,
     pub app_base: Option<String>,
     pub browser_target: Option<Value>,
+    pub tab_ref: Option<String>,
+    pub keep_tab_open: bool,
 }
 
 pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Option<Value>> {
@@ -70,6 +73,8 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
         deadline: None,
         session: SessionSpec {
             browser_target: config.browser_target.clone(),
+            tab_ref: config.tab_ref.clone(),
+            retain_tab_on_close: config.keep_tab_open,
             ..SessionSpec::default()
         },
         snapshot_mode: config.snapshot_mode,
@@ -97,7 +102,10 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
             &opts.run_id,
             &workflow_id,
             Some(RunErrorV1 {
-                code: "workflow_execution_error".into(),
+                code: e
+                    .downcast_ref::<WorkflowRunFailure>()
+                    .and_then(|failure| failure.error_code.clone())
+                    .unwrap_or_else(|| "workflow_execution_error".into()),
                 message: e.to_string(),
                 step_id: None,
                 retry_hint: None,

@@ -524,6 +524,11 @@ fn insert_numeric_tab_target(map: &mut serde_json::Map<String, Value>, tab_id: u
         .or_insert_with(|| Value::Number(tab_id.into()));
     map.entry("tab_id".to_string())
         .or_insert_with(|| Value::Number(tab_id.into()));
+    // Preserve that this numeric ID came from an instance-scoped tab_ref. The
+    // extension uses this to fail closed on a vanished retained tab instead of
+    // silently creating or selecting a different one.
+    map.entry("tab_ref_target".to_string())
+        .or_insert_with(|| Value::Bool(true));
     map.remove("tab_ref");
     map.remove("tabRef");
 }
@@ -1362,6 +1367,9 @@ impl SupervisorState {
                 return Ok(path);
             }
         }
+        if let Ok(path) = crate::workflow_catalog::resolve_workflow_reference(workflow_id) {
+            return Ok(path);
+        }
         for candidate in [
             PathBuf::from("workflows")
                 .join(workflow_id)
@@ -1428,6 +1436,11 @@ impl SupervisorState {
             workflow_path: path.to_string_lossy().into_owned(),
         };
         let mut result = execute_workflow(&transport, &sink, workflow, opts).await;
+        // A browser step may itself return a RunResultV2-shaped payload. The
+        // local supervisor owns this run's identity, so nested transport IDs
+        // must not replace the ID announced to the UI and progress tracker.
+        result.run_id = run_id.clone();
+        result.workflow_id = resolved_id.clone();
         if result.status != rzn_contracts::v2::RunStatusV2::Succeeded
             && result.failure_summary.is_none()
         {
@@ -3853,6 +3866,8 @@ struct WorkflowListEntry {
     last_run_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     health: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<Value>,
 }
 
 fn local_workflow_list_entries() -> Result<Vec<WorkflowListEntry>> {
@@ -3878,6 +3893,10 @@ fn local_workflow_list_entries() -> Result<Vec<WorkflowListEntry>> {
                     .map(str::to_string),
                 last_run_at: None,
                 health: None,
+                params: manifest
+                    .as_ref()
+                    .and_then(|value| value.get("params"))
+                    .cloned(),
             }
         })
         .collect())
@@ -3944,6 +3963,7 @@ fn cached_workflow_list_entries(root: &Path) -> Result<Vec<WorkflowListEntry>> {
                 .map(str::to_string),
             last_run_at: None,
             health: None,
+            params: manifest.get("params").cloned(),
         });
     }
     Ok(rows)
@@ -5854,6 +5874,12 @@ mod tests {
             version: Some("1".into()),
             last_run_at: None,
             health: None,
+            params: Some(json!({
+                "properties": {
+                    "query": {"kind": "string", "required": true, "description": "Search query."}
+                },
+                "additional_params": false
+            })),
         }
     }
 
@@ -5885,8 +5911,31 @@ mod tests {
         assert_eq!(by_id["both"].source, "server_cache");
         assert_eq!(by_id["both"].last_run_at, Some(30));
         assert_eq!(by_id["both"].health.as_ref().unwrap()["flag"], "broken");
+        assert_eq!(
+            by_id["both"].params.as_ref().unwrap()["properties"]["query"]["required"],
+            true
+        );
         assert!(by_id["never-run"].last_run_at.is_none());
         assert!(by_id["never-run"].health.is_none());
+    }
+
+    #[test]
+    fn supervisor_resolves_the_canonical_id_returned_by_workflows_list() {
+        let app_base = PathBuf::from(format!("/tmp/rzn-workflow-resolve-{}", Uuid::new_v4()));
+        let state = SupervisorState::new(SupervisorConfig {
+            app_base: Some(app_base.clone()),
+        });
+
+        let path = state
+            .resolve_local_workflow("bing/images-search")
+            .expect("resolve canonical catalog workflow id");
+
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("bing_images_search.json")
+        );
+        drop(state);
+        let _ = std::fs::remove_dir_all(app_base);
     }
 
     #[tokio::test]
@@ -8406,7 +8455,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tab_ref_input_routes_by_instance_and_forwards_numeric_tab_only() {
+    async fn tab_ref_close_routes_by_instance_and_forwards_only_its_numeric_tab() {
         let state = Arc::new(SupervisorState::new(test_config()));
         let (chrome_tx, mut chrome_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         register_bridge_with_target_for_test(
@@ -8434,7 +8483,7 @@ mod tests {
                     "execute_step",
                     json!({
                         "tab_ref": "rzn://browser/chrome-instance/tab/321",
-                        "step": { "type": "click" }
+                        "step": { "type": "close_current_tab" }
                     }),
                     None,
                     Some(1_000),
@@ -8463,6 +8512,12 @@ mod tests {
                 .pointer("/params/payload/tab_id")
                 .and_then(Value::as_u64),
             Some(321)
+        );
+        assert_eq!(
+            request
+                .pointer("/params/payload/tab_ref_target")
+                .and_then(Value::as_bool),
+            Some(true)
         );
         assert!(request.pointer("/params/payload/tab_ref").is_none());
 

@@ -30,6 +30,10 @@ use uuid::Uuid;
 
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30000;
 const DEFAULT_NATIVE_STEP_RPC_GRACE_MS: u64 = 5000;
+/// A short bridge-recovery window is useful after an extension restart, but a
+/// deadline-sized retry loop turns an upstream throttle into request hammering.
+const MAX_TRANSIENT_STEP_RETRIES: usize = 2;
+const TRANSIENT_STEP_RETRY_DELAY_MS: u64 = 350;
 
 // ---------------------------------------------------------------------------
 // Public run-loop surface (implemented by the CLI and the fleet loop).
@@ -104,6 +108,10 @@ pub trait RunEventSink: Send + Sync {
 #[derive(Debug, Clone, Default)]
 pub struct SessionSpec {
     pub browser_target: Option<Value>,
+    /// Exact browser tab to reuse for this run, scoped by browser instance.
+    pub tab_ref: Option<String>,
+    /// Release session ownership without closing the dedicated tab.
+    pub retain_tab_on_close: bool,
     /// Optional run lifecycle metadata forwarded to the browser session layer.
     /// Absent metadata preserves the legacy local-session protocol.
     pub origin: Option<String>,
@@ -165,7 +173,10 @@ pub async fn execute_workflow(
                 &opts.run_id,
                 &workflow_id,
                 Some(RunErrorV1 {
-                    code: "step_failed".to_string(),
+                    code: err
+                        .downcast_ref::<WorkflowRunFailure>()
+                        .and_then(|failure| failure.error_code.clone())
+                        .unwrap_or_else(|| "step_failed".to_string()),
                     message: err.to_string(),
                     step_id: None,
                     retry_hint: None,
@@ -298,6 +309,7 @@ pub(crate) async fn run_workflow(
                 workflow.runtime_context.as_ref(),
             );
             let payload = with_browser_target(payload, opts.session.browser_target.as_ref());
+            let payload = with_tab_ref(payload, opts.session.tab_ref.as_deref());
             // A step that performs an external write may have already applied its
             // side effect (e.g. posted a comment) even when the transport times out
             // before the response comes back. Retrying such a step risks a duplicate
@@ -308,6 +320,7 @@ pub(crate) async fn run_workflow(
             // browser queue open for the supervisor's global 10-minute ceiling.
             let step_watchdog_ms = rpc_timeout_ms.saturating_add(rpc_grace_ms);
             let deadline = tokio::time::Instant::now() + Duration::from_millis(rpc_timeout_ms);
+            let mut transient_retries = 0usize;
             let stop_reason: Option<String>;
             loop {
                 let response = match transport
@@ -321,7 +334,12 @@ pub(crate) async fn run_workflow(
                     Ok(response) => response,
                     Err(TransportError::Timeout) => {
                         let failure_capture = if opts.snapshot_mode == SnapshotMode::OnError {
-                            take_snapshot(transport, sink, session_id.as_deref())
+                            take_snapshot(
+                                transport,
+                                sink,
+                                session_id.as_deref(),
+                                opts.session.tab_ref.as_deref(),
+                            )
                                 .await
                                 .ok()
                                 .and_then(|snapshot| bounded_failure_capture(&snapshot))
@@ -340,6 +358,7 @@ pub(crate) async fn run_workflow(
                             &error,
                         );
                         return Err(anyhow!(WorkflowRunFailure {
+                            error_code: None,
                             classification_message: format!(
                                 "step {} ({}) timed out after {}ms",
                                 step_id, step_type, step_watchdog_ms
@@ -363,6 +382,7 @@ pub(crate) async fn run_workflow(
                             &error,
                         );
                         return Err(anyhow!(WorkflowRunFailure {
+                            error_code: None,
                             message: error.clone(),
                             report_context,
                             failing_step_index: idx,
@@ -380,10 +400,17 @@ pub(crate) async fn run_workflow(
                     break;
                 }
 
-                let err_str = response.get("error").and_then(|v| v.as_str()).unwrap_or("");
+                let err_str = response_error_message(&response).unwrap_or("");
+                let error_code = response_error_code(&response);
                 let transient = is_transient_step_error(err_str);
-                if transient && !step_writes_externally && tokio::time::Instant::now() < deadline {
-                    tokio::time::sleep(Duration::from_millis(350)).await;
+                if transient
+                    && !is_rate_limited_step_error(err_str, error_code)
+                    && !step_writes_externally
+                    && transient_retries < MAX_TRANSIENT_STEP_RETRIES
+                    && tokio::time::Instant::now() < deadline
+                {
+                    transient_retries += 1;
+                    tokio::time::sleep(Duration::from_millis(TRANSIENT_STEP_RETRY_DELAY_MS)).await;
                     continue;
                 }
 
@@ -391,7 +418,12 @@ pub(crate) async fn run_workflow(
                 record_step_output(step_id, &response, &mut step_outputs, &mut final_payload);
 
                 let failure_capture = if opts.snapshot_mode == SnapshotMode::OnError {
-                    take_snapshot(transport, sink, session_id.as_deref())
+                    take_snapshot(
+                        transport,
+                        sink,
+                        session_id.as_deref(),
+                        opts.session.tab_ref.as_deref(),
+                    )
                         .await
                         .ok()
                         .and_then(|snapshot| bounded_failure_capture(&snapshot))
@@ -399,6 +431,7 @@ pub(crate) async fn run_workflow(
                     None
                 };
                 let error = response_error_message(&response).unwrap_or("unknown failure");
+                let error_code = response_error_code(&response).map(str::to_string);
                 let report_context = build_failure_context(
                     &workflow.report_workflow,
                     Path::new(&opts.workflow_path),
@@ -408,15 +441,24 @@ pub(crate) async fn run_workflow(
                 );
                 return Err(anyhow!(WorkflowRunFailure {
                     message: format!("step {} ({}) failed", step_id, step_type),
+                    error_code: error_code.clone(),
                     report_context,
                     failing_step_index: idx,
                     failure_capture,
-                    classification_message: error.to_string(),
+                    classification_message: error_code
+                        .map(|code| format!("{}: {}", code, error))
+                        .unwrap_or_else(|| error.to_string()),
                 }));
             }
 
             if opts.snapshot_mode == SnapshotMode::AfterStep {
-                let _ = take_snapshot(transport, sink, session_id.as_deref()).await;
+                let _ = take_snapshot(
+                    transport,
+                    sink,
+                    session_id.as_deref(),
+                    opts.session.tab_ref.as_deref(),
+                )
+                .await;
             }
 
             if let Some(reason) = stop_reason {
@@ -440,7 +482,10 @@ pub(crate) async fn run_workflow(
     .await;
 
     if session_id.is_some() {
-        let mut close_payload = with_session(session_id.as_deref(), json!({}));
+        let mut close_payload = with_tab_ref(
+            with_session(session_id.as_deref(), json!({})),
+            opts.session.tab_ref.as_deref(),
+        );
         if opts.session.origin.as_deref() == Some("fleet") {
             close_payload["outcome"] = Value::String(
                 if result.is_ok() {
@@ -451,6 +496,9 @@ pub(crate) async fn run_workflow(
                 .to_string(),
             );
         }
+        if opts.session.retain_tab_on_close {
+            close_payload["keep_tab"] = Value::Bool(true);
+        }
         let _ = transport
             .call("browser.session_close", close_payload, 0)
             .await;
@@ -460,6 +508,7 @@ pub(crate) async fn run_workflow(
 
 fn session_open_payload(opts: &RunOptions) -> Value {
     let mut payload = with_browser_target(json!({}), opts.session.browser_target.as_ref());
+    payload = with_tab_ref(payload, opts.session.tab_ref.as_deref());
     let Some(origin) = opts.session.origin.as_deref() else {
         return payload;
     };
@@ -471,13 +520,27 @@ fn session_open_payload(opts: &RunOptions) -> Value {
     payload
 }
 
+fn with_tab_ref(mut payload: Value, tab_ref: Option<&str>) -> Value {
+    if let Some(tab_ref) = tab_ref.map(str::trim).filter(|value| !value.is_empty()) {
+        if let Value::Object(map) = &mut payload {
+            map.insert("tab_ref".to_string(), Value::String(tab_ref.to_string()));
+        }
+    }
+    payload
+}
+
 async fn take_snapshot(
     transport: &dyn StepTransport,
     sink: &dyn RunEventSink,
     session_id: Option<&str>,
+    tab_ref: Option<&str>,
 ) -> Result<Value> {
     let response = transport
-        .call("browser.snapshot", with_session(session_id, json!({})), 0)
+        .call(
+            "browser.snapshot",
+            with_tab_ref(with_session(session_id, json!({})), tab_ref),
+            0,
+        )
         .await
         .map_err(TransportError::into_anyhow)?;
     let hash = response
@@ -666,6 +729,21 @@ fn is_transient_step_error(err_str: &str) -> bool {
         || lower.contains("native-host bridge response channel closed")
         || lower.contains("native-host extension bridge timeout")
         || lower.contains("broker_watchdog_timeout")
+}
+
+/// Rate limits must be surfaced to the caller immediately. Retrying them in the
+/// generic bridge-recovery loop only extends the cooldown and multiplies load.
+fn is_rate_limited_step_error(err_str: &str, error_code: Option<&str>) -> bool {
+    let contains_rate_limit = |value: &str| {
+        let lower = value.to_ascii_lowercase();
+        lower.contains("429")
+            || lower.contains("rate limit")
+            || lower.contains("rate-limit")
+            || lower.contains("rate_limit")
+            || lower.contains("ratelimit")
+            || lower.contains("too many requests")
+    };
+    contains_rate_limit(err_str) || error_code.is_some_and(contains_rate_limit)
 }
 
 pub(crate) fn validate_steps(steps: &[RuntimeStep]) -> Result<()> {
@@ -1535,6 +1613,33 @@ pub(crate) fn response_error_message(response: &Value) -> Option<&str> {
             response
                 .pointer("/result/result/message")
                 .and_then(|value| value.as_str())
+        })
+}
+
+pub(crate) fn response_error_code(response: &Value) -> Option<&str> {
+    response
+        .get("error_code")
+        .and_then(Value::as_str)
+        .or_else(|| response.pointer("/error/code").and_then(Value::as_str))
+        .or_else(|| {
+            response
+                .pointer("/result/error_code")
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            response
+                .pointer("/result/error/code")
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            response
+                .pointer("/result/result/error_code")
+                .and_then(Value::as_str)
+        })
+        .or_else(|| {
+            response
+                .pointer("/result/result/error/code")
+                .and_then(Value::as_str)
         })
 }
 

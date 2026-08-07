@@ -47,6 +47,16 @@ fn transient_step_errors_match_extension_bridge_failures() {
 }
 
 #[test]
+fn rate_limited_errors_are_never_retryable() {
+    assert!(is_rate_limited_step_error(
+        "Native host timeout: HTTP 429 Too Many Requests",
+        None
+    ));
+    assert!(is_rate_limited_step_error("request rejected", Some("RATE_LIMITED")));
+    assert!(!is_rate_limited_step_error("Native host timeout", None));
+}
+
+#[test]
 fn external_write_steps_are_detected_for_no_retry() {
     // Manifest steps carry side_effects at the top level.
     assert!(step_has_external_write(&json!({
@@ -578,6 +588,16 @@ impl MockTransport {
             .map(|(_, params)| params.clone())
             .expect("recorded transport call")
     }
+
+    fn all_call_params(&self, method: &str) -> Vec<Value> {
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(called, _)| called == method)
+            .map(|(_, params)| params.clone())
+            .collect()
+    }
 }
 
 #[async_trait::async_trait]
@@ -688,6 +708,89 @@ async fn local_sessions_keep_the_legacy_lifecycle_payloads() {
     assert_eq!(
         transport.call_params("browser.session_close"),
         json!({ "session_id": "local-session" })
+    );
+}
+
+#[tokio::test]
+async fn retained_tab_is_targeted_for_every_step_and_not_closed() {
+    let transport = MockTransport::new(
+        Some("retained-session"),
+        vec![
+            Ok(json!({ "success": true })),
+            Ok(json!({ "success": true })),
+        ],
+    );
+    let sink = RecordingSink::default();
+    let mut opts = test_opts(SnapshotMode::AfterStep);
+    opts.session = SessionSpec {
+        tab_ref: Some("rzn://browser/chrome-one/tab/42".to_string()),
+        retain_tab_on_close: true,
+        ..SessionSpec::default()
+    };
+
+    let workflow = LoadedWorkflow {
+        report_workflow: json!({ "id": "demo/test", "version": "1.0.0" }),
+        steps: vec![
+            RuntimeStep::Legacy(
+                json!({ "id": "navigate", "type": "navigate_to_url", "url": "https://example.test" }),
+            ),
+            RuntimeStep::Legacy(
+                json!({ "id": "extract", "type": "execute_javascript", "script": "return 1;" }),
+            ),
+        ],
+        prefer_current_tab: false,
+        runtime_context: None,
+    };
+    let result = execute_workflow(&transport, &sink, workflow, opts).await;
+
+    assert_eq!(result.status, RunStatusV2::Succeeded);
+    assert_eq!(
+        transport.call_params("browser.session_open")["tab_ref"],
+        json!("rzn://browser/chrome-one/tab/42")
+    );
+    assert_eq!(transport.execute_count(), 2);
+    for payload in transport.all_call_params("browser.execute_step") {
+        assert_eq!(payload["tab_ref"], json!("rzn://browser/chrome-one/tab/42"));
+    }
+    for payload in transport.all_call_params("browser.snapshot") {
+        assert_eq!(payload["tab_ref"], json!("rzn://browser/chrome-one/tab/42"));
+    }
+    assert_eq!(
+        transport.call_params("browser.session_close")["keep_tab"],
+        json!(true)
+    );
+    assert_eq!(
+        transport.call_params("browser.session_close")["tab_ref"],
+        json!("rzn://browser/chrome-one/tab/42")
+    );
+}
+
+#[tokio::test]
+async fn tab_ref_close_step_is_forwarded_without_an_active_tab_fallback() {
+    let transport = MockTransport::new(
+        Some("close-session"),
+        vec![Ok(json!({ "success": true, "result": { "closed": true } }))],
+    );
+    let sink = RecordingSink::default();
+    let mut opts = test_opts(SnapshotMode::None);
+    opts.session.tab_ref = Some("rzn://browser/chrome-one/tab/42".to_string());
+    let workflow = LoadedWorkflow {
+        report_workflow: json!({ "id": "chatgpt/close", "version": "1.0.0" }),
+        steps: vec![RuntimeStep::Legacy(json!({
+            "id": "close",
+            "type": "close_current_tab"
+        }))],
+        prefer_current_tab: false,
+        runtime_context: None,
+    };
+
+    let result = execute_workflow(&transport, &sink, workflow, opts).await;
+
+    assert_eq!(result.status, RunStatusV2::Succeeded);
+    assert_eq!(transport.execute_count(), 1);
+    assert_eq!(
+        transport.call_params("browser.execute_step")["tab_ref"],
+        json!("rzn://browser/chrome-one/tab/42")
     );
 }
 
@@ -838,6 +941,49 @@ async fn execute_workflow_retries_transient_step_error() {
 }
 
 #[tokio::test]
+async fn execute_workflow_caps_transient_step_retries() {
+    let workflow = single_legacy_step("retry-me", false);
+    let transport = MockTransport::new(
+        Some("s"),
+        vec![
+            Ok(json!({ "success": false, "error": "Native host timeout" })),
+            Ok(json!({ "success": false, "error": "Native host timeout" })),
+            Ok(json!({ "success": false, "error": "Native host timeout" })),
+            // Would succeed if the runner kept looping until the deadline.
+            Ok(json!({ "success": true, "result": { "ok": true } })),
+        ],
+    );
+    let sink = RecordingSink::default();
+
+    let result = execute_workflow(&transport, &sink, workflow, test_opts(SnapshotMode::None)).await;
+
+    assert_eq!(result.status, RunStatusV2::Failed);
+    assert_eq!(transport.execute_count(), MAX_TRANSIENT_STEP_RETRIES + 1);
+}
+
+#[tokio::test]
+async fn execute_workflow_does_not_retry_rate_limited_transient_error() {
+    let workflow = single_legacy_step("read", false);
+    let transport = MockTransport::new(
+        Some("s"),
+        vec![
+            Ok(json!({
+                "success": false,
+                "error": "Native host timeout: HTTP 429 Too Many Requests"
+            })),
+            // Would succeed if a rate-limited error were incorrectly retried.
+            Ok(json!({ "success": true, "result": { "ok": true } })),
+        ],
+    );
+    let sink = RecordingSink::default();
+
+    let result = execute_workflow(&transport, &sink, workflow, test_opts(SnapshotMode::None)).await;
+
+    assert_eq!(result.status, RunStatusV2::Failed);
+    assert_eq!(transport.execute_count(), 1);
+}
+
+#[tokio::test]
 async fn execute_workflow_does_not_retry_external_write_step() {
     let workflow = single_legacy_step("post", true);
     let transport = MockTransport::new(
@@ -853,6 +999,33 @@ async fn execute_workflow_does_not_retry_external_write_step() {
     let result = execute_workflow(&transport, &sink, workflow, test_opts(SnapshotMode::None)).await;
 
     assert_eq!(result.status, RunStatusV2::Failed);
+    assert_eq!(transport.execute_count(), 1);
+}
+
+#[tokio::test]
+async fn execute_workflow_preserves_typed_tab_missing_error_code() {
+    let transport = MockTransport::new(
+        Some("s"),
+        vec![Ok(json!({
+            "success": false,
+            "error_code": "TAB_MISSING",
+            "error_msg": "Exact tab target 42 is missing."
+        }))],
+    );
+    let sink = RecordingSink::default();
+
+    let result = execute_workflow(
+        &transport,
+        &sink,
+        single_legacy_step("read", false),
+        test_opts(SnapshotMode::None),
+    )
+    .await;
+
+    assert_eq!(result.status, RunStatusV2::Failed);
+    let error = result.error.expect("typed bridge failure is preserved");
+    assert_eq!(error.code, "TAB_MISSING");
+    assert!(error.message.starts_with("TAB_MISSING:"));
     assert_eq!(transport.execute_count(), 1);
 }
 

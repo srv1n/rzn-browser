@@ -16,6 +16,7 @@ fn reddit_workflows_parse_as_v1_workflow() {
         "workflows/reddit/reddit-comment.json",
         "workflows/reddit/reddit-dm.json",
         "workflows/reddit/reddit-messages.json",
+        "workflows/reddit/reddit-profile-history.json",
         "workflows/reddit/reddit-search.json",
     ];
 

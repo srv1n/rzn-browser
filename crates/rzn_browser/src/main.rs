@@ -128,7 +128,7 @@ enum Commands {
     #[command(name = "plan-auto")]
     PlanAuto(PlanArgs),
 
-    /// Test browser automation without requiring API key
+    /// Test browser automation through the local supervisor without requiring an API key
     #[command(name = "test-browser")]
     TestBrowser(TestBrowserArgs),
 
@@ -250,6 +250,14 @@ struct RunArgs {
     /// Parameters for the workflow (format: --param key=value)
     #[arg(long = "param", value_parser = parse_key_val::<String, String>)]
     params: Vec<(String, String)>,
+
+    /// Reuse this exact browser tab for the workflow session.
+    #[arg(long = "tab-ref")]
+    tab_ref: Option<String>,
+
+    /// Leave the dedicated workflow tab open after the run completes.
+    #[arg(long = "keep-tab-open")]
+    keep_tab_open: bool,
 
     /// Snapshot mode for runs: none | after-step | on-error
     #[arg(long, default_value = DEFAULT_SNAPSHOT_MODE)]
@@ -489,6 +497,14 @@ struct SupervisorRunArgs {
     #[arg(long = "param", value_parser = parse_key_val::<String, String>)]
     params: Vec<(String, String)>,
 
+    /// Reuse this exact browser tab for the workflow session.
+    #[arg(long = "tab-ref")]
+    tab_ref: Option<String>,
+
+    /// Leave the dedicated workflow tab open after the run completes.
+    #[arg(long = "keep-tab-open")]
+    keep_tab_open: bool,
+
     /// Snapshot mode for runs: none | after-step | on-error
     #[arg(long, default_value = DEFAULT_SNAPSHOT_MODE)]
     snapshot: String,
@@ -586,7 +602,7 @@ enum WorkflowCommands {
     /// Deprecated alias for `workflow inspect`
     #[command(hide = true)]
     Contract(WorkflowContractArgs),
-    /// Run a cached workflow by id or file path
+    /// Deprecated direct runner; prefer `rzn-browser run`
     Run(WorkflowRunArgs),
     /// Create a new workflow via interactive builder (or with a template)
     New(WorkflowNewArgs),
@@ -924,8 +940,8 @@ struct WorkflowRunArgs {
     /// Parameters for the workflow (format: --param key=value)
     #[arg(long = "param", value_parser = parse_key_val::<String, String>)]
     params: Vec<(String, String)>,
-    /// Disable auto-healing if steps fail (enabled by default)
-    #[arg(long = "no-auto-heal")]
+    /// Deprecated compatibility flag; supervisor runs do not use LLM auto-healing
+    #[arg(long = "no-auto-heal", hide = true)]
     no_auto_heal: bool,
     /// Developer escape hatch for direct workflow-id/path execution
     #[arg(long)]
@@ -1371,10 +1387,16 @@ async fn main() {
             handle_plan_auto(args, config).await;
         }
         Commands::TestBrowser(args) => {
-            handle_test_browser(args, config).await;
+            if let Err(err) = handle_test_browser(args).await {
+                eprintln!("[ERROR] Browser test failed: {}", err);
+                process::exit(1);
+            }
         }
         Commands::Session(cmd) => {
-            handle_session_commands(cmd, config).await;
+            if let Err(err) = handle_session_commands(cmd).await {
+                eprintln!("[ERROR] Session command failed: {}", err);
+                process::exit(1);
+            }
         }
         Commands::Perf(cmd) => {
             handle_perf_commands(cmd).await;
@@ -3373,6 +3395,8 @@ async fn handle_run(args: RunArgs) -> anyhow::Result<()> {
         workflow_ref,
         target,
         params,
+        tab_ref,
+        keep_tab_open,
         snapshot,
         app_base,
         output_file,
@@ -3383,6 +3407,8 @@ async fn handle_run(args: RunArgs) -> anyhow::Result<()> {
         workflow_ref,
         target,
         params,
+        tab_ref,
+        keep_tab_open,
         snapshot,
         app_base,
         output_file,
@@ -3945,6 +3971,8 @@ async fn handle_supervisor_run(args: SupervisorRunArgs) -> anyhow::Result<()> {
         snapshot_mode,
         app_base: args.app_base,
         browser_target,
+        tab_ref: args.tab_ref,
+        keep_tab_open: args.keep_tab_open,
     };
 
     match native_runner::run_supervisor_workflow(config).await {
@@ -3958,6 +3986,15 @@ async fn handle_supervisor_run(args: SupervisorRunArgs) -> anyhow::Result<()> {
             Ok(())
         }
         Err(err) => {
+            if let Some(code) = err
+                .downcast_ref::<WorkflowRunFailure>()
+                .and_then(|failure| failure.error_code.as_deref())
+            {
+                // Automation callers may safely branch on this single stable
+                // marker. It is emitted only from an extension/supervisor
+                // error_code, never inferred from human-readable prose.
+                eprintln!("RZN_ERROR_CODE={}", code);
+            }
             if let Some(rendered) =
                 render_run_invalid_parameter_guidance(&workflow_ref, &resolved_workflow, &err)?
             {
@@ -4095,11 +4132,11 @@ async fn handle_plan_auto(args: PlanArgs, config: PlanConfig) {
     }
 }
 
-async fn handle_test_browser(args: TestBrowserArgs, config: PlanConfig) {
+async fn handle_test_browser(args: TestBrowserArgs) -> anyhow::Result<()> {
     println!(" RZN BROWSER AUTOMATION TEST");
     println!("   ├─ Scenario: {}", args.scenario);
     println!("   ├─ URL: {:?}", args.url);
-    println!("   ├─ Transport: {}", config.runtime_transport);
+    println!("   ├─ Backend: supervisor");
     println!("   └─ Mode: Hardcoded test (no LLM required)");
     println!();
 
@@ -4108,78 +4145,61 @@ async fn handle_test_browser(args: TestBrowserArgs, config: PlanConfig) {
         "google-search" => create_google_search_test_workflow(args.url),
         "simple-navigation" => create_simple_navigation_test_workflow(args.url),
         _ => {
-            eprintln!("[ERROR] Unknown test scenario: {}", args.scenario);
-            eprintln!("Available scenarios: google-search, simple-navigation");
-            process::exit(1);
+            anyhow::bail!(
+                "unknown test scenario `{}`; available scenarios: google-search, simple-navigation",
+                args.scenario
+            );
         }
     };
 
-    // Create a temporary workflow file
-    let temp_file = "/tmp/rzn_test_workflow.json";
-    match std::fs::write(
-        temp_file,
-        serde_json::to_string_pretty(&test_workflow).unwrap(),
-    ) {
-        Ok(_) => {
-            println!("[NOTE] Created temporary test workflow: {}", temp_file);
-        }
-        Err(e) => {
-            eprintln!("[ERROR] Failed to create test workflow file: {}", e);
-            process::exit(1);
-        }
-    }
+    // Use a unique path so concurrent diagnostics cannot overwrite each other.
+    let temp_file =
+        std::env::temp_dir().join(format!("rzn_test_workflow_{}.json", uuid::Uuid::new_v4()));
+    let temp_file_ref = workflow_path_as_unicode(&temp_file).map_err(anyhow::Error::msg)?;
+    std::fs::write(&temp_file, serde_json::to_string_pretty(&test_workflow)?)
+        .with_context(|| format!("write test workflow {}", temp_file.display()))?;
+    println!(
+        "[NOTE] Created temporary test workflow: {}",
+        temp_file.display()
+    );
 
-    // Execute the test workflow
     println!("[START] Executing test workflow...");
+    let run_result = handle_supervisor_run(SupervisorRunArgs {
+        workflow_ref: WorkflowRefArgs {
+            workflow_or_system: temp_file_ref,
+            workflow_name: None,
+        },
+        target: BrowserTargetArgs::default(),
+        params: Vec::new(),
+        tab_ref: None,
+        keep_tab_open: false,
+        snapshot: DEFAULT_SNAPSHOT_MODE.to_string(),
+        app_base: None,
+        output_file: None,
+        download_dir: None,
+    })
+    .await;
 
-    let mut config = config;
-    force_dummy_llm(&mut config);
-
-    let mut orchestrator = match Orchestrator::new(config).await {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("[ERROR] Failed to initialize orchestrator: {}", e);
-            process::exit(1);
-        }
-    };
-
-    let run_request = RunRequest {
-        workflow: temp_file.to_string(),
-        parameters: HashMap::new(),
-        auto_heal: false, // Disable auto-healing for test
-    };
-
-    match orchestrator.run(run_request).await {
-        Ok(response) => {
-            if response.success {
-                println!("[OK] Test completed successfully!");
-                println!(" Steps executed: {}", response.steps_executed);
-
-                if let Some(data) = response.data {
-                    println!("[TARGET] Test data:");
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&data)
-                            .unwrap_or_else(|_| "Failed to format data".to_string())
-                    );
-                }
-            } else {
-                println!(
-                    "[ERROR] Test failed: {}",
-                    response.error.unwrap_or("Unknown error".to_string())
-                );
-                process::exit(1);
-            }
-        }
-        Err(e) => {
-            eprintln!("[ERROR] Test error: {}", e);
-            process::exit(1);
-        }
+    let cleanup_result = std::fs::remove_file(&temp_file)
+        .with_context(|| format!("remove test workflow {}", temp_file.display()));
+    match (&run_result, cleanup_result) {
+        (_, Ok(())) => println!("[OK] Cleaned up temporary test workflow"),
+        (Ok(()), Err(err)) => return Err(err),
+        (Err(_), Err(err)) => eprintln!("[WARN] {}", err),
     }
 
-    // Clean up temporary file
-    let _ = std::fs::remove_file(temp_file);
-    println!("🧹 Cleaned up temporary files");
+    run_result?;
+    println!("[OK] Test completed successfully!");
+    Ok(())
+}
+
+fn workflow_path_as_unicode(path: &Path) -> Result<String, String> {
+    path.to_str().map(str::to_owned).ok_or_else(|| {
+        format!(
+            "workflow path is not valid Unicode and cannot be passed to the CLI runner: {}",
+            path.display()
+        )
+    })
 }
 
 fn create_google_search_test_workflow(start_url: Option<String>) -> serde_json::Value {
@@ -4256,9 +4276,10 @@ fn create_simple_navigation_test_workflow(start_url: Option<String>) -> serde_js
     })
 }
 
-async fn handle_session_commands(_cmd: SessionCommands, _config: PlanConfig) {
-    // Session management temporarily disabled until rzn_session crate is ready
-    eprintln!("Session management is not yet available");
+async fn handle_session_commands(_cmd: SessionCommands) -> anyhow::Result<()> {
+    // Session management remains unavailable until rzn_session is ready. Return
+    // failure instead of a misleading successful exit for scripts and agents.
+    anyhow::bail!("session management is not yet available");
     /*
     use rzn_session::{SessionController, SessionCommand, SessionResponse, SessionStatus, SessionConfig};
     use uuid::Uuid;
@@ -7856,82 +7877,73 @@ async fn handle_workflow_validate(
 
 async fn handle_workflow_run(
     args: WorkflowRunArgs,
-    mut config: PlanConfig,
+    _config: PlanConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let workflow_ref = workflow_ref_value(&args.workflow_ref)?;
     if !args.allow_direct_workflow {
         return Err(Box::<dyn std::error::Error>::from(anyhow::anyhow!(
-            "`rzn-browser workflow run` is a direct workflow escape hatch. Re-run with --allow-direct-workflow, or use `rzn-browser workflow capability resolve --system <system> <capability_id>` and route through a manifest capability."
+            "`rzn-browser workflow run` is a deprecated direct-workflow escape hatch. Prefer `rzn-browser run <system> <workflow>`, or re-run a direct file/id with --allow-direct-workflow."
         )));
     }
-    let auto_heal = !args.no_auto_heal;
-    if auto_heal {
-        if let Err(msg) = ensure_llm_ready_for_auto_heal(&config) {
-            return Err(Box::<dyn std::error::Error>::from(msg));
-        }
+    eprintln!(
+        "[WARN] `rzn-browser workflow run` is deprecated; routing through the supervisor. Prefer `rzn-browser run`."
+    );
+
+    let mut supervisor_args = supervisor_args_from_workflow_run(args);
+    let generated_workflow = if workflow_ref == "builtin/google-search" {
+        let params = normalize_run_params(
+            supervisor_args
+                .params
+                .iter()
+                .cloned()
+                .collect::<HashMap<_, _>>(),
+        )?;
+        let path = PathBuf::from(
+            generate_google_search_workflow(&params).map_err(Box::<dyn std::error::Error>::from)?,
+        );
+        supervisor_args.workflow_ref = WorkflowRefArgs {
+            workflow_or_system: path.to_string_lossy().into_owned(),
+            workflow_name: None,
+        };
+        Some(path)
     } else {
-        force_dummy_llm(&mut config);
-    }
+        None
+    };
 
-    let mut orch = Orchestrator::new(config.clone())
-        .await
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-    let mut params_map: HashMap<String, String> = HashMap::new();
-    for (k, v) in args.params {
-        params_map.insert(k, v);
-    }
-    params_map = normalize_run_params(params_map)?;
-
-    // Built-in generator: "builtin/google-search"
-    let wf_identifier = if workflow_ref == "builtin/google-search" {
-        match generate_google_search_workflow(&params_map) {
-            Ok(path) => path,
-            Err(e) => {
+    let run_result = handle_supervisor_run(supervisor_args).await;
+    if let Some(path) = generated_workflow {
+        if let Err(err) = std::fs::remove_file(&path) {
+            if run_result.is_ok() {
                 return Err(Box::<dyn std::error::Error>::from(format!(
-                    "failed to generate builtin workflow: {}",
-                    e
+                    "remove generated workflow {}: {}",
+                    path.display(),
+                    err
                 )));
             }
+            eprintln!(
+                "[WARN] Failed to remove generated workflow {}: {}",
+                path.display(),
+                err
+            );
         }
-    } else {
-        resolve_named_workflow_path(&workflow_ref)
-            .unwrap_or_else(|_| PathBuf::from(workflow_ref.clone()))
-            .to_string_lossy()
-            .to_string()
-    };
-
-    let req = RunRequest {
-        workflow: wf_identifier.clone(),
-        parameters: params_map,
-        auto_heal,
-    };
-    let resp = orch
-        .run(req)
-        .await
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-    if resp.success {
-        println!(
-            "✅ Workflow '{}' ran successfully ({} steps)",
-            workflow_ref, resp.steps_executed
-        );
-        if let Some(data) = resp.data {
-            println!("{}", serde_json::to_string_pretty(&data)?);
-        }
-    } else {
-        println!("❌ Workflow '{}' failed", workflow_ref);
-        let err = anyhow::anyhow!(
-            "{}",
-            resp.error
-                .unwrap_or_else(|| "workflow execution failed".to_string())
-        );
-        let context = build_failure_context_from_error(
-            &workflow_ref,
-            std::path::Path::new(&wf_identifier),
-            &err.to_string(),
-        );
-        eprintln!("\n{}", render_report_block(&context));
     }
-    Ok(())
+
+    run_result.map_err(Box::<dyn std::error::Error>::from)
+}
+
+fn supervisor_args_from_workflow_run(args: WorkflowRunArgs) -> SupervisorRunArgs {
+    let _ = args.no_auto_heal;
+    SupervisorRunArgs {
+        workflow_ref: args.workflow_ref,
+        target: BrowserTargetArgs::default(),
+        params: args.params,
+        tab_ref: None,
+        keep_tab_open: false,
+        snapshot: DEFAULT_SNAPSHOT_MODE.to_string(),
+        app_base: None,
+        output_file: None,
+        download_dir: None,
+    }
 }
 
 async fn handle_workflow_catalog(args: WorkflowListArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -9190,13 +9202,14 @@ fn generate_google_search_workflow(params: &HashMap<String, String>) -> Result<S
     };
 
     // Write to a temp file and return its path
-    let tmp = format!("/tmp/rzn_wf_google_{}.json", uuid::Uuid::new_v4());
+    let tmp = std::env::temp_dir().join(format!("rzn_wf_google_{}.json", uuid::Uuid::new_v4()));
+    let tmp_ref = workflow_path_as_unicode(&tmp)?;
     std::fs::write(
         &tmp,
         serde_json::to_string_pretty(&wf).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
-    Ok(tmp)
+    Ok(tmp_ref)
 }
 
 async fn handle_observe(
@@ -10907,6 +10920,67 @@ mod tests {
             }
             other => panic!("expected workflow run command, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn workflow_run_forwards_reference_and_params_to_supervisor() {
+        let args = WorkflowRunArgs {
+            workflow_ref: WorkflowRefArgs {
+                workflow_or_system: "x".to_string(),
+                workflow_name: Some("open".to_string()),
+            },
+            params: vec![(
+                "url".to_string(),
+                "https://x.com/example/status/1".to_string(),
+            )],
+            no_auto_heal: true,
+            allow_direct_workflow: true,
+        };
+
+        let forwarded = supervisor_args_from_workflow_run(args);
+        assert_eq!(forwarded.workflow_ref.workflow_or_system, "x");
+        assert_eq!(
+            forwarded.workflow_ref.workflow_name.as_deref(),
+            Some("open")
+        );
+        assert_eq!(
+            forwarded.params,
+            vec![(
+                "url".to_string(),
+                "https://x.com/example/status/1".to_string()
+            )]
+        );
+        assert_eq!(forwarded.snapshot, DEFAULT_SNAPSHOT_MODE);
+        assert!(forwarded.app_base.is_none());
+        assert!(forwarded.output_file.is_none());
+        assert!(forwarded.download_dir.is_none());
+    }
+
+    #[tokio::test]
+    async fn unavailable_session_command_returns_an_error() {
+        let err = handle_session_commands(SessionCommands::Create {
+            name: Some("diagnostic".to_string()),
+        })
+        .await
+        .expect_err("unavailable session commands must fail");
+
+        assert!(err
+            .to_string()
+            .contains("session management is not yet available"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workflow_path_rejects_non_unicode_before_use() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(OsString::from_vec(vec![
+            b'/', b't', b'm', b'p', b'/', 0xff, b'.', b'j', b's', b'o', b'n',
+        ]));
+        let err = workflow_path_as_unicode(&path).expect_err("non-Unicode path must be rejected");
+
+        assert!(err.contains("workflow path is not valid Unicode"));
     }
 
     #[test]

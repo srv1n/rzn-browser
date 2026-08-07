@@ -69,6 +69,9 @@ pub struct WorkflowFailureReportContext {
 #[derive(Debug, Clone)]
 pub struct WorkflowRunFailure {
     pub message: String,
+    /// Stable machine-readable error code returned by the browser bridge, when
+    /// one exists. Keep this separate from the prose report classification.
+    pub error_code: Option<String>,
     pub report_context: WorkflowFailureReportContext,
     pub failing_step_index: usize,
     pub failure_capture: Option<Value>,
@@ -77,7 +80,11 @@ pub struct WorkflowRunFailure {
 
 impl fmt::Display for WorkflowRunFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.message)
+        if let Some(code) = self.error_code.as_deref() {
+            write!(f, "{}: {}", code, self.message)
+        } else {
+            f.write_str(&self.message)
+        }
     }
 }
 
