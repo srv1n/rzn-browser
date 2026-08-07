@@ -5,26 +5,61 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::time::Duration;
 
+/// Default OpenAI API base URL (no trailing slash).
+pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+
+/// Resolve the OpenAI-compatible base URL from the environment.
+///
+/// `OPENAI_BASE_URL` (alias: `OPENAI_API_BASE`) points the client at any
+/// OpenAI-compatible server, e.g. Ollama (`http://localhost:11434/v1`) or
+/// LM Studio (`http://localhost:1234/v1`). Unset means api.openai.com.
+pub fn resolve_base_url() -> String {
+    base_url_from(
+        std::env::var("OPENAI_BASE_URL").ok(),
+        std::env::var("OPENAI_API_BASE").ok(),
+    )
+}
+
+fn base_url_from(primary: Option<String>, alias: Option<String>) -> String {
+    primary
+        .into_iter()
+        .chain(alias)
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .find(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_OPENAI_BASE_URL.to_string())
+}
+
+/// True when the base URL still points at OpenAI itself; local servers accept
+/// any (or no) API key, so key validation only applies to the real API.
+pub fn is_openai_host(base_url: &str) -> bool {
+    base_url.starts_with("https://api.openai.com")
+}
+
 /// OpenAI API client implementation
 pub struct OpenAIClient {
     client: Client,
     api_key: String,
     model: String,
+    base_url: String,
 }
 
 impl OpenAIClient {
     pub fn new(api_key: String, model: String, timeout_secs: u64) -> PlanResult<Self> {
-        if api_key.is_empty() {
-            return Err(PlanError::LLMError(
-                "OpenAI API key not provided".to_string(),
-            ));
-        }
+        let base_url = resolve_base_url();
 
-        // Basic API key format validation (skip for dummy keys)
-        if !api_key.starts_with("sk-") && api_key != "dummy-key-for-non-llm-mode" {
-            return Err(PlanError::LLMError(
-                "Invalid OpenAI API key format. API keys should start with 'sk-'".to_string(),
-            ));
+        if is_openai_host(&base_url) {
+            if api_key.is_empty() {
+                return Err(PlanError::LLMError(
+                    "OpenAI API key not provided".to_string(),
+                ));
+            }
+
+            // Basic API key format validation (skip for dummy keys)
+            if !api_key.starts_with("sk-") && api_key != "dummy-key-for-non-llm-mode" {
+                return Err(PlanError::LLMError(
+                    "Invalid OpenAI API key format. API keys should start with 'sk-'".to_string(),
+                ));
+            }
         }
 
         let client = Client::builder()
@@ -36,7 +71,13 @@ impl OpenAIClient {
             client,
             api_key,
             model,
+            base_url,
         })
+    }
+
+    /// Build a full endpoint URL, e.g. `/chat/completions`.
+    fn endpoint(&self, path: &str) -> String {
+        format!("{}{}", self.base_url, path)
     }
 
     fn simple_chat_content_from_response(response: &Value) -> PlanResult<String> {
@@ -150,7 +191,7 @@ impl LLMProvider for OpenAIClient {
 
         let response = self
             .client
-            .post("https://api.openai.com/v1/chat/completions")
+            .post(self.endpoint("/chat/completions"))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&request_body)
@@ -185,7 +226,7 @@ impl LLMProvider for OpenAIClient {
             if retried {
                 let retry_resp = self
                     .client
-                    .post("https://api.openai.com/v1/chat/completions")
+                    .post(self.endpoint("/chat/completions"))
                     .header("Authorization", format!("Bearer {}", self.api_key))
                     .header("Content-Type", "application/json")
                     .json(&request_body_retry)
@@ -307,7 +348,7 @@ impl LLMProvider for OpenAIClient {
 
         let resp = self
             .client
-            .post("https://api.openai.com/v1/responses")
+            .post(self.endpoint("/responses"))
             .header("Authorization", format!("Bearer {}", self.api_key))
             .header("Content-Type", "application/json")
             .json(&req_body)
@@ -372,7 +413,7 @@ impl LLMProvider for OpenAIClient {
             if retried {
                 let resp2 = self
                     .client
-                    .post("https://api.openai.com/v1/responses")
+                    .post(self.endpoint("/responses"))
                     .header("Authorization", format!("Bearer {}", self.api_key))
                     .header("Content-Type", "application/json")
                     .json(&retry_body)
@@ -429,7 +470,7 @@ impl LLMProvider for OpenAIClient {
 
                 let resp3 = self
                     .client
-                    .post("https://api.openai.com/v1/responses")
+                    .post(self.endpoint("/responses"))
                     .header("Authorization", format!("Bearer {}", self.api_key))
                     .header("Content-Type", "application/json")
                     .json(&req_body)
@@ -509,6 +550,48 @@ fn convert_tool_choice_for_responses(choice: Value) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn base_url_defaults_to_openai() {
+        assert_eq!(base_url_from(None, None), DEFAULT_OPENAI_BASE_URL);
+        assert_eq!(
+            base_url_from(Some("  ".to_string()), None),
+            DEFAULT_OPENAI_BASE_URL
+        );
+        assert!(is_openai_host(&base_url_from(None, None)));
+    }
+
+    #[test]
+    fn base_url_override_trims_trailing_slashes() {
+        assert_eq!(
+            base_url_from(Some("http://localhost:11434/v1".to_string()), None),
+            "http://localhost:11434/v1"
+        );
+        assert_eq!(
+            base_url_from(Some(" http://localhost:11434/v1/ ".to_string()), None),
+            "http://localhost:11434/v1"
+        );
+        assert!(!is_openai_host("http://localhost:11434/v1"));
+    }
+
+    #[test]
+    fn base_url_alias_is_used_only_as_fallback() {
+        assert_eq!(
+            base_url_from(
+                Some("http://primary/v1".to_string()),
+                Some("http://alias/v1".to_string())
+            ),
+            "http://primary/v1"
+        );
+        assert_eq!(
+            base_url_from(Some(String::new()), Some("http://alias/v1/".to_string())),
+            "http://alias/v1"
+        );
+        assert_eq!(
+            base_url_from(None, Some("http://alias/v1".to_string())),
+            "http://alias/v1"
+        );
+    }
 
     #[test]
     fn fix_openai_simple_chat_refusal_is_error() {

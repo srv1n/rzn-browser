@@ -282,7 +282,16 @@ impl Default for PlanConfig {
                 (key, model, exec_model, temp)
             }
             ProviderType::OpenAI => {
-                let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+                let mut key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
+                // Local OpenAI-compatible servers (Ollama, LM Studio, vLLM) ignore the
+                // key entirely; use a placeholder so key-required checks still pass.
+                if key.is_empty()
+                    && !crate::openai_client::is_openai_host(
+                        &crate::openai_client::resolve_base_url(),
+                    )
+                {
+                    key = "local".to_string();
+                }
                 let model = std::env::var("OPENAI_MODEL_PLANNING")
                     .unwrap_or_else(|_| "gpt-4o-mini".to_string());
                 let exec_model = std::env::var("OPENAI_MODEL_EXECUTION").ok();

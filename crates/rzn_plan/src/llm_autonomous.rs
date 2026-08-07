@@ -74,7 +74,10 @@ fn tool_llm_client_from_config(
             } else {
                 config.openai_api_key.clone()
             };
-            if api_key.trim().is_empty() {
+            // Local OpenAI-compatible servers do not need a real key.
+            if api_key.trim().is_empty()
+                && crate::openai_client::is_openai_host(&crate::openai_client::resolve_base_url())
+            {
                 None
             } else {
                 Some(ToolOnlyLLMClient::new(api_key, correlation_id.to_string()))

@@ -7,7 +7,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
+const CHAT_COMPLETIONS_PATH: &str = "/chat/completions";
 const DEFAULT_TOOL_MODEL: &str = "gpt-5-mini-2025-08-07";
 const REQUEST_TIMEOUT_SECS: u64 = 60;
 const CONNECT_TIMEOUT_SECS: u64 = 10;
@@ -49,7 +49,11 @@ impl ToolOnlyLLMClient {
             api_key,
             correlation_id,
             DEFAULT_TOOL_MODEL.to_string(),
-            OPENAI_CHAT_COMPLETIONS_URL.to_string(),
+            format!(
+                "{}{}",
+                crate::openai_client::resolve_base_url(),
+                CHAT_COMPLETIONS_PATH
+            ),
             log_file,
         )
     }
