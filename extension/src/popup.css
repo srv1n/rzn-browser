@@ -1,1 +1,63 @@
-:root{font:14px Inter,system-ui;color:#e8eef8;background:#0b1020}*{box-sizing:border-box}body{margin:0;width:420px;min-height:560px}#app{padding:18px}header,footer,.health,.toggle,.run{display:flex;align-items:center;justify-content:space-between;gap:10px}header{font-size:17px;margin-bottom:14px}a{color:#78a9ff;text-decoration:none}section,.toggle,footer{background:#131b2e;border:1px solid #28334c;border-radius:12px;padding:14px;margin:10px 0}.health{font-size:11px;flex-wrap:wrap}.health small{color:#8792aa}.ok{color:#53d98d}.bad{color:#ff657a}.running{color:#78a9ff}.cancelled{color:#d7a95b}.muted{color:#8792aa}.run{padding:9px 0;border-bottom:1px solid #28334c}.run:last-child{border:0}.run small{margin-left:auto;color:#8792aa}.origin{display:inline-block;border:1px solid #3a4868;border-radius:999px;padding:2px 7px;color:#b9c8e5;font-size:10px;letter-spacing:.04em;text-transform:uppercase}.origin-fleet{border-color:#326f5a;color:#72ddb0}.origin-schedule{border-color:#765d2e;color:#e2b65a}.run .origin{margin-left:auto}.run small{margin-left:0}button{border:0;border-radius:7px;padding:8px 12px;background:#3478f6;color:white}.danger{background:#d74455}.offline{text-align:center;margin-top:120px}.skeleton{padding-top:180px;text-align:center;color:#8792aa}h2{margin:6px 0}h3{margin-top:0}
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 15px;
+  --bg: #ffffff;
+  --surface: #f5f6f7;
+  --text: #1d1d1f;
+  --muted: #666a70;
+  --border: #dfe1e5;
+  --accent: #1769d2;
+  --success: #137333;
+  --warning: #946200;
+  --danger: #b3261e;
+  background: var(--bg);
+  color: var(--text);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #202124;
+    --surface: #292a2d;
+    --text: #f1f3f4;
+    --muted: #a8abb0;
+    --border: #3c4043;
+    --accent: #8ab4f8;
+    --success: #81c995;
+    --warning: #fdd663;
+    --danger: #f28b82;
+  }
+}
+
+* { box-sizing: border-box; }
+body { width: 400px; min-height: 520px; margin: 0; background: var(--bg); color: var(--text); }
+#app { padding: 18px; }
+header, footer, .health, .toggle, .run { display: flex; align-items: center; gap: 10px; }
+header { justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--border); font-size: 16px; }
+footer { min-height: 38px; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+section, .toggle { margin: 0; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.health { flex-wrap: wrap; padding: 10px 0; color: var(--muted); font-size: 12px; }
+.health span { white-space: nowrap; }
+.health small { color: var(--muted); }
+.toggle { justify-content: space-between; }
+.toggle input { order: 2; accent-color: var(--accent); }
+.run { min-height: 38px; padding: 7px 0; border-bottom: 1px solid var(--border); color: var(--text); }
+.run:last-child { border: 0; }
+.run:hover { text-decoration: none; }
+.run small { color: var(--muted); }
+.run .origin { margin-left: auto; }
+.ok { color: var(--success); }
+.bad { color: var(--danger); }
+.running { color: var(--accent); }
+.cancelled { color: var(--warning); }
+.muted { color: var(--muted); }
+.origin { color: var(--muted); font-size: 11px; text-transform: uppercase; }
+button { min-height: 32px; padding: 6px 11px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: white; font: inherit; font-weight: 600; cursor: pointer; }
+.danger { border-color: var(--danger); background: transparent; color: var(--danger); }
+.offline { margin-top: 100px; border: 0; text-align: center; }
+.skeleton { padding-top: 180px; color: var(--muted); text-align: center; }
+h2 { margin: 4px 0; font-size: 22px; letter-spacing: -.02em; }
+h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
+p { color: var(--muted); }

@@ -8,6 +8,7 @@ import {
   buildMetadataForTarget,
   buildManifestForTarget,
   CHROMIUM_EXTENSION_TARGETS,
+  chromeManifestVersionForBuildSignature,
   chromeExtensionIdFromManifestKey,
   RZN_DEV_EXTENSION_ID,
   RZN_DEV_EXTENSION_ORIGIN,
@@ -60,6 +61,14 @@ describe('manifest generation', () => {
     expect(chromeExtensionIdFromManifestKey(base.key)).toBe(RZN_DEV_EXTENSION_ID);
   });
 
+  it('derives an ordered Chrome-valid cachebuster version from UTC build timestamps', () => {
+    expect(chromeManifestVersionForBuildSignature('20260721T235959Z')).toBe('2026.721.2359.59');
+    expect(chromeManifestVersionForBuildSignature('20260803T000000Z')).toBe('2026.803.0.0');
+    expect(chromeManifestVersionForBuildSignature('20260803T000001Z')).toBe('2026.803.0.1');
+    expect(chromeManifestVersionForBuildSignature('20260230T000000Z')).toBeUndefined();
+    expect(chromeManifestVersionForBuildSignature('v0.1.1')).toBeUndefined();
+  });
+
   it('keeps shared permissions and content scripts out of Chromium overlays', async () => {
     for (const target of CHROMIUM_EXTENSION_TARGETS) {
       const overlay = await readJson(
@@ -99,11 +108,13 @@ describe('manifest generation', () => {
         distSourceDir,
         distRootDir,
         layout: 'nested',
+        buildSignature: '20260803T101112Z',
       });
 
       const manifest = await readJson(path.join(distRootDir, target, 'manifest.json'));
       const metadata = await readJson(path.join(distRootDir, target, 'rzn-build.json'));
       expect(manifest.rzn_build).toBeUndefined();
+      expect(manifest.version).toBe('2026.803.1011.12');
       expect(metadata.extension_target).toBe(target);
       expect(metadata.extension_id).toBe(RZN_DEV_EXTENSION_ID);
       expect(metadata.extension_origin).toBe(RZN_DEV_EXTENSION_ORIGIN);
@@ -135,6 +146,26 @@ describe('manifest generation', () => {
     expect(manifest.rzn_build).toBeUndefined();
     expect(metadata.extension_target).toBe('chrome');
     expect(metadata.extension_id).toBe(RZN_DEV_EXTENSION_ID);
+  });
+
+  it('keeps release-managed manifest versions for non-timestamp build signatures', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'rzn-manifest-release-'));
+    const distSourceDir = path.join(tmp, 'dist-source');
+    const releaseVersion = (await readJson(
+      path.join(repoRoot, 'extension', 'src', 'manifest.base.json')
+    )).version;
+    await fs.mkdir(distSourceDir, { recursive: true });
+    await fs.writeFile(path.join(distSourceDir, 'background.js'), '// built background');
+
+    await buildFor('chrome', {
+      rootDir: repoRoot,
+      distSourceDir,
+      distRootDir: tmp,
+      buildSignature: 'v0.1.1',
+    });
+
+    const manifest = await readJson(path.join(tmp, 'dist-chrome', 'manifest.json'));
+    expect(manifest.version).toBe(releaseVersion);
   });
 
   it('fails when a requested target overlay is missing', async () => {

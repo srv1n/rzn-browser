@@ -1,7 +1,7 @@
 # RZN Browser Automation Makefile
 
 .PHONY: help build build-rust build-ext clean codebasezip logs-clear logs-follow logs-show test test-basic test-google test-dom test-dom-units ads-smoke dev setup install reload-ext rust \
-	test-ext-e2e-install test-ext-e2e-run test-ext-e2e phase2 phase3 phase3-openai \
+	test-ext-unit test-setup-ext-sync test-ext-e2e-install test-ext-e2e-run test-ext-e2e phase2 phase3 phase3-openai \
 	index sg-find-stream sg-guards context-snippets agent-run agent-validate scope scope-q reducers-index invariants schema-check \
 	plugins-keygen plugins-build-rzn-browser-macos plugins-verify plugins-publish-rzn-browser-local plugins-publish-rzn-browser-cloud plugins-publish-rzn-browser-prod plugins-publish-rzn-browser-all bundle-macos-share \
 	release release-artifacts x-export-threads
@@ -46,6 +46,8 @@ help:
 	@echo "  make test-google   - Run Google search test"
 	@echo "  make ads-smoke     - Ads packs live smoke lane (selector-drift check; exits non-zero on degraded output)"
 	@echo "  make schema-check  - Verify actions schema ↔ generated types"
+	@echo "  make test-ext-unit [ARGS='path'] - Run extension Vitest tests"
+	@echo "  make test-setup-ext-sync - Verify runtime legacy extension sync"
 	@echo "  make test-ext-e2e  - Build + run extension Playwright e2e"
 	@echo "  make phase3        - Run autonomous (dummy LLM) end-to-end"
 	@echo "  make phase3-openai - Run autonomous with OpenAI (uses .env)"
@@ -108,6 +110,15 @@ build-rust:
 build-ext:
 	@echo "🌐 Building browser extension..."
 	cd extension && bun install --frozen-lockfile && bun run build
+
+# Run extension unit tests, optionally scoped with ARGS='src/foo.test.ts'.
+test-ext-unit:
+	@echo "🧪 Running extension unit tests..."
+	cd extension && bun x vitest run $(ARGS)
+
+test-setup-ext-sync:
+	@echo "🧪 Verifying runtime extension install sync..."
+	bash scripts/test_install_extension_runtime.sh
 
 # Install Playwright browsers for extension e2e
 test-ext-e2e-install:

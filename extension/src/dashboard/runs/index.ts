@@ -27,13 +27,13 @@ export async function mountRuns(root: HTMLElement, call: RpcClient, route: Dashb
     const statuses = [...new Set(runs.map(run => run.status))].sort();
     const origins = [...new Set(runs.map(run => originLabel(run.origin)))].sort();
     const total = Number(listed.total || 0);
-    root.innerHTML = `<section><h1>Runs</h1><div class="filters">
-      <label>Workflow <select data-filter="workflow">${option('', workflow)}${workflows.map(value => option(value, workflow)).join('')}</select></label>
-      <label>Status <select data-filter="status">${option('', status)}${statuses.map(value => option(value, status)).join('')}</select></label>
-      <label>Origin <select data-filter="origin">${option('', origin)}${origins.map(value => option(value, origin)).join('')}</select></label>
-      <label>Find on this page <input data-filter="text" value="${esc(text)}" placeholder="workflow, origin, status"></label>
+    root.innerHTML = `<section><header class="page-header"><div><h1>Runs</h1><p>Recent workflow activity from this browser and fleet.</p></div></header><div class="filters">
+      <label class="control"><span>Workflow</span><select data-filter="workflow">${option('', workflow)}${workflows.map(value => option(value, workflow)).join('')}</select></label>
+      <label class="control"><span>Status</span><select data-filter="status">${option('', status)}${statuses.map(value => option(value, status)).join('')}</select></label>
+      <label class="control"><span>Origin</span><select data-filter="origin">${option('', origin)}${origins.map(value => option(value, origin)).join('')}</select></label>
+      <label class="control search"><span>Find on this page</span><input type="search" data-filter="text" value="${esc(text)}" placeholder="Workflow, origin, or status"></label>
     </div>
-    ${total === 0 ? '<div class="empty"><p>No runs yet.</p><a href="#workflows">Run a workflow</a></div>' : `<table><thead><tr><th></th><th>Workflow</th><th>Origin</th><th>Started</th><th>Duration</th><th>Failing step</th></tr></thead><tbody>${visible.map(run => `<tr data-run="${esc(run.run_id)}"><td>${dot(run.status)}</td><td>${esc(run.workflow_id)}</td><td><span class="chip">${esc(originLabel(run.origin))}</span></td><td>${relativeTime(run.started_at)}</td><td>${duration(run.started_at, run.ended_at)}</td><td>${run.status === 'failed' ? esc(run.failing_step_index ?? '—') : '—'}</td></tr>`).join('')}</tbody></table>`}
+    ${total === 0 ? '<div class="empty"><p>No runs yet.</p><a href="#workflows">Run a workflow</a></div>' : `<div class="table-wrap"><table><thead><tr><th>Status</th><th>Workflow</th><th>Origin</th><th>Started</th><th>Duration</th><th>Failing step</th></tr></thead><tbody>${visible.map(run => `<tr data-run="${esc(run.run_id)}"><td><span class="status">${dot(run.status)} ${esc(run.status)}</span></td><td>${esc(run.workflow_id)}</td><td><span class="chip">${esc(originLabel(run.origin))}</span></td><td>${relativeTime(run.started_at)}</td><td>${duration(run.started_at, run.ended_at)}</td><td>${run.status === 'failed' ? esc(run.failing_step_index ?? '—') : '—'}</td></tr>`).join('')}</tbody></table></div>`}
     <nav class="pagination"><button data-page="prev" ${page === 0 ? 'disabled' : ''}>Previous</button><span>Page ${page + 1} of ${Math.max(1, Math.ceil(total / pageSize))}</span><button data-page="next" ${(page + 1) * pageSize >= total ? 'disabled' : ''}>Next</button></nav></section>`;
     root.querySelectorAll<HTMLSelectElement>('select[data-filter]').forEach(select => select.addEventListener('change', () => {
       if (select.dataset.filter === 'workflow') workflow = select.value;
@@ -67,7 +67,7 @@ async function mountDetail(root: HTMLElement, call: RpcClient, id: string, optio
   const disabled = isPaused(snapshot) || !available;
   const disabledReason = isPaused(snapshot) ? 'Automation is paused.' : 'This workflow is no longer available.';
   const steps = result.steps || [];
-  root.innerHTML = `<section><a href="#runs">← All runs</a><h1>Run ${esc(decoded)}</h1>
+  root.innerHTML = `<section><a href="#runs">← All runs</a><header class="page-header"><div><h1>Run ${esc(decoded)}</h1><p>Execution detail and captured failure context.</p></div></header>
     <div class="run-meta">${dot(record.status)} ${esc(record.workflow_id)} <span class="chip">${esc(originLabel(record.origin))}</span></div>
     <h2>Steps</h2><ol class="timeline">${steps.map((step: any, index: number) => `<li class="${index === record.failing_step_index ? 'failed-step' : ''}">${dot(step.status)} <b>${esc(step.step_id || `Step ${index + 1}`)}</b> <small>${esc(step.duration_ms != null ? `${step.duration_ms}ms` : step.duration || '')}</small></li>`).join('') || '<li>No step timeline recorded.</li>'}</ol>
     ${record.error_class || record.fingerprint || record.error_message ? `<section class="error-block"><h2>Failure</h2><span class="chip ${statusClass('failed')}">${esc(record.error_class || 'unknown')}</span><p>${esc(record.error_message || result.error?.message || result.failure_summary?.message || '')}</p><code>${esc(record.fingerprint || result.failure_summary?.fingerprint || '')}</code>${firstSeen ? `<p>First seen ${relativeTime(firstSeen)}</p>` : ''}</section>` : ''}

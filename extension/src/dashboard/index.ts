@@ -20,7 +20,7 @@ export async function render(): Promise<void> {
   if (!app) return;
   dispose?.(); dispose = undefined;
   const current = route();
-  app.innerHTML = `<aside><h2>RZN</h2>${tabs.map(tab => `<a class="${tab === current.tab ? 'active' : ''}" href="#${tab}">${tab}</a>`).join('')}</aside><main><p>Loading…</p></main>`;
+  app.innerHTML = `<aside class="sidebar"><div class="brand">RZN <small>Browser Automation</small></div><nav aria-label="Dashboard">${tabs.map(tab => `<a class="${tab === current.tab ? 'active' : ''}" href="#${tab}" ${tab === current.tab ? 'aria-current="page"' : ''}>${tab}</a>`).join('')}</nav></aside><main><p class="muted">Loading…</p></main>`;
   const main = app.querySelector<HTMLElement>('main')!;
   const navigate = (hash: string) => { location.hash = hash; };
   try {

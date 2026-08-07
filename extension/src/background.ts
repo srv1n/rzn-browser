@@ -11,6 +11,11 @@ import { cdpErrorText, isExecutionContextDestroyedCdpError } from './cdp/errors'
 import { setFlags, getFlags } from './config/flags';
 import { cdpSessionManager } from './runtime/cdp_session_manager';
 import { getActiveBrowserTab, getActiveBrowserTabId } from './browserTabs';
+import {
+  retainedWorkflowTabLifecyclePayload,
+  type RetainedWorkflowTabState,
+  updateRetainedWorkflowTabState,
+} from './workflowTabRetention';
 import { actionSuccess } from './actions/actionResult';
 import { RZN_EVAL_ERROR_KEY, evalErrorFromScriptingResult } from './scriptingEvalResult';
 import { buildScriptEvalBody } from './scriptingEvalBody';
@@ -40,6 +45,13 @@ import {
   extensionRuntimePingMetadata,
   getCachedBrowserInstanceId,
 } from './browserInstanceId';
+import { isOwnExtensionPageSender } from './runtimeSender';
+import { firstWorkflowStepNeedsInitializedTab, navigationReuseDisposition } from './navigationReuse';
+import {
+  closeExactWorkflowTab,
+  exactTabMissingError,
+  isExactTabMissingError,
+} from './workflowTabLifecycle';
 
 // CDP Lease Manager - keeps sessions alive briefly to avoid repeated attach/detach
 type TabId = number;
@@ -865,6 +877,7 @@ const fleetWindows = new FleetWindowRegistry();
 interface WorkflowSessionState {
   workflowTabId?: number;
   currentUrl?: string;
+  tabLifecycle?: RetainedWorkflowTabState;
   updatedAtMs?: number;
   brokerEpoch: number;
   queue: Promise<void>;
@@ -873,6 +886,7 @@ interface WorkflowSessionState {
 interface StoredWorkflowSessionState {
   workflowTabId?: number;
   currentUrl?: string;
+  tabLifecycle?: RetainedWorkflowTabState;
   updatedAtMs: number;
 }
 
@@ -905,6 +919,10 @@ function resolveRequestedTabId(message?: BrokerMessage): number | undefined {
     (message as any)?.data?.current_tab_id ??
     (message as any)?.payload?.current_tab_id;
   return typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : undefined;
+}
+
+function messageUsesExactTabRef(message?: BrokerMessage): boolean {
+  return message?.data?.tab_ref_target === true || message?.payload?.tab_ref_target === true;
 }
 
 function isDefaultWorkflowSession(sessionId?: string): boolean {
@@ -948,6 +966,14 @@ async function loadWorkflowSessionsFromStorage(): Promise<void> {
                   ? value.workflowTabId
                   : undefined,
               currentUrl: typeof value.currentUrl === 'string' ? value.currentUrl : undefined,
+              tabLifecycle:
+                value.tabLifecycle && typeof value.tabLifecycle === 'object'
+                  ? updateRetainedWorkflowTabState(
+                      undefined,
+                      value.tabLifecycle,
+                      Number(value.tabLifecycle.updatedAtMs) || Date.now(),
+                    )
+                  : undefined,
               updatedAtMs:
                 typeof value.updatedAtMs === 'number' && Number.isFinite(value.updatedAtMs)
                   ? value.updatedAtMs
@@ -976,6 +1002,7 @@ function snapshotWorkflowSessionsForStorage(): Record<string, StoredWorkflowSess
     snapshot[sessionId] = {
       workflowTabId: state.workflowTabId,
       currentUrl: state.currentUrl,
+      tabLifecycle: state.tabLifecycle,
       updatedAtMs: state.updatedAtMs || Date.now(),
     };
   }
@@ -999,7 +1026,7 @@ function scheduleWorkflowSessionsPersist(): void {
 
 function updateWorkflowSessionMetadata(
   sessionId: string,
-  updates: Partial<Pick<WorkflowSessionState, 'workflowTabId' | 'currentUrl'>>
+  updates: Partial<Pick<WorkflowSessionState, 'workflowTabId' | 'currentUrl' | 'tabLifecycle'>>
 ): void {
   const state = getWorkflowSessionState(sessionId);
   if (Object.prototype.hasOwnProperty.call(updates, 'workflowTabId')) {
@@ -1007,6 +1034,9 @@ function updateWorkflowSessionMetadata(
   }
   if (Object.prototype.hasOwnProperty.call(updates, 'currentUrl')) {
     state.currentUrl = updates.currentUrl;
+  }
+  if (Object.prototype.hasOwnProperty.call(updates, 'tabLifecycle')) {
+    state.tabLifecycle = updates.tabLifecycle;
   }
   state.updatedAtMs = Date.now();
   scheduleWorkflowSessionsPersist();
@@ -1023,6 +1053,10 @@ function refreshWorkflowSessionUrl(sessionId: string, tabId: number | undefined)
     .then((tab) => {
       updateWorkflowSessionMetadata(sessionId, {
         currentUrl: tab.url || tab.pendingUrl || undefined,
+        tabLifecycle: updateRetainedWorkflowTabState(
+          getWorkflowSessionState(sessionId).tabLifecycle,
+          { frozen: (tab as any).frozen, discarded: tab.discarded },
+        ),
       });
     })
     .catch(() => {
@@ -1046,7 +1080,43 @@ async function createWorkflowTab(
   workflowSessionId: string,
   properties: chrome.tabs.CreateProperties,
 ): Promise<chrome.tabs.Tab> {
-  return await fleetWindows.createTab(workflowSessionId, properties);
+  const tab = await fleetWindows.createTab(workflowSessionId, properties);
+  if (typeof tab.id === 'number') {
+    await retainChatGptWorkflowTab(tab.id, tab.url || tab.pendingUrl || properties.url);
+  }
+  return tab;
+}
+
+function isChatGptUrl(raw: string | undefined): boolean {
+  try {
+    const host = new URL(raw || '').hostname.toLowerCase();
+    return host === 'chatgpt.com' || host.endsWith('.chatgpt.com');
+  } catch {
+    return false;
+  }
+}
+
+// Retention is limited to ChatGPT handoff tabs and ends at terminal exact-tab
+// cleanup. Generic workflow tabs remain under Chrome's normal memory policy.
+async function retainChatGptWorkflowTab(tabId: number, knownUrl?: string): Promise<void> {
+  let url = knownUrl;
+  if (!isChatGptUrl(url)) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      url = tab.url || tab.pendingUrl;
+    } catch {
+      return;
+    }
+  }
+  if (!isChatGptUrl(url)) return;
+  try {
+    await chrome.tabs.update(tabId, { autoDiscardable: false });
+  } catch (error) {
+    console.warn('[WorkflowTabs] Failed to retain workflow tab', {
+      tab_id: tabId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function getWorkflowSessionState(sessionId: string): WorkflowSessionState {
@@ -1065,7 +1135,11 @@ function getWorkflowTabId(sessionId: string): number | undefined {
 
 function setWorkflowTabId(sessionId: string, tabId: number | undefined): void {
   const normalized = normalizeSessionId(sessionId);
-  updateWorkflowSessionMetadata(normalized, { workflowTabId: tabId });
+  updateWorkflowSessionMetadata(normalized, {
+    workflowTabId: tabId,
+    tabLifecycle: tabId === undefined ? undefined : getWorkflowSessionState(normalized).tabLifecycle,
+  });
+  if (tabId !== undefined) void retainChatGptWorkflowTab(tabId);
   refreshWorkflowSessionUrl(normalized, tabId);
 }
 
@@ -1769,7 +1843,8 @@ async function setFlagsForMessage(message: BrokerMessage): Promise<{
 async function disposeWorkflowSession(
   sessionId: string,
   keepFleetWindow = false,
-): Promise<{ closed: boolean; tabId?: number }> {
+  keepTab = false,
+): Promise<{ closed: boolean; retained?: boolean; tabId?: number }> {
   const normalized = normalizeSessionId(sessionId);
   const state = workflowSessions.get(normalized);
   const tabId = state?.workflowTabId;
@@ -1788,6 +1863,10 @@ async function disposeWorkflowSession(
 
   if (tabId === undefined) {
     return { closed: false };
+  }
+
+  if (keepTab) {
+    return { closed: false, retained: true, tabId };
   }
 
   try {
@@ -1827,6 +1906,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
     if (state.workflowTabId === tabId) {
       state.workflowTabId = undefined;
       state.currentUrl = undefined;
+      state.tabLifecycle = undefined;
       state.updatedAtMs = Date.now();
       // Keep map entries lightweight for active/default sessions; otherwise prune.
       if (sessionId !== DEFAULT_WORKFLOW_SESSION_ID) {
@@ -1834,6 +1914,33 @@ chrome.tabs.onRemoved.addListener((tabId) => {
       }
       scheduleWorkflowSessionsPersist();
     }
+  }
+});
+
+// Observe state transitions without polling or opening/focusing the tab. A
+// frozen/discarded state tells callers the page observer is unavailable; any
+// recovery must stay on this exact tab and direct saved URL.
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const lifecycleChanged =
+    Object.prototype.hasOwnProperty.call(changeInfo as object, 'frozen') ||
+    Object.prototype.hasOwnProperty.call(changeInfo as object, 'discarded');
+  if (!lifecycleChanged && !changeInfo.url) return;
+
+  let updated = false;
+  for (const [sessionId, state] of workflowSessions.entries()) {
+    if (state.workflowTabId !== tabId) continue;
+    state.tabLifecycle = updateRetainedWorkflowTabState(state.tabLifecycle, {
+      frozen: (changeInfo as any).frozen ?? (tab as any)?.frozen,
+      discarded: (changeInfo as any).discarded ?? tab?.discarded,
+    });
+    if (changeInfo.url) state.currentUrl = changeInfo.url;
+    state.updatedAtMs = Date.now();
+    workflowSessions.set(sessionId, state);
+    updated = true;
+  }
+  if (updated) scheduleWorkflowSessionsPersist();
+  if (changeInfo.url && isChatGptUrl(changeInfo.url)) {
+    void retainChatGptWorkflowTab(tabId, changeInfo.url);
   }
 });
 
@@ -2263,6 +2370,35 @@ async function ensureContentReady(tabId: number, injectPath = 'contentScript.js'
       throw new Error('Content script did not respond to ping');
     }
     await new Promise(r => setTimeout(r, 150));
+  }
+}
+
+async function wakeDiscardedWorkflowTab(
+  tabId: number,
+  brokerLease: BrokerRequestLease | null,
+  action: string,
+  exactTabTarget: boolean,
+): Promise<void> {
+  // `chrome.tabs.get` has already identified this exact tab. Reload by its ID;
+  // never substitute the active tab if Chrome discarded it under Memory Saver.
+  try {
+    await guardedBrokerSideEffect(
+      brokerLease,
+      `chrome.tabs.reload ${action}`,
+      () => chrome.tabs.reload(tabId),
+    );
+    await guardedBrokerSideEffect(
+      brokerLease,
+      `waitForTabComplete ${action}`,
+      () => waitForTabComplete(tabId, 15_000),
+    );
+    await guardedBrokerSideEffect(
+      brokerLease,
+      `ensureContentReady ${action}`,
+      () => ensureContentReady(tabId, 'contentScript.js', 8_000),
+    );
+  } catch (error) {
+    throw exactTabTarget ? exactTabMissingError(tabId, error) : error;
   }
 }
 
@@ -3925,7 +4061,20 @@ async function handleBrokerMessage(
       lease?: BrokerRequestLease | null;
     } = {}
   ) => {
-    sendResponseToBrokerRaw(response, {
+    const lifecycle = retainedWorkflowTabLifecyclePayload(
+      getWorkflowSessionState(workflowSessionId).tabLifecycle,
+    );
+    const enriched = lifecycle
+      ? {
+          ...(response as any),
+          tab_lifecycle: lifecycle,
+          result:
+            response.result && typeof response.result === 'object'
+              ? { ...(response.result as any), tab_lifecycle: lifecycle }
+              : response.result,
+        }
+      : response;
+    sendResponseToBrokerRaw(enriched as ExtensionResponse, {
       ...options,
       lease: options.lease ?? brokerLease,
     });
@@ -4054,7 +4203,11 @@ async function handleBrokerMessage(
       const result = await guardedBrokerSideEffect(
         brokerLease,
         'disposeWorkflowSession session_close',
-        () => disposeWorkflowSession(workflowSessionId, message.payload?.keep_window === true)
+        () => disposeWorkflowSession(
+          workflowSessionId,
+          message.payload?.keep_window === true,
+          message.payload?.keep_tab === true,
+        )
       );
       sendResponseToBroker({
         req_id: isOrchestratorFormat ? undefined : requestId,
@@ -4063,6 +4216,7 @@ async function handleBrokerMessage(
         result: {
           session_id: workflowSessionId,
           tab_closed: result.closed,
+          tab_retained: result.retained === true,
           tab_id: result.tabId,
         },
       });
@@ -4566,6 +4720,46 @@ async function handleBrokerMessage(
               'bind navigate_to_url workflow tab'
             );
           } else {
+            if (typeof step.skip_if_url_contains === 'string') {
+              const currentTab = await guardedBrokerSideEffect(
+                brokerLease,
+                'chrome.tabs.get navigate_to_url reuse check',
+                () => chrome.tabs.get(tabId!),
+              ).catch((error) => {
+                throw messageUsesExactTabRef(message) ? exactTabMissingError(tabId!, error) : error;
+              });
+              const currentUrl = currentTab.url || currentTab.pendingUrl || '';
+              const reuse = navigationReuseDisposition(
+                currentUrl,
+                step.skip_if_url_contains,
+                currentTab.discarded,
+              );
+              if (reuse !== 'navigate') {
+                if (reuse === 'wake_and_skip') {
+                  await wakeDiscardedWorkflowTab(
+                    tabId!,
+                    brokerLease,
+                    'reused navigate_to_url',
+                    messageUsesExactTabRef(message),
+                  );
+                } else {
+                  await guardedBrokerSideEffect(
+                    brokerLease,
+                    'ensureContentReady reused navigate_to_url',
+                    () => ensureContentReady(tabId!, 'contentScript.js', 8000).catch(() => {}),
+                  );
+                }
+                sendResponseToBroker({
+                  req_id: isOrchestratorFormat ? undefined : requestId,
+                  task_id: isOrchestratorFormat ? requestId : undefined,
+                  success: true,
+                  result: { skipped: true, reason: 'already_on_matching_url', url: currentUrl },
+                  current_url: currentUrl,
+                  current_tab_id: tabId,
+                } as any);
+                return;
+              }
+            }
             await guardedBrokerSideEffect(
               brokerLease,
               'chrome.tabs.update navigate_to_url',
@@ -4596,7 +4790,7 @@ async function handleBrokerMessage(
             req_id: isOrchestratorFormat ? undefined : requestId,
             task_id: isOrchestratorFormat ? requestId : undefined,
             success: false,
-            error_code: 'NAVIGATION_ERROR',
+            error_code: isExactTabMissingError(error) ? 'TAB_MISSING' : 'NAVIGATION_ERROR',
             error_msg: error?.message || String(error)
           } as any);
           return;
@@ -4776,20 +4970,13 @@ async function handleBrokerMessage(
             return;
           }
 
-          try {
-            await guardedBrokerSideEffect(
+          const closeResult = await closeExactWorkflowTab(maybeTabId, (targetTabId) =>
+            guardedBrokerSideEffect(
               brokerLease,
               'chrome.tabs.remove close_current_tab',
-              () => chrome.tabs.remove(maybeTabId)
-            );
-          } catch (e: any) {
-            const msg = e?.message || String(e);
-            const alreadyClosed =
-              msg.includes('No tab with id') ||
-              msg.includes('No tab') ||
-              msg.includes('The tab was closed');
-            if (!alreadyClosed) throw e;
-          }
+              () => chrome.tabs.remove(targetTabId),
+            )
+          );
 
           if (workflowTabId === maybeTabId) {
             commitWorkflowTabIdForLease(
@@ -4804,7 +4991,11 @@ async function handleBrokerMessage(
             req_id: isOrchestratorFormat ? undefined : requestId,
             task_id: isOrchestratorFormat ? requestId : undefined,
             success: true,
-            result: { tabId: maybeTabId, closed: true },
+            result: {
+              tabId: maybeTabId,
+              closed: closeResult.closed,
+              already_missing: closeResult.alreadyMissing,
+            },
           } as any);
           return;
         } catch (error: any) {
@@ -6403,8 +6594,9 @@ async function executeWorkflow(
   const mayUseActiveTab =
     !fleetWindows.isFleetSession(workflowSessionId) &&
     sessionMayUseActiveTab(workflowSessionId, preferCurrentTab);
-  const sessionTabIdRaw = (message as any)?.data?.current_tab_id;
-  if (typeof sessionTabIdRaw === 'number') {
+  const sessionTabIdRaw = resolveRequestedTabId(message);
+  const exactTabTarget = messageUsesExactTabRef(message);
+  if (sessionTabIdRaw !== undefined) {
     workflowTabId = sessionTabIdRaw;
   }
   if (workflowTabId === undefined) {
@@ -6412,9 +6604,9 @@ async function executeWorkflow(
   }
 
   const firstStepType = steps?.[0]?.type;
-  // Some steps (like open_new_tab and close_current_tab) should NOT trigger tab initialization.
-  // close_current_tab is typically used for best-effort cleanup.
-  const requiresExistingTab = firstStepType !== 'open_new_tab' && firstStepType !== 'close_current_tab';
+  // A first navigation creates its dedicated tab at its final URL. Never stage
+  // about:blank/example.com before a known destination.
+  const requiresExistingTab = firstWorkflowStepNeedsInitializedTab(firstStepType);
 
   // If a tab id is provided via session/global state but is no longer valid, clear it so we can
   // create a fresh workflow tab below. Avoid recursion here: broker messages can reuse the same
@@ -6427,6 +6619,16 @@ async function executeWorkflow(
         () => chrome.tabs.get(workflowTabId!)
       );
     } catch {
+      if (exactTabTarget) {
+        sendWorkflowResponse({
+          req_id: isOrchestratorFormat ? undefined : requestId,
+          task_id: isOrchestratorFormat ? requestId : undefined,
+          success: false,
+          error_code: 'TAB_MISSING',
+          error_msg: `Exact tab target ${workflowTabId} is missing.`,
+        });
+        return;
+      }
       logInfo(`Workflow tab no longer exists, clearing: ${workflowTabId}`);
       commitWorkflowTabIdForLease(
         brokerLease,
@@ -6708,6 +6910,45 @@ async function executeWorkflow(
             // Reuse existing workflow tab
             tabId = workflowTabId;
             console.log(`Reusing existing workflow tab ID: ${tabId}`);
+            if (typeof step.skip_if_url_contains === 'string') {
+              const currentTab = await guardedBrokerSideEffect(
+                brokerLease,
+                'chrome.tabs.get workflow navigate_to_url reuse check',
+                () => chrome.tabs.get(tabId),
+              ).catch((error) => {
+                throw exactTabTarget ? exactTabMissingError(tabId, error) : error;
+              });
+              const currentUrl = currentTab.url || currentTab.pendingUrl || '';
+              const reuse = navigationReuseDisposition(
+                currentUrl,
+                step.skip_if_url_contains,
+                currentTab.discarded,
+              );
+              if (reuse !== 'navigate') {
+                if (reuse === 'wake_and_skip') {
+                  await wakeDiscardedWorkflowTab(
+                    tabId,
+                    brokerLease,
+                    'reused workflow navigate_to_url',
+                    exactTabTarget,
+                  );
+                } else {
+                  await guardedBrokerSideEffect(
+                    brokerLease,
+                    'ensureContentReady reused workflow navigate_to_url',
+                    () => ensureContentReady(tabId, 'contentScript.js', 8000).catch(() => {}),
+                  );
+                }
+                results.push({
+                  type: 'navigation',
+                  status: 'skipped',
+                  reason: 'already_on_matching_url',
+                  url: currentUrl,
+                  success: true,
+                });
+                continue;
+              }
+            }
             await guardedBrokerSideEffect(
               brokerLease,
               'chrome.tabs.update workflow navigate_to_url',
@@ -6760,7 +7001,7 @@ async function executeWorkflow(
             req_id: isOrchestratorFormat ? undefined : requestId,
             task_id: isOrchestratorFormat ? requestId : undefined,
             success: false,
-            error_code: 'NAVIGATION_ERROR',
+            error_code: isExactTabMissingError(error) ? 'TAB_MISSING' : 'NAVIGATION_ERROR',
             error_msg: `Navigation failed: ${(error as Error).message}`
           });
           return;
@@ -7130,21 +7371,13 @@ async function executeWorkflow(
             continue;
           }
 
-          // Best-effort: if the tab is already gone, treat as a no-op success.
-          try {
-            await guardedBrokerSideEffect(
+          const closeResult = await closeExactWorkflowTab(maybeTabId, (targetTabId) =>
+            guardedBrokerSideEffect(
               brokerLease,
               'chrome.tabs.remove workflow close_current_tab',
-              () => chrome.tabs.remove(maybeTabId)
-            );
-          } catch (e: any) {
-            const msg = e?.message || String(e);
-            const alreadyClosed =
-              msg.includes('No tab with id') ||
-              msg.includes('No tab') ||
-              msg.includes('The tab was closed');
-            if (!alreadyClosed) throw e;
-          }
+              () => chrome.tabs.remove(targetTabId),
+            )
+          );
 
           if (workflowTabId === maybeTabId) {
             commitWorkflowTabIdForLease(
@@ -7155,7 +7388,13 @@ async function executeWorkflow(
             );
           }
 
-          results.push({ type: 'close_current_tab', tabId: maybeTabId, closed: true, success: true });
+          results.push({
+            type: 'close_current_tab',
+            tabId: maybeTabId,
+            closed: closeResult.closed,
+            already_missing: closeResult.alreadyMissing,
+            success: true,
+          });
           continue;
         } catch (error: any) {
           console.error('close_current_tab error:', error);
@@ -7655,12 +7894,11 @@ function runtimeSenderSummary(sender: chrome.runtime.MessageSender): Record<stri
 }
 
 function isOwnExtensionSender(sender: chrome.runtime.MessageSender): boolean {
-  const ownOrigin = chrome.runtime.getURL('');
-  return sender.id === chrome.runtime.id || (!!sender.url && sender.url.startsWith(ownOrigin));
+  return sender.id === chrome.runtime.id;
 }
 
 function isPopupOrExtensionPageSender(sender: chrome.runtime.MessageSender): boolean {
-  return isOwnExtensionSender(sender) && sender.tab?.id === undefined;
+  return isOwnExtensionPageSender(sender, chrome.runtime.id, chrome.runtime.getURL(''));
 }
 
 function isContentScriptSender(sender: chrome.runtime.MessageSender): boolean {

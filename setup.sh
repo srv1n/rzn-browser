@@ -266,15 +266,9 @@ if [[ -n "$RUNTIME_ROOT_DIR" ]]; then
   USER_WORKFLOWS_DIR="$RUNTIME_ROOT_DIR/workflows/user"
   INSTALLED_EXTENSION_ROOT="$RUNTIME_ROOT_DIR/extension/dist"
   INSTALLED_EXTENSION_DIR="$INSTALLED_EXTENSION_ROOT/chrome"
-  INSTALLED_EXTENSION_LEGACY_CHROME_DIR="$RUNTIME_ROOT_DIR/extension/dist-chrome"
 
   echo "Installing stable extension copies to: $INSTALLED_EXTENSION_ROOT"
-  guarded_rm_rf "$RUNTIME_ROOT_DIR/extension" "$RUNTIME_ROOT_DIR" "runtime extension"
-  mkdir -p "$RUNTIME_ROOT_DIR/extension"
-  cp -R "$(pwd)/extension/dist" "$INSTALLED_EXTENSION_ROOT"
-  if [[ -d "$(pwd)/extension/dist-chrome" ]]; then
-    cp -R "$(pwd)/extension/dist-chrome" "$INSTALLED_EXTENSION_LEGACY_CHROME_DIR"
-  fi
+  bash "$(pwd)/scripts/install_extension_runtime.sh" "$(pwd)/extension/dist" "$RUNTIME_ROOT_DIR"
 
   echo "Installing bundled workflows and examples into: $BUILTIN_WORKFLOWS_DIR"
   RZN_RUNTIME_DIR="$RUNTIME_ROOT_DIR" "$CLI_PATH" workflow pull --repo-root "$(pwd)"

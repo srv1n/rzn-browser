@@ -35,9 +35,9 @@ export const dot = (status?: string) => `<span class="status-dot ${statusClass(s
 export function isPaused(snapshot: any): boolean { return Boolean(snapshot?.paused); }
 
 export function unavailable(root: HTMLElement, error: unknown): void {
-  root.innerHTML = `<section class="empty"><h1>Supervisor unreachable</h1><p>Reconnect the native host and retry.</p><pre>${esc(error instanceof Error ? error.message : error)}</pre></section>`;
+  root.innerHTML = `<section><div class="empty"><h1>Supervisor unreachable</h1><p>Reconnect the native host and retry.</p><pre>${esc(error instanceof Error ? error.message : error)}</pre></div></section>`;
 }
 
 export function applicationError(root: HTMLElement, error: unknown): void {
-  root.innerHTML = `<section class="empty"><h1>Request failed</h1><pre>${esc(error instanceof Error ? error.message : error)}</pre></section>`;
+  root.innerHTML = `<section><div class="empty"><h1>Request failed</h1><pre>${esc(error instanceof Error ? error.message : error)}</pre></div></section>`;
 }

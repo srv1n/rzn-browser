@@ -58,6 +58,41 @@ export function buildSignature(): string {
   return value && value.length > 0 ? value : 'dev-unknown';
 }
 
+/**
+ * Returns a Chrome-valid build version for UTC timestamp signatures emitted by
+ * extension/build.sh. Chrome compares every numeric component, so this keeps
+ * successive timestamp builds ordered while making an unpacked reload observe
+ * a new manifest version.
+ *
+ * Release signatures (for example, v1.2.3) intentionally return undefined:
+ * their manifest version is synchronized by scripts/release/sync_versions.py.
+ */
+export function chromeManifestVersionForBuildSignature(signature: string): string | undefined {
+  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(signature);
+  if (!match) return undefined;
+
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const timestamp = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  if (
+    timestamp.getUTCFullYear() !== year ||
+    timestamp.getUTCMonth() !== month - 1 ||
+    timestamp.getUTCDate() !== day ||
+    timestamp.getUTCHours() !== hour ||
+    timestamp.getUTCMinutes() !== minute ||
+    timestamp.getUTCSeconds() !== second
+  ) {
+    return undefined;
+  }
+
+  return `${year}.${month * 100 + day}.${hour * 100 + minute}.${second}`;
+}
+
 export function chromeExtensionIdFromManifestKey(key: string): string {
   const der = Buffer.from(key, 'base64');
   const digest = crypto.createHash('sha256').update(der).digest();
@@ -84,13 +119,20 @@ export async function buildFor(browser: ExtensionBuildTarget, options: BuildOpti
     options.layout === 'nested'
       ? path.join(distRootDir, browser)
       : path.join(distRootDir, `dist-${browser}`);
+  const buildSignatureValue = options.buildSignature ?? buildSignature();
   const merged = await buildManifestForTarget(browser, rootDir);
+  const cachebusterVersion = (CHROMIUM_EXTENSION_TARGETS as readonly string[]).includes(browser)
+    ? chromeManifestVersionForBuildSignature(buildSignatureValue)
+    : undefined;
+  if (cachebusterVersion) {
+    merged.version = cachebusterVersion;
+  }
   await fs.rm(distDir, { recursive: true, force: true });
   await fs.mkdir(distDir, { recursive: true });
   await fs.writeFile(path.join(distDir, 'manifest.json'), JSON.stringify(merged, null, 2));
   await fs.writeFile(
     path.join(distDir, 'rzn-build.json'),
-    JSON.stringify(buildMetadataForTarget(browser, options.buildSignature), null, 2)
+    JSON.stringify(buildMetadataForTarget(browser, buildSignatureValue), null, 2)
   );
   if (options.copyFiles !== false) {
     await copyBuiltFiles(browser, options);

@@ -16,7 +16,7 @@ function statusClass(status:string){if(status==='succeeded')return'ok';if(status
 
 export function popupHtml(snapshot:Snapshot,now=Date.now()):string {
   const running=snapshot.now_running;const recent=snapshot.recent_runs.slice(0,5);const cloud=snapshot.fleet?`<span class="ok">● Cloud <small>${esc(age(snapshot.fleet.last_poll_ms,now))}</small></span>`:'<span class="muted">● Cloud</span>';
-  return `<header><b>RZN Automation</b><a href="dashboard.html#runs" target="_blank">Dashboard</a></header>
+  return `<header><b>RZN Browser</b><a href="dashboard.html#runs" target="_blank">Open dashboard</a></header>
 <section class="health"><span class="${snapshot.extension_connected?'ok':'bad'}">● Extension</span><span class="${snapshot.native_host_connected?'ok':'bad'}">● Native</span><span class="ok">● Supervisor</span>${cloud}</section>
 ${running?`<section class="now-running"><small>NOW RUNNING <span class="origin origin-${originLabel(running.origin)}">${originLabel(running.origin)}</span></small><h2>${esc(running.workflow_id)}</h2><p>Step ${running.step_index??0} of ${running.step_total??0} · ${elapsed(running.started_at,now)}</p><button id="stop" class="danger">Stop</button></section>`:`<section><h2>${snapshot.paused?'Automation paused':'Ready'}</h2><p>${snapshot.paused?'No new workflows will start.':'Waiting for work.'}</p></section>`}
 <label class="toggle"><input id="pause" type="checkbox" ${snapshot.paused?'checked':''}> Pause automation</label>
