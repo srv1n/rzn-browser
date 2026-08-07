@@ -1,0 +1,220 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "reddit/profile-history",
+  "name": "Reddit: Profile History",
+  "version": "1.0.0",
+  "system": "reddit",
+  "capability": "reddit.profile.history",
+  "summary": "Read a Reddit user's rendered post and comment history through the connected browser session.",
+  "description": "Fallback/cross-check extractor for Reddit profile history when API or JSON endpoints are blocked. It drives www.reddit.com with the connected browser's existing cookies, paces each profile navigation, incrementally harvests post/comment cards while scrolling, and reports whether the requested limit was reached or the rendered feed stalled. Reddit account login is optional for public profiles; it never calls Reddit's JSON API.",
+  "params": {
+    "properties": {
+      "username": {
+        "kind": "string",
+        "required": true,
+        "min_length": 1,
+        "max_length": 20,
+        "description": "Reddit username without the leading u/."
+      },
+      "mode": {
+        "kind": "string",
+        "required": false,
+        "default": "overview",
+        "enum_values": ["overview", "posts", "comments"],
+        "description": "Activity feed to read. overview returns both posts and comments; posts and comments use Reddit's dedicated profile tabs."
+      },
+      "limit": {
+        "kind": "integer",
+        "required": false,
+        "default": 100,
+        "min": 1,
+        "max": 500,
+        "description": "Maximum activity items to return. Hard cap 500."
+      },
+      "max_scrolls": {
+        "kind": "integer",
+        "required": false,
+        "default": 30,
+        "min": 0,
+        "max": 100,
+        "description": "Maximum lazy-load scroll cycles. Hard cap 100."
+      },
+      "scroll_delay_ms": {
+        "kind": "integer",
+        "required": false,
+        "default": 1800,
+        "min": 1200,
+        "max": 5000,
+        "description": "Delay after each feed scroll. Values below 1200 ms are clamped to 1200 to avoid aggressive driving."
+      },
+      "navigation_delay_ms": {
+        "kind": "integer",
+        "required": false,
+        "default": 4000,
+        "min": 3000,
+        "max": 15000,
+        "description": "Pacing delay before opening the requested profile. Values below 3000 ms are clamped to 3000."
+      },
+      "require_login": {
+        "kind": "boolean",
+        "required": false,
+        "default": false,
+        "description": "Require a Reddit account login instead of accepting an anonymous cookie-backed browser session. Defaults false because public rendered history works without account authentication when Reddit accepts the browser session cookies."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["www.reddit.com"]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["www.reddit.com"]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["www.reddit.com"]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 240000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "name": "Open Reddit in the connected browser profile",
+      "timeout_ms": 60000,
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": { "url": "https://www.reddit.com/" },
+        "side_effects": ["browser_state"]
+      }
+    },
+    {
+      "id": "s2",
+      "name": "Pace the visit and open the requested profile feed",
+      "timeout_ms": 30000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp": false,
+          "args": ["{username}", "{mode}", "{navigation_delay_ms}"],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const username=cleanArg(arg0).replace(/^u\\//i,'');const mode=(cleanArg(arg1)||'overview').toLowerCase();const rawDelay=parseInt(cleanArg(arg2),10);const delay=Number.isFinite(rawDelay)?Math.min(Math.max(rawDelay,3000),15000):4000;if(!username||!/^[A-Za-z0-9_-]{1,20}$/.test(username))throw new Error('username must contain 1-20 Reddit username characters without u/');if(!['overview','posts','comments'].includes(mode))throw new Error('mode must be overview, posts, or comments');await new Promise(r=>setTimeout(r,delay));const suffix=mode==='posts'?'/submitted/':mode==='comments'?'/comments/':'/';const target='https://www.reddit.com/user/'+encodeURIComponent(username)+suffix;setTimeout(()=>window.location.assign(target),0);return{target,mode,navigation_delay_ms:delay};"
+        },
+        "side_effects": ["browser_state"]
+      }
+    },
+    {
+      "id": "s3",
+      "name": "Allow the profile feed to hydrate",
+      "timeout_ms": 5000,
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": ["read_only"]
+      }
+    },
+    {
+      "id": "s4",
+      "name": "Scroll, incrementally harvest cards, and report completeness",
+      "timeout_ms": 180000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp": false,
+          "args": ["{username}", "{mode}", "{limit}", "{max_scrolls}", "{scroll_delay_ms}", "{require_login}"],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};const norm=(s)=>(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const abs=(h)=>{if(!h)return'';try{return new URL(h,location.origin).toString();}catch{return String(h);}};const asBool=(v,d)=>{const t=cleanArg(v).toLowerCase();if(!t)return d;return !['false','0','no','off'].includes(t);};const username=cleanArg(arg0).replace(/^u\\//i,'');const mode=(cleanArg(arg1)||'overview').toLowerCase();const n=parseInt(cleanArg(arg2),10);const limit=Number.isFinite(n)&&n>0?Math.min(n,500):100;const ms=parseInt(cleanArg(arg3),10);const maxScrolls=Number.isFinite(ms)&&ms>=0?Math.min(ms,100):30;const sd=parseInt(cleanArg(arg4),10);const scrollDelay=Number.isFinite(sd)?Math.min(Math.max(sd,1200),5000):1800;const requireLogin=asBool(arg5,false);const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));const pageText=norm(document.body?.innerText||'').slice(0,12000);if(/prove your humanity|blocked by network security|you've been blocked|too many requests/i.test(pageText))throw new Error('Reddit blocked the rendered profile page with a challenge or rate limit; stop and retry later in the connected browser profile');const loggedOut=!!document.querySelector('#login-button[href*=\\\"/login\\\"], a[id*=\\\"login\\\"][href*=\\\"/login\\\"]');if(requireLogin&&loggedOut)throw new Error('Reddit is logged out in the connected browser profile. Sign in there, then rerun or leave require_login=false for public cookie-backed history');if(!/\\/user\\//.test(location.pathname))throw new Error('Reddit profile navigation did not land on a user page: '+location.href);const items=new Map();const subredditFrom=(root)=>{const attr=root.getAttribute('subreddit-name');if(attr)return attr;const a=Array.from(root.querySelectorAll('a[href^=\\\"/r/\\\"]')).find(el=>/^r\\//i.test(norm(el.textContent)));if(a)return norm(a.textContent).replace(/^r\\//i,'');const href=root.getAttribute('href')||'';const communityMatch=href.match(/^\\/r\\/([^/]+)/i);if(communityMatch)return decodeURIComponent(communityMatch[1]);const userMatch=href.match(/^\\/user\\/([^/]+)/i);return userMatch?'u_'+decodeURIComponent(userMatch[1]):'';};const harvest=()=>{for(const root of document.querySelectorAll('shreddit-profile-comment, shreddit-post')){let item=null;if(root.tagName.toLowerCase()==='shreddit-profile-comment'){const id=root.getAttribute('comment-id')||root.getAttribute('data-feed-element-id')||'';const permalink=root.getAttribute('href')||root.querySelector('shreddit-comment-action-row[permalink]')?.getAttribute('permalink')||'';const textEl=root.querySelector('[id=\\\"-post-rtjson-content\\\"], [id$=\\\"-post-rtjson-content\\\"]');const titleLink=Array.from(root.querySelectorAll('h2 a[href*=\\\"/comments/\\\"], a[href*=\\\"/comments/\\\"]')).find(a=>norm(a.textContent));const time=root.querySelector('time[datetime]');item={kind:'comment',id,author:username,subreddit:subredditFrom(root),timestamp:time?.getAttribute('datetime')||'',relative_time:norm(time?.textContent||''),permalink:abs(permalink),post_title:norm(titleLink?.textContent||root.closest('article')?.getAttribute('aria-label')||''),text:norm(textEl?.innerText||textEl?.textContent||'')};}else{const id=root.id||root.getAttribute('data-feed-element-id')||'';const permalink=root.getAttribute('permalink')||root.querySelector('a[slot=\\\"full-post-link\\\"], a[slot=\\\"title\\\"]')?.getAttribute('href')||'';const title=root.querySelector('[slot=\\\"title\\\"]');const body=root.querySelector('[slot=\\\"text-body\\\"] [id$=\\\"-post-rtjson-content\\\"], [slot=\\\"text-body\\\"], [id$=\\\"-post-rtjson-content\\\"]');const time=root.querySelector('time[datetime]');item={kind:'post',id,author:root.getAttribute('author')||username,subreddit:subredditFrom(root),timestamp:time?.getAttribute('datetime')||'',relative_time:norm(time?.textContent||''),permalink:abs(permalink),post_title:norm(title?.textContent||''),text:norm(body?.innerText||body?.textContent||'')};}const key=item.id||item.permalink;if(key&&!items.has(key))items.set(key,item);}};let scrolls=0;let stallCycles=0;let previousCount=-1;let previousHeight=-1;let stopReason='max_scrolls_reached';for(let i=0;i<=maxScrolls;i++){harvest();if(items.size>=limit){stopReason='limit_reached';break;}if(i===maxScrolls)break;const height=Math.max(document.body?.scrollHeight||0,document.documentElement?.scrollHeight||0);window.scrollTo({top:height,behavior:'instant'});scrolls++;await sleep(scrollDelay);harvest();const nextHeight=Math.max(document.body?.scrollHeight||0,document.documentElement?.scrollHeight||0);if(items.size===previousCount&&nextHeight===previousHeight)stallCycles++;else stallCycles=0;previousCount=items.size;previousHeight=nextHeight;if(stallCycles>=3){stopReason='feed_stalled';break;}}const all=Array.from(items.values());const filtered=mode==='posts'?all.filter(x=>x.kind==='post'):mode==='comments'?all.filter(x=>x.kind==='comment'):all;const output=filtered.slice(0,limit);const warnings=[];if(loggedOut)warnings.push('The browser is not signed into a Reddit account. Public history was available through its cookie-backed session, but Reddit may hide or rate-limit older activity.');if(stopReason!=='limit_reached')warnings.push('The rendered feed stopped before the requested limit; treat this result as partial, not complete account history.');return{profile:{username,url:location.href},mode,authenticated:!loggedOut,requested_limit:limit,returned_count:output.length,scrolls_performed:scrolls,stop_reason:stopReason,requested_limit_reached:output.length>=limit,history_may_be_partial:output.length<limit||loggedOut,items:output,warnings};"
+        },
+        "side_effects": ["browser_state", "read_only"]
+      }
+    }
+  ],
+  "result": {
+    "artifact_policy": { "prefer_downloads": false },
+    "include_debug": false,
+    "output_selector": { "step_id": "s4", "path": "$" },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "profile": { "type": "object", "properties": { "username": { "type": "string" }, "url": { "type": "string" } } },
+        "mode": { "type": "string" },
+        "authenticated": { "type": "boolean" },
+        "requested_limit": { "type": "integer" },
+        "returned_count": { "type": "integer" },
+        "scrolls_performed": { "type": "integer" },
+        "stop_reason": { "type": "string" },
+        "requested_limit_reached": { "type": "boolean" },
+        "history_may_be_partial": { "type": "boolean" },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": { "type": "string" },
+              "id": { "type": "string" },
+              "author": { "type": "string" },
+              "subreddit": { "type": "string" },
+              "timestamp": { "type": "string" },
+              "relative_time": { "type": "string" },
+              "permalink": { "type": "string" },
+              "post_title": { "type": "string" },
+              "text": { "type": "string" }
+            }
+          }
+        },
+        "warnings": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  },
+  "help": {
+    "summary": "Read rendered Reddit profile history through the connected browser session without OAuth or Reddit API keys.",
+    "parameters": {
+      "username": "Reddit username without u/.",
+      "mode": "overview (posts + comments), posts, or comments.",
+      "limit": "Maximum returned items; default 100, hard cap 500.",
+      "max_scrolls": "Maximum lazy-load scroll cycles; default 30, hard cap 100.",
+      "scroll_delay_ms": "Delay between feed scrolls; minimum 1200 ms.",
+      "navigation_delay_ms": "Pacing delay before each profile navigation; minimum 3000 ms.",
+      "require_login": "Default false. Set true when the caller requires a Reddit account-authenticated session rather than accepted anonymous browser cookies."
+    },
+    "examples": [
+      {
+        "description": "Read up to 100 public posts and comments using the connected browser's existing cookies",
+        "command": "rzn-browser run reddit profile-history --param username=example_user"
+      },
+      {
+        "description": "Read only comments with a smaller bounded crawl",
+        "command": "rzn-browser run reddit profile-history --param username=example_user --param mode=comments --param limit=50 --param max_scrolls=20"
+      },
+      {
+        "description": "Require an account-authenticated Reddit session",
+        "command": "rzn-browser run reddit profile-history --param username=example_user --param require_login=true"
+      }
+    ],
+    "returns": [
+      "Object with profile/mode/auth status, bounded-scroll completeness metadata, warnings, and items containing kind, id, text, subreddit, ISO timestamp, relative time, post title, and permalink."
+    ],
+    "notes": [
+      "Fallback/cross-check path only. Prefer the Reddit API when it is available and authorized.",
+      "No OAuth or Reddit JSON endpoints are used; the workflow reads the rendered www.reddit.com DOM through the connected browser session.",
+      "Account login is optional. Anonymous browser cookies can satisfy Reddit's browser challenge and expose real public history even while the page shows Log In.",
+      "Unauthenticated results are marked authenticated=false and history_may_be_partial=true because Reddit may hide or rate-limit older activity.",
+      "Every invocation waits at least three seconds before navigating to the requested profile. Do not run many users concurrently against one Reddit account.",
+      "Selectors are based on observed 2026-08-01 markup: shreddit-profile-comment, shreddit-post, slot attributes, data-feed-element-id, comment-id, permalink, subreddit-name, and nested time[datetime].",
+      "history_may_be_partial remains true when the rendered feed stalls before the requested limit; a short result is never silently presented as full account history."
+    ]
+  }
+}

@@ -10,8 +10,10 @@
 | [[ADI-T-0002]] | `stale` | srv1n | `main` | `2026-07-11T05:16:46Z` |
 | [[ADI-T-0003]] | `stale` | srv1n | `main` | `2026-07-11T03:32:40Z` |
 | [[ADI-T-0004]] | `stale` | srv1n | `main` | `2026-07-11T05:00:09Z` |
-| [[EUI-T-0002]] | `active` | codex-root-20260713 | `main` | `2026-07-13T07:26:17Z` |
-| [[EUI-T-0006]] | `active` | codex-root-20260713 | `main` | `2026-07-13T07:26:16Z` |
+| [[EUI-T-0002]] | `stale` | codex-root-20260713 | `main` | `2026-07-13T07:26:17Z` |
+| [[EUI-T-0006]] | `stale` | codex-root-20260713 | `main` | `2026-07-13T07:26:16Z` |
+| [[EUI-T-0010]] | `active` | agent:sarav | `main` | `2026-07-21T07:17:47Z` |
+| [[EUI-T-0011]] | `active` | agent:sarav | `main` | `2026-07-21T07:54:21Z` |
 | [[MBR-T-0019]] | `stale` | agent:codex | `main` | `2026-05-29T21:01:43Z` |
 | [[MBR-T-0020]] | `stale` | agent:sarav | `main` | `2026-05-29T21:11:25Z` |
 | [[MBR-T-0021]] | `stale` | agent:sarav | `main` | `2026-05-29T21:17:05Z` |

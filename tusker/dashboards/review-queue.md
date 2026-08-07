@@ -19,6 +19,8 @@
 | [[EUI-T-0006]] |  | low | Review evidence and close or return to rework. |
 | [[EUI-T-0007]] |  | medium | Review evidence and close or return to rework. |
 | [[EUI-T-0009]] |  | medium | Review evidence and close or return to rework. |
+| [[EUI-T-0010]] |  | low | Review evidence and close or return to rework. |
+| [[EUI-T-0011]] |  | low | Review evidence and close or return to rework. |
 | [[FLA-T-0001]] |  | medium | Review evidence and close or return to rework. |
 | [[FLA-T-0002]] |  | high | Review evidence and close or return to rework. |
 | [[FLA-T-0003]] |  | high | Review evidence and close or return to rework. |

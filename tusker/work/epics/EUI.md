@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-07-11T07:06:59Z"
-updated_at: "2026-07-13T05:42:38Z"
-state_rev: "sha256:d886926db32904d35a640f6a19f9bc2fd6a9f94821344b6bf718fef73de68930"
+updated_at: "2026-07-21T06:04:56Z"
+state_rev: "sha256:24b5496b730a85009e3a3f08861d042ca7a21d9916494bb9b46754708d863f75"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -62,6 +62,8 @@ One UI with progressive disclosure (no separate fleet mode); extension is a thin
 | [[EUI-T-0007]] | review | reviewer | Review evidence and close or return to rework. |
 | [[EUI-T-0008]] | ready | agent | Execute the task contract and satisfy proof mode. |
 | [[EUI-T-0009]] | review | reviewer | Review evidence and close or return to rework. |
+| [[EUI-T-0010]] | review | reviewer | Review evidence and close or return to rework. |
+| [[EUI-T-0011]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 

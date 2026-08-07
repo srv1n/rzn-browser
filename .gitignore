@@ -71,3 +71,6 @@ chrome-store-submission/
 
 # Goodreads research skill run output
 goodreads-research-out/
+
+# local chatgpt-handoff workflow cache
+.chatgpt-handoff/

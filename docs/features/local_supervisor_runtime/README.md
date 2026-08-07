@@ -226,6 +226,9 @@ Minimum full-runtime scenarios:
 - Auto-spawned supervisors are detached into their own Unix process group. Short-lived CLI/MCP/agent wrappers must be able to exit without process-group cleanup killing the supervisor they just started.
 - Installed native binaries must be replaced atomically with temp-file-plus-rename. Copying over a live macOS executable path can leave future launches stuck in dyld before `main`; the installer scripts use `install_file_atomic` for this reason.
 - `rzn-browser run` uses supervisor mode. Runs call `runtime.ensure_ready` before browser work and require a live native-host bridge.
+- The deprecated `rzn-browser workflow run --allow-direct-workflow` escape hatch delegates to the same supervisor runner, so manifest and legacy file references do not revive the removed planner/broker runtime.
+- `rzn-browser test-browser` creates a unique temporary legacy fixture, executes it through the supervisor runner, and removes the fixture on both success and failure.
+- Public `rzn-browser session ...` compatibility commands fail with a nonzero exit until their session-management implementation exists; internal browser sessions remain supervisor-owned.
 - Browser worker fallback has been removed from the supervisor path.
 - `rzn-browser mcp browser` exposes the browser tool names and routes through the supervisor.
 - `rzn-browser supervisor` starts the supervisor cloud actor, owns cloud config/status, connects to the dev-harness cloud WebSocket actor endpoint when configured, and dispatches cloud browser commands over the native-host bridge.
