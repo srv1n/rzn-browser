@@ -1483,12 +1483,12 @@ async function tryEvalViaPageBridge(step: any, executionBackend: string): Promis
       timeout
     );
     if (!resp?.success) return null;
-    return {
+    return evalResponse({
       success: true,
       world: 'main',
       execution_backend: executionBackend,
       result: resp.result,
-    };
+    });
   } catch {
     return null;
   }
@@ -1503,6 +1503,17 @@ function actionFailureResponseFields(result: any): { success: boolean; error_cod
     success: false,
     error_code: typeof result.error_code === 'string' ? result.error_code : 'ACTION_FAILED',
     error_msg: actionResultFailureMessage(result),
+  };
+}
+
+function evalResponse(result: any): any {
+  const nested = result?.result;
+  if (!isActionResultFailure(nested)) return result;
+  return {
+    ...result,
+    success: false,
+    error_code: typeof nested.error_code === 'string' ? nested.error_code : 'ACTION_FAILED',
+    error_msg: actionResultFailureMessage(nested),
   };
 }
 
@@ -3865,12 +3876,12 @@ const actionHandlers = {
       if (!response?.success) {
         throw new Error(response?.error || 'Scripting eval failed');
       }
-      return {
+      return evalResponse({
         success: true,
         world: 'main',
         execution_backend: response.execution_backend || 'chrome_scripting_main_world',
         result: response.result,
-      };
+      });
     }
     const response: any = await new Promise((resolve, reject) => {
       chrome.runtime.sendMessage(
@@ -3896,12 +3907,12 @@ const actionHandlers = {
     if (!response?.success) {
       throw new Error(response?.error || 'CDP eval failed');
     }
-    return {
+    return evalResponse({
       success: true,
       world: 'main',
       execution_backend: response.execution_backend || 'cdp_runtime_evaluate',
       result: response.result,
-    };
+    });
   },
 
   semantic_action: async (step: any) => {
