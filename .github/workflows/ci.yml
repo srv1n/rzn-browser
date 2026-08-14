@@ -103,6 +103,11 @@ jobs:
         working-directory: extension
         run: bun x vitest --run
 
+      - name: Run ChatGPT workflow contract tests
+        run: |
+          node workflows/chatgpt/chatgpt_read_response_contract.test.mjs
+          node workflows/chatgpt/chatgpt_send_submitted_message.test.mjs
+
       - name: Check extension artifacts
         run: |
           test -d extension/dist-chrome

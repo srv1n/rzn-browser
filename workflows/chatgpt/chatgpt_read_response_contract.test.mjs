@@ -18,7 +18,7 @@ function fixture(kind) {
   const append = (key, message) => { mapping[current_node].children.push(key); mapping[key] = node(current_node, [], message); current_node = key; };
   if (kind === 'completed') {
     append('preamble', assistant('preamble-message', { metadata: { is_thinking_preamble_message: true }, content: { content_type: 'text', parts: ['thinking preamble'] } }));
-    append('answer', assistant('answer-message', { content: { content_type: 'text', parts: ['final answer'] } }));
+    append('answer', assistant('answer-message', { content: { content_type: 'text', parts: ['final', 'answer'] } }));
     mapping.boundary.children.push('inactive');
     mapping.inactive = node('boundary', [], assistant('inactive-message', { content: { content_type: 'text', parts: ['wrong branch'] } }));
   } else if (kind === 'ack-then-streaming') {
@@ -35,7 +35,9 @@ async function run(kind, after = 'boundary-message') {
   const conversation = fixture(kind);
   const calls = [];
   const location = { href: `https://chatgpt.com/c/${chatId}` };
-  const window = { location, __rzn_params: { after_message_id: after, download_attachments: false } };
+  const params = { download_attachments: false };
+  if (after !== null) params.after_message_id = after;
+  const window = { location, __rzn_params: params };
   const fetch = async (url) => {
     calls.push(url);
     if (url === '/api/auth/session') return { json: async () => kind === 'no-token' ? ({}) : ({ accessToken: 'test-token' }) };
@@ -54,8 +56,12 @@ const completed = await run('completed');
 assert.equal(completed.response_state, 'completed');
 assert.equal(completed.selected_message_id, 'answer-message');
 assert.deepEqual(completed.messages.map((item) => item.id), ['boundary-message', 'preamble-message', 'answer-message']);
-assert.equal(completed.messages.find((item) => item.id === completed.selected_message_id).text, 'final answer');
+assert.equal(completed.messages.find((item) => item.id === completed.selected_message_id).text, 'final\n\nanswer');
 assert.deepEqual(completed.attachments_downloaded, []);
+const legacy = await run('completed', null);
+assert.equal('response_state' in legacy, false);
+assert.equal(legacy.mode, 'latest');
+assert.ok(Array.isArray(legacy.messages));
 for (const kind of ['not-started', 'streaming', 'ack-then-streaming']) {
   const result = await run(kind);
   assert.equal(result.response_state, kind === 'not-started' ? 'not_started' : 'streaming');
