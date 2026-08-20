@@ -102,6 +102,9 @@ enum Commands {
     /// Run a workflow through the local browser supervisor
     Run(RunArgs),
 
+    /// Update the CLI, native host, extension, and bundled workflows to the latest release
+    Update(UpdateArgs),
+
     /// Re-check the local browser supervisor and native-host bridge
     Heal(HealArgs),
 
@@ -277,6 +280,21 @@ struct RunArgs {
 }
 
 #[derive(Args, Debug)]
+struct UpdateArgs {
+    /// GitHub repo to update from
+    #[arg(long, default_value = "srv1n/rzn-browser")]
+    repo: String,
+
+    /// Release tag to install instead of the latest one
+    #[arg(long)]
+    version: Option<String>,
+
+    /// Report the installed and available versions without installing anything
+    #[arg(long)]
+    check: bool,
+}
+
+#[derive(Parser, Debug)]
 struct HealArgs {
     /// Override APP_BASE for supervisor socket/token/runtime files
     #[arg(long)]
@@ -1345,6 +1363,12 @@ async fn main() {
         Commands::Run(args) => {
             if let Err(err) = handle_run(args).await {
                 eprintln!("❌ run failed: {}", err);
+                process::exit(1);
+            }
+        }
+        Commands::Update(args) => {
+            if let Err(err) = handle_update(args).await {
+                eprintln!("❌ update failed: {}", err);
                 process::exit(1);
             }
         }
@@ -5644,16 +5668,22 @@ fn load_workflow_value(reference: &str) -> anyhow::Result<(PathBuf, Value)> {
 }
 
 fn load_workflow_contract_value(reference: &str) -> anyhow::Result<(PathBuf, Value)> {
+    // Resolve by name first, the same way `run` does. Capability lookup is the
+    // fallback: several manifests can declare one capability, so leading with it
+    // made `inspect` describe a manifest that `run` would never execute.
+    if let Ok((resolved, value)) = load_workflow_value(reference) {
+        if value.get("schema_version").and_then(|value| value.as_str())
+            == Some(WORKFLOW_CONTRACT_VERSION)
+        {
+            return Ok((resolved, value));
+        }
+    }
+
     if let Some(manifest_path) = find_manifest_path_for_reference(reference) {
         return read_contract_value_from_path(&manifest_path);
     }
 
     let (resolved, value) = load_workflow_value(reference)?;
-    if value.get("schema_version").and_then(|value| value.as_str())
-        == Some(WORKFLOW_CONTRACT_VERSION)
-    {
-        return Ok((resolved, value));
-    }
 
     if let Some(manifest_path) = find_manifest_path_for_runtime_workflow(&resolved) {
         return read_contract_value_from_path(&manifest_path);
@@ -5676,15 +5706,28 @@ fn find_manifest_path_for_reference(reference: &str) -> Option<PathBuf> {
     let expected_capability = format!("{}.{}", system, workflow.replace('_', "."));
     let expected_dash = format!("{}-{}", system, workflow);
     let capabilities = list_capabilities_with_query(&CapabilityCatalogQuery::default()).ok()?;
-    capabilities.into_iter().find_map(|entry| {
-        let capability = entry.capability_id.replace('_', ".");
-        let matches = entry.system == system
-            && (capability == expected_capability
-                || entry.workflow == workflow
-                || entry.workflow == expected_dash
-                || entry.workflow.ends_with(&format!("-{}", workflow)));
-        matches.then(|| PathBuf::from(entry.manifest_path))
-    })
+    // Rank matches so the name the caller typed wins over anything that merely shares
+    // its capability. Several workflows may declare the same capability (forks kept in
+    // the user namespace, for one), and picking whichever came first made `inspect`
+    // describe a different manifest than `run` executes.
+    capabilities
+        .into_iter()
+        .filter(|entry| entry.system == system)
+        .filter_map(|entry| {
+            let capability = entry.capability_id.replace('_', ".");
+            let rank = if entry.workflow == workflow || entry.workflow == expected_dash {
+                0
+            } else if capability == expected_capability {
+                1
+            } else if entry.workflow.ends_with(&format!("-{}", workflow)) {
+                2
+            } else {
+                return None;
+            };
+            Some((rank, PathBuf::from(entry.manifest_path)))
+        })
+        .min_by_key(|(rank, _)| *rank)
+        .map(|(_, path)| path)
 }
 
 fn normalize_contract_ref(reference: &str) -> String {
@@ -8412,6 +8455,214 @@ fn normalize_run_params(
     Ok(params)
 }
 
+/// Release artifact name for the host platform, matching install.sh's detect_platform_slug.
+fn release_artifact_name() -> anyhow::Result<String> {
+    let os = match std::env::consts::OS {
+        "macos" => "macos",
+        "linux" => "linux",
+        other => anyhow::bail!("unsupported OS for update: {}", other),
+    };
+    let arch = match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "x64",
+        other => anyhow::bail!("unsupported architecture for update: {}", other),
+    };
+    Ok(format!("rzn-browser-{}-{}.tar.gz", os, arch))
+}
+
+fn release_artifact_url(repo: &str, version: Option<&str>, artifact: &str) -> anyhow::Result<String> {
+    let repo = repo.trim();
+    if repo.is_empty() || !repo.contains('/') {
+        anyhow::bail!("--repo must look like owner/name, got '{}'", repo);
+    }
+    let release_path = match version {
+        Some(tag) => {
+            let tag = tag.trim();
+            if tag.is_empty()
+                || !tag
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+            {
+                anyhow::bail!("--version must be a release tag, got '{}'", tag);
+            }
+            format!("releases/download/{}", tag)
+        }
+        None => "releases/latest/download".to_string(),
+    };
+    Ok(format!(
+        "https://github.com/{}/{}/{}",
+        repo, release_path, artifact
+    ))
+}
+
+fn latest_release_tag(repo: &str) -> anyhow::Result<String> {
+    let output = Command::new("curl")
+        .arg("-fsSL")
+        .arg("-H")
+        .arg("Accept: application/vnd.github+json")
+        .arg(format!(
+            "https://api.github.com/repos/{}/releases/latest",
+            repo.trim()
+        ))
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to query the latest release: {}", e))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "could not read the latest release for {} ({})",
+            repo,
+            output.status
+        );
+    }
+    let value: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|e| anyhow::anyhow!("unreadable release payload: {}", e))?;
+    value
+        .get("tag_name")
+        .and_then(|tag| tag.as_str())
+        .map(|tag| tag.to_string())
+        .ok_or_else(|| anyhow::anyhow!("release payload has no tag_name"))
+}
+
+fn sha256_of_file(path: &std::path::Path) -> anyhow::Result<String> {
+    let (program, args): (&str, Vec<&str>) = if cfg!(target_os = "macos") {
+        ("shasum", vec!["-a", "256"])
+    } else {
+        ("sha256sum", vec![])
+    };
+    let output = Command::new(program)
+        .args(&args)
+        .arg(path)
+        .output()
+        .map_err(|e| anyhow::anyhow!("failed to run {}: {}", program, e))?;
+    if !output.status.success() {
+        anyhow::bail!("{} failed for {}", program, path.display());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .split_whitespace()
+        .next()
+        .map(|digest| digest.to_ascii_lowercase())
+        .ok_or_else(|| anyhow::anyhow!("{} produced no digest", program))
+}
+
+/// Parse a `<sha256>  <filename>` sidecar and check it names the artifact we downloaded.
+fn expected_sha256_from_sidecar(contents: &str, artifact: &str) -> anyhow::Result<String> {
+    let first = contents
+        .lines()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("empty sha256 sidecar"))?;
+    let mut fields = first.split_whitespace();
+    let digest = fields
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("sha256 sidecar has no digest"))?
+        .to_ascii_lowercase();
+    if digest.len() != 64 || !digest.chars().all(|c| c.is_ascii_hexdigit()) {
+        anyhow::bail!("invalid sha256 sidecar format");
+    }
+    if let Some(named) = fields.next() {
+        let named = named.trim_start_matches('*');
+        let named = named.rsplit('/').next().unwrap_or(named);
+        if named != artifact {
+            anyhow::bail!("sha256 sidecar is for {}, not {}", named, artifact);
+        }
+    }
+    Ok(digest)
+}
+
+async fn handle_update(args: UpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let installed = env!("CARGO_PKG_VERSION");
+    let repo = std::env::var("RZN_INSTALL_REPO").unwrap_or_else(|_| args.repo.clone());
+    let available = match args.version.as_deref() {
+        Some(tag) => tag.to_string(),
+        None => latest_release_tag(&repo).unwrap_or_else(|_| "unknown".to_string()),
+    };
+
+    println!("rzn-browser update");
+    println!("  installed: {}", installed);
+    println!("  available: {} ({})", available, repo);
+
+    if args.check {
+        println!("Nothing installed (--check).");
+        return Ok(());
+    }
+
+    let artifact = release_artifact_name()?;
+    let artifact_url = release_artifact_url(&repo, args.version.as_deref(), &artifact)?;
+    let temp_root = std::env::temp_dir().join(format!("rzn-update-{}", uuid::Uuid::new_v4()));
+    fs::create_dir_all(&temp_root)
+        .map_err(|e| anyhow::anyhow!("create temp dir {}: {}", temp_root.display(), e))?;
+
+    let archive_path = temp_root.join(&artifact);
+    let sidecar_path = temp_root.join(format!("{}.sha256", artifact));
+    println!("Downloading {}", artifact_url);
+    run_checked_command(
+        "curl",
+        Command::new("curl")
+            .arg("-fsSL")
+            .arg(&artifact_url)
+            .arg("-o")
+            .arg(&archive_path),
+    )?;
+    run_checked_command(
+        "curl",
+        Command::new("curl")
+            .arg("-fsSL")
+            .arg(format!("{}.sha256", artifact_url))
+            .arg("-o")
+            .arg(&sidecar_path),
+    )?;
+
+    let sidecar = fs::read_to_string(&sidecar_path)
+        .map_err(|e| anyhow::anyhow!("read sha256 sidecar: {}", e))?;
+    let expected = expected_sha256_from_sidecar(&sidecar, &artifact)?;
+    let actual = sha256_of_file(&archive_path)?;
+    if expected != actual {
+        return Err(anyhow::anyhow!(
+            "checksum mismatch for {}\n  expected: {}\n  actual:   {}",
+            artifact,
+            expected,
+            actual
+        )
+        .into());
+    }
+    println!("Verified sha256: {}", actual);
+
+    let extract_dir = temp_root.join("extract");
+    fs::create_dir_all(&extract_dir)
+        .map_err(|e| anyhow::anyhow!("create extract dir {}: {}", extract_dir.display(), e))?;
+    run_checked_command(
+        "tar",
+        Command::new("tar")
+            .arg("-xzf")
+            .arg(&archive_path)
+            .arg("-C")
+            .arg(&extract_dir),
+    )?;
+
+    let payload_root = fs::read_dir(&extract_dir)
+        .map_err(|e| anyhow::anyhow!("read extract dir: {}", e))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| path.join("install.sh").is_file())
+        .ok_or_else(|| anyhow::anyhow!("release artifact contained no install.sh payload"))?;
+
+    // The packaged installer places the binaries, extension, native-host manifest, and
+    // runs `workflow pull` — the same path the curl install takes.
+    println!("Running packaged installer from {}", payload_root.display());
+    let status = Command::new("sh")
+        .arg(payload_root.join("install.sh"))
+        .env("RZN_INSTALL_ARTIFACT_SHA256_VERIFIED", "1")
+        .env("RZN_INSTALL_ARTIFACT_SHA256", &actual)
+        .status()
+        .map_err(|e| anyhow::anyhow!("failed to run the packaged installer: {}", e))?;
+    if !status.success() {
+        return Err(anyhow::anyhow!("packaged installer exited with {}", status).into());
+    }
+
+    let _ = fs::remove_dir_all(&temp_root);
+    println!();
+    println!("Updated to {}. Run `rzn-browser list` to see the refreshed catalog.", available);
+    Ok(())
+}
+
 fn workflow_pull_url(args: &WorkflowPullArgs) -> String {
     if let Some(url) = args.url.as_ref() {
         return url.clone();
@@ -10830,6 +11081,41 @@ mod tests {
             }
             other => panic!("expected workflow validate command, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn update_builds_release_urls_and_validates_sidecars() {
+        let artifact = "rzn-browser-macos-arm64.tar.gz";
+
+        assert_eq!(
+            release_artifact_url("srv1n/rzn-browser", None, artifact).unwrap(),
+            "https://github.com/srv1n/rzn-browser/releases/latest/download/rzn-browser-macos-arm64.tar.gz"
+        );
+        assert_eq!(
+            release_artifact_url("srv1n/rzn-browser", Some("v1.2.3"), artifact).unwrap(),
+            "https://github.com/srv1n/rzn-browser/releases/download/v1.2.3/rzn-browser-macos-arm64.tar.gz"
+        );
+        // a tag is a tag, not a path or a shell fragment
+        assert!(release_artifact_url("srv1n/rzn-browser", Some("../../etc"), artifact).is_err());
+        assert!(release_artifact_url("srv1n/rzn-browser", Some("v1; rm -rf /"), artifact).is_err());
+        assert!(release_artifact_url("not-a-repo", None, artifact).is_err());
+
+        let digest = "a".repeat(64);
+        assert_eq!(
+            expected_sha256_from_sidecar(&format!("{}  {}\n", digest, artifact), artifact).unwrap(),
+            digest
+        );
+        // bare digest, no filename column
+        assert_eq!(
+            expected_sha256_from_sidecar(&digest, artifact).unwrap(),
+            digest
+        );
+        // a sidecar naming a different artifact must not be accepted
+        assert!(
+            expected_sha256_from_sidecar(&format!("{}  other.tar.gz", digest), artifact).is_err()
+        );
+        assert!(expected_sha256_from_sidecar("deadbeef  x.tar.gz", artifact).is_err());
+        assert!(expected_sha256_from_sidecar("", artifact).is_err());
     }
 
     #[test]

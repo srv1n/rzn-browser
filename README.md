@@ -208,6 +208,15 @@ irm https://raw.githubusercontent.com/srv1n/rzn-browser/main/install.ps1 | iex
 
 The installer drops the runtime into a stable local directory, installs the native host, refreshes the built-in workflow catalog, and exposes the CLI binaries on your machine.
 
+To move an existing install to the latest release — binaries, extension, native host, and the bundled workflow catalog in one step:
+
+```sh
+rzn-browser update           # install the latest release
+rzn-browser update --check   # only report installed vs available
+```
+
+`update` runs the same packaged installer the curl one-liner does, after verifying the release artifact's sha256. Workflows you added yourself (`workflow add`) live in the user catalog and are never overwritten by an update.
+
 | OS | runtime root | what lands there |
 | --- | --- | --- |
 | macOS | `~/Library/Application Support/RZN` | `bin/`, `extension/dist/{chrome,edge,chromium}/`, `workflows/` |
