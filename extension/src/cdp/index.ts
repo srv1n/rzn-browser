@@ -4,7 +4,6 @@
 // === Core Frame Routing Infrastructure ===
 export { frameRouter, type FrameInfo, type TargetInfo } from './frameRouter';
 export { cdpClient, type CDPCommand, type CDPResult, type CDPTarget } from './cdpClient';
-export { accessibilityService, type AccessibleElement } from './accessibility';
 
 // === Complete CDP Type System ===
 export * from './types';
@@ -62,21 +61,6 @@ export async function detachFromTab(tabId: number): Promise<void> {
  */
 export function routeForFrame(frameId?: string): { sessionId?: string } {
   return frameRouter.routeForFrame(frameId);
-}
-
-/**
- * Get complete accessibility snapshot across all frames
- * Preferred method for extracting semantic element information
- */
-export async function getAccessibilitySnapshot(tabId: number) {
-  return accessibilityService.getAccessibilitySnapshot(tabId);
-}
-
-/**
- * Get all interactive elements (buttons, links, inputs, etc.)
- */
-export async function getInteractiveElements(tabId: number) {
-  return accessibilityService.getInteractiveElements(tabId);
 }
 
 /**

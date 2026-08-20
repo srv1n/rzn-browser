@@ -4,7 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ES2020", "DOM"],
-    "types": ["chrome", "node", "vite/client", "webextension-polyfill"],
+    "types": ["chrome", "node", "vite/client"],
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "skipLibCheck": true,

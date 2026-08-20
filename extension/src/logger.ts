@@ -11,24 +11,6 @@ interface LogMessage {
   metadata?: Record<string, any>;
 }
 
-// Check if we're in development mode
-const isDevelopment = () => {
-  // Check various ways to determine development mode
-  try {
-    // Chrome extensions don't have process.env, so check for debug flag in storage
-    return (
-      chrome.runtime.getManifest().version_name?.includes('dev') ||
-      // Or check a custom flag in local storage (only available in content scripts)
-      (typeof localStorage !== 'undefined' && localStorage.getItem('RZN_DEBUG') === 'true') ||
-      // Default to true for now to enable logging
-      true
-    );
-  } catch {
-    // Default to true if any checks fail
-    return true;
-  }
-};
-
 // Store reference to native port from background script
 let nativePort: chrome.runtime.Port | null = null;
 
@@ -104,11 +86,6 @@ function sendLogMessage(logMsg: LogMessage) {
     consoleMethod(consolePrefix, logMsg.message);
   }
   
-  // Only send to broker in development mode
-  if (!isDevelopment()) {
-    return;
-  }
-  
   // Send through native messaging if available
   if (nativePort) {
     try {
@@ -121,10 +98,7 @@ function sendLogMessage(logMsg: LogMessage) {
       }
     } catch (error) {
       // Native port might be disconnected
-      // Only log error in debug mode to avoid spam
-      if (isDevelopment()) {
-        console.debug('[RZN:Logger] Native port disconnected, queueing message');
-      }
+      console.debug('[RZN:Logger] Native port disconnected, queueing message');
       nativePort = null;
       
       // Queue the message if space available
@@ -172,55 +146,11 @@ export function logError(message: string, error?: Error | unknown, metadata?: Re
   sendLogMessage(logMsg);
 }
 
-// Helper for logging with custom context
-export function createLogger(context: string) {
-  return {
-    debug: (message: string, metadata?: Record<string, any>) => {
-      const logMsg = formatLogMessage('debug', message, context, metadata);
-      sendLogMessage(logMsg);
-    },
-    info: (message: string, metadata?: Record<string, any>) => {
-      const logMsg = formatLogMessage('info', message, context, metadata);
-      sendLogMessage(logMsg);
-    },
-    warn: (message: string, metadata?: Record<string, any>) => {
-      const logMsg = formatLogMessage('warn', message, context, metadata);
-      sendLogMessage(logMsg);
-    },
-    error: (message: string, error?: Error | unknown, metadata?: Record<string, any>) => {
-      const errorMetadata = {
-        ...metadata,
-        ...(error instanceof Error ? {
-          errorName: error.name,
-          errorMessage: error.message,
-          errorStack: error.stack
-        } : error ? {
-          error: String(error)
-        } : {})
-      };
-      
-      const logMsg = formatLogMessage('error', message, context, errorMetadata);
-      sendLogMessage(logMsg);
-    }
-  };
-}
-
-// Export function to enable/disable debug mode at runtime
-export function setDebugMode(enabled: boolean) {
-  if (typeof localStorage !== 'undefined') {
-    if (enabled) {
-      localStorage.setItem('RZN_DEBUG', 'true');
-    } else {
-      localStorage.removeItem('RZN_DEBUG');
-    }
-  }
-}
-
 // Initialize logger after Chrome APIs are available
 if (typeof chrome !== 'undefined' && chrome.runtime) {
   // Log initialization
   logInfo('RZN Logger initialized', {
-    debugMode: isDevelopment(),
+    debugMode: true,
     context: 'logger.ts'
   });
 }

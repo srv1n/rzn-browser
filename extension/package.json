@@ -13,7 +13,7 @@
     "build:chromium": "bun run scripts/generate-types.ts && ./build.sh chromium",
     "build:firefox": "bun run scripts/generate-types.ts && ./build.sh firefox",
     "clean": "rm -rf .build dist dist-chrome dist-edge dist-chromium dist-firefox",
-    "package": "bun run build && bun run package:chrome && bun run package:edge && bun run package:chromium",
+    "package": "bun run build && tar -czf dist/rzn-browser-extension-chrome.tar.gz -C dist chrome && tar -czf dist/rzn-browser-extension-edge.tar.gz -C dist edge && tar -czf dist/rzn-browser-extension-chromium.tar.gz -C dist chromium",
     "package:chrome": "bun run build:chrome && tar -czf dist/rzn-browser-extension-chrome.tar.gz -C dist chrome",
     "package:edge": "bun run build:edge && tar -czf dist/rzn-browser-extension-edge.tar.gz -C dist edge",
     "package:chromium": "bun run build:chromium && tar -czf dist/rzn-browser-extension-chromium.tar.gz -C dist chromium",
@@ -27,14 +27,10 @@
   "devDependencies": {
     "@types/chrome": "^0.0.251",
     "@types/node": "^25.7.0",
-    "@types/webextension-polyfill": "^0.10.0",
-    "ts-node": "^10.9.1",
-    "tsx": "^4.7.0",
     "typescript": "^7.0.2",
     "vite": "^8.0.12",
     "vitest": "^4.1.6",
     "playwright": "^1.55.0",
-    "@playwright/test": "^1.55.0",
-    "webextension-polyfill": "^0.10.0"
+    "@playwright/test": "^1.55.0"
   }
 }

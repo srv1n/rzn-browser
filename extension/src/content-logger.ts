@@ -1,15 +1,6 @@
 // Content-safe logger for content scripts
 // Uses chrome.runtime.sendMessage instead of native ports
 
-interface LogMessage {
-  type: 'CONTENT_LOG';
-  level: 'debug' | 'info' | 'warn' | 'error';
-  message: string;
-  timestamp: string;
-  context?: string;
-  metadata?: Record<string, any>;
-}
-
 function getContext(): string {
   try {
     const stack = new Error().stack;
@@ -73,9 +64,4 @@ export function logError(message: string, error?: any, metadata?: any) {
     ...metadata
   } : { error: String(error), ...metadata };
   sendLog('error', message, errorMeta);
-}
-
-// Stub for compatibility - content scripts don't manage native ports
-export function setNativePort(port: any) {
-  // No-op in content scripts
 }

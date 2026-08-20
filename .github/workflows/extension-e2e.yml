@@ -26,7 +26,7 @@ jobs:
 
       - name: Build extension
         working-directory: extension
-        run: bun run build
+        run: bun run build:chrome
 
       - name: Install Playwright Chromium and deps
         working-directory: extension
@@ -45,4 +45,3 @@ jobs:
           name: extension-test-results
           path: extension/test-results
           if-no-files-found: ignore
-

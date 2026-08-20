@@ -4,7 +4,7 @@ import { pruneDOM } from './domPrune';
 
 import { logInfo, logError, logDebug, logWarn, setNativePort } from './logger';
 import { cdpIntegration } from './cdp/integration';
-import { getAccessibilitySnapshot, getInteractiveElements as cdpGetInteractiveElements } from './cdp';
+import { accessibilityService } from './cdp/accessibility';
 import { ExecutionTier } from './cdp/executionStrategy';
 import { frameRouter } from './cdp/frameRouter';
 import { cdpErrorText, isExecutionContextDestroyedCdpError } from './cdp/errors';
@@ -5922,7 +5922,7 @@ async function handleBrokerMessage(
         await frameRouter.attachToTab(tabId);
         await extendCDPLease(tabId);
         try {
-          return await cdpGetInteractiveElements(tabId);
+          return await accessibilityService.getInteractiveElements(tabId);
         } finally {
           await forceDetachCDP(tabId).catch(() => {
             console.warn(`Failed to detach CDP from tab ${tabId} after get_interactive_elements`);

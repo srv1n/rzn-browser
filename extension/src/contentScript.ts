@@ -5214,10 +5214,6 @@ const actionHandlers = {
     if (!step?.script) {
       throw new Error('Missing script for execute_javascript');
     }
-    const pageBridgeResult = await tryEvalViaPageBridge(step, 'page_bridge_main_world_compat');
-    if (pageBridgeResult) {
-      return pageBridgeResult;
-    }
     const world = String(step.world || 'main').toLowerCase();
     if (world === 'main') {
       return await actionHandlers.eval_main_world(step);

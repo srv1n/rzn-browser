@@ -13,29 +13,9 @@ import { getActiveBrowserTabId } from '../browserTabs';
 import { actionSuccess } from './actionResult';
 
 type Rect = { left: number; top: number; width: number; height: number };
+type CdpHandle = { sendCommand<T = any>(method: string, params?: any): Promise<T> };
 
-export class ClickElementAction {
-  async execute(
-    sessionId: string,
-    tabId: number,
-    selector: string,
-    opts?: { randomOffset?: boolean; forceSameTab?: boolean },
-  ): Promise<{ x: number; y: number; rect: Rect }> {
-    if (!selector || typeof selector !== "string") {
-      throw new Error("click_element_cdp requires a CSS selector");
-    }
-
-    const handle = await cdpSessionManager.acquire(sessionId, tabId);
-
-    const rect = await this.getElementRect(handle, selector, !!opts?.forceSameTab);
-    const { x, y } = this.pickPoint(rect, !!opts?.randomOffset);
-
-    await this.dispatchClick(handle, x, y);
-
-    return { x, y, rect };
-  }
-
-  private async getElementRect(handle: { sendCommand<T = any>(method: string, params?: any): Promise<T> }, selector: string, forceSameTab: boolean): Promise<Rect> {
+async function getElementRect(handle: CdpHandle, selector: string, forceSameTab: boolean): Promise<Rect> {
     const expression = `(() => {
       const sel = ${JSON.stringify(selector)};
       const forceSameTab = ${forceSameTab ? "true" : "false"};
@@ -80,9 +60,9 @@ export class ClickElementAction {
     }
 
     return value as Rect;
-  }
+}
 
-  private pickPoint(rect: Rect, randomOffset: boolean): { x: number; y: number } {
+function pickPoint(rect: Rect, randomOffset: boolean): { x: number; y: number } {
     const safeW = Math.max(1, rect.width);
     const safeH = Math.max(1, rect.height);
 
@@ -95,9 +75,9 @@ export class ClickElementAction {
     const y = rect.top + safeH * fy;
 
     return { x, y };
-  }
+}
 
-  private async dispatchClick(handle: { sendCommand<T = any>(method: string, params?: any): Promise<T> }, x: number, y: number): Promise<void> {
+async function dispatchClick(handle: CdpHandle, x: number, y: number): Promise<void> {
     // Best-effort: move then press/release.
     await handle.sendCommand("Input.dispatchMouseEvent", {
       type: "mouseMoved",
@@ -123,10 +103,24 @@ export class ClickElementAction {
     });
 
     await new Promise((resolve) => setTimeout(resolve, 50));
-  }
 }
 
-export const clickElementAction = new ClickElementAction();
+async function clickElement(
+  sessionId: string,
+  tabId: number,
+  selector: string,
+  opts?: { randomOffset?: boolean; forceSameTab?: boolean },
+): Promise<{ x: number; y: number; rect: Rect }> {
+  if (!selector || typeof selector !== "string") {
+    throw new Error("click_element_cdp requires a CSS selector");
+  }
+
+  const handle = await cdpSessionManager.acquire(sessionId, tabId);
+  const rect = await getElementRect(handle, selector, !!opts?.forceSameTab);
+  const { x, y } = pickPoint(rect, !!opts?.randomOffset);
+  await dispatchClick(handle, x, y);
+  return { x, y, rect };
+}
 
 export async function handleClickElement(step: any): Promise<any> {
   const selector = step.selector;
@@ -145,7 +139,7 @@ export async function handleClickElement(step: any): Promise<any> {
 
   const sessionId = String(step.session_id || step.sessionId || "default");
   const startedAt = Date.now();
-  const clicked = await clickElementAction.execute(sessionId, targetTabId, String(selector), {
+  const clicked = await clickElement(sessionId, targetTabId, String(selector), {
     randomOffset,
     forceSameTab,
   });
