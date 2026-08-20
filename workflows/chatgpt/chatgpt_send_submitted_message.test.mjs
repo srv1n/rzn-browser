@@ -35,19 +35,73 @@ const window = {
   __rzn_chatgpt_picker: { desiredModel: 'GPT-5.6 Sol', desiredEffort: 'Pro' },
   __rzn_chatgpt_send_marker: { pre_user_id: 'old-user-id', message_text: 'target prompt', clicked_at: 1000 },
 };
-const run = new Function('document', 'window', 'location', 'URLSearchParams', 'fetch', `return (async()=>{${script}})()`);
-const result = await run(document, window, location, URLSearchParams, fetch);
+// Drive the poll loop off a fake clock so the deadline path runs instantly.
+// Timers are queued, not fired inline: the abort timers tfetch arms are cleared
+// in its finally block, so only the real backoff sleeps ever advance the clock.
+let clock = 1_000_000;
+let timers = [];
+let timerSeq = 0;
+const Date_ = { now: () => clock };
+const setTimeout_ = (cb, ms) => { const id = ++timerSeq; timers.push({ id, at: clock + (ms || 0), cb }); return id; };
+const clearTimeout_ = (id) => { timers = timers.filter((timer) => timer.id !== id); };
+const run = new Function('document', 'window', 'location', 'URLSearchParams', 'fetch', 'Date', 'setTimeout', 'clearTimeout', 'AbortController', `return (async()=>{${script}})()`);
+
+// Run the script to completion, advancing the clock to the next due timer
+// whenever it parks. Mirrors what an event loop does, minus the waiting.
+const call = async () => {
+  timers = [];
+  let settled = false;
+  let value;
+  let failure;
+  const pending = run(document, window, location, URLSearchParams, fetch, Date_, setTimeout_, clearTimeout_, AbortController)
+    .then((result) => { value = result; }, (error) => { failure = error; })
+    .finally(() => { settled = true; });
+  for (let guard = 0; guard < 10_000 && !settled; guard += 1) {
+    for (let drain = 0; drain < 50; drain += 1) await Promise.resolve();
+    if (settled || !timers.length) break;
+    const next = timers.reduce((earliest, timer) => (timer.at < earliest.at ? timer : earliest));
+    timers = timers.filter((timer) => timer.id !== next.id);
+    clock = Math.max(clock, next.at);
+    next.cb();
+  }
+  await pending;
+  assert.ok(settled, 'script never settled');
+  if (failure) throw failure;
+  return value;
+};
+const result = await call();
 
 assert.equal(result.chat_id, chatId);
 assert.equal(result.chat_url, location.href);
 assert.equal(result.submitted_message_id, 'submitted-user-id');
 assert.deepEqual(calls, ['/api/auth/session', `/backend-api/conversation/${chatId}`, `/backend-api/conversation/${chatId}`]);
 
-conversationNodes = Array(8).fill('concurrent-assistant');
-const unavailable = await run(document, window, location, URLSearchParams, fetch);
+// The turn never lands: the loop must give up on its own deadline, not run forever,
+// and must back off rather than hammering the conversation API.
+calls.length = 0;
+const startedAt = clock;
+conversationNodes = Array(500).fill('concurrent-assistant');
+const unavailable = await call();
 assert.equal(unavailable.success, false);
 assert.equal(unavailable.error_code, 'MESSAGE_BOUNDARY_UNAVAILABLE');
 assert.match(unavailable.error_msg, /does not match send marker/);
+const elapsed = clock - startedAt;
+assert.ok(elapsed <= 20_000, `poll loop overran its deadline: ${elapsed}ms`);
+const polls = calls.filter((url) => url !== '/api/auth/session').length;
+assert.ok(polls <= 15, `poll loop hit the conversation API ${polls} times`);
+assert.ok(polls >= 5, `poll loop gave up after only ${polls} attempts`);
+
+// The reason this step failed in the field: the script's own worst case has to
+// fit inside the step budget, or the harness kills it mid-poll instead of
+// letting it return a readable MESSAGE_BOUNDARY_UNAVAILABLE.
+const bind = wf.steps.find((step) => step.id === 's17');
+const deadlineMs = Number(/const deadline=Date\.now\(\)\+(\d+)/.exec(script)?.[1]);
+assert.ok(Number.isFinite(deadlineMs), 's17 must bound its poll loop with an explicit deadline');
+const slowestFetchMs = Math.max(...[...script.matchAll(/tfetch\([^;]*?,\s*(\d+)\)/g)].map((m) => Number(m[1])));
+assert.ok(
+  deadlineMs + slowestFetchMs <= bind.timeout_ms,
+  `s17 can run ${deadlineMs + slowestFetchMs}ms but the step allows ${bind.timeout_ms}ms`,
+);
 
 const submit = wf.steps.find((step) => step.id === 's15');
 assert.deepEqual(submit.action.inputs.args, ['{message_text}', '{chat_id}']);
