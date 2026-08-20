@@ -52,7 +52,10 @@ fn rate_limited_errors_are_never_retryable() {
         "Native host timeout: HTTP 429 Too Many Requests",
         None
     ));
-    assert!(is_rate_limited_step_error("request rejected", Some("RATE_LIMITED")));
+    assert!(is_rate_limited_step_error(
+        "request rejected",
+        Some("RATE_LIMITED")
+    ));
     assert!(!is_rate_limited_step_error("Native host timeout", None));
 }
 

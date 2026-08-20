@@ -9,6 +9,10 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # Runners have no sccache, and the repo's .cargo/config.toml sets it as the rustc
+  # wrapper. An empty value overrides that config; a fresh runner's cache is cold
+  # anyway, so the wrapper only ever cost us a failed build.
+  RUSTC_WRAPPER: ""
 
 jobs:
   fmt:
@@ -97,7 +101,12 @@ jobs:
 
       - name: Build extension
         working-directory: extension
-        run: bun run build
+        run: |
+          bun run scripts/generate-types.ts
+          export RZN_BUILD_SIGNATURE="$(date -u +'%Y%m%dT%H%M%SZ')"
+          ./build.sh chrome
+          ./build.sh edge
+          ./build.sh chromium
 
       - name: Run extension unit tests
         working-directory: extension

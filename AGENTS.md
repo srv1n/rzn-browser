@@ -17,7 +17,8 @@ This applies in the primary checkout and in every Git worktree.
 
 - Use `make` for every build, check, test, or run that can compile project code. Do not invoke `cargo`, `bun`, or another build tool directly.
 - Use the existing focused targets where possible: `make build`, `make build-rust`, `make build-ext`, or `make test`. For a focused Rust command, use `make rust ARGS='check -p <crate>'` (or another Cargo subcommand in `ARGS`).
-- `sccache` is required for Rust compilation. The Makefile and `.cargo/config.toml` enforce it; do not override `RUSTC_WRAPPER` or disable the cache.
+- `sccache` is required for local Rust compilation. The Makefile and `.cargo/config.toml` enforce it; do not override `RUSTC_WRAPPER` or disable the cache on a development machine.
+- CI and release workflows are the exception: they set `RUSTC_WRAPPER: ""` because runners have no sccache installed, and a fresh runner's cache is cold regardless. Leave that override in place — without it every release build fails at `could not execute process 'sccache ... rustc -vV'`.
 
 ## Execution modes
 

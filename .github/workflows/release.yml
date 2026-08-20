@@ -16,6 +16,10 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Runners have no sccache, and the repo's .cargo/config.toml sets it as the rustc
+  # wrapper. An empty value overrides that config; a fresh runner's cache is cold
+  # anyway, so the wrapper only ever cost us a failed build.
+  RUSTC_WRAPPER: ""
 
 jobs:
   release_meta:
