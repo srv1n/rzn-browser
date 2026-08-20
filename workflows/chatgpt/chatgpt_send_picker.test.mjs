@@ -209,6 +209,26 @@ for (const shape of ['menuitem', 'button-aria', 'wrapped']) {
   await assert.rejects(() => run('s12', page, ['none']), /model_selection_verify_failed/);
 }
 
+{ // menu labels are free-form: a row that drops the "GPT-" prefix is the same model
+  const page = newPage({ models: ['5.6 Sol', '5.5', 'o3'], model: '5.5' });
+  await run('s6', page, ['GPT-5.6 Sol', 'High', 'true']);
+  commitStamped(page, 'rzn-target-model');
+  await run('s9', page);
+  commitStamped(page, 'rzn-target-effort');
+  const s12 = await run('s12', page, ['none']);
+  assert.equal(s12.model_selection.applied, true, 'a GPT-less label must still verify');
+  assert.equal(s12.model_selection.model_selected, '5.6 Sol');
+}
+
+{ // a genuine mismatch still fails, and says what the row actually read
+  const page = newPage({ commit: false });
+  await run('s6', page, ['GPT-5.6 Sol', 'High', 'true']);
+  commitStamped(page, 'rzn-target-model');
+  await run('s9', page);
+  commitStamped(page, 'rzn-target-effort');
+  await assert.rejects(() => run('s12', page, ['none']), /model_row="ModelGPT-5\.5"/);
+}
+
 { // require_exact_model=false reports the mismatch instead of throwing
   const page = newPage({ commit: false });
   await run('s6', page, ['GPT-5.6 Sol', 'High', 'false']);
