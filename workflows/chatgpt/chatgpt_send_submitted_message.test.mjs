@@ -84,12 +84,27 @@ conversationNodes = Array(500).fill('concurrent-assistant');
 const unavailable = await call();
 assert.equal(unavailable.success, false);
 assert.equal(unavailable.error_code, 'MESSAGE_BOUNDARY_UNAVAILABLE');
-assert.match(unavailable.error_msg, /does not match send marker/);
+assert.match(unavailable.error_msg, /predates the send click/);
 const elapsed = clock - startedAt;
 assert.ok(elapsed <= 20_000, `poll loop overran its deadline: ${elapsed}ms`);
 const polls = calls.filter((url) => url !== '/api/auth/session').length;
 assert.ok(polls <= 15, `poll loop hit the conversation API ${polls} times`);
 assert.ok(polls >= 5, `poll loop gave up after only ${polls} attempts`);
+
+// The composer is a ProseMirror surface: what comes back from the API is
+// re-serialized, so line breaks and spacing need not survive byte-for-byte.
+// Whitespace differences must still bind; different prose must not.
+mapping['active-user'].message.content.parts = ['target\n\n  prompt  '];
+conversationNodes = ['active-assistant'];
+const reflowed = await call();
+assert.equal(reflowed.submitted_message_id, 'submitted-user-id', 'whitespace-only differences must still bind');
+
+mapping['active-user'].message.content.parts = ['a completely different prompt'];
+conversationNodes = Array(500).fill('active-assistant');
+const mismatched = await call();
+assert.equal(mismatched.error_code, 'MESSAGE_BOUNDARY_UNAVAILABLE');
+assert.match(mismatched.error_msg, /text does not match send marker/);
+mapping['active-user'].message.content.parts = ['target prompt'];
 
 // The reason this step failed in the field: the script's own worst case has to
 // fit inside the step budget, or the harness kills it mid-poll instead of
