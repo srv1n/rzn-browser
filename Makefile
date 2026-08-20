@@ -1,6 +1,6 @@
 # RZN Browser Automation Makefile
 
-.PHONY: help build build-rust build-ext clean codebasezip logs-clear logs-follow logs-show test test-basic test-google test-dom test-dom-units ads-smoke dev setup install reload-ext rust \
+.PHONY: help build build-release build-rust build-rust-release build-ext build-ext-release clean codebasezip logs-clear logs-follow logs-show test test-basic test-google test-dom test-dom-units ads-smoke dev setup install reload-ext rust \
 	test-ext-unit test-setup-ext-sync test-ext-e2e-install test-ext-e2e-run test-ext-e2e phase2 phase3 phase3-openai \
 	index sg-find-stream sg-guards context-snippets agent-run agent-validate scope scope-q reducers-index invariants schema-check \
 	plugins-keygen plugins-build-rzn-browser-macos plugins-verify plugins-publish-rzn-browser-local plugins-publish-rzn-browser-cloud plugins-publish-rzn-browser-prod plugins-publish-rzn-browser-all bundle-macos-share \
@@ -21,9 +21,12 @@ help:
 	@echo "RZN Browser Automation - Development Commands"
 	@echo ""
 	@echo "Build Commands:"
-	@echo "  make build         - Build everything (Rust + Extension)"
-	@echo "  make build-rust    - Build only Rust components"
-	@echo "  make build-ext     - Build only browser extension"
+	@echo "  make build         - Fast development build (debug Rust + Chrome extension)"
+	@echo "  make build-release - Optimized Rust + all browser extension targets"
+	@echo "  make build-rust    - Build debug Rust components"
+	@echo "  make build-rust-release - Build optimized Rust components"
+	@echo "  make build-ext     - Build Chrome extension"
+	@echo "  make build-ext-release - Build all browser extension targets"
 	@echo "  make rust ARGS='check -p <crate>' - Run a focused Cargo command through Make"
 	@echo "  make clean         - Clean all build artifacts"
 	@echo "  make codebasezip   - Create dated lean source ZIP for external code review"
@@ -86,9 +89,13 @@ help:
 	@echo "  make agent-run     - Prepare an agent run (shortlist)"
 	@echo "  make agent-validate - Validate changes vs shortlist + guards"
 
-# Build everything
-build: ensure-logd build-rust build-ext
-	@echo "✅ Build complete!"
+# Fast local build: debug Rust and Chrome only.
+build: build-rust build-ext
+	@echo "✅ Development build complete!"
+
+# Production/release build: optimized Rust and every browser target.
+build-release: build-rust-release build-ext-release
+	@echo "✅ Release build complete!"
 
 # Ensure rzn_logd is running
 ensure-logd:
@@ -101,14 +108,24 @@ ensure-logd:
 		echo "✅ rzn_logd already running"; \
 	fi
 
-# Build Rust components
+# Build Rust components for local development.
 build-rust:
-	@echo "🦀 Building Rust components..."
+	@echo "🦀 Building debug Rust components..."
+	RZN_LOG_ENABLED=1 cargo build -p rzn-browser -p rzn-native-host
+
+# Build optimized Rust components for distribution.
+build-rust-release:
+	@echo "🦀 Building release Rust components..."
 	RZN_LOG_ENABLED=1 cargo build --release -p rzn-browser -p rzn-native-host
 
-# Build browser extension
+# Build the Chrome extension for local development.
 build-ext:
-	@echo "🌐 Building browser extension..."
+	@echo "🌐 Building Chrome extension..."
+	cd extension && bun install --frozen-lockfile && bun run build:chrome
+
+# Build every browser extension target for distribution.
+build-ext-release:
+	@echo "🌐 Building all browser extensions..."
 	cd extension && bun install --frozen-lockfile && bun run build
 
 # Run extension unit tests, optionally scoped with ARGS='src/foo.test.ts'.

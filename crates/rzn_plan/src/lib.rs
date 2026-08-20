@@ -18,8 +18,6 @@
 )]
 //! Orchestrator crate for planning and executing browser workflows using LLM and broker.
 
-pub mod action_error_handler;
-pub mod action_registry;
 // Single autonomous planner implementation
 pub mod action_surface;
 pub mod anthropic_client;
@@ -28,11 +26,7 @@ pub mod cli_client;
 pub mod desktop_session;
 pub mod desktop_tools;
 pub mod dom_analyzer;
-pub mod dom_compression;
-pub mod dom_context;
 pub mod dom_processor;
-pub mod dom_representation;
-pub mod dom_whitelist;
 pub mod dummy_client;
 pub mod element_ref;
 pub mod failure_cache;
@@ -53,7 +47,6 @@ pub mod security_prompts;
 pub mod self_healing;
 pub mod telemetry;
 pub mod tool_llm;
-pub mod ui;
 pub mod wait_strategies;
 pub mod workflow_manager;
 
@@ -61,10 +54,6 @@ pub mod workflow_manager;
 pub use desktop_session::DesktopSession;
 pub use desktop_tools::{DesktopErrorCode, DesktopToolError, DesktopToolResult};
 pub use dom_analyzer::DomAnalyzer;
-pub use dom_context::{
-    create_debug_context, create_focused_context, create_minimal_context, DOMContextConfig,
-    DOMContextFormatter, FormattedDOMContext,
-};
 pub use dom_processor::{DomContext, DomElement, DomProcessor, DomProcessorConfig};
 pub use element_ref::{
     ElementBounds, EncodedId, InputRung, ResolvedElement, ResultEnvelope, TargetSpec,
@@ -85,77 +74,6 @@ pub use workflow_manager::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use thiserror::Error;
-
-/// Executes the iterative planning-execution loop for a user goal.
-///
-/// This is the main entry point for planning and executing workflows.
-pub async fn plan_execute_loop(
-    goal: &str,
-    start_url: Option<&str>,
-    config: PlanConfig,
-) -> PlanResult<serde_json::Value> {
-    let mut orchestrator = Orchestrator::new(config).await?;
-
-    let request = PlanRequest {
-        goal: goal.to_string(),
-        start_url: start_url.map(|s| s.to_string()),
-        parameters: std::collections::HashMap::new(),
-        save_workflow: false,
-        workflow_name: None,
-    };
-
-    let response = orchestrator.plan(request).await?;
-
-    if response.success {
-        Ok(response.data.unwrap_or(serde_json::Value::Null))
-    } else {
-        Err(PlanError::ExecutionError(
-            response.error.unwrap_or("Unknown error".to_string()),
-        ))
-    }
-}
-
-/// Builds the LLM prompt messages from the user goal, DOM outline, and history.
-pub fn build_prompt(
-    goal: &str,
-    dom_outline: &str,
-    history: &[HistoryEntry],
-) -> Vec<serde_json::Value> {
-    let prompt_builder = PromptBuilder::new();
-    // Convert HistoryEntry to StepExecution for compatibility
-    let step_executions: Vec<StepExecution> = history
-        .iter()
-        .map(|_| {
-            // TODO: Implement proper conversion from HistoryEntry to StepExecution
-            StepExecution {
-                step: rzn_core::Step {
-                    id: "placeholder".to_string(),
-                    name: "Placeholder step".to_string(),
-                    kind: rzn_core::StepKind::WaitForTimeout { timeout_ms: 1000 },
-                },
-                result: ExecutionResult::Success { payload: None },
-                timestamp: chrono::Utc::now(),
-                dom_snapshot: None,
-            }
-        })
-        .collect();
-
-    prompt_builder.build_planning_prompt(goal, dom_outline, "about:blank", &step_executions)
-}
-
-/// Reduces a raw HTML snapshot into a trimmed outline (ids, classes, text snippets).
-pub fn html_reduce(html: &str) -> String {
-    let analyzer = DomAnalyzer::new(30_000); // 30KB limit
-    analyzer
-        .reduce_html(html)
-        .unwrap_or_else(|_| html.to_string())
-}
-
-/// Entry recording a single step execution result for history tracking.
-#[derive(Debug, serde::Serialize, serde::Deserialize)]
-pub struct HistoryEntry {
-    // TODO: define fields for history entries (step args, result/error).
-}
 
 /// Errors returned by the planning-execution loop.
 #[derive(Debug, Error)]
@@ -485,21 +403,5 @@ mod tests {
         assert!(!config.model.is_empty());
         assert_eq!(config.max_steps, 25);
         assert_eq!(config.temperature, 1.0);
-    }
-
-    #[test]
-    fn test_html_reduce() {
-        let html = "<html><body><h1>Test</h1><p>Content</p></body></html>";
-        let reduced = html_reduce(html);
-        assert!(!reduced.is_empty());
-    }
-
-    #[test]
-    fn test_build_prompt() {
-        let goal = "Test goal";
-        let dom = "Test DOM";
-        let history = vec![];
-        let prompt = build_prompt(goal, dom, &history);
-        assert!(!prompt.is_empty());
     }
 }

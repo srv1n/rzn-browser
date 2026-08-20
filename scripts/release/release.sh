@@ -112,7 +112,6 @@ done
 
 git add "${VERSION_FILES[@]}"
 git add Cargo.lock
-git add extension/dist-chrome extension/dist-firefox
 
 git commit -m "chore(release): $TAG"
 git tag -a "$TAG" -m "Release $TAG"

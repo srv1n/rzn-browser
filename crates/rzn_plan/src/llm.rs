@@ -1150,6 +1150,35 @@ impl LLMClient {
         Ok(LLMChatResponse { content })
     }
 
+    pub async fn chat_with_required_tools(
+        &self,
+        messages: Vec<Value>,
+        tools: Vec<Value>,
+        correlation_id: &str,
+    ) -> PlanResult<Value> {
+        append_llm_message_log(
+            &format!("TOOL REQUEST [{correlation_id}]"),
+            Some(&messages),
+            None,
+        );
+        let response = self
+            .provider
+            .chat_completion(
+                messages,
+                0.0,
+                Some(tools),
+                Some(json!("required")),
+                Some(1000),
+            )
+            .await?;
+        append_llm_message_log(
+            &format!("TOOL RESPONSE [{correlation_id}]"),
+            None,
+            Some(&response),
+        );
+        Ok(response)
+    }
+
     /// Chat method that enforces JSON response format (uses provider's chat_completion)
     pub async fn chat_json(
         &self,

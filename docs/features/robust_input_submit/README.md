@@ -44,7 +44,7 @@ Short lease; detach on idle
   - `extension/src/contentScript.ts`: adds `submit_text_query` with rung ladder; logs via content-logger; prefers standard handlers by default.
   - `extension/src/background.ts`: routes static commands; `press_key_cdp` path executes trusted key via chrome.debugger; `set_flags` to override per-domain flags.
   - `extension/src/cdp/frameRouter.ts`: stable attach (Target.setAutoAttach(flatten=true)); no `Target.enable`; graceful errors.
-  - `extension/src/input/rungs/cdp.ts`: CDP rung guarded (disabled in content); executes only where chrome.debugger available (background).
+  - `extension/src/background.ts`: background-only CDP actions execute trusted input where `chrome.debugger` is available.
   - `extension/src/config/siteOverrides.ts`: google.* treated as requiring trusted input (CDP rung allowed).
   - `crates/rzn_plan/src/llm_autonomous.rs`: type → FillInputField only; press Enter (Search) → submit_text_query + wait → FSM to Results; UTF‑8 safe truncation; use `get_dom_snapshot` for page state.
 - Data contracts
@@ -93,4 +93,3 @@ Short lease; detach on idle
 - Content-side CDP rung (ladder rung 3): accessing chrome.tabs/chrome.debugger in content caused runtime errors and stalls.
 - `Target.enable` during attach: not required; threw “wasn’t found” and increased attach churn.
 - Inline test bridge injection: tripped CSP (unsafe-inline); removed in favor of manifest-provided pageBridge in MAIN world.
-

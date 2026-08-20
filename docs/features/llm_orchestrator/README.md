@@ -17,7 +17,7 @@ while goal_not_achieved and steps < max:
   1) Context: broker.get_current_dom_snapshot()   // or get_page_source then DomProcessor.extract_dom_context
   2) TIER 1 (Planner): PromptBuilder.build_*planner*_prompt(dom, url, goal, history)
      → LLM returns planned_action {action, parameters, reasoning}
-  3) TIER 2 (Navigator): PromptBuilder.build_navigator_prompt(snapshot, planned_action)
+  3) TIER 2 (Navigator): PromptBuilder.build_snapshot_navigator_prompt(planned_action, snapshot)
      → LLM returns validated action (selector/encoded_id, action_type)
   4) Execute: BrokerClient.execute_step[_and_get_dom](step)
   5) TIER 3 (Validator): PromptBuilder.build_validator_prompt(before_dom, after_dom, step)
@@ -112,4 +112,3 @@ Back to SW → Broker → Orchestrator
 - Robust selectors fallback inside broker client: added complexity and drift; replaced with Navigator tier + sanitizer.
 - Pure raw HTML context for planning: too large and noisy; replaced with compact DOM snapshots and structured context.
 - Constructing Google direct search URLs: flagged in policy; use search box + Enter for stealth and consistency.
-

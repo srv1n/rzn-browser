@@ -143,22 +143,13 @@ impl LLMProvider for OpenAIClient {
     ) -> PlanResult<Value> {
         debug!("OpenAI chat completion request with model: {}", self.model);
 
-        // Handle model-specific temperature requirements
-        let adjusted_temperature = if self.model.starts_with("o1-")
-            || self.model.starts_with("o4-")
-            || self.model.starts_with("gpt-5-")
-        {
-            // o1, o4, and gpt-5 family only support the default temperature (1.0)
-            1.0
-        } else {
-            temperature
-        };
-
         let mut request_body = json!({
             "model": self.model,
             "messages": messages,
-            "temperature": adjusted_temperature,
         });
+        add_temperature(&mut request_body, &self.model, temperature);
+
+        let uses_tools = tools.is_some();
 
         // Add tools if provided
         if let Some(tools) = tools {
@@ -178,7 +169,7 @@ impl LLMProvider for OpenAIClient {
         // Some models (o1/o4/gpt-5 family) require 'max_completion_tokens' instead of 'max_tokens'
         let use_max_completion = self.model.starts_with("o1-")
             || self.model.starts_with("o4-")
-            || self.model.starts_with("gpt-5-")
+            || self.model.starts_with("gpt-5")
             || self.model.contains("reasoning");
         if use_max_completion {
             request_body["max_completion_tokens"] = json!(max);
@@ -186,8 +177,10 @@ impl LLMProvider for OpenAIClient {
             request_body["max_tokens"] = json!(max);
         }
 
-        // Prefer JSON object responses when possible
-        request_body["response_format"] = json!({ "type": "json_object" });
+        // Tool calls and JSON-object responses are separate response modes.
+        if !uses_tools {
+            request_body["response_format"] = json!({ "type": "json_object" });
+        }
 
         let response = self
             .client
@@ -308,13 +301,7 @@ impl LLMProvider for OpenAIClient {
         });
 
         // Only include temperature for classic chat models; newer families (o1/o4/gpt-5/reasoning) reject it
-        let is_fixed_temp = self.model.starts_with("o1-")
-            || self.model.starts_with("o4-")
-            || self.model.starts_with("gpt-5-")
-            || self.model.contains("reasoning");
-        if !is_fixed_temp {
-            req_body["temperature"] = json!(temperature);
-        }
+        add_temperature(&mut req_body, &self.model, temperature);
 
         // Add tools/tool_choice if provided (convert to Responses API schema)
         if let Some(t) = tools {
@@ -495,6 +482,16 @@ impl LLMProvider for OpenAIClient {
     }
 }
 
+fn add_temperature(body: &mut Value, model: &str, temperature: f32) {
+    let rejects_temperature = model.starts_with("o1-")
+        || model.starts_with("o4-")
+        || model.starts_with("gpt-5")
+        || model.contains("reasoning");
+    if !rejects_temperature {
+        body["temperature"] = json!(temperature);
+    }
+}
+
 /// Convert OpenAI Chat Completions tool schema to Responses API schema
 fn convert_tools_for_responses(tools: Vec<Value>) -> Vec<Value> {
     tools
@@ -591,6 +588,25 @@ mod tests {
             base_url_from(None, Some("http://alias/v1".to_string())),
             "http://alias/v1"
         );
+    }
+
+    #[test]
+    fn request_temperature_matches_model_contract() {
+        for model in [
+            "gpt-5",
+            "gpt-5-mini",
+            "o1-preview",
+            "o4-mini",
+            "custom-reasoning",
+        ] {
+            let mut body = json!({});
+            add_temperature(&mut body, model, 0.0);
+            assert!(body.get("temperature").is_none(), "{model}");
+        }
+
+        let mut body = json!({});
+        add_temperature(&mut body, "gpt-4.1", 0.25);
+        assert_eq!(body["temperature"], json!(0.25));
     }
 
     #[test]

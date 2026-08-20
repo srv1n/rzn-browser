@@ -4572,7 +4572,7 @@ impl Orchestrator {
             self.execute_step_with_target_spec(step, &target_spec, session)
                 .await
         } else {
-            self.execute_step_legacy_with_tracking(step, session).await
+            self.execute_step(step, session).await
         };
 
         // Record execution result for future mode selection
@@ -4705,19 +4705,6 @@ impl Orchestrator {
                 Err(e)
             }
         }
-    }
-
-    /// Legacy step execution with result tracking
-    async fn execute_step_legacy_with_tracking(
-        &mut self,
-        step: &Step,
-        session: &mut PlanningSession,
-    ) -> PlanResult<(ExecutionResult, String)> {
-        // Use existing execute_step method but track results
-        let result = self.execute_step(step, session).await;
-
-        // The result tracking is handled in execute_step_with_mode_selection
-        result
     }
 
     /// Extract domain from URL

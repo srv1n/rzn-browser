@@ -107,55 +107,15 @@ impl PolicyValidator {
 }
 ```
 
-### 3. Tool-Only LLM Client (IMPLEMENTED) 
+### 3. Required-Tool LLM Calls (IMPLEMENTED)
 
 ```rust
-// crates/rzn_plan/src/tool_llm/llm_client.rs
-
-pub struct ToolOnlyLLMClient {
-    client: Client,
-    api_key: String,
-    correlation_id: String,
-}
-
-impl ToolOnlyLLMClient {
-    pub async fn call_with_tools(
-        &self,
-        system_prompt: &str,
-        user_prompt: &str,
-        all_tools: Vec<ChatCompletionTool>,
-        allowed_tools: Vec<&str>,
-    ) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
-        
-        // Filter tools by FSM allowlist
-        let filtered_tools: Vec<_> = all_tools.into_iter()
-            .filter(|tool| {
-                if let Some(name) = &tool.function.name {
-                    allowed_tools.contains(&name.as_str())
-                } else {
-                    false
-                }
-            })
-            .collect();
-            
-        let request_body = json!({
-            "model": "gpt-5-mini-2025-08-07",
-            "temperature": 0.0,  // CRITICAL: Deterministic output
-            "max_tokens": 1000,
-            "tool_choice": "required",  // CRITICAL: Force tool use
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt}
-            ],
-            "tools": filtered_tools
-        });
-        
-        // Execute request and return parsed tool calls
-        let response = self.execute_request(request_body).await?;
-        self.parse_tool_calls(&response)
-    }
-}
-```
+// crates/rzn_plan/src/llm.rs + tool_llm/llm_client.rs
+let tools = allowed_tool_values(&planner_state.get_allowed_tools());
+let response = llm_client
+    .chat_with_required_tools(messages, tools, &correlation_id)
+    .await?;
+let tool_calls = parse_tool_calls(&response)?;
 ```
 
 ### 4. Main LLM Autonomous Flow (IMPLEMENTED)
@@ -167,7 +127,7 @@ pub async fn execute_autonomous(instruction: &str) -> Result<Response> {
     let correlation_id = uuid::Uuid::new_v4().to_string();
     let mut planner_state = PlannerState::new(correlation_id.clone());
     let policy = PolicyValidator::new(correlation_id.clone());
-    let tool_llm = ToolOnlyLLMClient::new(api_key, correlation_id.clone());
+    let llm_client = LLMClient::new(&config)?;
     let mut broker = BrokerClient::new().await?;
     let mut step_count = 0;
     const MAX_STEPS: u32 = 50;
@@ -194,13 +154,12 @@ pub async fn execute_autonomous(instruction: &str) -> Result<Response> {
             instruction, page_context
         );
         
-        // 4. Call tool-only LLM (temperature=0, structured output)
-        let tool_calls = tool_llm.call_with_tools(
-            &planner_state.get_system_prompt(),
-            &user_prompt,
-            get_all_tools(),
-            allowed_tools
-        ).await?;
+        // 4. Call the configured LLM provider with required tools
+        let tools = allowed_tool_values(&allowed_tools);
+        let response = llm_client
+            .chat_with_required_tools(messages, tools, &correlation_id)
+            .await?;
+        let tool_calls = parse_tool_calls(&response)?;
         
         // 5. Validate actions against policy
         policy.validate_batch(&tool_calls, &planner_state)?;

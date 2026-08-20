@@ -90,7 +90,24 @@ def build_extension(root: Path, version: str) -> None:
         if source_path.exists():
             source_path.replace(extension_dir / "dist" / dest)
 
-    run(["bun", "scripts/build-ext.ts"], cwd=root, env=build_env)
+    run(
+        [
+            "bun",
+            "scripts/build-ext.ts",
+            "--target",
+            "chrome",
+            "--source-dir",
+            str(extension_dir / "dist"),
+            "--dist-root",
+            str(extension_dir),
+            "--layout",
+            "legacy",
+            "--build-signature",
+            f"v{version}",
+        ],
+        cwd=root,
+        env=build_env,
+    )
 
 
 def build_runtime(root: Path, version: str, platform_slug: str) -> Path:

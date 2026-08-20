@@ -4,7 +4,7 @@
 
 **Key Simplifications:**
 - **Single LLM Entry Point**: `llm_autonomous.rs` replaces multiple competing implementations
-- **Unified DOM Processing**: Consolidated `dom_analyzer.rs`, `dom_processor.rs`, and `dom_context.rs` functionality  
+- **Unified DOM Processing**: `dom_analyzer.rs` reduces raw HTML; `dom_processor.rs` builds structured fallback context
 - **Removed Redundancies**: Eliminated duplicate autonomous planners, CLI handlers, and schema files
 - **Focused Component Set**: Only essential, actively-used modules remain
 
@@ -265,19 +265,16 @@ pub fn execute_workflow(workflow: Workflow) -> Result<()> {
 pub async fn execute_autonomous(instruction: &str) -> Result<Response> {
     let mut fsm = PlannerState::new(correlation_id);
     let policy = PolicyValidator::new(correlation_id);
-    let tool_llm = ToolOnlyLLMClient::new(api_key, correlation_id);
+    let llm_client = LLMClient::new(&config)?;
     
     while !fsm.is_complete() {
         // 1. Get allowed tools for current FSM state
         let allowed_tools = fsm.get_allowed_tools();
         
-        // 2. Call tool-only LLM (temperature=0, structured output)
-        let tool_calls = tool_llm.call_with_tools(
-            &fsm.get_system_prompt(),
-            user_prompt,
-            all_tools,
-            allowed_tools
-        ).await?;
+        // 2. Filter the standard tools and use the configured provider client
+        let tools = allowed_tool_values(&allowed_tools);
+        let response = llm_client.chat_with_required_tools(messages, tools, correlation_id).await?;
+        let tool_calls = parse_tool_calls(&response)?;
         
         // 3. Validate actions against policy
         policy.validate_batch(&tool_calls, &fsm)?;

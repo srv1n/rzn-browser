@@ -6,7 +6,7 @@ use crate::{
     llm_provider::ProviderType,
     planner::{PlannerMode, PlannerState, PolicyValidator},
     security_prompts::wrap_untrusted_content,
-    tool_llm::ToolOnlyLLMClient,
+    tool_llm::{allowed_tool_values, parse_tool_calls},
     PlanConfig, PlanError, PlanResult,
 };
 use log::{error, info, warn};
@@ -63,27 +63,19 @@ struct SelectorDescriptor {
     actions: Vec<String>,
 }
 
-fn tool_llm_client_from_config(
-    config: &PlanConfig,
-    correlation_id: &str,
-) -> Option<ToolOnlyLLMClient> {
+fn tool_llm_enabled_from_config(config: &PlanConfig) -> bool {
     match ProviderType::from_str(&config.llm_provider) {
         Some(ProviderType::OpenAI) => {
             let api_key = if !config.llm_api_key.trim().is_empty() {
-                config.llm_api_key.clone()
+                &config.llm_api_key
             } else {
-                config.openai_api_key.clone()
+                &config.openai_api_key
             };
             // Local OpenAI-compatible servers do not need a real key.
-            if api_key.trim().is_empty()
-                && crate::openai_client::is_openai_host(&crate::openai_client::resolve_base_url())
-            {
-                None
-            } else {
-                Some(ToolOnlyLLMClient::new(api_key, correlation_id.to_string()))
-            }
+            !api_key.trim().is_empty()
+                || !crate::openai_client::is_openai_host(&crate::openai_client::resolve_base_url())
         }
-        _ => None,
+        _ => false,
     }
 }
 
@@ -95,7 +87,7 @@ pub struct LLMAutonomousPlanner {
     current_url: Option<String>,
     planner_state: PlannerState,
     policy_validator: PolicyValidator,
-    tool_llm_client: Option<ToolOnlyLLMClient>,
+    tool_llm_enabled: bool,
     correlation_id: String,
     last_dom_hash: Option<String>,
     scrolls_since_last_extract: u32,
@@ -1017,10 +1009,10 @@ impl LLMAutonomousPlanner {
         let system_prompt = include_str!("prompts/autonomous.md").to_string();
         let correlation_id = Uuid::new_v4().to_string();
 
-        // Initialize tool-only LLM client only when the selected provider is OpenAI.
+        // Enable tool-first planning only when the selected provider is OpenAI.
         // The selected PlanConfig is authoritative; environment-only fallback lives in
         // PlanConfig::default for compatibility with legacy callers.
-        let tool_llm_client = tool_llm_client_from_config(config, &correlation_id);
+        let tool_llm_enabled = tool_llm_enabled_from_config(config);
 
         Self {
             llm_client,
@@ -1030,7 +1022,7 @@ impl LLMAutonomousPlanner {
             current_url: None,
             planner_state: PlannerState::new(correlation_id.clone()),
             policy_validator: PolicyValidator::new(correlation_id.clone()),
-            tool_llm_client,
+            tool_llm_enabled,
             correlation_id,
             last_dom_hash: None,
             scrolls_since_last_extract: 0,
@@ -4960,8 +4952,8 @@ Rules:
     /// Get next action from LLM
     async fn get_llm_action(&mut self) -> PlanResult<Value> {
         // Try tool-only approach first if available
-        if let Some(ref tool_llm) = self.tool_llm_client {
-            if let Ok(tool_response) = self.get_tool_based_action(tool_llm).await {
+        if self.tool_llm_enabled {
+            if let Ok(tool_response) = self.get_tool_based_action().await {
                 return Ok(tool_response);
             }
             // Fall back to regular LLM if tool-only fails
@@ -5027,7 +5019,7 @@ Rules:
     }
 
     /// Get action using tool-only LLM approach
-    async fn get_tool_based_action(&self, tool_llm: &ToolOnlyLLMClient) -> PlanResult<Value> {
+    async fn get_tool_based_action(&self) -> PlanResult<Value> {
         // Get FSM-based system prompt
         let system_prompt = format!(
             "{}\n\nCurrent Mode: {:?}\n{}",
@@ -5038,7 +5030,7 @@ Rules:
 
         // Get allowed tools based on FSM state
         let allowed_tools = self.planner_state.get_allowed_tools();
-        let all_tools = ToolOnlyLLMClient::get_standard_tools();
+        let tools = allowed_tool_values(&allowed_tools);
 
         // Build user prompt including the original instruction
         let original_task = self
@@ -5057,11 +5049,23 @@ Rules:
 
         let user_prompt = format!("{}\n\nCurrent state: {}", original_task, current_state);
 
-        // Call tool-only LLM
-        match tool_llm
-            .call_with_tools(&system_prompt, &user_prompt, all_tools, allowed_tools)
+        let response = self
+            .llm_client
+            .chat_with_required_tools(
+                vec![
+                    json!({"role": "system", "content": system_prompt}),
+                    json!({"role": "user", "content": user_prompt}),
+                ],
+                tools,
+                &self.correlation_id,
+            )
             .await
-        {
+            .map_err(|error| {
+                warn!("Tool-only LLM failed: {error}");
+                error
+            })?;
+
+        match parse_tool_calls(&response) {
             Ok(tool_calls) => {
                 // Convert tool calls to our action format
                 let actions: Vec<Value> = tool_calls
@@ -5095,11 +5099,10 @@ Rules:
                     }))
                 }
             }
-            Err(e) => {
-                warn!("Tool-only LLM failed: {}", e);
+            Err(error) => {
+                warn!("Tool-only LLM failed: {error}");
                 Err(PlanError::ExecutionError(format!(
-                    "Tool-only LLM failed: {}",
-                    e
+                    "Tool-only LLM failed: {error}"
                 )))
             }
         }
@@ -6299,7 +6302,7 @@ mod tests {
     }
 
     #[test]
-    fn fix_tool_llm_client_follows_plan_config_provider() {
+    fn fix_tool_llm_follows_plan_config_provider() {
         let mut config = PlanConfig {
             llm_provider: "dummy".to_string(),
             openai_api_key: "sk-legacy".to_string(),
@@ -6307,15 +6310,15 @@ mod tests {
             ..PlanConfig::default()
         };
 
-        assert!(tool_llm_client_from_config(&config, "test-correlation").is_none());
+        assert!(!tool_llm_enabled_from_config(&config));
 
         config.llm_provider = "openai".to_string();
-        assert!(tool_llm_client_from_config(&config, "test-correlation").is_some());
+        assert!(tool_llm_enabled_from_config(&config));
 
         config.llm_api_key.clear();
-        assert!(tool_llm_client_from_config(&config, "test-correlation").is_some());
+        assert!(tool_llm_enabled_from_config(&config));
 
         config.openai_api_key.clear();
-        assert!(tool_llm_client_from_config(&config, "test-correlation").is_none());
+        assert!(!tool_llm_enabled_from_config(&config));
     }
 }
