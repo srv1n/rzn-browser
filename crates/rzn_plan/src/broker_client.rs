@@ -180,7 +180,12 @@ mod tests {
             .await
             .expect_err("invalid namespaced socket should return an error")
             .to_string();
+        // Linux's abstract namespace accepts a name with an interior NUL, so the
+        // conversion succeeds there and the failure surfaces at connect time instead.
+        #[cfg(not(target_os = "linux"))]
         assert!(ns_error.contains("Invalid namespaced socket name"));
+        #[cfg(target_os = "linux")]
+        assert!(!ns_error.is_empty());
     }
 
     #[tokio::test]

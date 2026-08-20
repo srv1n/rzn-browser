@@ -5942,6 +5942,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(app_base);
     }
 
+    // Drives a Unix domain socket at a filesystem path. Windows reaches the supervisor
+    // over a named pipe, which needs its own harness.
+    #[cfg(unix)]
     #[tokio::test]
     async fn supervisor_client_reconnects_after_bad_frame_read() {
         let app_base = PathBuf::from(format!("/tmp/rzn-scf-{}", Uuid::new_v4()));

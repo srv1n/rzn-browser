@@ -380,7 +380,7 @@ impl NativeHostInstallOs {
     fn current() -> Self {
         #[cfg(target_os = "linux")]
         {
-            return Self::Linux;
+            Self::Linux
         }
 
         #[cfg(target_os = "macos")]
