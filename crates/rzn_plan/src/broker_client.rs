@@ -188,6 +188,9 @@ mod tests {
         assert!(!ns_error.is_empty());
     }
 
+    // Builds a listener at a /tmp filesystem path, so it is a Unix domain socket test.
+    // Windows reaches the supervisor over a named pipe and needs its own harness.
+    #[cfg(unix)]
     #[tokio::test]
     async fn supervisor_endpoint_client_reconnects_after_bad_frame_read() {
         let root = std::path::PathBuf::from(format!("/tmp/rzp-{}", uuid::Uuid::new_v4().simple()));
