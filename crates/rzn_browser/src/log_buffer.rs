@@ -77,9 +77,9 @@ impl LogBuffer {
             .iter()
             .rev()
             .filter(|e| {
-                level.map_or(true, |x| e.level.eq_ignore_ascii_case(x))
-                    && component.map_or(true, |x| e.component == x)
-                    && run_id.map_or(true, |x| e.run_id.as_deref() == Some(x))
+                level.is_none_or(|x| e.level.eq_ignore_ascii_case(x))
+                    && component.is_none_or(|x| e.component == x)
+                    && run_id.is_none_or(|x| e.run_id.as_deref() == Some(x))
             })
             .take(limit.min(500))
             .cloned()

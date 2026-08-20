@@ -165,18 +165,17 @@ impl PlanSanitizer {
                 }
             }
 
-            StepKind::WaitForElement { selector, .. } => {
-                // Block waiting for IFRAME elements
+            // Block waiting for IFRAME elements
+            StepKind::WaitForElement { selector, .. }
                 if selector.to_uppercase().starts_with("IFRAME")
                     || selector.to_lowercase().contains("iframe")
-                    || selector.to_lowercase().contains("frame")
-                {
-                    warn!(
-                        "🚫 Plan sanitizer: Blocking IFRAME wait step - {} ({})",
-                        step.name, selector
-                    );
-                    return Ok(None);
-                }
+                    || selector.to_lowercase().contains("frame") =>
+            {
+                warn!(
+                    "🚫 Plan sanitizer: Blocking IFRAME wait step - {} ({})",
+                    step.name, selector
+                );
+                return Ok(None);
             }
 
             _ => {

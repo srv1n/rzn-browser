@@ -275,7 +275,7 @@ impl WorkflowCache {
 
             stats.scanned += versions.len();
             // Newest first.
-            versions.sort_by(|a, b| b.1.cmp(&a.1));
+            versions.sort_by_key(|version| std::cmp::Reverse(version.1));
 
             for (index, (path, mtime)) in versions.iter().enumerate() {
                 let over_count = index >= keep_per_id;

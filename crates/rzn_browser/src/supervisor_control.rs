@@ -38,7 +38,7 @@ impl SupervisorControl {
         let paused = fs::read(&path)
             .ok()
             .and_then(|b| serde_json::from_slice::<Persisted>(&b).ok())
-            .map_or(false, |s| s.paused);
+            .is_some_and(|s| s.paused);
         Self {
             path,
             paused: AtomicBool::new(paused),

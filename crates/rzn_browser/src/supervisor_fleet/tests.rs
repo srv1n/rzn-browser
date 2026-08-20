@@ -425,7 +425,7 @@ fn terminal_status_and_backoff_and_jitter() {
     // Jitter stays within ±33% of the base.
     for _ in 0..50 {
         let j = jittered_ms(1_000);
-        assert!(j >= 670 && j <= 1_330, "jitter out of bounds: {j}");
+        assert!((670..=1_330).contains(&j), "jitter out of bounds: {j}");
     }
 }
 

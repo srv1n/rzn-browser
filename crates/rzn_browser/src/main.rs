@@ -8470,7 +8470,11 @@ fn release_artifact_name() -> anyhow::Result<String> {
     Ok(format!("rzn-browser-{}-{}.tar.gz", os, arch))
 }
 
-fn release_artifact_url(repo: &str, version: Option<&str>, artifact: &str) -> anyhow::Result<String> {
+fn release_artifact_url(
+    repo: &str,
+    version: Option<&str>,
+    artifact: &str,
+) -> anyhow::Result<String> {
     let repo = repo.trim();
     if repo.is_empty() || !repo.contains('/') {
         anyhow::bail!("--repo must look like owner/name, got '{}'", repo);
@@ -8659,7 +8663,10 @@ async fn handle_update(args: UpdateArgs) -> Result<(), Box<dyn std::error::Error
 
     let _ = fs::remove_dir_all(&temp_root);
     println!();
-    println!("Updated to {}. Run `rzn-browser list` to see the refreshed catalog.", available);
+    println!(
+        "Updated to {}. Run `rzn-browser list` to see the refreshed catalog.",
+        available
+    );
     Ok(())
 }
 
@@ -9050,7 +9057,7 @@ async fn handle_workflow_new(
         is_list,
         Some(extra_steps),
     )?;
-    let meta_path = format!("{}/{}.params.json", &config.workflows_dir, slugify(&name));
+    let meta_path = format!("{}/{}.params.json", config.workflows_dir, slugify(&name));
     let meta = json!({
         "workflow_file": out_path,
         "goal": goal,
@@ -10400,7 +10407,10 @@ mod tests {
         assert!(err.to_string().contains("--bridge"));
     }
 
+    // Asserts on dist/release/release-notes.md, a build artifact that is gitignored and
+    // absent until a release bundle has been built locally.
     #[test]
+    #[ignore = "requires locally built release notes in dist/release"]
     fn one_browser_compat_release_notes_scope_multi_bridge_change() {
         let path =
             PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../dist/release/release-notes.md");

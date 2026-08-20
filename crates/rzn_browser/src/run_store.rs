@@ -154,9 +154,9 @@ impl RunStore {
             filter
                 .workflow_id
                 .as_ref()
-                .map_or(true, |v| &row.workflow_id == v)
-                && filter.status.as_ref().map_or(true, |v| &row.status == v)
-                && filter.origin.as_ref().map_or(true, |v| {
+                .is_none_or(|v| &row.workflow_id == v)
+                && filter.status.as_ref().is_none_or(|v| &row.status == v)
+                && filter.origin.as_ref().is_none_or(|v| {
                     if v == "fleet" {
                         row.origin.starts_with("fleet:")
                     } else {
@@ -164,7 +164,7 @@ impl RunStore {
                     }
                 })
         });
-        rows.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        rows.sort_by_key(|row| std::cmp::Reverse(row.started_at));
         let total = rows.len();
         Ok((
             total,
@@ -206,7 +206,7 @@ impl RunStore {
             .lock()
             .map_err(|_| anyhow!("run store lock poisoned"))?;
         let mut rows = load_index(&self.root.join(INDEX_FILE))?;
-        rows.sort_by(|a, b| b.started_at.cmp(&a.started_at));
+        rows.sort_by_key(|row| std::cmp::Reverse(row.started_at));
         let cutoff = policy.now_ms - policy.max_age_days.max(1) * 86_400_000;
         let mut kept = Vec::new();
         let mut removed = 0;

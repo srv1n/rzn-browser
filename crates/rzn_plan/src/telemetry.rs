@@ -827,7 +827,7 @@ impl TraceReplay {
         }
 
         // Sort by start time (newest first)
-        sessions.sort_by(|a, b| b.start_time.cmp(&a.start_time));
+        sessions.sort_by_key(|session| std::cmp::Reverse(session.start_time));
 
         Ok(sessions)
     }

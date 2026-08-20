@@ -230,7 +230,7 @@ impl DomAnalyzer {
                 }
             }
         } else {
-            best_opportunities.sort_by(|a, b| b.3.cmp(&a.3)); // Sort by quality score
+            best_opportunities.sort_by_key(|opportunity| std::cmp::Reverse(opportunity.3)); // Sort by quality score
 
             for (selector, description, count, score) in best_opportunities.iter().take(3) {
                 outline.push_str(&format!(

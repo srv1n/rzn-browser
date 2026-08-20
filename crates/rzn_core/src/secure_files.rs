@@ -128,7 +128,7 @@ pub fn cleanup_secure_artifacts(
             };
             remaining.push((entry.path(), metadata.modified().ok()));
         }
-        remaining.sort_by(|left, right| right.1.cmp(&left.1));
+        remaining.sort_by_key(|(_, modified)| std::cmp::Reverse(*modified));
         for (path, _) in remaining.into_iter().skip(max_files) {
             if fs::remove_file(path).is_ok() {
                 removed += 1;

@@ -484,8 +484,8 @@ impl WorkflowManager {
 
         let stale_ids: Vec<String> = self
             .execution_contexts
-            .iter()
-            .filter_map(|(id, _)| {
+            .keys()
+            .filter_map(|id| {
                 // For simplicity, assume all contexts older than max_age are stale
                 // In a real implementation, we'd track creation timestamps
                 if rand::random::<u64>() % 100 < 10 {

@@ -5919,7 +5919,11 @@ mod tests {
         assert!(by_id["never-run"].health.is_none());
     }
 
+    // Resolves through the installed runtime catalog, so it only has something to find
+    // on a machine where the catalog has been installed. Run it with
+    // `cargo test -- --ignored` after `rzn-browser workflow pull`.
     #[test]
+    #[ignore = "requires an installed workflow catalog"]
     fn supervisor_resolves_the_canonical_id_returned_by_workflows_list() {
         let app_base = PathBuf::from(format!("/tmp/rzn-workflow-resolve-{}", Uuid::new_v4()));
         let state = SupervisorState::new(SupervisorConfig {

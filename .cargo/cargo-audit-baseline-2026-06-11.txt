@@ -10,3 +10,7 @@ RUSTSEC-2026-0009 # time 0.3.41: RFC 2822 parser stack exhaustion
 RUSTSEC-2026-0098 # rustls-webpki 0.103.10: URI name constraints accepted
 RUSTSEC-2026-0099 # rustls-webpki 0.103.10: wildcard name constraints accepted
 RUSTSEC-2026-0104 # rustls-webpki 0.103.10: CRL parsing panic
+RUSTSEC-2026-0258 # h2 0.3.27: unbounded empty DATA frames. Server-side DoS; this repo
+                  # only uses h2 as an HTTP client through reqwest 0.11 -> hyper 0.14.
+                  # The fix is h2 >=0.4.16, which needs reqwest 0.12 and a jsonschema
+                  # upgrade. Added 2026-08-20; drop once that migration lands.

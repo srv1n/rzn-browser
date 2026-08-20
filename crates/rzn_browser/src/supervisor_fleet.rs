@@ -1102,8 +1102,8 @@ impl FleetLoop {
             let _ = state.append_run_and_refresh(AppendRun {
                 origin: &format!("fleet:{}", assignment_task.job_id),
                 workflow_hash: Some(&assignment_task.workflow_hash),
-                started_at: started_at_ms as i64,
-                ended_at: finished_at_ms as i64,
+                started_at: started_at_ms,
+                ended_at: finished_at_ms,
                 params: &assignment_task.params,
                 result: &result,
             });
@@ -1423,7 +1423,7 @@ fn jittered_ms(base_ms: u64) -> u64 {
 fn backoff_ms(base_ms: u64, failures: u32) -> u64 {
     let shift = failures.saturating_sub(1).min(20);
     let factor = 1u64 << shift;
-    base_ms.saturating_mul(factor).min(MAX_BACKOFF_MS).max(1)
+    base_ms.saturating_mul(factor).clamp(1, MAX_BACKOFF_MS)
 }
 
 async fn sleep_ms(ms: u64) {

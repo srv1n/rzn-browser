@@ -185,7 +185,7 @@ pub async fn execute_workflow(
             enrich_failure_result(
                 &mut result,
                 &err,
-                opts.workflow_hash.as_deref().unwrap_or_else(|| ""),
+                opts.workflow_hash.as_deref().unwrap_or(""),
             );
             result
         }
@@ -1770,13 +1770,12 @@ fn select_json_path(value: &Value, path: &str) -> Option<Value> {
             }
             current = current.get(key)?;
             rest = &after_dot[end..];
-        } else if let Some(after_bracket) = rest.strip_prefix('[') {
+        } else {
+            let after_bracket = rest.strip_prefix('[')?;
             let end = after_bracket.find(']')?;
             let index = after_bracket[..end].parse::<usize>().ok()?;
             current = current.get(index)?;
             rest = &after_bracket[end + 1..];
-        } else {
-            return None;
         }
     }
     Some(current.clone())
