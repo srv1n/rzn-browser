@@ -251,9 +251,5 @@
       "rating/reviews can be empty for places without enough reviews.",
       "url points at the Maps place page (google.com/maps/place/...), not the place's own website."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-maps.json",
-    "legacy_system_id": "google"
   }
 }

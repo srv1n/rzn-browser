@@ -388,9 +388,5 @@
       "Use `--output-file <path>` (CLI flag) to write the markdown body to disk; use `--download-dir <dir>` to download all images, videos, and linked pages to a folder with a manifest.json mapping URL -> local path.",
       "Replaces the deprecated `x_open_post`, `x_open_article`, and `x_thread` workflows."
     ]
-  },
-  "metadata": {
-    "migrated_from": "x/x_open.json",
-    "legacy_system_id": "x"
   }
 }

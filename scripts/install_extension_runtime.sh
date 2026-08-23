@@ -37,6 +37,3 @@ esac
 rm -rf "$EXTENSION_ROOT"
 mkdir -p "$EXTENSION_ROOT"
 cp -R "$SOURCE_DIST" "$EXTENSION_ROOT/dist"
-# Chrome's legacy unpacked path must be a second copy of this build, never a
-# repository dist-chrome directory that may predate the build above.
-cp -R "$SOURCE_DIST/chrome" "$EXTENSION_ROOT/dist-chrome"

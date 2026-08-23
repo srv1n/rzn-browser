@@ -13,7 +13,7 @@ import {
 // DOM injection removed - using new enhanced action system
 // Enhanced action system with Element Resolution and Input Synthesis Ladder
 import { enhancedActionExecutor, EnhancedAction } from './content/actions-enhanced';
-import { TargetSpec, InputRung } from './types/targets';
+import { TargetSpec } from './types/targets';
 import { RZN_BUILD_SIGNATURE, RZN_PAGE_TEST_BRIDGE_ENABLED } from './buildInfo';
 import {
   actionResultFailureMessage,
@@ -182,17 +182,16 @@ function captureEnhancedDOMSnapshot(options?: { maxElements?: number; highlightE
   // Store element references for resolution
   lastElementMap.clear();
   domData.elements.forEach((element, index) => {
-    const encodedId = (element as any).id ? String((element as any).id) : `elem_${index}`;
+    const encodedId = element.id;
     if (element.selector) {
       try {
         const domElement = document.querySelector(element.selector);
         if (domElement) {
-          // Prefer stable ids; keep index-based ids for backward compatibility.
+          // Keep the encoded ID and the current snapshot reference.
           lastElementMap.set(encodedId, domElement);
-          lastElementMap.set(`elem_${index}`, domElement);
           lastElementMap.set(element.selector, domElement);
           // Agent-browser-style short refs for LLM-friendly selection:
-          // idx=N maps to ref=@e{N+1}, so @e1 => elem_0, @e2 => elem_1, etc.
+          // Snapshot index N maps to ref=@e{N+1}.
           const ref = `@e${index + 1}`;
           lastElementMap.set(ref, domElement);
           lastElementMap.set(ref.slice(1), domElement); // "eN"
@@ -249,21 +248,6 @@ function captureDOMSnapshot(options?: { maxElements?: number; forceFull?: boolea
     delta: deltaData,
     is_delta: !!deltaData
   };
-}
-
-// DOM pruning utility
-function pruneDOM(options?: { maxSize?: number }): string {
-  const snapshot = captureDOMSnapshot({ maxElements: 100 });
-  
-  // Convert new format back to HTML-like string for compatibility
-  const maxSize = options?.maxSize || 1000000;
-  let html = snapshot.prompt;
-  
-  if (html.length > maxSize) {
-    html = html.substring(0, maxSize) + '<!-- truncated -->';
-  }
-  
-  return html;
 }
 
 // Shadow-DOM aware querying (light DOM + open/closed shadow roots).
@@ -408,7 +392,7 @@ function isElementVisible(element: Element): boolean {
 }
 
 // Enhanced element discovery using element resolver
-async function findElementWithRetry(options: { selector?: string; index?: number; encoded_id?: string }): Promise<Element> {
+async function findElementWithRetry(options: { selector?: string; encoded_id?: string }): Promise<Element> {
   console.log('findElementWithRetry called with:', options);
   
   // Handle enhanced targeting
@@ -421,26 +405,13 @@ async function findElementWithRetry(options: { selector?: string; index?: number
     throw new Error(`Element with encoded_id ${options.encoded_id} not found in element map`);
   }
   
-  // Handle index-based lookup (convert to encoded_id)
-  if (options.index !== undefined) {
-    console.log(`Looking up element by index: ${options.index}`);
-    const encodedId = `elem_${options.index}`;
-    const element = lastElementMap.get(encodedId);
-    if (element) {
-      console.log('Element found by index!', element);
-      return element;
-    }
-    throw new Error(`Element with index ${options.index} not found in element map`);
-  }
-  
   // Handle selector-based lookup
   const selector = options.selector;
   if (!selector) {
-    throw new Error('Missing selector, index, or encoded_id for element discovery');
+    throw new Error('Missing selector or encoded_id for element discovery');
   }
 
-  // Direct cache lookup (supports CSS selectors, EncodedIds like "0:12", legacy "elem_N",
-  // and ref aliases like "@e12"/"ref=e12" when present).
+  // Direct cache lookup supports CSS selectors, encoded IDs, and snapshot refs.
   const directCached = lastElementMap.get(selector);
   if (directCached && directCached.isConnected) {
     return directCached;
@@ -449,12 +420,6 @@ async function findElementWithRetry(options: { selector?: string; index?: number
   // Ref-based lookup (e.g. "@e12", "ref=e12", "e12")
   const refIndex = parseRefIndex(selector);
   if (refIndex !== null) {
-    const key = `elem_${refIndex}`;
-    const cached = lastElementMap.get(key);
-    if (cached && cached.isConnected) {
-      return cached;
-    }
-
     const resolvedSelector = selectorForRefIndex(refIndex);
     if (resolvedSelector) {
       const el = findMatchingElement(resolvedSelector, {
@@ -463,7 +428,6 @@ async function findElementWithRetry(options: { selector?: string; index?: number
         preferVisible: (options as any).pierce_shadow === true,
       });
       if (el) {
-        lastElementMap.set(key, el);
         lastElementMap.set(resolvedSelector, el);
         return el;
       }
@@ -1106,7 +1070,7 @@ const enhancedActionHandlers = {
 
   // Enhanced click with stable element resolution and input escalation
   click_element_enhanced: async (step: any) => {
-    const targetSpec = normalizeStepToTargetSpec(step);
+    const targetSpec = requireTargetSpec(step);
     const action: EnhancedAction = {
       type: 'click_element',
       target_spec: targetSpec,
@@ -1128,7 +1092,7 @@ const enhancedActionHandlers = {
 
     // Best-effort: focus the element after a successful click when selector is available
     try {
-      const sel = step.css || step.selector;
+      const sel = targetSpec.css;
       if (sel) {
         const el = document.querySelector(sel) as HTMLElement | null;
         if (el && typeof el.focus === 'function') {
@@ -1147,7 +1111,7 @@ const enhancedActionHandlers = {
 
   // Enhanced fill with stable element resolution and input escalation
   fill_input_field_enhanced: async (step: any) => {
-    const targetSpec = normalizeStepToTargetSpec(step);
+    const targetSpec = requireTargetSpec(step);
     const action: EnhancedAction = {
       type: 'fill_input_field',
       target_spec: targetSpec,
@@ -1187,7 +1151,6 @@ const enhancedActionHandlers = {
     return actionSuccess({
       action: 'press_special_key',
       result: { pressed: true, key },
-      legacy: { key },
     });
   },
 
@@ -1216,13 +1179,12 @@ const enhancedActionHandlers = {
     return actionSuccess({
       action: 'press_key',
       result: { pressed: true, key },
-      legacy: { key },
     });
   },
 
   // Enhanced hover with element resolution
   hover_element_enhanced: async (step: any) => {
-    const targetSpec = normalizeStepToTargetSpec(step);
+    const targetSpec = requireTargetSpec(step);
     const action: EnhancedAction = {
       type: 'hover_element',
       target_spec: targetSpec,
@@ -1244,7 +1206,7 @@ const enhancedActionHandlers = {
 
   // Enhanced scroll with element resolution
   scroll_element_into_view_enhanced: async (step: any) => {
-    const targetSpec = normalizeStepToTargetSpec(step);
+    const targetSpec = requireTargetSpec(step);
     const action: EnhancedAction = {
       type: 'scroll_element_into_view',
       target_spec: targetSpec,
@@ -1266,7 +1228,7 @@ const enhancedActionHandlers = {
 
   // Enhanced text extraction
   get_element_text_enhanced: async (step: any) => {
-    const targetSpec = normalizeStepToTargetSpec(step);
+    const targetSpec = requireTargetSpec(step);
     const action: EnhancedAction = {
       type: 'get_element_text',
       target_spec: targetSpec,
@@ -1288,12 +1250,12 @@ const enhancedActionHandlers = {
 
   // Enhanced structured data extraction
   extract_structured_data_enhanced: async (step: any) => {
-    const targetSpec = normalizeStepToTargetSpec(step);
+    const targetSpec = requireTargetSpec(step);
     const action: EnhancedAction = {
       type: 'extract_structured_data',
       target_spec: targetSpec,
       fields: step.fields || [],
-      // Pass through extraction_type for workflow compatibility (no site-specific fast paths)
+      // Keep the caller's extraction label. It is data, not a site-specific fast path.
       extraction_type: step.extraction_type,
       timeout: step.timeoutMs || 10000
     };
@@ -1307,11 +1269,6 @@ const enhancedActionHandlers = {
     return actionSuccess({
       action: 'extract_structured_data_enhanced',
       result: result.result,
-      legacy: {
-        data: result.result,
-        extraction_type: step.extraction_type,
-        item_count: Array.isArray(result.result) ? result.result.length : 0,
-      },
       duration_ms: result.execution_time_ms,
       rung_used: result.rung_used,
       escalated: result.escalated,
@@ -1338,42 +1295,11 @@ const enhancedActionHandlers = {
   }
 };
 
-// Helper function to convert legacy step format to TargetSpec
-function normalizeStepToTargetSpec(step: any): TargetSpec {
-  // If step already has target_spec, use it
-  if (step.target_spec) {
-    return step.target_spec;
+function requireTargetSpec(step: any): TargetSpec {
+  if (!step?.target_spec) {
+    throw new Error('Enhanced actions require target_spec');
   }
-
-  // Convert legacy selectors
-  if (step.encoded_id) {
-    return { encoded_id: step.encoded_id };
-  }
-  
-  if (step.css || step.selector) {
-    const sel = step.css || step.selector;
-    const refIndex = parseRefIndex(sel);
-    if (refIndex !== null) {
-      const resolved = selectorForRefIndex(refIndex);
-      if (resolved) return { css: resolved };
-    }
-    return { css: sel };
-  }
-  
-  if (step.xpath) {
-    return { xpath: step.xpath };
-  }
-  
-  if (step.role_name) {
-    return { role_name: step.role_name };
-  }
-  
-  if (step.text_near) {
-    return { text_near: step.text_near };
-  }
-
-  // Fallback to selector field
-  return { css: step.selector || 'body' };
+  return step.target_spec as TargetSpec;
 }
 
 const REDACTED_STEP_KEYS = ['value', 'text', 'password', 'passcode', 'otp', 'token', 'secret'];
@@ -1697,7 +1623,6 @@ const actionHandlers = {
             action: 'click_element',
             result: { clicked: true, selector: selectorForMainWorld, method: 'page_bridge_native_click' },
             duration_ms: Date.now() - startedAt,
-            legacy: { selector: selectorForMainWorld, method: 'page_bridge_native_click' },
           });
         }
       }
@@ -1721,7 +1646,6 @@ const actionHandlers = {
         action: 'click_element',
         result: { clicked: true, selector: step.selector, method: 'native_click' },
         duration_ms: Date.now() - startedAt,
-        legacy: { selector: step.selector, method: 'native_click' },
       });
     }
 
@@ -1783,7 +1707,6 @@ const actionHandlers = {
       action: 'click_element',
       result: { clicked: true, selector: step.selector, method: pointerOk ? 'pointer_mouse_events' : 'mouse_events' },
       duration_ms: Date.now() - startedAt,
-      legacy: { selector: step.selector, method: pointerOk ? 'pointer_mouse_events' : 'mouse_events' },
     });
   },
 
@@ -2783,7 +2706,6 @@ const actionHandlers = {
         action: 'type_text',
         result: { inserted: false, textLength: 0, reason: 'empty_text' },
         duration_ms: Date.now() - startedAt,
-        legacy: { textLength: 0 },
       });
     }
 
@@ -2956,7 +2878,6 @@ const actionHandlers = {
         used_cdp: allowCdpTyping,
       },
       duration_ms: Date.now() - startedAt,
-      legacy: { textLength: text.length },
     });
   },
 
@@ -4133,19 +4054,14 @@ const actionHandlers = {
       action: 'extract_structured_data',
       result: results,
       duration_ms: Date.now() - startedAt,
-      legacy: {
-        data: results,
-        item_count: results.length,
-        extraction_type,
-      },
     });
   },
 
   // Test/bridge helper: run a validated extraction plan without arbitrary JS execution.
   // This mirrors the runtime command handler (message.cmd === 'execute_extraction_plan').
   execute_extraction_plan: async (step: any) => {
-    const { ExtractionPlanV1Schema } = await import('./types/extractionPlan');
-    const plan = ExtractionPlanV1Schema.parse(step.plan ?? step);
+    const { ExtractionPlanSchema } = await import('./types/extractionPlan');
+    const plan = ExtractionPlanSchema.parse(step.plan ?? step);
 
     const resolveScope = (): ParentNode => {
       if (!plan.scope) return document;
@@ -5227,17 +5143,10 @@ const actionHandlers = {
 (window as any).captureEnhancedDOMSnapshot = captureEnhancedDOMSnapshot;
 (window as any).captureCurrentDOM = captureCurrentDOM;
 
-// Also expose to isolated world for direct access
-if (typeof exportFunction !== 'undefined') {
-  // Firefox - export to page context
-  exportFunction(captureEnhancedDOMSnapshot, window, { defineAs: 'captureEnhancedDOMSnapshot' });
-  exportFunction(captureCurrentDOM, window, { defineAs: 'captureCurrentDOM' });
-}
-
 const CONTENT_SCRIPT_PROTOCOL_VERSION = 'rzn-cs-2026-03-17-3';
-const CONTENT_SCRIPT_HANDSHAKE_CMD = 'rzn_handshake_v1';
-const CONTENT_SCRIPT_EXECUTE_STEP_CMD = 'rzn_execute_step_v1';
-const CONTENT_SCRIPT_DOM_SNAPSHOT_CMD = 'rzn_get_dom_snapshot_v1';
+const CONTENT_SCRIPT_HANDSHAKE_CMD = 'rzn_handshake';
+const CONTENT_SCRIPT_EXECUTE_STEP_CMD = 'rzn_execute_step';
+const CONTENT_SCRIPT_DOM_SNAPSHOT_CMD = 'rzn_get_dom_snapshot';
 const CONTENT_SCRIPT_ACTIVE_INSTANCE_ATTR = 'data-rzn-active-content-script-instance';
 const CONTENT_SCRIPT_ACTIVE_PROTOCOL_ATTR = 'data-rzn-active-content-script-protocol';
 const CONTENT_SCRIPT_EXECUTION_CACHE_CONTAINER_ID = '__rzn_content_script_execution_cache';
@@ -5328,18 +5237,6 @@ function assertPageChannelStepAllowed(step: any): void {
   if (!stepType || !isAllowed) {
     throw new Error(`Step type is not allowed from the page bridge: ${stepType || '<missing>'}`);
   }
-}
-
-function windowMessageTargetOrigin(): string | null {
-  const origin = window.location.origin;
-  if (!origin || origin === 'null') return null;
-  return origin;
-}
-
-function postPageBridgeMessage(message: any): void {
-  const targetOrigin = windowMessageTargetOrigin();
-  if (!targetOrigin) return;
-  window.postMessage(message, targetOrigin);
 }
 
 function claimActiveContentScriptInstance(): void {
@@ -5847,8 +5744,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.cmd === 'execute_extraction_plan') {
     (async () => {
       try {
-        const { ExtractionPlanV1Schema } = await import('./types/extractionPlan');
-        const plan = ExtractionPlanV1Schema.parse(message.payload?.plan);
+        const { ExtractionPlanSchema } = await import('./types/extractionPlan');
+        const plan = ExtractionPlanSchema.parse(message.payload?.plan);
 
         const resolveScope = (): ParentNode => {
           if (!plan.scope) return document;
@@ -5971,12 +5868,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           };
           const stepType = stepObj.type;
           const enhancedType = stepType + '_enhanced';
-          const forceLegacy = !!stepObj.force_legacy;
           const wantEnhanced = !!(stepObj.use_enhanced === true || stepType.endsWith('_enhanced') || stepObj.target_spec);
 
           let handler;
 
-          if (!forceLegacy && wantEnhanced) {
+          if (wantEnhanced) {
             if (enhancedActionHandlers[enhancedType as keyof typeof enhancedActionHandlers]) {
               handler = enhancedActionHandlers[enhancedType as keyof typeof enhancedActionHandlers];
               console.log(`[RZN] Using enhanced handler for ${stepType}`);
@@ -5988,7 +5884,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
           if (!handler && (actionHandlers as any)[stepType]) {
             handler = (actionHandlers as any)[stepType];
-            console.log(`[RZN] Using standard handler for ${stepType}${forceLegacy ? ' (force_legacy)' : ''}`);
+            console.log(`[RZN] Using standard handler for ${stepType}`);
           }
 
           if (!handler) {
@@ -6439,28 +6335,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   }
   
-if (message.cmd === 'get_pruned_dom') {
-    const options = message.payload?.options || {};
-    
-    // Use enhanced DOM capture approach
-    const domSnapshot = captureEnhancedDOMSnapshot({
-      maxElements: options.maxElements || 200,
-      highlightElements: false
-    });
-    
-    // For backwards compatibility, use the formatted prompt as HTML
-    const html = domSnapshot.prompt || pruneDOM(options);
-    
-    sendResponse({
-      req_id: message.req_id,
-      success: true,
-      html: html, // HTML with embedded prompt
-      dom_snapshot: domSnapshot, // New enhanced format
-      dom_hash: domSnapshot.hash
-    });
-    return false; // Synchronous response
-  }
-  
 if (message.cmd === 'get_dom_snapshot' || message.cmd === CONTENT_SCRIPT_DOM_SNAPSHOT_CMD) {
     const options = message.payload?.options || {};
     
@@ -6488,110 +6362,6 @@ if (message.cmd === 'get_dom_hash') {
     });
   return false; // Synchronous response
 }
-});
-
-// Listen for test bridge messages from the page and execute actions
-window.addEventListener('message', (event: MessageEvent) => {
-  if (!isActiveContentScriptInstance()) return;
-  if (event.origin !== window.location.origin) return;
-
-  // In MV3, comparing `event.source` across MAIN/isolated worlds is unreliable (it may be `null`
-  // or a different WindowProxy wrapper). Instead, filter on message shape + type.
-  const data: any = (event as any).data;
-  if (!data || typeof data !== 'object') return;
-  if (
-    data.type !== 'RZN_TEST_PING' &&
-    data.type !== 'RZN_TEST_DOM_SNAPSHOT' &&
-    data.type !== 'RZN_TEST_EXECUTE'
-  ) {
-    return;
-  }
-  if (!isValidBridgeToken(data.token)) return;
-
-  if (data.type === 'RZN_TEST_PING') {
-    postPageBridgeMessage({ type: 'RZN_TEST_PONG', requestId: data.requestId, payload: true });
-    return;
-  }
-
-  if (data.type === 'RZN_TEST_DOM_SNAPSHOT') {
-    try {
-      const domSnapshot = captureEnhancedDOMSnapshot({
-        maxElements: data.options?.maxElements || 200,
-        highlightElements: !!data.options?.highlightElements,
-      });
-      postPageBridgeMessage({
-        type: 'RZN_TEST_DOM_SNAPSHOT_RESULT',
-        requestId: data.requestId,
-        snapshot: domSnapshot,
-      });
-    } catch (e: any) {
-      postPageBridgeMessage({
-        type: 'RZN_TEST_DOM_SNAPSHOT_RESULT',
-        requestId: data.requestId,
-        error: e?.message || String(e),
-      });
-    }
-  }
-
-  if (data.type === 'RZN_TEST_EXECUTE') {
-    (async () => {
-      try {
-        const response = await executeWithSharedRequestDedup(
-          data.requestId,
-          stepFingerprint(data.step),
-          async () => {
-          const step = data.step || {};
-          assertPageChannelStepAllowed(step);
-          const stepType: string = step.type;
-          const enhancedType = `${stepType}_enhanced`;
-          const forceLegacy = !!(step && (step as any).force_legacy);
-
-          let handler: any = undefined;
-          if (!forceLegacy && (enhancedActionHandlers as any)[enhancedType]) {
-            handler = (enhancedActionHandlers as any)[enhancedType];
-          } else if (!forceLegacy && (enhancedActionHandlers as any)[stepType]) {
-            handler = (enhancedActionHandlers as any)[stepType];
-          } else if ((actionHandlers as any)[stepType]) {
-            handler = (actionHandlers as any)[stepType];
-          }
-
-          if (!handler) {
-            throw new Error(`Unknown action type: ${stepType}`);
-          }
-
-          const result = await handler(step);
-          const actionFailure = actionFailureResponseFields(result);
-          const domSnapshot = captureEnhancedDOMSnapshot({ maxElements: 120, highlightElements: false });
-
-          return {
-            ...actionFailure,
-            result,
-            current_url: window.location.href,
-            dom_snapshot: domSnapshot,
-            dom_hash: domSnapshot.hash,
-          };
-        });
-
-        postPageBridgeMessage({
-          type: 'RZN_TEST_RESULT',
-          requestId: data.requestId,
-          response,
-        });
-      } catch (err: any) {
-        const domSnapshot = captureEnhancedDOMSnapshot({ maxElements: 120, highlightElements: false });
-        postPageBridgeMessage({
-          type: 'RZN_TEST_RESULT',
-          requestId: data.requestId,
-          response: {
-            success: false,
-            error_msg: err?.message || String(err),
-            dom_snapshot: domSnapshot,
-            dom_hash: domSnapshot.hash,
-          }
-        });
-      }
-    })();
-  }
 });
 
 // DOM-based test bridge (used by pageBridge.js in MAIN world).
@@ -6643,12 +6413,11 @@ async function handleDomBridgeRequest(node: HTMLElement) {
           const step = payload?.step || {};
           const stepType: string = step.type;
           const enhancedType = `${stepType}_enhanced`;
-          const forceLegacy = !!(step && (step as any).force_legacy);
 
           let handler: any = undefined;
-          if (!forceLegacy && (enhancedActionHandlers as any)[enhancedType]) {
+          if ((enhancedActionHandlers as any)[enhancedType]) {
             handler = (enhancedActionHandlers as any)[enhancedType];
-          } else if (!forceLegacy && (enhancedActionHandlers as any)[stepType]) {
+          } else if ((enhancedActionHandlers as any)[stepType]) {
             handler = (enhancedActionHandlers as any)[stepType];
           } else if ((actionHandlers as any)[stepType]) {
             handler = (actionHandlers as any)[stepType];

@@ -177,9 +177,5 @@
       "Requires an existing logged-in LinkedIn session.",
       "Discover job_ids with linkedin_jobs_search."
     ]
-  },
-  "metadata": {
-    "migrated_from": "linkedin/job_detail.json",
-    "legacy_system_id": "linkedin"
   }
 }

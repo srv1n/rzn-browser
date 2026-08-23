@@ -240,9 +240,5 @@
       "Will not click Unlike. If the post is already liked the assertion still succeeds because the Unlike control is already visible.",
       "Opens a fresh tab so parallel runs don't collide."
     ]
-  },
-  "metadata": {
-    "migrated_from": "x/x_like_post.json",
-    "legacy_system_id": "x"
   }
 }

@@ -1,0 +1,18 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-08-23T15:27:39Z",
+  "event_kind": "verification_removed",
+  "id": "01M0QKR319QSQPVCEHMST5ZY88",
+  "object": "RZN-T-0001",
+  "object_kind": "task",
+  "payload": {
+    "blocked_by": "",
+    "check": "make test",
+    "covers": "A1,A2",
+    "index": 5,
+    "notes": "broad Rust proof",
+    "result": "pending"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

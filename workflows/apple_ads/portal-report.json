@@ -227,9 +227,5 @@
       "Apple removed tab-based report switching in early 2026; the old `report_type` param has been dropped.",
       "Each row is repeated per metric anchor (~10× per campaign). Dedupe by campaign_id/adgroup_id downstream — the first occurrence of each id usually carries the entity name, the rest carry metric strings like '$0.00' / '0%'."
     ]
-  },
-  "metadata": {
-    "migrated_from": "apple_ads/portal-report.json",
-    "legacy_system_id": "apple_ads"
   }
 }

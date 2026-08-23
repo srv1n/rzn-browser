@@ -145,7 +145,6 @@ test.describe('Static fill_input_field contenteditable e2e', () => {
       type: 'fill_input_field',
       selector: '#editor',
       value: 'that is just great',
-      force_legacy: true,
     }));
     expect(fillResp.success).toBeTruthy();
 
@@ -156,7 +155,6 @@ test.describe('Static fill_input_field contenteditable e2e', () => {
     const clickResp = await page.evaluate(async () => (window as any).__rznExecuteStep({
       type: 'click_element',
       selector: '#submit',
-      force_legacy: true,
     }));
     expect(clickResp.success).toBeTruthy();
 
@@ -189,7 +187,6 @@ test.describe('Static fill_input_field contenteditable e2e', () => {
       type: 'fill_input_field',
       selector: '#editor',
       value: 'hello world',
-      force_legacy: true,
     }));
     expect(fillResp.success).toBeTruthy();
 

@@ -1,0 +1,6 @@
+# tusker
+config.local.yaml
+_system/generated/
+.obsidian/workspace*
+.obsidian/cache
+.trash/

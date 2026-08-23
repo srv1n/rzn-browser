@@ -173,13 +173,9 @@
     ],
     "notes": [
       "JS-first: reads fin-streamer[data-field=...] and [data-testid='quote-statistics'] li. These are stable Yahoo widgets \u2014 selectors have outlasted multiple page redesigns.",
-      "Body-text regex parsing was the fallback in v1; v2 keeps a slimmer fallback only for the price/change triple in case fin-streamer fails to mount.",
+      "Body-text regex parsing is a narrow fallback for the price and change values when fin-streamer does not mount.",
       "Pair with finance/yahoo-news for headlines on the same ticker.",
       "For Google Finance as an alternate source, use google/finance (workflows/google/google-finance.json \u2014 supports any TICKER:EXCHANGE)."
     ]
-  },
-  "metadata": {
-    "migrated_from": "finance/stock-price.json",
-    "legacy_system_id": "finance"
   }
 }

@@ -2,11 +2,10 @@
 
 This bundle contains:
 
-- `extension/dist-chrome/`: Chrome MV3 extension (load as unpacked)
+- `extension/dist/chrome/`: Chrome MV3 extension (load as unpacked)
 - `bin/rzn-native-host`: native messaging host (installed by script)
 - `bin/rzn-browser`: standalone CLI to run workflows
 - `workflows/`: shipped workflow library, including search, social, shopping, research, finance, generated examples, and test/debug flows
-- `examples/browser_automation/`: packaged example workflows that install into the builtin catalog
 - `AGENTS.md`: local instructions for Codex, Claude Code, and similar coding agents
 
 ## Quick Start
@@ -28,7 +27,7 @@ xattr -dr com.apple.quarantine .
 - Open `chrome://extensions`
 - Enable **Developer mode**
 - Click **Load unpacked**
-- Select: `~/Library/Application Support/RZN/extension/dist-chrome`
+- Select: `~/Library/Application Support/RZN/extension/dist/chrome`
 - Confirm extension ID matches: `__RZN_EXTENSION_ID__`
 
 4. Restart Chrome once (recommended).

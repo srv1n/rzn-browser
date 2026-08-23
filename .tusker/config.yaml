@@ -1,0 +1,133 @@
+schema: tusker.config/v1
+project_id: rzn-browser
+
+storage:
+  root: .tusker
+  generated_root: .tusker/_generated
+  evidence_root: .tusker/evidence
+  events_root: .tusker/events
+  attempts_root: .tusker/attempts
+
+runtime:
+  lease_backend: local
+  lease_ttl_minutes: 120
+  mutation_mode: single_user_local
+
+automation:
+  # Automation is opt-in. Registration keeps status projections fresh; only
+  # an explicit operator change may authorize daemon dispatch.
+  enabled: false
+  # Editable semantic defaults. They are policy, not a machine-local model catalog.
+  default_profile: execute-standard
+
+  profiles:
+    execute-complex:
+        effort: high
+        harness: codex_acp
+        model: gpt-5.6-terra
+        permission_preset: workspace-write-offline
+        sandbox:
+            mode: workspace-write
+            network: false
+        subagents:
+            allowed: false
+            max_concurrent: 0
+    execute-fast:
+        effort: low
+        harness: codex_acp
+        model: gpt-5.6-luna
+        permission_preset: workspace-write-offline
+        sandbox:
+            mode: workspace-write
+            network: false
+        subagents:
+            allowed: false
+            max_concurrent: 0
+    execute-frontier:
+        effort: xhigh
+        harness: codex_acp
+        model: gpt-5.6-sol
+        permission_preset: workspace-write-offline
+        sandbox:
+            mode: workspace-write
+            network: false
+        subagents:
+            allowed: false
+            max_concurrent: 0
+    execute-standard:
+        effort: medium
+        harness: codex_acp
+        model: gpt-5.6-terra
+        permission_preset: workspace-write-offline
+        sandbox:
+            mode: workspace-write
+            network: false
+        subagents:
+            allowed: false
+            max_concurrent: 0
+    planner:
+        effort: high
+        harness: codex_acp
+        model: gpt-5.6-sol
+        permission_preset: workspace-write-offline
+        sandbox:
+            mode: workspace-write
+            network: false
+        subagents:
+            allowed: false
+            max_concurrent: 0
+    repair-complex:
+        effort: high
+        harness: codex_acp
+        model: gpt-5.6-terra
+        permission_preset: workspace-write-offline
+        sandbox:
+            mode: workspace-write
+            network: false
+        subagents:
+            allowed: false
+            max_concurrent: 0
+    review-independent:
+        effort: high
+        harness: codex_acp
+        model: gpt-5.6-terra
+        permission_preset: read-only
+        sandbox:
+            mode: read-only
+            network: false
+        subagents:
+            allowed: false
+            max_concurrent: 0
+
+  dispatch_scope: armed_waves
+  # The deterministic review-completion reactor is separately opt-in. Its
+  # modes are disabled, shadow (read-only comparison), and authoritative.
+  completion_reactor:
+    mode: disabled
+  trigger_states: [ready, rework]
+  # Codex ACP is the primary local runner. Run "tusker acp setup" once on the
+  # machine to install/configure its pinned adapter before enabling automation.
+  default_runner: codex_acp
+  enabled_runners: [codex_acp, codex_exec, claude-code]
+  workspace:
+    strategy: worktree
+    root: workspaces
+  concurrency:
+    max_active_runs: 2
+    max_active_runs_per_project: 1
+    max_concurrent_by_state:
+      rework: 1
+  runners:
+    # Direct Codex remains available only to an explicitly named emergency or
+    # danger profile; safe generated profiles use codex_acp above.
+    codex_exec:
+      kind: codex_exec
+      command: codex exec --json --skip-git-repo-check -
+    claude-code:
+      kind: claude-code
+      command: claude -p --output-format stream-json --input-format stream-json --permission-mode bypassPermissions
+  fanout:
+    enabled: false
+    max_children: 0
+    allowed_child_types: []
+    merge_rule: manual_review

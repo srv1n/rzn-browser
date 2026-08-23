@@ -8,9 +8,8 @@ Scope:
 What is included:
 - `bin/rzn-native-host`: native messaging host used by the Chrome extension
 - `bin/rzn-browser`: standalone CLI for deterministic workflows and LLM-driven automation
-- `extension/dist-chrome/`: unpacked Chrome extension to load in Chrome
+- `extension/dist/chrome/`: unpacked Chrome extension to load in Chrome
 - `workflows/`: shipped workflow library, including search, social, shopping, research, finance, and generated examples
-- `examples/browser_automation/`: packaged example workflows installed into the builtin catalog
 - `schema/`: workflow/action schemas
 
 How to get started:
@@ -23,7 +22,7 @@ How to get started:
    - `rzn-browser llm-auto "<task>"`
 
 Important runtime assumptions:
-- Chrome must have loaded `extension/dist-chrome` as an unpacked extension.
+- Chrome must have loaded `extension/dist/chrome` as an unpacked extension.
 - The native host must be installed with `./install-macos.sh`.
 - If the native host is not connecting, reload the extension or restart Chrome.
 

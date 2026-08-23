@@ -161,9 +161,5 @@
       "Dedup is by Capterra product id (the numeric segment in /p/<id>/<slug>/reviews/).",
       "Rating + review count are parsed from anchor text matching '4.5 (1234)'."
     ]
-  },
-  "metadata": {
-    "migrated_from": "capterra/capterra-search.json",
-    "legacy_system_id": "capterra"
   }
 }

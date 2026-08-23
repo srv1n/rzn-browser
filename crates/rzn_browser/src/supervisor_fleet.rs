@@ -29,12 +29,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 
 use crate::run_store::{AppendRun, RunStore};
-use rzn_contracts::fleet_v1::{
-    error_codes, DeviceHealthV1, FleetDeviceStatusV1, FleetJobAssignmentV1,
-    FleetJobTerminalStatusV1, FleetPollRequestV1, FleetPollResponseV1, FleetResultAckV1,
-    FleetResultPostV1,
+use rzn_contracts::fleet::{
+    error_codes, DeviceHealth, FleetDeviceStatus, FleetJobAssignment, FleetJobTerminalStatus,
+    FleetPollRequest, FleetPollResponse, FleetResultAck, FleetResultPost,
 };
-use rzn_contracts::v2::{RunErrorV1, RunResultV2, RunStatusV2, RUN_RESULT_VERSION};
+use rzn_contracts::workflow::{RunError, RunResult, RunStatus, RUN_RESULT_CONTRACT};
 use rzn_core::runtime_paths::{default_app_base_dir, env_trimmed};
 
 use crate::supervisor::SupervisorState;
@@ -338,7 +337,7 @@ struct JournalEntry {
     job_id: String,
     state: JournalState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    terminal_status: Option<FleetJobTerminalStatusV1>,
+    terminal_status: Option<FleetJobTerminalStatus>,
     ts_ms: i64,
     #[serde(default)]
     workflow_id: String,
@@ -358,9 +357,9 @@ struct JournalTailEntry {
 
 impl JournalEntry {
     fn from_assignment(
-        assignment: &FleetJobAssignmentV1,
+        assignment: &FleetJobAssignment,
         state: JournalState,
-        terminal_status: Option<FleetJobTerminalStatusV1>,
+        terminal_status: Option<FleetJobTerminalStatus>,
     ) -> Self {
         Self {
             job_id: assignment.job_id.clone(),
@@ -376,7 +375,7 @@ impl JournalEntry {
     fn carry(
         prev: &JournalEntry,
         state: JournalState,
-        terminal_status: Option<FleetJobTerminalStatusV1>,
+        terminal_status: Option<FleetJobTerminalStatus>,
     ) -> Self {
         Self {
             job_id: prev.job_id.clone(),
@@ -393,7 +392,7 @@ impl JournalEntry {
         job_id: &str,
         workflow_id: &str,
         state: JournalState,
-        terminal_status: Option<FleetJobTerminalStatusV1>,
+        terminal_status: Option<FleetJobTerminalStatus>,
     ) -> Self {
         Self {
             job_id: job_id.to_string(),
@@ -535,12 +534,12 @@ enum FleetCallError {
 
 #[async_trait]
 trait FleetApi: Send + Sync {
-    async fn poll(&self, req: &FleetPollRequestV1) -> Result<FleetPollResponseV1, FleetCallError>;
+    async fn poll(&self, req: &FleetPollRequest) -> Result<FleetPollResponse, FleetCallError>;
     async fn post_result(
         &self,
         job_id: &str,
-        post: &FleetResultPostV1,
-    ) -> Result<FleetResultAckV1, FleetCallError>;
+        post: &FleetResultPost,
+    ) -> Result<FleetResultAck, FleetCallError>;
 }
 
 /// Real reqwest-backed fleet API. The device token is only ever sent as a bearer
@@ -569,7 +568,7 @@ impl HttpFleetApi {
 
 #[async_trait]
 impl FleetApi for HttpFleetApi {
-    async fn poll(&self, req: &FleetPollRequestV1) -> Result<FleetPollResponseV1, FleetCallError> {
+    async fn poll(&self, req: &FleetPollRequest) -> Result<FleetPollResponse, FleetCallError> {
         let url = format!("{}/v1/fleet/poll", self.server_url);
         let response = self
             .client
@@ -582,7 +581,7 @@ impl FleetApi for HttpFleetApi {
         let status = response.status();
         if status.as_u16() == 403 {
             let body = response.text().await.unwrap_or_default();
-            if let Ok(err) = serde_json::from_str::<rzn_contracts::fleet_v1::FleetErrorV1>(&body) {
+            if let Ok(err) = serde_json::from_str::<rzn_contracts::fleet::FleetError>(&body) {
                 if err.code == error_codes::DEVICE_REVOKED
                     || err.code == error_codes::DEVICE_DORMANT
                 {
@@ -601,7 +600,7 @@ impl FleetApi for HttpFleetApi {
             )));
         }
         response
-            .json::<FleetPollResponseV1>()
+            .json::<FleetPollResponse>()
             .await
             .map_err(|err| FleetCallError::Network(format!("poll decode failed: {err}")))
     }
@@ -609,8 +608,8 @@ impl FleetApi for HttpFleetApi {
     async fn post_result(
         &self,
         job_id: &str,
-        post: &FleetResultPostV1,
-    ) -> Result<FleetResultAckV1, FleetCallError> {
+        post: &FleetResultPost,
+    ) -> Result<FleetResultAck, FleetCallError> {
         let url = format!("{}/v1/fleet/jobs/{}/result", self.server_url, job_id);
         let response = self
             .client
@@ -628,7 +627,7 @@ impl FleetApi for HttpFleetApi {
             )));
         }
         response
-            .json::<FleetResultAckV1>()
+            .json::<FleetResultAck>()
             .await
             .map_err(|err| FleetCallError::Network(format!("result ack decode failed: {err}")))
     }
@@ -686,14 +685,14 @@ impl HealthProbe for StateHealthProbe {
 
 #[async_trait]
 trait FleetJobExecutor: Send + Sync {
-    /// Run the assignment to a terminal `RunResultV2`. `cancel` is checked
+    /// Run the assignment to a terminal `RunResult`. `cancel` is checked
     /// between steps; a set flag means later steps are skipped.
     async fn execute(
         &self,
-        assignment: &FleetJobAssignmentV1,
+        assignment: &FleetJobAssignment,
         cancel: Arc<AtomicBool>,
         shared: Arc<FleetShared>,
-    ) -> RunResultV2;
+    ) -> RunResult;
 }
 
 /// Production executor: resolve the manifest via the content-hash cache and run
@@ -709,10 +708,10 @@ struct InProcessJobExecutor {
 impl FleetJobExecutor for InProcessJobExecutor {
     async fn execute(
         &self,
-        assignment: &FleetJobAssignmentV1,
+        assignment: &FleetJobAssignment,
         cancel: Arc<AtomicBool>,
         shared: Arc<FleetShared>,
-    ) -> RunResultV2 {
+    ) -> RunResult {
         let run_id = format!("fleet-{}", assignment.job_id);
         let content_hash = strip_hash_prefix(&assignment.workflow_hash);
 
@@ -902,7 +901,7 @@ impl FleetLoop {
             self.shared.set_active_job(active_ids.first().cloned());
 
             let health = self.build_health(&active_ids).await;
-            let request = FleetPollRequestV1 {
+            let request = FleetPollRequest {
                 health,
                 active_job_ids: active_ids.clone(),
                 max_jobs: 1,
@@ -916,7 +915,7 @@ impl FleetLoop {
                         .then_some(response.poll_interval_seconds);
 
                     match response.device_status {
-                        FleetDeviceStatusV1::Revoked => {
+                        FleetDeviceStatus::Revoked => {
                             self.shared.set_state(
                                 LoopState::StoppedRevoked,
                                 Some("device revoked".to_string()),
@@ -926,7 +925,7 @@ impl FleetLoop {
                             }
                             break;
                         }
-                        FleetDeviceStatusV1::Dormant => {
+                        FleetDeviceStatus::Dormant => {
                             self.shared.set_state(
                                 LoopState::StoppedDormant,
                                 Some("device dormant".to_string()),
@@ -936,7 +935,7 @@ impl FleetLoop {
                             }
                             break;
                         }
-                        FleetDeviceStatusV1::Active => {}
+                        FleetDeviceStatus::Active => {}
                     }
 
                     // Cooperative cancellation of the running job.
@@ -989,10 +988,10 @@ impl FleetLoop {
         self.shared.refresh_tail(&self.journal);
     }
 
-    async fn build_health(&self, active_ids: &[String]) -> DeviceHealthV1 {
+    async fn build_health(&self, active_ids: &[String]) -> DeviceHealth {
         let snapshot = self.health.probe().await;
         let uptime_seconds = ((now_ms() - self.started_at_ms).max(0) as u64) / 1_000;
-        DeviceHealthV1 {
+        DeviceHealth {
             browser_running: snapshot.browser_running,
             extension_bridge_up: snapshot.extension_bridge_up,
             readiness_cause: snapshot.readiness_cause,
@@ -1021,7 +1020,7 @@ impl FleetLoop {
 
     /// Accept + spawn a job, journaling `accepted` BEFORE any execution. Returns
     /// `None` (no execution) when the job is already finished/posted (dedupe).
-    async fn maybe_start_job(&self, assignment: FleetJobAssignmentV1) -> Option<RunningJob> {
+    async fn maybe_start_job(&self, assignment: FleetJobAssignment) -> Option<RunningJob> {
         if let Some(entry) = self.journal.latest(&assignment.job_id) {
             if matches!(entry.state, JournalState::Finished | JournalState::Posted) {
                 // Already completed: never re-execute; a persisted result (if any)
@@ -1068,7 +1067,7 @@ impl FleetLoop {
             let mut result = executor
                 .execute(&assignment_task, cancel_task.clone(), shared.clone())
                 .await;
-            if result.status != RunStatusV2::Succeeded && result.failure_summary.is_none() {
+            if result.status != RunStatus::Succeeded && result.failure_summary.is_none() {
                 let error = result.error.as_ref();
                 let code = error.map_or("unknown", |e| e.code.as_str());
                 let message = error.map_or("workflow failed", |e| e.message.as_str());
@@ -1082,7 +1081,7 @@ impl FleetLoop {
             let cancelled = cancel_task.load(Ordering::SeqCst);
             let terminal = terminal_status(&result, cancelled);
             let phase = match &terminal {
-                FleetJobTerminalStatusV1::Succeeded => "succeeded",
+                FleetJobTerminalStatus::Succeeded => "succeeded",
                 _ => "failed",
             };
             let error_class = result
@@ -1108,7 +1107,7 @@ impl FleetLoop {
                 result: &result,
             });
 
-            let post = FleetResultPostV1 {
+            let post = FleetResultPost {
                 job_id: assignment_task.job_id.clone(),
                 status: terminal.clone(),
                 run_result: result,
@@ -1153,7 +1152,7 @@ impl FleetLoop {
                 Ok(bytes) => bytes,
                 Err(_) => continue,
             };
-            let post: FleetResultPostV1 = match serde_json::from_slice(&bytes) {
+            let post: FleetResultPost = match serde_json::from_slice(&bytes) {
                 Ok(post) => post,
                 Err(_) => {
                     let _ = fs::remove_file(&path);
@@ -1187,7 +1186,7 @@ impl FleetLoop {
             match entry.state {
                 JournalState::Accepted | JournalState::Running => {
                     if let Ok(bytes) = fs::read(&result_path) {
-                        if let Ok(post) = serde_json::from_slice::<FleetResultPostV1>(&bytes) {
+                        if let Ok(post) = serde_json::from_slice::<FleetResultPost>(&bytes) {
                             // A real result survived the crash; mark finished so it posts.
                             let _ = self.journal.append(JournalEntry::carry(
                                 &entry,
@@ -1202,7 +1201,7 @@ impl FleetLoop {
                     let _ = self.journal.append(JournalEntry::carry(
                         &entry,
                         JournalState::Finished,
-                        Some(FleetJobTerminalStatusV1::Aborted),
+                        Some(FleetJobTerminalStatus::Aborted),
                     ));
                 }
                 JournalState::Finished => {
@@ -1227,7 +1226,7 @@ fn should_claim_job(idle: bool, paused: bool) -> bool {
 // Result persistence + helpers
 // ---------------------------------------------------------------------------
 
-fn persist_result(dir: &Path, job_id: &str, post: &FleetResultPostV1) -> io::Result<()> {
+fn persist_result(dir: &Path, job_id: &str, post: &FleetResultPost) -> io::Result<()> {
     fs::create_dir_all(dir)?;
     let bytes = serde_json::to_vec(post).map_err(io_error)?;
     let name = result_filename(job_id);
@@ -1253,25 +1252,25 @@ fn result_filename(job_id: &str) -> String {
     format!("{sanitized}.json")
 }
 
-fn terminal_status(result: &RunResultV2, cancelled: bool) -> FleetJobTerminalStatusV1 {
+fn terminal_status(result: &RunResult, cancelled: bool) -> FleetJobTerminalStatus {
     if cancelled {
-        return FleetJobTerminalStatusV1::Cancelled;
+        return FleetJobTerminalStatus::Cancelled;
     }
     match result.status {
-        RunStatusV2::Succeeded => FleetJobTerminalStatusV1::Succeeded,
-        RunStatusV2::TimedOut => FleetJobTerminalStatusV1::TimedOut,
-        RunStatusV2::Cancelled => FleetJobTerminalStatusV1::Cancelled,
-        RunStatusV2::Failed | RunStatusV2::PolicyBlocked => FleetJobTerminalStatusV1::Failed,
+        RunStatus::Succeeded => FleetJobTerminalStatus::Succeeded,
+        RunStatus::TimedOut => FleetJobTerminalStatus::TimedOut,
+        RunStatus::Cancelled => FleetJobTerminalStatus::Cancelled,
+        RunStatus::Failed | RunStatus::PolicyBlocked => FleetJobTerminalStatus::Failed,
     }
 }
 
-fn terminal_error(terminal: &FleetJobTerminalStatusV1, result: &RunResultV2) -> Option<String> {
+fn terminal_error(terminal: &FleetJobTerminalStatus, result: &RunResult) -> Option<String> {
     match terminal {
-        FleetJobTerminalStatusV1::Succeeded => None,
-        FleetJobTerminalStatusV1::Cancelled => Some("cancelled by control plane".to_string()),
-        FleetJobTerminalStatusV1::TimedOut => Some("execution deadline exceeded".to_string()),
-        FleetJobTerminalStatusV1::Aborted => Some("supervisor restarted mid-run".to_string()),
-        FleetJobTerminalStatusV1::Failed => Some(
+        FleetJobTerminalStatus::Succeeded => None,
+        FleetJobTerminalStatus::Cancelled => Some("cancelled by control plane".to_string()),
+        FleetJobTerminalStatus::TimedOut => Some("execution deadline exceeded".to_string()),
+        FleetJobTerminalStatus::Aborted => Some("supervisor restarted mid-run".to_string()),
+        FleetJobTerminalStatus::Failed => Some(
             result
                 .error
                 .as_ref()
@@ -1303,22 +1302,22 @@ fn strip_hash_prefix(hash: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn aborted_post(job_id: &str, workflow_id: &str) -> FleetResultPostV1 {
+fn aborted_post(job_id: &str, workflow_id: &str) -> FleetResultPost {
     let now = now_ms();
-    FleetResultPostV1 {
+    FleetResultPost {
         job_id: job_id.to_string(),
-        status: FleetJobTerminalStatusV1::Aborted,
-        run_result: RunResultV2 {
-            version: RUN_RESULT_VERSION.to_string(),
+        status: FleetJobTerminalStatus::Aborted,
+        run_result: RunResult {
+            version: RUN_RESULT_CONTRACT.to_string(),
             run_id: format!("fleet-abort-{job_id}"),
             workflow_id: workflow_id.to_string(),
-            status: RunStatusV2::Failed,
+            status: RunStatus::Failed,
             output: None,
             artifacts: Vec::new(),
             warnings: Vec::new(),
             steps: Vec::new(),
             debug: None,
-            error: Some(RunErrorV1 {
+            error: Some(RunError {
                 code: "supervisor_restarted".to_string(),
                 message: "supervisor restarted mid-run".to_string(),
                 step_id: None,
@@ -1332,18 +1331,18 @@ fn aborted_post(job_id: &str, workflow_id: &str) -> FleetResultPostV1 {
     }
 }
 
-fn failed_result(run_id: &str, workflow_id: &str, message: String) -> RunResultV2 {
-    RunResultV2 {
-        version: RUN_RESULT_VERSION.to_string(),
+fn failed_result(run_id: &str, workflow_id: &str, message: String) -> RunResult {
+    RunResult {
+        version: RUN_RESULT_CONTRACT.to_string(),
         run_id: run_id.to_string(),
         workflow_id: workflow_id.to_string(),
-        status: RunStatusV2::Failed,
+        status: RunStatus::Failed,
         output: None,
         artifacts: Vec::new(),
         warnings: Vec::new(),
         steps: Vec::new(),
         debug: None,
-        error: Some(RunErrorV1 {
+        error: Some(RunError {
             code: "fleet_execution_error".to_string(),
             message,
             step_id: None,
@@ -1353,18 +1352,18 @@ fn failed_result(run_id: &str, workflow_id: &str, message: String) -> RunResultV
     }
 }
 
-fn timed_out_result(run_id: &str, workflow_id: &str) -> RunResultV2 {
-    RunResultV2 {
-        version: RUN_RESULT_VERSION.to_string(),
+fn timed_out_result(run_id: &str, workflow_id: &str) -> RunResult {
+    RunResult {
+        version: RUN_RESULT_CONTRACT.to_string(),
         run_id: run_id.to_string(),
         workflow_id: workflow_id.to_string(),
-        status: RunStatusV2::TimedOut,
+        status: RunStatus::TimedOut,
         output: None,
         artifacts: Vec::new(),
         warnings: Vec::new(),
         steps: Vec::new(),
         debug: None,
-        error: Some(RunErrorV1 {
+        error: Some(RunError {
             code: "execution_deadline_exceeded".to_string(),
             message: "execution deadline exceeded".to_string(),
             step_id: None,

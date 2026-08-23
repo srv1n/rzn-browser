@@ -191,9 +191,5 @@
       "abstract reflects what arXiv renders on the result card (the 'full abstract' link is expanded server-side).",
       "Use arxiv html to fetch the canonical abstract page for any returned id."
     ]
-  },
-  "metadata": {
-    "migrated_from": "arxiv/arxiv-search.json",
-    "legacy_system_id": "arxiv"
   }
 }

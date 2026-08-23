@@ -5,14 +5,14 @@ pub mod framing;
 pub mod runtime_paths;
 pub mod secure_files;
 pub mod workflow_contract {
-    pub use rzn_contracts::v2::*;
+    pub use rzn_contracts::workflow::*;
     use serde_json::Value;
 
     pub fn validate_manifest_str(
         json_str: &str,
-    ) -> Result<WorkflowManifestV2, Vec<ContractValidationIssueV2>> {
+    ) -> Result<WorkflowManifest, Vec<ContractValidationIssue>> {
         let value = serde_json::from_str::<Value>(json_str).map_err(|err| {
-            vec![ContractValidationIssueV2::new(
+            vec![ContractValidationIssue::new(
                 "",
                 format!("invalid JSON: {err}"),
             )]
@@ -21,11 +21,11 @@ pub mod workflow_contract {
     }
 
     pub fn validate_run_envelope_str(
-        manifest: &WorkflowManifestV2,
+        manifest: &WorkflowManifest,
         json_str: &str,
-    ) -> Result<RunEnvelopeV1, Vec<ContractValidationIssueV2>> {
+    ) -> Result<RunRequest, Vec<ContractValidationIssue>> {
         let value = serde_json::from_str::<Value>(json_str).map_err(|err| {
-            vec![ContractValidationIssueV2::new(
+            vec![ContractValidationIssue::new(
                 "",
                 format!("invalid JSON: {err}"),
             )]
@@ -34,9 +34,9 @@ pub mod workflow_contract {
     }
 
     pub fn normalize_manifest_params(
-        manifest: &WorkflowManifestV2,
+        manifest: &WorkflowManifest,
         input: &Value,
-    ) -> Result<serde_json::Map<String, Value>, Vec<ParamValidationIssueV2>> {
+    ) -> Result<serde_json::Map<String, Value>, Vec<ParamValidationIssue>> {
         manifest.normalize_params(input)
     }
 }
@@ -54,7 +54,6 @@ pub mod dsl {
     use super::*;
     use jsonschema::{Draft, JSONSchema};
     use serde::{Deserialize, Serialize};
-    use std::collections::HashMap;
 
     /// Main Step structure that wraps the generated StepKind
     #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -109,14 +108,6 @@ pub mod dsl {
         pub sensitive: Option<bool>,
     }
 
-    /// Request sent from the CLI to the broker describing a workflow to run
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct WorkflowRequest {
-        pub action: String,
-        pub task_id: String,
-        pub workflow: Workflow,
-    }
-
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct Message {
         pub action: String,
@@ -135,27 +126,6 @@ pub mod dsl {
         pub search_query: Option<String>,
     }
 
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct SelectorConfig {
-        pub name: String,
-        pub selector: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub attribute: Option<String>,
-        #[serde(default)]
-        pub post_processing: Vec<String>,
-    }
-
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct ExtensionResponse {
-        pub action: String,
-        pub task_id: String,
-        pub success: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub result: Option<serde_json::Value>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub error: Option<String>,
-    }
-
     /// Log message sent through native messaging
     #[derive(Serialize, Deserialize, Debug, Clone)]
     pub struct LogMessage {
@@ -167,83 +137,8 @@ pub mod dsl {
         pub data: Option<serde_json::Value>,
     }
 
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    #[serde(tag = "type")]
-    pub enum StepResult {
-        #[serde(rename = "ok")]
-        Ok { step_id: String },
-
-        #[serde(rename = "ok_with_payload")]
-        OkWithPayload {
-            step_id: String,
-            payload: serde_json::Value,
-        },
-
-        #[serde(rename = "error")]
-        Error { step_id: String, message: String },
-    }
-
-    /// Template for parameterized strings
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct Template(pub String);
-
-    impl Template {
-        /// Render the template with the given parameters
-        pub fn render(&self, params: &HashMap<String, String>) -> String {
-            let mut result = self.0.clone();
-            for (key, value) in params {
-                result = result.replace(&format!("{{{}}}", key), value);
-            }
-            result
-        }
-    }
-
-    /// Field definition for forms and validation
-    #[derive(Serialize, Deserialize, Debug, Clone)]
-    pub struct FieldDef {
-        pub name: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub description: Option<String>,
-        #[serde(default)]
-        pub required: bool,
-    }
-
-    impl Workflow {
-        /// Convert the workflow into a Task using the first sequence of
-        /// browser automation steps.
-        pub fn to_task(&self) -> Result<Task, String> {
-            let steps = if let Some(seq) = self.browser_automation.sequences.first() {
-                seq.steps.clone()
-            } else {
-                Vec::new()
-            };
-
-            Ok(Task {
-                steps,
-                search_query: None,
-            })
-        }
-    }
-
-    /// Validation functions for workflows
-    pub fn validate_workflow_value(value: &serde_json::Value) -> Result<(), String> {
-        validate_against_schema(value, include_str!("../../../schema/actions-v1.json"))
-    }
-
     pub fn validate_action_value(value: &serde_json::Value) -> Result<(), String> {
-        validate_against_schema(value, include_str!("../../../schema/actions-v1.json"))
-    }
-
-    pub fn validate_workflow_str(json_str: &str) -> Result<(), String> {
-        let value: serde_json::Value =
-            serde_json::from_str(json_str).map_err(|e| format!("Invalid JSON: {}", e))?;
-        validate_workflow_value(&value)
-    }
-
-    pub fn validate_action_str(json_str: &str) -> Result<(), String> {
-        let value: serde_json::Value =
-            serde_json::from_str(json_str).map_err(|e| format!("Invalid JSON: {}", e))?;
-        validate_action_value(&value)
+        validate_against_schema(value, include_str!("../../../schema/actions.json"))
     }
 
     fn validate_against_schema(value: &serde_json::Value, schema_str: &str) -> Result<(), String> {

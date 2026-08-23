@@ -1,0 +1,15 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-08-23T15:28:31Z",
+  "event_kind": "status_changed",
+  "id": "01M0QKSP7PG03GPKS2EYRH9VEW",
+  "object": "RZN-T-0001",
+  "object_kind": "task",
+  "payload": {
+    "from": "rework",
+    "reason": "Canonical docs and final code-backed proof are complete",
+    "to": "review"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

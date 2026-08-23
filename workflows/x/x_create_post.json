@@ -271,9 +271,5 @@
       "Opens a fresh tab via the /compose/post modal route.",
       "Does not handle media/video uploads \u2014 text-only posts."
     ]
-  },
-  "metadata": {
-    "migrated_from": "x/x_create_post.json",
-    "legacy_system_id": "x"
   }
 }

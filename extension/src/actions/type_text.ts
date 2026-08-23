@@ -165,6 +165,5 @@ export async function handleTypeText(step: any): Promise<any> {
     result,
     tabId: targetTabId,
     duration_ms: Date.now() - startedAt,
-    legacy: result,
   });
 }

@@ -192,9 +192,5 @@
       "The priming navigation to ?tab=0 is what makes XSRF cookies available to the same-origin step.",
       "Prefer this workflow over DOM scraping; the portal's keyword UI is shadow-DOM heavy and brittle."
     ]
-  },
-  "metadata": {
-    "migrated_from": "apple_ads/keyword-suggest.json",
-    "legacy_system_id": "apple_ads"
   }
 }

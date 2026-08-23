@@ -208,9 +208,5 @@
     "notes": [
       "Uses a dedicated workflow tab (`use_current_tab=false`) and the authenticated Chrome profile if Amazon account state is needed."
     ]
-  },
-  "metadata": {
-    "migrated_from": "amazon/amazon-product-with-profiles.json",
-    "legacy_system_id": null
   }
 }

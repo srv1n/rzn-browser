@@ -341,9 +341,5 @@
       "Opens a fresh tab; parallel DM sends to different handles are safe.",
       "Recipient must accept DMs from the authenticated user for the Message button to exist."
     ]
-  },
-  "metadata": {
-    "migrated_from": "x/x_send_dm.json",
-    "legacy_system_id": "x"
   }
 }

@@ -16,14 +16,14 @@ write_matches() {
   local pattern="$1"; shift
   local globs=()
   while [[ $# -gt 0 ]]; do globs+=( -g "$1" ); shift; done
-  rg -n --hidden "$pattern" "${globs[@]}" -g '!target/**' -g '!node_modules/**' -g '!extension/dist*/**' || true
+  rg -n --hidden "$pattern" "${globs[@]}" -g '!target/**' -g '!node_modules/**' -g '!extension/dist/**' || true
 }
 
 snippet_context() {
   local pattern="$1"; shift
   local globs=()
   while [[ $# -gt 0 ]]; do globs+=( -g "$1" ); shift; done
-  rg -n --hidden "$pattern" "${globs[@]}" -g '!target/**' -g '!node_modules/**' -g '!extension/dist*/**' \
+  rg -n --hidden "$pattern" "${globs[@]}" -g '!target/**' -g '!node_modules/**' -g '!extension/dist/**' \
     | while IFS=: read -r file line _; do
         echo "--- $file:$line"
         start=$((line-3)); end=$((line+3)); if (( start < 1 )); then start=1; fi

@@ -219,9 +219,5 @@
       "status maps to cardType (APPLIED / SAVED / IN_PROGRESS / ARCHIVED) inside the JS step.",
       "Card markup is best-effort; title/company/location/status_text degrade gracefully when a line is missing."
     ]
-  },
-  "metadata": {
-    "migrated_from": "linkedin/my_jobs.json",
-    "legacy_system_id": "linkedin"
   }
 }

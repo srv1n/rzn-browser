@@ -164,9 +164,5 @@
       "G2 sometimes redirects /search?query=<single-word-category> to /categories/<slug>. The selector works on both surfaces.",
       "G2 has occasional bot detection on this surface; if results come back empty, open the search URL manually once to clear any challenge before re-running."
     ]
-  },
-  "metadata": {
-    "migrated_from": "g2/g2-search.json",
-    "legacy_system_id": "g2"
   }
 }

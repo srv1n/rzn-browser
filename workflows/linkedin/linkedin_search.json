@@ -324,8 +324,5 @@
       "post_url is empty for the content vertical (LinkedIn does not expose per-post permalinks as hrefs in feed cards).",
       "Results are deduped by canonical href (query string stripped) and capped at max_results."
     ]
-  },
-  "metadata": {
-    "legacy_system_id": "linkedin"
   }
 }

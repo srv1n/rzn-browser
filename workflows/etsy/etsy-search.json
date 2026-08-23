@@ -240,9 +240,5 @@
       "Drives the homepage search box (`#global-enhancements-search-query`) rather than hitting `/search?q=<query>` directly so traffic looks human.",
       "Item selector targets `li[data-listing-id]`, `article[data-listing-id]`, and `.v2-listing-card` so layouts across Etsy A/B variants are handled."
     ]
-  },
-  "metadata": {
-    "migrated_from": "etsy/etsy-search.json",
-    "legacy_system_id": "etsy"
   }
 }

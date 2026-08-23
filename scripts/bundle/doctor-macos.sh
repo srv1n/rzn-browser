@@ -8,7 +8,7 @@ INSTALL_ROOT="${RZN_BUNDLE_INSTALL_ROOT:-${HOME}/Library/Application Support/RZN
 BIN_DIR="${INSTALL_ROOT}/bin"
 NATIVE_HOST_PATH="${BIN_DIR}/rzn-native-host"
 CLI_PATH="${BIN_DIR}/rzn-browser"
-EXT_DIR="${INSTALL_ROOT}/extension/dist-chrome"
+EXT_DIR="${INSTALL_ROOT}/extension/dist/chrome"
 
 CHROME_HOST_DIR="${RZN_BUNDLE_CHROME_HOST_DIR:-${HOME}/Library/Application Support/Google/Chrome/NativeMessagingHosts}"
 MANIFEST_PATH="${CHROME_HOST_DIR}/${HOST_NAME}.json"
@@ -67,25 +67,12 @@ print("allowed_origins:", d.get("allowed_origins"))
 PY
 
 echo ""
-if [[ -S "/tmp/rzn.sock" ]]; then
-  echo "[OK] /tmp/rzn.sock exists"
-  python3 - <<'PY'
-import socket
-s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-s.settimeout(0.2)
-try:
-  s.connect("/tmp/rzn.sock")
-  print("[OK] /tmp/rzn.sock is connectable")
-except Exception as e:
-  print("[WARN] /tmp/rzn.sock exists but connect failed:", e)
-finally:
-  try: s.close()
-  except Exception: pass
-PY
+SUPERVISOR_SOCKET="$INSTALL_ROOT/run/rzn-supervisor.sock"
+SUPERVISOR_TOKEN="$INSTALL_ROOT/secure/rzn-supervisor-token"
+if [[ -S "$SUPERVISOR_SOCKET" && -f "$SUPERVISOR_TOKEN" ]]; then
+  echo "[OK] supervisor endpoint artifacts exist"
 else
-  echo "[WARN] /tmp/rzn.sock missing"
-  echo "       Chrome launches the native host when the extension connects."
-  echo "       Actions: open Chrome, reload the extension, or restart Chrome."
+  echo "[WARN] supervisor endpoint artifacts missing"
 fi
 
 echo ""

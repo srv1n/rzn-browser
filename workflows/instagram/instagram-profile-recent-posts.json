@@ -252,9 +252,5 @@
       "Discovery stops at the smaller of target_count, max_scrolls, or max_idle_scrolls consecutive no-growth passes.",
       "Opens a dedicated workflow tab (use_current_tab=false), so this workflow is safe to run in parallel with other dedicated-tab instagram flows."
     ]
-  },
-  "metadata": {
-    "migrated_from": "instagram/instagram-profile-recent-posts.json",
-    "legacy_system_id": "instagram"
   }
 }

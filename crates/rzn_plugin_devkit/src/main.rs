@@ -153,7 +153,7 @@ struct PayloadFile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct PluginManifestV1 {
+struct PluginManifest {
     v: u32,
     id: String,
     version: String,
@@ -412,7 +412,7 @@ fn build_manifest(
     config: &BundleConfig,
     platform: &str,
     payloads: &BTreeMap<String, PayloadFile>,
-) -> Result<PluginManifestV1> {
+) -> Result<PluginManifest> {
     let mut sha256: BTreeMap<String, String> = BTreeMap::new();
     for (dest, payload) in payloads {
         let bytes = fs::read(&payload.source)
@@ -482,7 +482,7 @@ fn build_manifest(
         }
     }
 
-    let manifest = PluginManifestV1 {
+    let manifest = PluginManifest {
         v: 1,
         id: config.id.clone(),
         version: config.version.clone(),
@@ -500,7 +500,7 @@ fn build_manifest(
     Ok(manifest)
 }
 
-fn validate_manifest_basic(manifest: &PluginManifestV1) -> Result<()> {
+fn validate_manifest_basic(manifest: &PluginManifest) -> Result<()> {
     if manifest.v != 1 {
         bail!("unsupported manifest version {}", manifest.v);
     }
@@ -704,7 +704,7 @@ fn is_symlink(path: &Path) -> Result<bool> {
         .is_symlink())
 }
 
-fn serialize_manifest_bytes(manifest: &PluginManifestV1) -> Result<Vec<u8>> {
+fn serialize_manifest_bytes(manifest: &PluginManifest) -> Result<Vec<u8>> {
     let v = serde_json::to_value(manifest).context("serialize plugin.json to value")?;
     let v = canonicalize_json_value(v);
     let mut out = serde_json::to_vec(&v).context("serialize plugin.json")?;
@@ -848,7 +848,7 @@ fn verify_bundle_zip(zip_path: &Path, public_key_path: &Path) -> Result<()> {
     pk.verify_strict(&manifest_bytes, &sig)
         .context("signature verification failed")?;
 
-    let manifest: PluginManifestV1 =
+    let manifest: PluginManifest =
         serde_json::from_slice(&manifest_bytes).context("parse plugin.json")?;
     validate_manifest_basic(&manifest)?;
 
@@ -975,7 +975,7 @@ mod tests {
         payload_path: &str,
         payload_bytes: &[u8],
     ) -> Result<(Vec<u8>, String)> {
-        let manifest = PluginManifestV1 {
+        let manifest = PluginManifest {
             v: 1,
             id: "test-plugin".to_string(),
             version: "1.0.0".to_string(),
@@ -1118,7 +1118,7 @@ mod tests {
     }
 
     #[test]
-    fn directory_resources_and_examples_are_hashed_into_manifest() -> Result<()> {
+    fn directory_resources_are_hashed_into_manifest() -> Result<()> {
         let temp = TempDirGuard::new("rzn-plugin-devkit-test")?;
 
         let browser_bin = temp.path.join("artifacts/rzn-browser");
@@ -1127,10 +1127,6 @@ mod tests {
         let system_meta = temp
             .path
             .join("resources/systems/browser_automation/system.metadata.yaml");
-        let example_workflow = temp
-            .path
-            .join("examples/browser_automation/open_page_get_title.json");
-
         write_file(&browser_bin, b"browser-supervisor-binary")?;
         write_file(&worker_bin, b"worker-binary")?;
         write_file(&native_host_bin, b"native-host-binary")?;
@@ -1138,8 +1134,6 @@ mod tests {
             &system_meta,
             b"version: 1\nsystem:\n  id: browser_automation\n",
         )?;
-        write_file(&example_workflow, br#"{"id":"open_page_get_title"}"#)?;
-
         let config = BundleConfig {
             id: "rzn-browser".to_string(),
             version: "0.1.0".to_string(),
@@ -1185,28 +1179,16 @@ mod tests {
                     mode: Some(JsonValue::String("755".to_string())),
                 },
             ],
-            shared_payloads: vec![
-                PayloadConfig {
-                    source: temp
-                        .path
-                        .join("resources/systems/browser_automation")
-                        .display()
-                        .to_string(),
-                    dest: "resources/systems/browser_automation".to_string(),
-                    platforms: None,
-                    mode: None,
-                },
-                PayloadConfig {
-                    source: temp
-                        .path
-                        .join("examples/browser_automation")
-                        .display()
-                        .to_string(),
-                    dest: "examples/browser_automation".to_string(),
-                    platforms: None,
-                    mode: None,
-                },
-            ],
+            shared_payloads: vec![PayloadConfig {
+                source: temp
+                    .path
+                    .join("resources/systems/browser_automation")
+                    .display()
+                    .to_string(),
+                dest: "resources/systems/browser_automation".to_string(),
+                platforms: None,
+                mode: None,
+            }],
         };
 
         let payloads = collect_payloads(&config, "macos_universal")?;
@@ -1214,8 +1196,6 @@ mod tests {
         assert!(payloads.contains_key("bin/macos/universal/plugin-worker"));
         assert!(payloads.contains_key("bin/macos/universal/rzn-native-host"));
         assert!(payloads.contains_key("resources/systems/browser_automation/system.metadata.yaml"));
-        assert!(payloads.contains_key("examples/browser_automation/open_page_get_title.json"));
-
         let manifest = build_manifest(&config, "macos_universal", &payloads)?;
         assert!(manifest
             .sha256
@@ -1228,10 +1208,6 @@ mod tests {
         assert!(manifest
             .sha256
             .contains_key("resources/systems/browser_automation/system.metadata.yaml"));
-        assert!(manifest
-            .sha256
-            .contains_key("examples/browser_automation/open_page_get_title.json"));
-
         Ok(())
     }
 }

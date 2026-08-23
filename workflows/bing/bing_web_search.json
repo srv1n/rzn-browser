@@ -207,9 +207,5 @@
       "Organic only \u2014 sponsored (`li.b_ad`) results are skipped by the item selector.",
       "Opens a fresh tab; safe to run in parallel with the other bing workflows."
     ]
-  },
-  "metadata": {
-    "migrated_from": "bing/bing_web_search.json",
-    "legacy_system_id": "bing"
   }
 }

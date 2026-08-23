@@ -263,9 +263,5 @@
       "Chrome may prompt the first time you run against a fresh profile. Subsequent runs reuse the prior choice.",
       "Opens a fresh tab."
     ]
-  },
-  "metadata": {
-    "migrated_from": "bing/bing_images_download.json",
-    "legacy_system_id": "bing"
   }
 }

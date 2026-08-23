@@ -1,9 +1,5 @@
 node_modules/
 dist/
-dist-chrome
-dist-chrome/
-dist-firefox
-dist-firefox/
 *.zip
 
 com.example.rustapp.json
@@ -18,7 +14,6 @@ google_search.json
 .tmp_cssparser_test/
 .beads/
 CLAUDE.md
-.tusker-local/
 docs/index/
 
 google.md
@@ -59,8 +54,8 @@ workflows/generated/
 output/
 artifacts/
 
-# Local task tracker state (kept on disk, not published)
-tusker/
+# Legacy local task state (not published)
+# The current repository tracker lives in `.tusker/`.
 
 # Internal planning notes, not public docs
 docs/repo_cleanup_audit/

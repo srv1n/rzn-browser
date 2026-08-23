@@ -274,9 +274,5 @@
       "Selector coverage is broad on purpose because PubMed ships several layout variants — empty fields are common when a particular element is absent on a given record (e.g. no DOI, no PMC).",
       "Use pubmed search to resolve a query into PMIDs first, then feed PMIDs into this workflow one at a time."
     ]
-  },
-  "metadata": {
-    "migrated_from": "pubmed/pubmed-extract.json",
-    "legacy_system_id": "pubmed"
   }
 }

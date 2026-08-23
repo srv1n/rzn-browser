@@ -3,19 +3,19 @@ use std::fs;
 use std::path::Path;
 
 fn main() {
-    println!("cargo:rerun-if-changed=../../schema/actions-v1.json");
+    println!("cargo:rerun-if-changed=../../schema/actions.json");
 
-    let schema_path = Path::new("../../schema/actions-v1.json");
+    let schema_path = Path::new("../../schema/actions.json");
     let out_dir = env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("step.rs");
 
     // Read the schema file
     let schema_content =
-        fs::read_to_string(schema_path).expect("Failed to read actions-v1.json schema file");
+        fs::read_to_string(schema_path).expect("Failed to read actions.json schema file");
 
     // Parse the schema to extract action types
     let schema: serde_json::Value =
-        serde_json::from_str(&schema_content).expect("Failed to parse actions-v1.json");
+        serde_json::from_str(&schema_content).expect("Failed to parse actions.json");
 
     // Extract action types from enum
     let action_types = schema["properties"]["type"]["enum"]

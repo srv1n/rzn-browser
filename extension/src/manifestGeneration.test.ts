@@ -83,7 +83,7 @@ describe('manifest generation', () => {
     }
   });
 
-  it('keeps Chromium manifests free of legacy Edge-only metadata', async () => {
+  it('keeps Chromium manifests free of Edge update metadata', async () => {
     const chrome = await buildManifestForTarget('chrome', repoRoot);
     const edge = await buildManifestForTarget('edge', repoRoot);
     const chromium = await buildManifestForTarget('chromium', repoRoot);
@@ -107,7 +107,6 @@ describe('manifest generation', () => {
         rootDir: repoRoot,
         distSourceDir,
         distRootDir,
-        layout: 'nested',
         buildSignature: '20260803T101112Z',
       });
 
@@ -129,8 +128,8 @@ describe('manifest generation', () => {
     }
   });
 
-  it('keeps the legacy dist-target manifest layout available for older callers', async () => {
-    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'rzn-manifest-legacy-'));
+  it('writes the canonical nested manifest layout', async () => {
+    const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'rzn-manifest-nested-'));
     const distSourceDir = path.join(tmp, 'dist-source');
     await fs.mkdir(distSourceDir, { recursive: true });
     await fs.writeFile(path.join(distSourceDir, 'background.js'), '// built background');
@@ -141,8 +140,8 @@ describe('manifest generation', () => {
       distRootDir: tmp,
     });
 
-    const manifest = await readJson(path.join(tmp, 'dist-chrome', 'manifest.json'));
-    const metadata = await readJson(path.join(tmp, 'dist-chrome', 'rzn-build.json'));
+    const manifest = await readJson(path.join(tmp, 'chrome', 'manifest.json'));
+    const metadata = await readJson(path.join(tmp, 'chrome', 'rzn-build.json'));
     expect(manifest.rzn_build).toBeUndefined();
     expect(metadata.extension_target).toBe('chrome');
     expect(metadata.extension_id).toBe(RZN_DEV_EXTENSION_ID);
@@ -164,7 +163,7 @@ describe('manifest generation', () => {
       buildSignature: 'v0.1.1',
     });
 
-    const manifest = await readJson(path.join(tmp, 'dist-chrome', 'manifest.json'));
+    const manifest = await readJson(path.join(tmp, 'chrome', 'manifest.json'));
     expect(manifest.version).toBe(releaseVersion);
   });
 

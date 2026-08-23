@@ -1,0 +1,30 @@
+filters:
+  or:
+    - and:
+      - file.ext == "md"
+      - 'schema == "tusker.gate/v1"'
+      - 'status == "open"'
+      - 'owner == "human" || owner.startsWith("human:")'
+    - and:
+      - file.ext == "md"
+      - 'schema == "tusker.task/v7"'
+      - 'readiness == "waiting_on_human" || agent_action == "stop_until_human_response"'
+properties:
+  id:
+    displayName: ID
+  title:
+    displayName: Title
+  owner:
+    displayName: Owner
+  next_owner:
+    displayName: Next owner
+  blocks:
+    displayName: Blocks
+  next_action:
+    displayName: Next action
+  action:
+    displayName: Gate action
+views:
+  - type: table
+    name: "Human Actions"
+    order: [id, title, owner, next_owner, blocks, action, next_action]

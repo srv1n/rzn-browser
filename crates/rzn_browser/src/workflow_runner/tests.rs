@@ -4,11 +4,12 @@
 //! live in `native_runner` (they exercise code that moved here). The second block
 //! is the `MockTransport` suite that drives `execute_workflow` end to end:
 //! happy path, transient retry, external-write no-retry, stop_workflow early exit,
-//! per-step watchdog timeout, output selector, and legacy-format workflows.
+//! per-step watchdog timeout, and output selector.
 
 use super::*;
-use crate::workflow_params::apply_parameters;
-use rzn_contracts::v2::RunStatusV2;
+use rzn_contracts::workflow::{
+    RunStatus, SideEffectClass, WorkflowAction, WorkflowActionKind, WorkflowStep,
+};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -67,11 +68,6 @@ fn external_write_steps_are_detected_for_no_retry() {
         "type": "execute_javascript",
         "side_effects": ["browser_state", "external_write"],
     })));
-    // Legacy steps may nest them under `action`.
-    assert!(step_has_external_write(&json!({
-        "id": "s9",
-        "action": { "side_effects": ["external_write"] },
-    })));
     // Read-only / state-only steps must remain retriable.
     assert!(!step_has_external_write(&json!({
         "id": "s7",
@@ -79,107 +75,6 @@ fn external_write_steps_are_detected_for_no_retry() {
         "side_effects": ["read_only"],
     })));
     assert!(!step_has_external_write(&json!({ "id": "s1" })));
-}
-
-#[test]
-fn apply_parameters_injects_safe_params_for_script_steps() {
-    let workflow = json!({
-        "browser_automation": {
-            "sequences": [{
-                "steps": [{
-                    "type": "execute_javascript",
-                    "script": "return window.__rzn_params.message_body;",
-                    "args": []
-                }]
-            }]
-        }
-    });
-    let params = HashMap::from([("message_body".to_string(), "O'Reilly".to_string())]);
-
-    let applied = apply_parameters(workflow, &params);
-    let step = &applied["browser_automation"]["sequences"][0]["steps"][0];
-
-    assert_eq!(step["params"]["message_body"], "O'Reilly");
-    assert_eq!(step["script"], "return window.__rzn_params.message_body;");
-}
-
-#[test]
-fn apply_parameters_expands_chained_param_defaults() {
-    let workflow = json!({
-        "browser_automation": {
-            "sequences": [{
-                "steps": [{
-                    "type": "navigate_to_url",
-                    "url": "{app_url}"
-                }]
-            }]
-        }
-    });
-    let params = HashMap::from([
-        (
-            "app_url".to_string(),
-            "https://apps.apple.com/{country}/app/id{app_id}".to_string(),
-        ),
-        ("country".to_string(), "us".to_string()),
-        ("app_id".to_string(), "123456789".to_string()),
-    ]);
-
-    let applied = apply_parameters(workflow, &params);
-
-    assert_eq!(
-        applied
-            .pointer("/browser_automation/sequences/0/steps/0/url")
-            .and_then(|value| value.as_str()),
-        Some("https://apps.apple.com/us/app/id123456789")
-    );
-}
-
-#[test]
-fn runtime_context_is_discovered_from_manifest_workflow_ref() {
-    let root = unique_temp_path("runtime-context").join("workflows");
-    let workflow_dir = root.join("x");
-    fs::create_dir_all(&workflow_dir).unwrap();
-    let workflow_path = workflow_dir.join("x_open.json");
-    fs::write(
-        &workflow_path,
-        r#"{
-          "browser_automation": {
-            "sequences": [{
-              "steps": [{ "id": "extract", "type": "extract_structured_data" }]
-            }]
-          }
-        }"#,
-    )
-    .unwrap();
-    fs::write(
-        workflow_dir.join("open.json"),
-        r#"{
-          "schema_version": "rzn.workflow_manifest",
-          "id": "x.open",
-          "name": "Open X",
-          "version": "0.1.0",
-          "system": "x",
-          "capability": "x.read.unified",
-          "side_effects": [{ "class": "read_only" }],
-          "runtime": { "actor": "supervisor", "workflow_path": "x/x_open.json" },
-          "steps": [],
-          "result": {
-            "output_selector": { "step_id": "extract", "path": "$" }
-          }
-        }"#,
-    )
-    .unwrap();
-
-    let context = load_runtime_context_for_workflow(&workflow_path.to_string_lossy()).unwrap();
-
-    let context = context.expect("manifest context");
-    assert_eq!(context.workflow_id, "x.open");
-    assert_eq!(context.workflow_version, "0.1.0");
-    assert_eq!(context.capability, "x.read.unified");
-    assert_eq!(context.declared_side_effects, vec!["read_only"]);
-    assert!(context.enforce_side_effects);
-
-    let _ = fs::remove_dir_all(&root);
 }
 
 #[test]
@@ -220,9 +115,9 @@ fn step_payload_threads_manifest_identity_and_side_effect_policy() {
 #[test]
 fn output_extraction_prefers_run_result_output() {
     let response = json!({
-        "result": { "legacy": true },
+        "result": { "ignored": true },
         "run_result": {
-            "version": "rzn.run_result.v2",
+            "version": "rzn.run_result",
             "run_id": "run-1",
             "workflow_id": "x.open",
             "status": "succeeded",
@@ -271,17 +166,23 @@ fn manifest_with_steps_loads_as_executable_workflow() {
 
     let workflow = load_workflow_value(&manifest_path.to_string_lossy()).unwrap();
     let steps = workflow
-        .pointer("/browser_automation/sequences/0/steps")
+        .get("steps")
         .and_then(|value| value.as_array())
         .expect("steps");
 
     assert_eq!(steps.len(), 2);
-    assert_eq!(steps[0].get("type"), Some(&json!("navigate_to_url")));
     assert_eq!(
-        steps[0].get("url"),
+        steps[0].pointer("/action/kind"),
+        Some(&json!("navigate_to_url"))
+    );
+    assert_eq!(
+        steps[0].pointer("/action/inputs/url"),
         Some(&json!("https://www.google.com/search?q={search_query}"))
     );
-    assert_eq!(steps[1].get("item_selector"), Some(&json!(".result")));
+    assert_eq!(
+        steps[1].pointer("/action/inputs/item_selector"),
+        Some(&json!(".result"))
+    );
 
     let _ = fs::remove_dir_all(&root);
 }
@@ -338,10 +239,7 @@ fn manifest_run_loader_keeps_manifest_steps_and_params_authoritative() {
     )
     .unwrap();
 
-    assert!(
-        loaded.report_workflow.get("browser_automation").is_none(),
-        "manifest run path must not synthesize a legacy workflow object"
-    );
+    assert!(loaded.report_workflow.get("steps").is_some());
     assert!(matches!(loaded.steps[0], RuntimeStep::Manifest { .. }));
     let executor_step = loaded.steps[0].executor_step();
     assert_eq!(executor_step.get("type"), Some(&json!("navigate_to_url")));
@@ -480,9 +378,9 @@ fn manifest_run_loader_rejects_unknown_output_selector_step() {
 fn step_recording_preserves_supervisor_run_result_envelope() {
     let response = json!({
         "ok": true,
-        "result": { "legacy": true },
+        "result": { "ignored": true },
         "run_result": {
-            "version": "rzn.run_result.v2",
+            "version": "rzn.run_result",
             "run_id": "run-1",
             "workflow_id": "x.open",
             "status": "succeeded",
@@ -506,7 +404,7 @@ fn step_recording_preserves_supervisor_run_result_envelope() {
         final_payload
             .get("version")
             .and_then(|value| value.as_str()),
-        Some("rzn.run_result.v2")
+        Some("rzn.run_result")
     );
     assert_eq!(
         final_payload
@@ -517,14 +415,14 @@ fn step_recording_preserves_supervisor_run_result_envelope() {
 }
 
 #[test]
-fn response_success_treats_error_shaped_legacy_response_as_failure() {
+fn response_success_treats_error_shaped_response_as_failure() {
     assert!(!response_success(&json!({
         "error": "selector not found",
         "error_code": "SELECTOR_NOT_FOUND"
     })));
     assert!(!response_success(&json!({
         "run_result": {
-            "version": "rzn.run_result.v2",
+            "version": "rzn.run_result",
             "run_id": "run-1",
             "workflow_id": "x.open",
             "status": "failed",
@@ -678,9 +576,10 @@ async fn fleet_session_lifecycle_payloads_include_run_metadata_and_outcome() {
         ..SessionSpec::default()
     };
 
-    let result = execute_workflow(&transport, &sink, single_legacy_step("step", false), opts).await;
+    let result =
+        execute_workflow(&transport, &sink, single_manifest_step("step", false), opts).await;
 
-    assert_eq!(result.status, RunStatusV2::Succeeded);
+    assert_eq!(result.status, RunStatus::Succeeded);
     assert_eq!(
         transport.call_params("browser.session_open"),
         json!({ "origin": "fleet", "run_id": "fleet-run-1", "job_id": "job-1" }),
@@ -694,19 +593,19 @@ async fn fleet_session_lifecycle_payloads_include_run_metadata_and_outcome() {
 }
 
 #[tokio::test]
-async fn local_sessions_keep_the_legacy_lifecycle_payloads() {
+async fn local_sessions_keep_lifecycle_payloads() {
     let transport = MockTransport::new(Some("local-session"), vec![Ok(json!({ "success": true }))]);
     let sink = RecordingSink::default();
 
     let result = execute_workflow(
         &transport,
         &sink,
-        single_legacy_step("step", false),
+        single_manifest_step("step", false),
         test_opts(SnapshotMode::None),
     )
     .await;
 
-    assert_eq!(result.status, RunStatusV2::Succeeded);
+    assert_eq!(result.status, RunStatus::Succeeded);
     assert_eq!(transport.call_params("browser.session_open"), json!({}));
     assert_eq!(
         transport.call_params("browser.session_close"),
@@ -734,11 +633,17 @@ async fn retained_tab_is_targeted_for_every_step_and_not_closed() {
     let workflow = LoadedWorkflow {
         report_workflow: json!({ "id": "demo/test", "version": "1.0.0" }),
         steps: vec![
-            RuntimeStep::Legacy(
-                json!({ "id": "navigate", "type": "navigate_to_url", "url": "https://example.test" }),
+            manifest_step(
+                "navigate",
+                WorkflowActionKind::NavigateToUrl,
+                json!({ "url": "https://example.test" }),
+                &[],
             ),
-            RuntimeStep::Legacy(
-                json!({ "id": "extract", "type": "execute_javascript", "script": "return 1;" }),
+            manifest_step(
+                "extract",
+                WorkflowActionKind::ExecuteJavascript,
+                json!({ "script": "return 1;" }),
+                &[],
             ),
         ],
         prefer_current_tab: false,
@@ -746,7 +651,7 @@ async fn retained_tab_is_targeted_for_every_step_and_not_closed() {
     };
     let result = execute_workflow(&transport, &sink, workflow, opts).await;
 
-    assert_eq!(result.status, RunStatusV2::Succeeded);
+    assert_eq!(result.status, RunStatus::Succeeded);
     assert_eq!(
         transport.call_params("browser.session_open")["tab_ref"],
         json!("rzn://browser/chrome-one/tab/42")
@@ -779,17 +684,19 @@ async fn tab_ref_close_step_is_forwarded_without_an_active_tab_fallback() {
     opts.session.tab_ref = Some("rzn://browser/chrome-one/tab/42".to_string());
     let workflow = LoadedWorkflow {
         report_workflow: json!({ "id": "chatgpt/close", "version": "1.0.0" }),
-        steps: vec![RuntimeStep::Legacy(json!({
-            "id": "close",
-            "type": "close_current_tab"
-        }))],
+        steps: vec![manifest_step(
+            "close",
+            WorkflowActionKind::CloseCurrentTab,
+            json!({}),
+            &[],
+        )],
         prefer_current_tab: false,
         runtime_context: None,
     };
 
     let result = execute_workflow(&transport, &sink, workflow, opts).await;
 
-    assert_eq!(result.status, RunStatusV2::Succeeded);
+    assert_eq!(result.status, RunStatus::Succeeded);
     assert_eq!(transport.execute_count(), 1);
     assert_eq!(
         transport.call_params("browser.execute_step")["tab_ref"],
@@ -797,14 +704,42 @@ async fn tab_ref_close_step_is_forwarded_without_an_active_tab_fallback() {
     );
 }
 
-fn single_legacy_step(id: &str, external_write: bool) -> LoadedWorkflow {
-    let mut step = json!({ "id": id, "type": "execute_javascript", "script": "return 1;" });
-    if external_write {
-        step["side_effects"] = json!(["external_write"]);
+fn manifest_step(
+    id: impl Into<String>,
+    kind: WorkflowActionKind,
+    inputs: Value,
+    side_effects: &[SideEffectClass],
+) -> RuntimeStep {
+    let mut action = WorkflowAction::new(kind);
+    action.inputs = inputs.as_object().cloned().unwrap_or_default();
+    action.side_effects = side_effects.to_vec();
+    RuntimeStep::Manifest {
+        step: WorkflowStep {
+            id: id.into(),
+            name: None,
+            action,
+            timeout_ms: None,
+            retry: Default::default(),
+            continue_on_error: false,
+        },
+        params: HashMap::new(),
     }
+}
+
+fn single_manifest_step(id: &str, external_write: bool) -> LoadedWorkflow {
+    let side_effects = if external_write {
+        vec![SideEffectClass::ExternalWrite]
+    } else {
+        Vec::new()
+    };
     LoadedWorkflow {
         report_workflow: json!({ "id": "demo/test", "version": "1.0.0" }),
-        steps: vec![RuntimeStep::Legacy(step)],
+        steps: vec![manifest_step(
+            id,
+            WorkflowActionKind::ExecuteJavascript,
+            json!({ "script": "return 1;" }),
+            &side_effects,
+        )],
         prefer_current_tab: false,
         runtime_context: None,
     }
@@ -835,7 +770,7 @@ async fn execute_workflow_runs_manifest_and_selects_step_output() {
 
     let result = execute_workflow(&transport, &sink, workflow, test_opts(SnapshotMode::None)).await;
 
-    assert_eq!(result.status, RunStatusV2::Succeeded);
+    assert_eq!(result.status, RunStatus::Succeeded);
     assert_eq!(result.workflow_id, "google/search");
     assert_eq!(
         result.output,
@@ -868,8 +803,11 @@ async fn execute_workflow_applies_output_selector_path() {
     };
     let workflow = LoadedWorkflow {
         report_workflow: json!({ "id": "demo/x", "version": "1.0.0" }),
-        steps: vec![RuntimeStep::Legacy(
-            json!({ "id": "extract", "type": "extract_structured_data" }),
+        steps: vec![manifest_step(
+            "extract",
+            WorkflowActionKind::ExtractStructuredData,
+            json!({}),
+            &[],
         )],
         prefer_current_tab: false,
         runtime_context: Some(context),
@@ -885,7 +823,7 @@ async fn execute_workflow_applies_output_selector_path() {
 
     let result = execute_workflow(&transport, &sink, workflow, test_opts(SnapshotMode::None)).await;
 
-    assert_eq!(result.status, RunStatusV2::Succeeded);
+    assert_eq!(result.status, RunStatus::Succeeded);
     assert_eq!(result.output, Some(json!("picked")));
 }
 
@@ -894,11 +832,17 @@ async fn execute_workflow_stops_early_on_stop_workflow() {
     let workflow = LoadedWorkflow {
         report_workflow: json!({ "id": "demo/x", "version": "1.0.0" }),
         steps: vec![
-            RuntimeStep::Legacy(
-                json!({ "id": "one", "type": "execute_javascript", "script": "return 1;" }),
+            manifest_step(
+                "one",
+                WorkflowActionKind::ExecuteJavascript,
+                json!({ "script": "return 1;" }),
+                &[],
             ),
-            RuntimeStep::Legacy(
-                json!({ "id": "two", "type": "execute_javascript", "script": "return 2;" }),
+            manifest_step(
+                "two",
+                WorkflowActionKind::ExecuteJavascript,
+                json!({ "script": "return 2;" }),
+                &[],
             ),
         ],
         prefer_current_tab: false,
@@ -918,7 +862,7 @@ async fn execute_workflow_stops_early_on_stop_workflow() {
 
     let result = execute_workflow(&transport, &sink, workflow, test_opts(SnapshotMode::None)).await;
 
-    assert_eq!(result.status, RunStatusV2::Succeeded);
+    assert_eq!(result.status, RunStatus::Succeeded);
     // Second step must never run.
     assert_eq!(transport.execute_count(), 1);
     assert_eq!(sink.stops.lock().unwrap().as_slice(), &["halt".to_string()]);
@@ -926,7 +870,7 @@ async fn execute_workflow_stops_early_on_stop_workflow() {
 
 #[tokio::test]
 async fn execute_workflow_retries_transient_step_error() {
-    let workflow = single_legacy_step("retry-me", false);
+    let workflow = single_manifest_step("retry-me", false);
     let transport = MockTransport::new(
         Some("s"),
         vec![
@@ -938,14 +882,14 @@ async fn execute_workflow_retries_transient_step_error() {
 
     let result = execute_workflow(&transport, &sink, workflow, test_opts(SnapshotMode::None)).await;
 
-    assert_eq!(result.status, RunStatusV2::Succeeded);
+    assert_eq!(result.status, RunStatus::Succeeded);
     // One transient failure then success => two execute_step calls.
     assert_eq!(transport.execute_count(), 2);
 }
 
 #[tokio::test]
 async fn execute_workflow_caps_transient_step_retries() {
-    let workflow = single_legacy_step("retry-me", false);
+    let workflow = single_manifest_step("retry-me", false);
     let transport = MockTransport::new(
         Some("s"),
         vec![
@@ -960,13 +904,13 @@ async fn execute_workflow_caps_transient_step_retries() {
 
     let result = execute_workflow(&transport, &sink, workflow, test_opts(SnapshotMode::None)).await;
 
-    assert_eq!(result.status, RunStatusV2::Failed);
+    assert_eq!(result.status, RunStatus::Failed);
     assert_eq!(transport.execute_count(), MAX_TRANSIENT_STEP_RETRIES + 1);
 }
 
 #[tokio::test]
 async fn execute_workflow_does_not_retry_rate_limited_transient_error() {
-    let workflow = single_legacy_step("read", false);
+    let workflow = single_manifest_step("read", false);
     let transport = MockTransport::new(
         Some("s"),
         vec![
@@ -982,13 +926,13 @@ async fn execute_workflow_does_not_retry_rate_limited_transient_error() {
 
     let result = execute_workflow(&transport, &sink, workflow, test_opts(SnapshotMode::None)).await;
 
-    assert_eq!(result.status, RunStatusV2::Failed);
+    assert_eq!(result.status, RunStatus::Failed);
     assert_eq!(transport.execute_count(), 1);
 }
 
 #[tokio::test]
 async fn execute_workflow_does_not_retry_external_write_step() {
-    let workflow = single_legacy_step("post", true);
+    let workflow = single_manifest_step("post", true);
     let transport = MockTransport::new(
         Some("s"),
         vec![
@@ -1001,7 +945,7 @@ async fn execute_workflow_does_not_retry_external_write_step() {
 
     let result = execute_workflow(&transport, &sink, workflow, test_opts(SnapshotMode::None)).await;
 
-    assert_eq!(result.status, RunStatusV2::Failed);
+    assert_eq!(result.status, RunStatus::Failed);
     assert_eq!(transport.execute_count(), 1);
 }
 
@@ -1020,12 +964,12 @@ async fn execute_workflow_preserves_typed_tab_missing_error_code() {
     let result = execute_workflow(
         &transport,
         &sink,
-        single_legacy_step("read", false),
+        single_manifest_step("read", false),
         test_opts(SnapshotMode::None),
     )
     .await;
 
-    assert_eq!(result.status, RunStatusV2::Failed);
+    assert_eq!(result.status, RunStatus::Failed);
     let error = result.error.expect("typed bridge failure is preserved");
     assert_eq!(error.code, "TAB_MISSING");
     assert!(error.message.starts_with("TAB_MISSING:"));
@@ -1034,7 +978,7 @@ async fn execute_workflow_preserves_typed_tab_missing_error_code() {
 
 #[tokio::test]
 async fn execute_workflow_surfaces_watchdog_timeout_as_failure() {
-    let workflow = single_legacy_step("hang", false);
+    let workflow = single_manifest_step("hang", false);
     let transport = MockTransport::new(Some("s"), vec![Err(TransportError::Timeout)]);
     let sink = RecordingSink::default();
 
@@ -1046,7 +990,7 @@ async fn execute_workflow_surfaces_watchdog_timeout_as_failure() {
     )
     .await;
 
-    assert_eq!(result.status, RunStatusV2::Failed);
+    assert_eq!(result.status, RunStatus::Failed);
     let summary = result.failure_summary.as_ref().expect("failure summary");
     assert_eq!(summary.failing_step_index, Some(0));
     assert_eq!(summary.error_class, "timeout");
@@ -1076,10 +1020,12 @@ async fn execute_workflow_propagates_known_failing_step_into_fingerprint() {
         report_workflow: json!({ "id": "demo/seven", "version": "1.0.0" }),
         steps: (0..7)
             .map(|index| {
-                RuntimeStep::Legacy(json!({
-                    "id": format!("step-{index}"),
-                    "type": "click"
-                }))
+                manifest_step(
+                    format!("step-{index}"),
+                    WorkflowActionKind::Click,
+                    json!({}),
+                    &[],
+                )
             })
             .collect(),
         prefer_current_tab: false,
@@ -1103,51 +1049,6 @@ async fn execute_workflow_propagates_known_failing_step_into_fingerprint() {
     assert_eq!(summary.failing_step_index, Some(6));
     assert_eq!(summary.error_class, "selector_not_found");
     assert_eq!(summary.fingerprint, "333a6f8f918a2812");
-}
-
-#[tokio::test]
-async fn execute_workflow_runs_legacy_format() {
-    let root = unique_temp_path("run-legacy").join("workflows");
-    let workflow_dir = root.join("demo");
-    fs::create_dir_all(&workflow_dir).unwrap();
-    let path = workflow_dir.join("legacy.json");
-    fs::write(
-        &path,
-        r#"{
-          "id": "demo.legacy",
-          "version": "1.0.0",
-          "browser_automation": {
-            "sequences": [{
-              "steps": [
-                { "id": "open", "type": "navigate_to_url", "url": "https://example.com" },
-                { "id": "read", "type": "extract_structured_data" }
-              ]
-            }]
-          }
-        }"#,
-    )
-    .unwrap();
-
-    let workflow = load_workflow_for_run(&path.to_string_lossy(), &HashMap::new()).unwrap();
-    assert!(matches!(workflow.steps[0], RuntimeStep::Legacy(_)));
-
-    let transport = MockTransport::new(
-        Some("s"),
-        vec![
-            Ok(json!({ "success": true, "result": { "opened": true } })),
-            Ok(json!({ "success": true, "result": { "text": "hello" } })),
-        ],
-    );
-    let sink = RecordingSink::default();
-
-    let result = execute_workflow(&transport, &sink, workflow, test_opts(SnapshotMode::None)).await;
-
-    assert_eq!(result.status, RunStatusV2::Succeeded);
-    assert_eq!(result.workflow_id, "rzn.legacy.workflow");
-    assert_eq!(result.output, Some(json!({ "text": "hello" })));
-    assert_eq!(transport.execute_count(), 2);
-
-    let _ = fs::remove_dir_all(&root);
 }
 
 fn unique_temp_path(name: &str) -> PathBuf {

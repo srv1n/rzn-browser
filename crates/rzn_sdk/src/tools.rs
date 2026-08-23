@@ -1,6 +1,8 @@
 use crate::host::RuntimeTransport;
 use crate::session::{Session, SessionConfig};
-use rzn_contracts::v1::{ActionResultV1, ActionV1, SnapshotV1, TargetV1, TranscriptV1};
+use rzn_contracts::browser::{
+    BrowserAction, BrowserActionResult, BrowserSnapshot, BrowserTarget, BrowserTranscript,
+};
 use tokio::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -51,7 +53,7 @@ pub type ToolResult<T> = std::result::Result<T, ToolError>;
 ///
 /// This is the recommended entrypoint for downstream apps. It intentionally:
 /// - avoids exposing `rzn_plan` internals
-/// - returns stable, structured contracts (`rzn_contracts::v1`)
+/// - returns stable, structured browser contracts (`rzn_contracts::browser`)
 /// - keeps LLM prompting/planning ownership in the host application
 pub struct BrowserTools {
     session: Session,
@@ -77,19 +79,19 @@ impl BrowserTools {
         Ok(Self { session })
     }
 
-    pub fn transcript(&self) -> &TranscriptV1 {
+    pub fn transcript(&self) -> &BrowserTranscript {
         self.session.transcript()
     }
 
-    pub fn last_snapshot(&self) -> Option<&SnapshotV1> {
+    pub fn last_snapshot(&self) -> Option<&BrowserSnapshot> {
         self.session.last_snapshot()
     }
 
-    pub async fn observe(&mut self) -> ToolResult<SnapshotV1> {
+    pub async fn observe(&mut self) -> ToolResult<BrowserSnapshot> {
         self.session.snapshot().await.map_err(map_session_err)
     }
 
-    pub async fn act(&mut self, action: ActionV1) -> ToolResult<ActionResultV1> {
+    pub async fn act(&mut self, action: BrowserAction) -> ToolResult<BrowserActionResult> {
         let res = self.session.apply(action).await.map_err(map_session_err)?;
         ensure_success(&res)?;
         Ok(res)
@@ -97,8 +99,8 @@ impl BrowserTools {
 
     pub async fn execute_steps(
         &mut self,
-        actions: Vec<ActionV1>,
-    ) -> ToolResult<Vec<ActionResultV1>> {
+        actions: Vec<BrowserAction>,
+    ) -> ToolResult<Vec<BrowserActionResult>> {
         let mut out = Vec::with_capacity(actions.len());
         for action in actions {
             let res = self.session.apply(action).await.map_err(map_session_err)?;
@@ -111,9 +113,9 @@ impl BrowserTools {
     pub async fn click_encoded(
         &mut self,
         encoded_id: impl Into<String>,
-    ) -> ToolResult<ActionResultV1> {
-        self.act(ActionV1::ClickElement {
-            target: TargetV1::from_encoded_id(encoded_id),
+    ) -> ToolResult<BrowserActionResult> {
+        self.act(BrowserAction::ClickElement {
+            target: BrowserTarget::from_encoded_id(encoded_id),
             random_offset: Some(true),
             timeout_ms: Some(5000),
         })
@@ -124,9 +126,9 @@ impl BrowserTools {
         &mut self,
         encoded_id: impl Into<String>,
         value: impl Into<String>,
-    ) -> ToolResult<ActionResultV1> {
-        self.act(ActionV1::FillInputField {
-            target: TargetV1::from_encoded_id(encoded_id),
+    ) -> ToolResult<BrowserActionResult> {
+        self.act(BrowserAction::FillInputField {
+            target: BrowserTarget::from_encoded_id(encoded_id),
             value: value.into(),
             clear_first: Some(true),
             simulate_typing: Some(true),
@@ -140,9 +142,9 @@ impl BrowserTools {
         &mut self,
         encoded_id: impl Into<String>,
         key: impl Into<String>,
-    ) -> ToolResult<ActionResultV1> {
-        self.act(ActionV1::PressSpecialKey {
-            target: TargetV1::from_encoded_id(encoded_id),
+    ) -> ToolResult<BrowserActionResult> {
+        self.act(BrowserAction::PressSpecialKey {
+            target: BrowserTarget::from_encoded_id(encoded_id),
             key: key.into(),
             timeout_ms: Some(5000),
         })
@@ -153,9 +155,9 @@ impl BrowserTools {
         &mut self,
         encoded_id: impl Into<String>,
         timeout_ms: u32,
-    ) -> ToolResult<ActionResultV1> {
-        self.act(ActionV1::WaitForElement {
-            target: TargetV1::from_encoded_id(encoded_id),
+    ) -> ToolResult<BrowserActionResult> {
+        self.act(BrowserAction::WaitForElement {
+            target: BrowserTarget::from_encoded_id(encoded_id),
             timeout_ms: Some(timeout_ms),
         })
         .await
@@ -164,7 +166,7 @@ impl BrowserTools {
     pub async fn get_page_source(&mut self) -> ToolResult<String> {
         let res = self
             .session
-            .apply(ActionV1::GetPageSource)
+            .apply(BrowserAction::GetPageSource)
             .await
             .map_err(map_session_err)?;
         ensure_success(&res)?;
@@ -192,7 +194,7 @@ fn map_session_err(err: crate::Error) -> ToolError {
     }
 }
 
-fn ensure_success(res: &ActionResultV1) -> ToolResult<()> {
+fn ensure_success(res: &BrowserActionResult) -> ToolResult<()> {
     if res.success {
         return Ok(());
     }
@@ -213,39 +215,55 @@ fn ensure_success(res: &ActionResultV1) -> ToolResult<()> {
     Err(ToolError::ExtensionError { code, message })
 }
 
-fn extract_page_source_html(res: &ActionResultV1) -> Option<String> {
+fn extract_page_source_html(res: &BrowserActionResult) -> Option<String> {
     let raw = res.raw.as_ref()?;
-    if let Some(s) = raw.get("html_content").and_then(|v| v.as_str()) {
-        return Some(s.to_string());
-    }
-    if let Some(steps) = raw.get("steps").and_then(|v| v.as_array()) {
-        for step in steps {
-            if let Some(s) = step.pointer("/data/html_content").and_then(|v| v.as_str()) {
-                return Some(s.to_string());
-            }
+    raw.pointer("/result/html")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    fn result(raw: Value) -> BrowserActionResult {
+        BrowserActionResult {
+            success: true,
+            error_code: None,
+            error: None,
+            current_url: None,
+            current_tab_id: None,
+            current_tab_ref: None,
+            dom_hash: None,
+            dom_snapshot: None,
+            capabilities: None,
+            raw: Some(raw),
         }
     }
-    // Legacy results array
-    if let Some(results) = raw.get("results").and_then(|v| v.as_array()) {
-        for r in results {
-            let is_page_source = r.get("type").and_then(|v| v.as_str()) == Some("page_source");
-            if is_page_source {
-                if let Some(s) = r.get("html").and_then(|v| v.as_str()) {
-                    return Some(s.to_string());
-                }
-            }
-        }
+
+    #[test]
+    fn page_source_uses_direct_result_shape() {
+        let response = result(json!({
+            "success": true,
+            "result": {"type": "page_source", "html": "<html></html>"}
+        }));
+
+        assert_eq!(
+            extract_page_source_html(&response).as_deref(),
+            Some("<html></html>")
+        );
     }
-    // Nested under result.results
-    if let Some(results) = raw.pointer("/result/results").and_then(|v| v.as_array()) {
-        for r in results {
-            let is_page_source = r.get("type").and_then(|v| v.as_str()) == Some("page_source");
-            if is_page_source {
-                if let Some(s) = r.get("html").and_then(|v| v.as_str()) {
-                    return Some(s.to_string());
-                }
-            }
-        }
+
+    #[test]
+    fn page_source_ignores_retired_aggregate_shapes() {
+        let response = result(json!({
+            "html_content": "<html>top-level</html>",
+            "steps": [{"data": {"html_content": "<html>step</html>"}}],
+            "results": [{"type": "page_source", "html": "<html>results</html>"}],
+            "result": {"results": [{"type": "page_source", "html": "<html>nested</html>"}]}
+        }));
+
+        assert_eq!(extract_page_source_html(&response), None);
     }
-    None
 }

@@ -1,0 +1,3 @@
+name: tusker
+description: Use Tusker V7 for task creation, lifecycle state, acceptance, proof, gates, and closeout whenever a repository contains .tusker or a Tusker task is named.
+entrypoint: SKILL.md

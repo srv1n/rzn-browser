@@ -1,0 +1,31 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-08-23T12:31:37Z",
+  "event_kind": "updated",
+  "id": "01M0Q9NRH08S5WXKF5Y7WS3ZF8",
+  "object": "RZN-T-0001",
+  "object_kind": "task",
+  "payload": {
+    "changes": {
+      "next_owner": {
+        "from": "agent",
+        "to": "reviewer"
+      },
+      "next_ref": {
+        "from": "RZN-T-0001",
+        "to": ""
+      },
+      "next_source": {
+        "from": "task",
+        "to": "review_policy"
+      },
+      "readiness": {
+        "from": "ready",
+        "to": "waiting_on_review"
+      }
+    },
+    "source": "task:RZN-T-0001"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

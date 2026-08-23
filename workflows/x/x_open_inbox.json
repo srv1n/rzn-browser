@@ -154,9 +154,5 @@
       "Read-only: never sends a message.",
       "Opens a fresh tab so other workflows can run in parallel against the same browser session."
     ]
-  },
-  "metadata": {
-    "migrated_from": "x/x_open_inbox.json",
-    "legacy_system_id": "x"
   }
 }

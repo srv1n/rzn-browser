@@ -110,7 +110,6 @@ test.describe('Extraction - Infinite scroll list', () => {
     // Now extract all items
     const extractResp = await page.evaluate(async () => (window as any).__rznExecuteStep({
       type: 'extract_structured_data',
-      force_legacy: true,
       item_selector: '#feed .item',
       fields: [
         { name: 'text', selector: '*' },

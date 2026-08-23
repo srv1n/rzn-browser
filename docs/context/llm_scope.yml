@@ -3,9 +3,8 @@ include:
   - extension/tests/**
   - crates/**/src/**
   - workflows/**
-  - docs/features/**
-  - docs/ARCHITECTURE.md
-  - docs/WORKFLOW_MODE.md
+  - docs/system/**
+  - workflows/README.md
   - AGENTS.md
   - README.md
   - Makefile
@@ -13,8 +12,6 @@ exclude:
   - target/**
   - node_modules/**
   - extension/dist/**
-  - extension/dist-*/**
-  - extension/dist-chrome/**
   - logs/**
   - .git/**
   - test-results/**

@@ -225,9 +225,5 @@
       "Instagram only renders the category tab (Accounts / Tags / Places) for a category that actually has matches, so mode=\"hashtags\" on a handle-only query returns an empty results array rather than an error.",
       "Rows are deduped by href because Instagram renders each result with both an image link and a text link pointing at the same target."
     ]
-  },
-  "metadata": {
-    "migrated_from": "instagram/instagram-search.json",
-    "legacy_system_id": "instagram"
   }
 }

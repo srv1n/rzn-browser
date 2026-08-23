@@ -178,9 +178,5 @@
       "Uses direct URL navigation (old.reddit.com/search?q=\u2026) to avoid the homepage search-form consent-banner click interception landmine.",
       "Requires no authentication; works on logged-out sessions too, though rate-limiting is stricter when logged out."
     ]
-  },
-  "metadata": {
-    "migrated_from": "reddit/reddit-search.json",
-    "legacy_system_id": "reddit"
   }
 }

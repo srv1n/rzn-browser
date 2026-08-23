@@ -201,8 +201,5 @@
       "Sections are located by their visible H2 heading text (About / Experience / Education) since LinkedIn class names are hashed per deploy.",
       "Missing fields degrade to empty string or empty array."
     ]
-  },
-  "metadata": {
-    "legacy_system_id": "linkedin"
   }
 }

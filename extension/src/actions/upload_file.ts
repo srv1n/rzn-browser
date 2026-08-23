@@ -156,6 +156,5 @@ export async function handleUploadFile(step: any): Promise<any> {
     result: payload,
     tabId: targetTabId,
     duration_ms: Date.now() - startedAt,
-    legacy: payload,
   });
 }

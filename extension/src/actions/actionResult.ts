@@ -27,7 +27,6 @@ export type ActionResultMeta = {
 export type ActionSuccessInput<T = any> = ActionResultMeta & {
   action: string;
   result?: T;
-  legacy?: Record<string, any>;
   warnings?: ActionWarning[];
   artifacts?: ActionArtifact[];
   debug?: Record<string, any>;
@@ -37,7 +36,6 @@ export type ActionErrorInput = ActionResultMeta & {
   action: string;
   error: unknown;
   error_code?: string;
-  legacy?: Record<string, any>;
   warnings?: ActionWarning[];
   artifacts?: ActionArtifact[];
   debug?: Record<string, any>;
@@ -59,37 +57,10 @@ export interface TypedActionResult<T = any> {
   duration_ms?: number;
   rung_used?: number | string;
   escalated?: boolean;
-  [legacyField: string]: any;
 }
-
-const canonicalActionResultFields = new Set([
-  'success',
-  'status',
-  'action',
-  'result',
-  'warnings',
-  'artifacts',
-  'debug',
-  'error',
-  'error_code',
-  'error_msg',
-  'tabId',
-  'timestamp',
-  'duration_ms',
-  'rung_used',
-  'escalated',
-]);
 
 function isRecord(value: unknown): value is Record<string, any> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function legacyFields(legacy?: Record<string, any>): Record<string, any> {
-  if (!legacy) return {};
-
-  return Object.fromEntries(
-    Object.entries(legacy).filter(([key]) => !canonicalActionResultFields.has(key)),
-  );
 }
 
 function errorMessage(error: unknown): string {
@@ -121,7 +92,6 @@ export function actionSuccess<T = any>(input: ActionSuccessInput<T>): TypedActio
     artifacts: input.artifacts ?? [],
     ...(input.debug ? { debug: input.debug } : {}),
     ...commonFields(input),
-    ...legacyFields(input.legacy),
   };
 }
 
@@ -139,7 +109,6 @@ export function actionFailure(input: ActionErrorInput): TypedActionResult<null> 
     artifacts: input.artifacts ?? [],
     ...(input.debug ? { debug: input.debug } : {}),
     ...commonFields(input),
-    ...legacyFields(input.legacy),
   };
 }
 
@@ -177,7 +146,7 @@ export function actionResultFailureMessage(value: unknown, fallback = 'Action fa
 export function normalizeActionResult<T = any>(
   action: string,
   value: unknown,
-  meta: Omit<ActionSuccessInput<T>, 'action' | 'result' | 'legacy'> = {},
+  meta: Omit<ActionSuccessInput<T>, 'action' | 'result'> = {},
 ): TypedActionResult<T> {
   if (isTypedActionResult(value)) {
     return value as TypedActionResult<T>;
@@ -188,7 +157,6 @@ export function normalizeActionResult<T = any>(
       action,
       error: actionResultFailureMessage(value),
       ...meta,
-      legacy: value,
     });
   }
 
@@ -196,6 +164,5 @@ export function normalizeActionResult<T = any>(
     action,
     result: value as T,
     ...meta,
-    legacy: isRecord(value) ? value : undefined,
   });
 }

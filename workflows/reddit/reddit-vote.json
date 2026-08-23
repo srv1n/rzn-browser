@@ -249,9 +249,5 @@
       "Idempotent. Calling direction=up on an already-upvoted item returns success with action='noop_already_upvoted'.",
       "Score field comes from the .score element's title attribute (exact integer) when available; falls back to the visible text (which Reddit may fuzz)."
     ]
-  },
-  "metadata": {
-    "migrated_from": "reddit/reddit-vote.json",
-    "legacy_system_id": "reddit"
   }
 }

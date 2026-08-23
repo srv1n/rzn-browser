@@ -129,9 +129,5 @@
     ],
     "returns": [],
     "notes": []
-  },
-  "metadata": {
-    "migrated_from": "chatgpt/chatgpt_recent_chats.json",
-    "legacy_system_id": "chatgpt"
   }
 }

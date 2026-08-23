@@ -125,14 +125,14 @@ test.describe('Multi-workflow concurrency e2e', () => {
         runSteps(
           [
             { type: 'navigate_to_url', url: `${baseUrl}?job=a`, wait: 'domcontentloaded' },
-            { type: 'fill_input_field', selector: '#name', value: 'SessionA', clear_first: true, force_legacy: true },
+            { type: 'fill_input_field', selector: '#name', value: 'SessionA', clear_first: true },
           ],
           { session_id: 'session-a' },
         ),
         runSteps(
           [
             { type: 'navigate_to_url', url: `${baseUrl}?job=b`, wait: 'domcontentloaded' },
-            { type: 'fill_input_field', selector: '#name', value: 'SessionB', clear_first: true, force_legacy: true },
+            { type: 'fill_input_field', selector: '#name', value: 'SessionB', clear_first: true },
           ],
           { session_id: 'session-b' },
         ),

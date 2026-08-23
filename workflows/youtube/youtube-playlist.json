@@ -208,9 +208,5 @@
       "Mix/auto-generated playlists (id starts with RD) are allowed but may not expose every entry in the DOM.",
       "Channel name is sourced from the playlist sidebar when available. Per-video channel is omitted for single-channel playlists \u2014 YouTube doesn't render a separate byline per row in that case."
     ]
-  },
-  "metadata": {
-    "migrated_from": "youtube/youtube-playlist.json",
-    "legacy_system_id": "youtube"
   }
 }

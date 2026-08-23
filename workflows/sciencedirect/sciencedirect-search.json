@@ -198,9 +198,5 @@
       "doi is read from the li[data-doi] attribute, not rendered text.",
       "The url field is a relative path; prefix with https://www.sciencedirect.com to resolve."
     ]
-  },
-  "metadata": {
-    "migrated_from": "sciencedirect/sciencedirect-search.json",
-    "legacy_system_id": "sciencedirect"
   }
 }

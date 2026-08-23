@@ -1,0 +1,18 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-08-23T15:27:05Z",
+  "event_kind": "verification_removed",
+  "id": "01M0QKQ252NXQDPN6TACFP6KBD",
+  "object": "RZN-T-0001",
+  "object_kind": "task",
+  "payload": {
+    "blocked_by": "",
+    "check": "command: make schema-check",
+    "covers": "A1",
+    "index": 3,
+    "notes": "documented schema boundary",
+    "result": "pending"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

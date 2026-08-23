@@ -11,7 +11,7 @@ fn repo_root() -> PathBuf {
 }
 
 #[test]
-fn google_workflows_parse_as_v1_workflow() {
+fn google_workflows_parse_as_workflow() {
     let workflows = [
         "workflows/google/google-search.json",
         "workflows/google/google-images.json",

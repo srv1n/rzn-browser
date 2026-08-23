@@ -216,9 +216,5 @@
       "If you want Chrome to save files directly inside the authenticated session, use `bing_images_download` instead.",
       "Opens a fresh tab."
     ]
-  },
-  "metadata": {
-    "migrated_from": "bing/bing_images_search.json",
-    "legacy_system_id": "bing"
   }
 }

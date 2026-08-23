@@ -486,9 +486,5 @@
       "Read-only: walks the SPA, opens a property tab, then closes it. No login required.",
       "Selectors track Airbnb's data-testid attributes; expect breakage when Airbnb ships a UI refresh."
     ]
-  },
-  "metadata": {
-    "migrated_from": "airbnb/airbnb-search.json",
-    "legacy_system_id": "airbnb"
   }
 }

@@ -50,7 +50,6 @@ def write_metadata(stage: Path, *, version: str, kind: str, platform_slug: str |
 
 def copy_catalog_payload(root: Path, stage: Path) -> None:
     copy_tree(root / "workflows", stage / "workflows")
-    copy_tree(root / "examples" / "browser_automation", stage / "examples" / "browser_automation")
     if (root / "resources").exists():
         copy_tree(root / "resources", stage / "resources")
 
@@ -100,8 +99,6 @@ def build_extension(root: Path, version: str) -> None:
             str(extension_dir / "dist"),
             "--dist-root",
             str(extension_dir),
-            "--layout",
-            "legacy",
             "--build-signature",
             f"v{version}",
         ],
@@ -134,7 +131,7 @@ def build_runtime(root: Path, version: str, platform_slug: str) -> Path:
         src = root / "target" / "release" / exe_name(binary, platform_slug)
         copy_file(src, stage / "bin" / exe_name(binary, platform_slug), executable=True)
 
-    copy_tree(root / "extension" / "dist-chrome", stage / "extension" / "dist-chrome")
+    copy_tree(root / "extension" / "dist" / "chrome", stage / "extension" / "dist" / "chrome")
     copy_catalog_payload(root, stage)
     if (root / "skills").is_dir():
         copy_tree(root / "skills", stage / "skills")

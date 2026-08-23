@@ -90,7 +90,6 @@ cd "$repo_root"
       -path 'extension/.pw-user-data*' -o \
       -path 'extension/coverage' -o \
       -path 'extension/dist' -o \
-      -path 'extension/dist-*' -o \
       -path 'extension/node_modules' -o \
       -path 'extension/test-results' \
     \) -prune -o \

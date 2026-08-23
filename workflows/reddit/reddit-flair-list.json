@@ -231,14 +231,10 @@
     "notes": [
       "Source of truth is the live submit-page picker, not /api/link_flair_v2. The picker reflects what THIS account can actually use, including karma-gated and account-conditional flairs the public API hides or shows indiscriminately. Trade-off: the picker is browser-only, so this workflow is slower (~10s) than an API call.",
       "Cache the result. Reddit's flair sets change rarely (weeks\u2013months). The intended call site is the publisher's discovery loop, not its publish-time path.",
-      "mod_only is derived from aria-disabled='true' on the radio input \u2014 Reddit hides flairs the account can't use OR shows them disabled with this attribute. text_editable and allowed_post_types are NOT exposed in the picker DOM without selecting each flair (Reddit only renders the edit affordance after selection); shipping these would 9\u00d7 the run time. They are out of scope for v1; add via a follow-up workflow if a publisher actually needs them.",
+      "mod_only is derived from aria-disabled='true' on the radio input \u2014 Reddit hides flairs the account can't use OR shows them disabled with this attribute. text_editable and allowed_post_types are NOT exposed in the picker DOM without selecting each flair (Reddit only renders the edit affordance after selection); shipping these would 9\u00d7 the run time. Add them in a separate workflow only when a publisher needs them.",
       "Closes the flair modal via Cancel before returning so the composer is left in a clean state for any subsequent workflow that reuses the session.",
       "Caller must be signed into reddit.com in the active browser profile.",
       "Idempotent + side-effect-free. Safe to call repeatedly without rate-limit risk beyond Reddit's normal page-load gating."
     ]
-  },
-  "metadata": {
-    "migrated_from": "reddit/reddit-flair-list.json",
-    "legacy_system_id": "reddit"
   }
 }

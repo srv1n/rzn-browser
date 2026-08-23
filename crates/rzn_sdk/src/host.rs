@@ -7,21 +7,11 @@ use std::collections::HashMap;
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeTransport {
     Native,
-    Tcp,
-    Pipe,
 }
 
 impl RuntimeTransport {
     pub fn from_env() -> Self {
-        match std::env::var("RZN_TRANSPORT")
-            .unwrap_or_else(|_| "native".to_string())
-            .to_lowercase()
-            .as_str()
-        {
-            "native" | "endpoint" | "auto" => Self::Native,
-            "tcp" => Self::Tcp,
-            _ => Self::Pipe,
-        }
+        Self::Native
     }
 }
 
@@ -29,8 +19,6 @@ impl From<RuntimeTransport> for rzn_plan::broker_client::Transport {
     fn from(value: RuntimeTransport) -> Self {
         match value {
             RuntimeTransport::Native => Self::Native,
-            RuntimeTransport::Tcp => Self::Tcp,
-            RuntimeTransport::Pipe => Self::Pipe,
         }
     }
 }
@@ -44,7 +32,6 @@ pub type BrokerTransport = RuntimeTransport;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostConfig {
     pub llm_provider: String,
-    pub openai_api_key: String,
     pub llm_api_key: String,
     pub model: String,
     pub execution_model: Option<String>,
@@ -70,7 +57,6 @@ impl HostConfig {
     fn to_plan_config(&self) -> rzn_plan::PlanConfig {
         rzn_plan::PlanConfig {
             llm_provider: self.llm_provider.clone(),
-            openai_api_key: self.openai_api_key.clone(),
             llm_api_key: self.llm_api_key.clone(),
             model: self.model.clone(),
             execution_model: self.execution_model.clone(),
@@ -90,7 +76,6 @@ impl Default for HostConfig {
         let cfg = rzn_plan::PlanConfig::default();
         Self {
             llm_provider: cfg.llm_provider,
-            openai_api_key: cfg.openai_api_key,
             llm_api_key: cfg.llm_api_key,
             model: cfg.model,
             execution_model: cfg.execution_model,

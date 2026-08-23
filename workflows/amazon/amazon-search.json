@@ -234,9 +234,5 @@
       "Drives the real homepage search box (`#twotabsearchtextbox`) and submits the form to look like a human rather than a bot hitting `/s?k=...` directly.",
       "Feed `product_url` into amazon/product-key-facts-reviews for deep extraction."
     ]
-  },
-  "metadata": {
-    "migrated_from": "amazon/amazon-search.json",
-    "legacy_system_id": "amazon"
   }
 }

@@ -284,9 +284,5 @@
       "date_posted maps to f_TPR (r2592000 / r604800 / r86400); remote maps to f_WT (1 / 2 / 3).",
       "Use linkedin_job_detail to expand a single job by job_id."
     ]
-  },
-  "metadata": {
-    "migrated_from": "linkedin/jobs_search.json",
-    "legacy_system_id": "linkedin"
   }
 }

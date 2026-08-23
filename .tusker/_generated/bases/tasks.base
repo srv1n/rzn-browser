@@ -1,0 +1,69 @@
+filters:
+  and:
+    - file.ext == "md"
+    - 'schema == "tusker.task/v7"'
+properties:
+  id:
+    displayName: ID
+  title:
+    displayName: Title
+  epic:
+    displayName: Epic
+  wave:
+    displayName: Wave
+  status:
+    displayName: Status
+  readiness:
+    displayName: Readiness
+  priority:
+    displayName: Priority
+  risk:
+    displayName: Risk
+  next_owner:
+    displayName: Next owner
+  next_action:
+    displayName: Next action
+views:
+  - type: table
+    name: "Agent Ready"
+    filters:
+      and:
+        - 'readiness == "ready"'
+        - 'status == "ready" || status == "rework"'
+        - 'next_owner == "agent" || next_owner.startsWith("agent:")'
+    order: [id, title, wave, epic, priority, risk, next_action]
+  - type: table
+    name: Backlog
+    filters:
+      or:
+        - 'status == "idea"'
+        - 'status == "backlog"'
+        - 'readiness == "held"'
+    order: [id, title, wave, epic, priority, risk, next_owner, next_action]
+  - type: table
+    name: Review
+    filters:
+      and:
+        - 'status == "review"'
+        - 'readiness != "waiting_on_human"'
+    order: [id, title, wave, epic, risk, next_action]
+  - type: table
+    name: Human Wait
+    filters:
+      or:
+        - 'readiness == "waiting_on_human"'
+        - 'agent_action == "stop_until_human_response"'
+    order: [id, title, next_owner, next_ref, next_action]
+  - type: table
+    name: Blocked
+    filters:
+      or:
+        - 'readiness.startsWith("blocked")'
+        - 'readiness == "waiting_on_ci"'
+    order: [id, title, wave, epic, readiness, next_owner, next_action]
+  - type: table
+    name: Done
+    filters:
+      and:
+        - 'status == "done"'
+    order: [id, title, wave, epic, accepted_by, closed_at]

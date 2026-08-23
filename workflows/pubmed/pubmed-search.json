@@ -169,9 +169,5 @@
       "Uses standard DOM input and submit actions; no CDP is required.",
       "Caller should treat results as the currently visible PubMed search page, not a full PubMed API export."
     ]
-  },
-  "metadata": {
-    "migrated_from": "pubmed/pubmed-search.json",
-    "legacy_system_id": "pubmed"
   }
 }

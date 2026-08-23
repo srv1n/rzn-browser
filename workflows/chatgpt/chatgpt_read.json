@@ -34,11 +34,6 @@
         "required": false,
         "description": "What to return. `latest` = just the last user message + every assistant turn after it (final reply + any planning turns) + a streaming flag. `transcript` (default) = user/assistant turns as clean markdown. `full` = every node in the mapping with raw parts, metadata, and parent/child refs."
       },
-      "attachments_scroll": {
-        "kind": "boolean",
-        "required": false,
-        "description": "Deprecated no-op. Attachments are now enumerated from the conversation JSON, so nothing has to be scrolled into view. Accepted and ignored."
-      },
       "after_message_id": {
         "kind": "string",
         "required": false,
@@ -188,7 +183,6 @@
       "download_attachments": "If true, download every file attachment — both user uploads and assistant-generated sandbox outputs (code-interpreter patches/zips) — bundled into ONE zip (chatgpt-attachments-<chat_id>.zip) in the browser Downloads folder. Avoids Chrome's multi-download gate. Defaults to true.",
       "include_system": "Only meaningful when mode=transcript. If true, include system/tool turns in the messages array. Defaults to false.",
       "mode": "What to return. `latest` = just the last user message + every assistant turn after it (final reply + any planning turns) + a streaming flag. `transcript` (default) = user/assistant turns as clean markdown. `full` = every node in the mapping with raw parts, metadata, and parent/child refs.",
-      "attachments_scroll": "If true (and download_attachments is on), scroll the whole conversation top-to-bottom so virtualized assistant-generated download buttons render and get captured. Slower; use it to collect buried patches/zips. Defaults to false (capture only currently-rendered attachments).",
       "after_message_id": "Optional submitted user-message boundary. Returns the standard read envelope plus response_state; a later active-chain user turn fails with BOUNDARY_SUPERSEDED."
     },
     "examples": [
@@ -227,9 +221,5 @@
       "Gizmo/project user uploads can return 403 from the file-download API (ChatGPT marks them direct_get_only); assistant-generated files are unaffected.",
       "Image generation outputs are not auto-downloaded here — use chatgpt_images_download for that."
     ]
-  },
-  "metadata": {
-    "migrated_from": "chatgpt/chatgpt_read.json",
-    "legacy_system_id": "chatgpt"
   }
 }

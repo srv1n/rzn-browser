@@ -203,9 +203,5 @@
       "Pagination uses ?page=<n> on the canonical URL \u2014 G2's pager is server-rendered so this is more reliable than clicking the next button (which sometimes lazy-loads via JS).",
       "max_pages caps at 5 to avoid long runs and rate limiting."
     ]
-  },
-  "metadata": {
-    "migrated_from": "g2/g2-product-details-reviews.json",
-    "legacy_system_id": "g2"
   }
 }

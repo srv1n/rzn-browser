@@ -15,7 +15,7 @@ use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 
-use rzn_contracts::fleet_v1::FleetErrorV1;
+use rzn_contracts::fleet::FleetError;
 
 // ---------------------------------------------------------------------------
 // Fixtures / helpers
@@ -31,8 +31,8 @@ fn temp_dir(tag: &str) -> PathBuf {
     dir
 }
 
-fn assignment(job_id: &str) -> FleetJobAssignmentV1 {
-    FleetJobAssignmentV1 {
+fn assignment(job_id: &str) -> FleetJobAssignment {
+    FleetJobAssignment {
         job_id: job_id.to_string(),
         workflow_id: "wf_demo".to_string(),
         workflow_hash: "a".repeat(64),
@@ -44,42 +44,42 @@ fn assignment(job_id: &str) -> FleetJobAssignmentV1 {
     }
 }
 
-fn poll_active_empty() -> FleetPollResponseV1 {
-    FleetPollResponseV1 {
+fn poll_active_empty() -> FleetPollResponse {
+    FleetPollResponse {
         jobs: Vec::new(),
         cancellations: Vec::new(),
         poll_interval_seconds: 0,
-        device_status: FleetDeviceStatusV1::Active,
+        device_status: FleetDeviceStatus::Active,
     }
 }
 
-fn poll_with_job(a: FleetJobAssignmentV1) -> FleetPollResponseV1 {
-    FleetPollResponseV1 {
+fn poll_with_job(a: FleetJobAssignment) -> FleetPollResponse {
+    FleetPollResponse {
         jobs: vec![a],
         ..poll_active_empty()
     }
 }
 
-fn poll_with_cancel(job_id: &str) -> FleetPollResponseV1 {
-    FleetPollResponseV1 {
+fn poll_with_cancel(job_id: &str) -> FleetPollResponse {
+    FleetPollResponse {
         cancellations: vec![job_id.to_string()],
         ..poll_active_empty()
     }
 }
 
-fn poll_revoked() -> FleetPollResponseV1 {
-    FleetPollResponseV1 {
-        device_status: FleetDeviceStatusV1::Revoked,
+fn poll_revoked() -> FleetPollResponse {
+    FleetPollResponse {
+        device_status: FleetDeviceStatus::Revoked,
         ..poll_active_empty()
     }
 }
 
-fn succeeded_run_result(run_id: &str, workflow_id: &str) -> RunResultV2 {
-    RunResultV2 {
-        version: RUN_RESULT_VERSION.to_string(),
+fn succeeded_run_result(run_id: &str, workflow_id: &str) -> RunResult {
+    RunResult {
+        version: RUN_RESULT_CONTRACT.to_string(),
         run_id: run_id.to_string(),
         workflow_id: workflow_id.to_string(),
-        status: RunStatusV2::Succeeded,
+        status: RunStatus::Succeeded,
         output: Some(json!({ "ok": true })),
         artifacts: Vec::new(),
         warnings: Vec::new(),
@@ -106,15 +106,15 @@ async fn wait_until<F: Fn() -> bool>(pred: F, label: &str) {
 // ---------------------------------------------------------------------------
 
 enum MockPoll {
-    Ok(FleetPollResponseV1),
+    Ok(FleetPollResponse),
     Stop(String),
     Network(String),
 }
 
 struct MockInner {
     script: VecDeque<MockPoll>,
-    default: FleetPollResponseV1,
-    posts: Vec<FleetResultPostV1>,
+    default: FleetPollResponse,
+    posts: Vec<FleetResultPost>,
     poll_count: usize,
     ack_deduped: bool,
     fail_next_posts: usize,
@@ -125,7 +125,7 @@ struct MockApi {
 }
 
 impl MockApi {
-    fn new(script: Vec<MockPoll>, default: FleetPollResponseV1) -> Self {
+    fn new(script: Vec<MockPoll>, default: FleetPollResponse) -> Self {
         Self {
             inner: Mutex::new(MockInner {
                 script: script.into_iter().collect(),
@@ -148,7 +148,7 @@ impl MockApi {
         self
     }
 
-    fn posts(&self) -> Vec<FleetResultPostV1> {
+    fn posts(&self) -> Vec<FleetResultPost> {
         self.inner.lock().unwrap().posts.clone()
     }
 
@@ -159,7 +159,7 @@ impl MockApi {
 
 #[async_trait]
 impl FleetApi for MockApi {
-    async fn poll(&self, _req: &FleetPollRequestV1) -> Result<FleetPollResponseV1, FleetCallError> {
+    async fn poll(&self, _req: &FleetPollRequest) -> Result<FleetPollResponse, FleetCallError> {
         let mut inner = self.inner.lock().unwrap();
         inner.poll_count += 1;
         match inner.script.pop_front() {
@@ -176,8 +176,8 @@ impl FleetApi for MockApi {
     async fn post_result(
         &self,
         _job_id: &str,
-        post: &FleetResultPostV1,
-    ) -> Result<FleetResultAckV1, FleetCallError> {
+        post: &FleetResultPost,
+    ) -> Result<FleetResultAck, FleetCallError> {
         let mut inner = self.inner.lock().unwrap();
         if inner.fail_next_posts > 0 {
             inner.fail_next_posts -= 1;
@@ -185,7 +185,7 @@ impl FleetApi for MockApi {
         }
         inner.posts.push(post.clone());
         let deduped = inner.ack_deduped;
-        Ok(FleetResultAckV1 {
+        Ok(FleetResultAck {
             ok: true,
             job_status: "accepted".to_string(),
             deduped,
@@ -227,10 +227,10 @@ impl MockExecutor {
 impl FleetJobExecutor for MockExecutor {
     async fn execute(
         &self,
-        a: &FleetJobAssignmentV1,
+        a: &FleetJobAssignment,
         cancel: Arc<AtomicBool>,
         _shared: Arc<FleetShared>,
-    ) -> RunResultV2 {
+    ) -> RunResult {
         self.executed.lock().unwrap().push(a.job_id.clone());
         let run_id = format!("run-{}", a.job_id);
         match self.behavior {
@@ -342,7 +342,7 @@ fn journal_append_latest_and_compact() {
         .append(JournalEntry::from_assignment(
             &b,
             JournalState::Finished,
-            Some(FleetJobTerminalStatusV1::Succeeded),
+            Some(FleetJobTerminalStatus::Succeeded),
         ))
         .unwrap();
     journal
@@ -350,7 +350,7 @@ fn journal_append_latest_and_compact() {
             "job_2",
             "wf_demo",
             JournalState::Posted,
-            Some(FleetJobTerminalStatusV1::Succeeded),
+            Some(FleetJobTerminalStatus::Succeeded),
         ))
         .unwrap();
 
@@ -399,21 +399,21 @@ fn terminal_status_and_backoff_and_jitter() {
     let ok = succeeded_run_result("r", "w");
     assert_eq!(
         terminal_status(&ok, false),
-        FleetJobTerminalStatusV1::Succeeded
+        FleetJobTerminalStatus::Succeeded
     );
     assert_eq!(
         terminal_status(&ok, true),
-        FleetJobTerminalStatusV1::Cancelled
+        FleetJobTerminalStatus::Cancelled
     );
     let failed = failed_result("r", "w", "boom".to_string());
     assert_eq!(
         terminal_status(&failed, false),
-        FleetJobTerminalStatusV1::Failed
+        FleetJobTerminalStatus::Failed
     );
     let timed = timed_out_result("r", "w");
     assert_eq!(
         terminal_status(&timed, false),
-        FleetJobTerminalStatusV1::TimedOut
+        FleetJobTerminalStatus::TimedOut
     );
 
     // Backoff grows then caps at 5 minutes.
@@ -481,7 +481,7 @@ async fn a1_happy_path_journals_before_execution_and_posts() {
     let posts = api.posts();
     assert_eq!(posts.len(), 1);
     assert_eq!(posts[0].job_id, "job_a1");
-    assert_eq!(posts[0].status, FleetJobTerminalStatusV1::Succeeded);
+    assert_eq!(posts[0].status, FleetJobTerminalStatus::Succeeded);
     assert_eq!(executor.executed(), vec!["job_a1".to_string()]);
 
     // accepted was journaled BEFORE execution (running/finished), and posted last.
@@ -534,7 +534,7 @@ async fn a2_reconcile_running_entry_posts_aborted() {
     let posts = api.posts();
     assert_eq!(posts.len(), 1);
     assert_eq!(posts[0].job_id, "job_crash");
-    assert_eq!(posts[0].status, FleetJobTerminalStatusV1::Aborted);
+    assert_eq!(posts[0].status, FleetJobTerminalStatus::Aborted);
     // Never executed; journaled through to posted.
     assert!(executor.executed().is_empty());
     assert_eq!(
@@ -554,13 +554,13 @@ async fn a2_finished_not_posted_reposts_stored_result() {
         .append(JournalEntry::from_assignment(
             &a,
             JournalState::Finished,
-            Some(FleetJobTerminalStatusV1::Succeeded),
+            Some(FleetJobTerminalStatus::Succeeded),
         ))
         .unwrap();
     // A persisted result awaiting post.
-    let stored = FleetResultPostV1 {
+    let stored = FleetResultPost {
         job_id: "job_stored".to_string(),
-        status: FleetJobTerminalStatusV1::Succeeded,
+        status: FleetJobTerminalStatus::Succeeded,
         run_result: succeeded_run_result("run-job_stored", "wf_demo"),
         error: None,
         started_at_ms: 1,
@@ -600,12 +600,12 @@ async fn a2_already_completed_redelivery_is_deduped_not_reexecuted() {
         .append(JournalEntry::from_assignment(
             &a,
             JournalState::Finished,
-            Some(FleetJobTerminalStatusV1::Succeeded),
+            Some(FleetJobTerminalStatus::Succeeded),
         ))
         .unwrap();
-    let stored = FleetResultPostV1 {
+    let stored = FleetResultPost {
         job_id: "job_done".to_string(),
-        status: FleetJobTerminalStatusV1::Succeeded,
+        status: FleetJobTerminalStatus::Succeeded,
         run_result: succeeded_run_result("run-job_done", "wf_demo"),
         error: None,
         started_at_ms: 1,
@@ -654,9 +654,9 @@ async fn a2_already_completed_redelivery_is_deduped_not_reexecuted() {
 async fn a2_result_reposts_after_failed_post() {
     let dir = temp_dir("a2-retry");
     let journal = Arc::new(Journal::open(dir.join("j.jsonl")).unwrap());
-    let stored = FleetResultPostV1 {
+    let stored = FleetResultPost {
         job_id: "job_retry".to_string(),
-        status: FleetJobTerminalStatusV1::Succeeded,
+        status: FleetJobTerminalStatus::Succeeded,
         run_result: succeeded_run_result("run-job_retry", "wf_demo"),
         error: None,
         started_at_ms: 1,
@@ -766,7 +766,7 @@ async fn a4_cancellation_produces_cancelled_result() {
     let posts = api.posts();
     assert_eq!(posts.len(), 1);
     assert_eq!(posts[0].job_id, "job_cancel");
-    assert_eq!(posts[0].status, FleetJobTerminalStatusV1::Cancelled);
+    assert_eq!(posts[0].status, FleetJobTerminalStatus::Cancelled);
     assert!(
         executor.observed_cancel.load(Ordering::SeqCst),
         "executor must observe the cooperative cancel"
@@ -799,16 +799,16 @@ async fn spawn_http_mock(router: Router) -> String {
 
 #[tokio::test]
 async fn http_poll_and_result_round_trip() {
-    async fn poll_ok() -> Json<FleetPollResponseV1> {
+    async fn poll_ok() -> Json<FleetPollResponse> {
         Json(poll_with_job(assignment("job_http")))
     }
     async fn result_ok(
         State(state): State<HttpMockState>,
         AxPath(_job_id): AxPath<String>,
-        Json(_post): Json<FleetResultPostV1>,
-    ) -> Json<FleetResultAckV1> {
+        Json(_post): Json<FleetResultPost>,
+    ) -> Json<FleetResultAck> {
         state.result_posts.fetch_add(1, Ordering::SeqCst);
-        Json(FleetResultAckV1 {
+        Json(FleetResultAck {
             ok: true,
             job_status: "accepted".to_string(),
             deduped: false,
@@ -823,8 +823,8 @@ async fn http_poll_and_result_round_trip() {
     let base = spawn_http_mock(router).await;
 
     let api = HttpFleetApi::new(base, "fld_secret");
-    let req = FleetPollRequestV1 {
-        health: DeviceHealthV1 {
+    let req = FleetPollRequest {
+        health: DeviceHealth {
             browser_running: true,
             extension_bridge_up: true,
             readiness_cause: None,
@@ -840,9 +840,9 @@ async fn http_poll_and_result_round_trip() {
     assert_eq!(resp.jobs.len(), 1);
     assert_eq!(resp.jobs[0].job_id, "job_http");
 
-    let post = FleetResultPostV1 {
+    let post = FleetResultPost {
         job_id: "job_http".to_string(),
-        status: FleetJobTerminalStatusV1::Succeeded,
+        status: FleetJobTerminalStatus::Succeeded,
         run_result: succeeded_run_result("run-job_http", "wf_demo"),
         error: None,
         started_at_ms: 1,
@@ -855,10 +855,10 @@ async fn http_poll_and_result_round_trip() {
 
 #[tokio::test]
 async fn http_poll_403_revoked_maps_to_stop() {
-    async fn poll_revoked_handler() -> (StatusCode, Json<FleetErrorV1>) {
+    async fn poll_revoked_handler() -> (StatusCode, Json<FleetError>) {
         (
             StatusCode::FORBIDDEN,
-            Json(FleetErrorV1 {
+            Json(FleetError {
                 code: error_codes::DEVICE_REVOKED.to_string(),
                 message: "device token revoked".to_string(),
             }),
@@ -868,8 +868,8 @@ async fn http_poll_403_revoked_maps_to_stop() {
     let base = spawn_http_mock(router).await;
 
     let api = HttpFleetApi::new(base, "fld_secret");
-    let req = FleetPollRequestV1 {
-        health: DeviceHealthV1 {
+    let req = FleetPollRequest {
+        health: DeviceHealth {
             browser_running: false,
             extension_bridge_up: false,
             readiness_cause: Some("bridge_down".to_string()),

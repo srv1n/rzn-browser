@@ -1,6 +1,6 @@
-// Auto-generated from schema/actions-v1.json
-// schema-version: rzn.actions.v1
-// schema-sha256: 6873b747d9ea838443a4d94266ca07656567853722d8f89aba807a171bf469cf
+// Auto-generated from schema/actions.json
+// schema-version: rzn.actions
+// schema-sha256: d397ca91da91bac5224118c5631e9a270c704da4724c38a826c88c46d76fb57b
 // DO NOT EDIT MANUALLY
 
 export interface RobustSelectors {

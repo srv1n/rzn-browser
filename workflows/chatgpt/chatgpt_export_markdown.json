@@ -1,0 +1,127 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "chatgpt/export-markdown",
+  "name": "ChatGPT: Export Markdown",
+  "version": "1.0.0",
+  "system": "chatgpt",
+  "capability": "chatgpt.export_markdown",
+  "summary": "Export the active branch of a ChatGPT conversation as clearly demarcated Markdown messages.",
+  "description": "Read a ChatGPT conversation through the authenticated backend API, follow only the active current_node parent chain, and return one Markdown document with every user and assistant message separated by headings. This bounded path handles large conversations that time out when every regenerated branch and attachment is scanned.",
+  "params": {
+    "additional_params": false,
+    "properties": {
+      "chat_id": {
+        "kind": "string",
+        "required": true,
+        "description": "ChatGPT conversation id (the part after /c/ in the URL)."
+      },
+      "chat_url": {
+        "kind": "string",
+        "required": true,
+        "description": "Exact ChatGPT conversation URL to open."
+      },
+      "include_system": {
+        "kind": "boolean",
+        "required": false,
+        "description": "Include system and tool messages. Defaults to false."
+      }
+    }
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["chatgpt.com"]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["chatgpt.com"]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["chatgpt.com"]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["chatgpt.com"]
+    },
+    {
+      "class": "file_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": []
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 120000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{chat_url}"
+        },
+        "side_effects": ["browser_state"]
+      },
+      "name": "Open the exact ChatGPT conversation URL",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": ["read_only"]
+      },
+      "name": "Allow the authenticated SPA shell to settle",
+      "timeout_ms": 1200
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": ["{chat_id}"],
+          "script": "const clean=(v)=>String(v==null?'':v).trim();const params=(typeof window!=='undefined'&&window.__rzn_params)||{};const chatId=clean(arg0);if(!chatId)throw new Error('chat_id is required');const includeSystem=/^(true|1|yes|y)$/i.test(clean(params.include_system));const session=await fetch('/api/auth/session',{credentials:'include'}).then(r=>r.json()).catch(()=>({}));const token=session?.accessToken;if(!token)return{success:false,error_code:'AUTH_REQUIRED',error_msg:'No accessToken in /api/auth/session'};const response=await fetch('/backend-api/conversation/'+encodeURIComponent(chatId),{headers:{Authorization:'Bearer '+token,Accept:'application/json'}});if(!response.ok)return{success:false,error_code:'CONVERSATION_API_FAILED',error_msg:'conversation API '+response.status};const conversation=await response.json();const mapping=conversation.mapping||{};const ids=[];const seen=new Set();let nodeId=conversation.current_node||conversation.current_node_id;while(nodeId){if(seen.has(nodeId))throw new Error('active chain contains a cycle');seen.add(nodeId);const node=mapping[nodeId];if(!node)throw new Error('active chain node missing: '+nodeId);ids.push(nodeId);nodeId=node.parent||null;}ids.reverse();const messages=[];for(const id of ids){const message=mapping[id]?.message;if(!message||!message.author?.role)continue;const role=message.author.role;if(!includeSystem&&(role==='system'||role==='tool'))continue;const parts=Array.isArray(message.content?.parts)?message.content.parts:[];const text=parts.filter((part)=>typeof part==='string').join('\\n\\n').trim();if(!text)continue;messages.push({id:message.id||id,role,create_time:message.create_time||null,text});}const markdown='# '+(conversation.title||'ChatGPT thread')+'\\n\\n'+messages.map((message,index)=>'## Message '+(index+1)+' — '+message.role.toUpperCase()+'\\n\\n'+message.text).join('\\n\\n---\\n\\n')+'\\n';return{chat_id:chatId,title:conversation.title||null,url:window.location.href,active_chain_length:ids.length,message_count:messages.length,user_turn_count:messages.filter((message)=>message.role==='user').length,assistant_turn_count:messages.filter((message)=>message.role==='assistant').length,messages,markdown};"
+        },
+        "side_effects": ["read_only", "network_access"]
+      },
+      "name": "Read the active conversation chain and render Markdown",
+      "timeout_ms": 120000
+    }
+  ],
+  "result": {
+    "artifact_policy": {"prefer_downloads": false},
+    "include_debug": false,
+    "output_schema": {"type": "object"},
+    "output_selector": {"step_id": "s2", "path": "$.result"}
+  },
+  "help": {
+    "summary": "Export one ChatGPT conversation as Markdown with User/Assistant message headings.",
+    "parameters": {
+      "chat_id": "Conversation id from the target URL.",
+      "chat_url": "Exact conversation URL.",
+      "include_system": "Optional true to include system/tool messages."
+    },
+    "examples": [
+      {
+        "description": "Write the active conversation branch directly to Markdown.",
+        "command": "rzn-browser run chatgpt export-markdown --param chat_id=\"01234567-89ab-cdef-0123-456789abcdef\" --param chat_url=\"https://chatgpt.com/c/01234567-89ab-cdef-0123-456789abcdef\" --output-file=thread.md"
+      }
+    ],
+    "returns": ["{ markdown, messages, message_count, user_turn_count, assistant_turn_count }. The CLI --output-file writes the markdown field directly."]
+  }
+}

@@ -217,9 +217,5 @@
       "If you need actual time-series numbers, use the official Google Trends API or scrape the underlying network requests (out of scope for this workflow).",
       "Trends rate-limits aggressively; retries on 429 will fail until cool-down."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-trends.json",
-    "legacy_system_id": "google"
   }
 }

@@ -187,9 +187,5 @@
       "Use this for a single known id; for keyword search use arxiv search.",
       "Links resolve against arxiv.org; pdf_link and source_link are stable arXiv endpoints."
     ]
-  },
-  "metadata": {
-    "migrated_from": "arxiv/arxiv-html.json",
-    "legacy_system_id": "arxiv"
   }
 }

@@ -531,9 +531,5 @@
       "sr-only, button, and style nodes are stripped from visible text.",
       "download_artifacts clicks buttons in DOM order with a small gap between clicks; actual save path is controlled by Chrome's download preferences, not this workflow."
     ]
-  },
-  "metadata": {
-    "migrated_from": "claude/claude_export_chat.json",
-    "legacy_system_id": "claude"
   }
 }

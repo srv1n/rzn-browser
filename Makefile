@@ -1,10 +1,10 @@
 # RZN Browser Automation Makefile
 
-.PHONY: help build build-release build-rust build-rust-release build-ext build-ext-release clean codebasezip logs-clear logs-follow logs-show test test-basic test-google test-dom test-dom-units ads-smoke dev setup install reload-ext rust \
-	test-ext-unit test-setup-ext-sync test-ext-e2e-install test-ext-e2e-run test-ext-e2e phase2 phase3 phase3-openai \
+.PHONY: help build build-release build-rust build-rust-release build-ext build-ext-release clean codebasezip logs-clear logs-follow logs-show test test-dom test-dom-units ads-smoke dev setup install reload-ext rust \
+	test-ext-unit test-setup-ext-sync test-ext-e2e-install test-ext-e2e-run test-ext-e2e \
 	index sg-find-stream sg-guards context-snippets agent-run agent-validate scope scope-q reducers-index invariants schema-check \
-	plugins-keygen plugins-build-rzn-browser-macos plugins-verify plugins-publish-rzn-browser-local plugins-publish-rzn-browser-cloud plugins-publish-rzn-browser-prod plugins-publish-rzn-browser-all bundle-macos-share \
-	release release-artifacts x-export-threads
+	plugins-keygen plugins-build-rzn-browser-macos plugins-verify bundle-macos-share \
+	release x-export-threads
 
 RZN_BROWSER ?= rzn-browser
 SCCACHE ?= $(shell command -v sccache 2>/dev/null)
@@ -22,11 +22,11 @@ help:
 	@echo ""
 	@echo "Build Commands:"
 	@echo "  make build         - Fast development build (debug Rust + Chrome extension)"
-	@echo "  make build-release - Optimized Rust + all browser extension targets"
+	@echo "  make build-release - Optimized Rust + supported Chromium extension targets"
 	@echo "  make build-rust    - Build debug Rust components"
 	@echo "  make build-rust-release - Build optimized Rust components"
 	@echo "  make build-ext     - Build Chrome extension"
-	@echo "  make build-ext-release - Build all browser extension targets"
+	@echo "  make build-ext-release - Build supported Chromium extension targets"
 	@echo "  make rust ARGS='check -p <crate>' - Run a focused Cargo command through Make"
 	@echo "  make clean         - Clean all build artifacts"
 	@echo "  make codebasezip   - Create dated lean source ZIP for external code review"
@@ -45,15 +45,11 @@ help:
 	@echo ""
 	@echo "Testing Commands:"
 	@echo "  make test          - Run all Rust tests"
-	@echo "  make test-basic    - Run basic test workflow"
-	@echo "  make test-google   - Run Google search test"
 	@echo "  make ads-smoke     - Ads packs live smoke lane (selector-drift check; exits non-zero on degraded output)"
 	@echo "  make schema-check  - Verify actions schema ↔ generated types"
 	@echo "  make test-ext-unit [ARGS='path'] - Run extension Vitest tests"
-	@echo "  make test-setup-ext-sync - Verify runtime legacy extension sync"
+	@echo "  make test-setup-ext-sync - Verify canonical runtime extension sync"
 	@echo "  make test-ext-e2e  - Build + run extension Playwright e2e"
-	@echo "  make phase3        - Run autonomous (dummy LLM) end-to-end"
-	@echo "  make phase3-openai - Run autonomous with OpenAI (uses .env)"
 	@echo ""
 	@echo "DOM Testing Commands:"
 	@echo "  make test-dom      - Run DOM-focused Rust tests"
@@ -63,7 +59,6 @@ help:
 	@echo "  make install       - Release install (CLI + native host + Chrome/Edge/Chromium extension bundles)"
 	@echo "  make setup         - Dev setup (debug-first, lighter local wiring)"
 	@echo "  make release VERSION=1.2.3 - Sync versions, tag v1.2.3, and push it so GitHub Actions publishes the release"
-	@echo "  make release-artifacts - Build installable release archives for the current host"
 	@echo "  make doctor        - Validate local wiring (sock/manifest)"
 	@echo "  make run W=...     - Run a workflow via CLI factory"
 	@echo "  make x-export-threads HANDLE=... [WINDOW=week|month|custom] [SINCE=YYYY-MM-DD UNTIL=YYYY-MM-DD] [MODE=live|top] [LIMIT=10] [DOWNLOAD=1]"
@@ -76,10 +71,6 @@ help:
 	@echo "  make plugins-keygen - Generate .secrets/plugin-signing keys"
 	@echo "  make plugins-build-rzn-browser-macos - Build signed rzn-browser ZIP (macos_universal)"
 	@echo "  make plugins-verify ZIP=... PUB=... - Verify bundle ZIP (signature + sha256)"
-	@echo "  make plugins-publish-rzn-browser-local - Build/upload/register/publish to local backend (http://localhost:8082)"
-	@echo "  make plugins-publish-rzn-browser-cloud - Build/upload/register/publish to cloud backend (https://cloud.rzn.ai)"
-	@echo "  make plugins-publish-rzn-browser-prod - Cloud backend publish path"
-	@echo "  make plugins-publish-rzn-browser-all - Build once, then notify/publish both local and cloud backends"
 	@echo "  make bundle-macos-share - Build friend-share ZIP (includes extension + install scripts)"
 	@echo ""
 	@echo "Scoped Context Commands:"
@@ -93,7 +84,7 @@ help:
 build: build-rust build-ext
 	@echo "✅ Development build complete!"
 
-# Production/release build: optimized Rust and every browser target.
+# Production/release build: optimized Rust and supported Chromium targets.
 build-release: build-rust-release build-ext-release
 	@echo "✅ Release build complete!"
 
@@ -123,9 +114,9 @@ build-ext:
 	@echo "🌐 Building Chrome extension..."
 	cd extension && bun install --frozen-lockfile && bun run build:chrome
 
-# Build every browser extension target for distribution.
+# Build every supported browser extension target for distribution.
 build-ext-release:
-	@echo "🌐 Building all browser extensions..."
+	@echo "🌐 Building supported Chromium extensions..."
 	cd extension && bun install --frozen-lockfile && bun run build
 
 # Run extension unit tests, optionally scoped with ARGS='src/foo.test.ts'.
@@ -161,7 +152,6 @@ test-ext-e2e-chrome: build-ext
 	cd extension && RZN_PW_CHANNEL=chrome bun x playwright test --project=chromium-extension --reporter=line
 
 # Phase 2 done: enhanced actions e2e
-phase2: test-ext-e2e
 	@echo "🎉 Phase 2 validation complete"
 
 # Generate dev signing keys used for local install-from-file
@@ -218,7 +208,7 @@ codebasezip:
 clean:
 	@echo "🧹 Cleaning build artifacts..."
 	cargo clean
-	rm -rf extension/dist extension/dist-*
+	rm -rf extension/dist
 	rm -rf logs/*.log
 
 # Development mode for extension
@@ -280,14 +270,6 @@ rust:
 		exit 2; \
 	fi
 	@cargo $(ARGS)
-
-# Test basic workflow
-test-basic: ensure-logd
-	RZN_LOG_ENABLED=1 ./scripts/logger.sh run workflows/test-basic.json
-
-# Test Google search
-test-google: ensure-logd
-	RZN_LOG_ENABLED=1 ./scripts/logger.sh run workflows/google.search.v1.json --param search_query="rust programming"
 
 # Full setup (dev-first defaults; avoids heavy release builds unless you ask for them)
 setup:
@@ -437,7 +419,7 @@ appstore-snapshot:
 	@./skills/appstore-search-snapshot/scripts/run.sh --term "$(TERM)" $(if $(COUNTRY),--country "$(COUNTRY)",) $(ARGS)
 
 # Ads packs smoke lane (ADI-T-0004): run each ads pack at a small cap and validate
-# its manifest against schema/ads-manifest-v1.json + a per-source field baseline.
+# its manifest against schema/ads-manifest.json + a per-source field baseline.
 # Exits non-zero on empty / schema-invalid / degraded output, so a site changing
 # its markup (selector drift) fails loudly. Suggested cadence: daily (scheduled)
 # and before a release. Needs Chrome + the RZN extension (live runs).
@@ -461,40 +443,11 @@ reload-ext:
 	@echo "3. Click the refresh button"
 	@open -a "Google Chrome" "chrome://extensions/"
 
-# Quick workflow to build and test
-quick-test: build-ext test-basic
-
-# Development workflow: clear logs, build, test
-dev-test: logs-clear build-ext test-basic logs-follow
-
 # Stop logging daemon
 stop-logd:
 	@echo "🛑 Stopping rzn_logd..."
 	@pkill -x rzn_logd || true
 	@echo "✅ rzn_logd stopped"
-
-# Test logging integration
-test-logging:
-	@./scripts/test-logging-integration.sh
-
-# ============ Phase 3 (LLM Autonomous) ============
-
-# Run autonomous planner with dummy provider (no API keys)
-phase3:
-	@echo "🤖 Running Phase 3 (LLM autonomous) with dummy LLM provider..."
-	@echo "   Set LLM_PROVIDER=dummy to bypass API keys"
-	LLM_PROVIDER=dummy cargo build --release -p rzn-browser -p rzn-native-host
-	LLM_PROVIDER=dummy ./target/release/rzn-browser llm-auto "Search Google for OpenAI and extract the first 3 results" --max-steps 10 || true
-
-# Run autonomous planner with OpenAI (reads .env / environment)
-phase3-openai:
-	@echo "🤖 Running Phase 3 (LLM autonomous) with OpenAI provider..."
-	@echo "   Ensure:"
-	@echo "   - Extension is loaded (dist/chrome) and connected to the native host"
-	@echo "   - .env exports: LLM_PROVIDER=openai, OPENAI_API_KEY=..., OPENAI_MODEL_PLANNING=..., OPENAI_MAX_TOKENS=..., RZN_ALLOWED_HOSTS=..."
-	@echo "   - Start with small step cap (e.g., --max-steps 8)"
-	cargo build --release -p rzn-browser -p rzn-native-host
-	./target/release/rzn-browser llm-auto "Search Google for OpenAI and extract the first 3 results" --max-steps 8 || true
 
 # ============ DOM Testing Targets ============
 
@@ -521,7 +474,7 @@ index:
 	@DEPTH=$${DEPTH:-3} ./scripts/gen-tree.sh $$DEPTH > docs/index/TREE_DEPTH_$$DEPTH.md
 	@rg -n --hidden -S \
 		-e "chrome\\.runtime\\.onMessage|chrome\\.runtime\\.sendMessage|chrome\\.tabs\\.sendMessage|window\\.postMessage|__rznExecuteStep|captureEnhancedDOMSnapshot|dispatch\\(|createSlice\\(|builder\\.addCase|serde_json|tokio|mpsc|websocket|postMessage" \
-		--glob '!target/**' --glob '!extension/dist-*/**' --glob '!extension/dist/**' --glob '!node_modules/**' \
+		--glob '!target/**' --glob '!extension/dist/**' --glob '!node_modules/**' \
 		| tee docs/index/HOTSPOTS.rg >/dev/null
 	@echo "✅ Wrote docs/index/TREE.md and HOTSPOTS.rg"
 

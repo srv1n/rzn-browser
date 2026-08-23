@@ -363,9 +363,5 @@
       "Page scrolling uses the engine's infinite_scroll action because apps.apple.com's CSP forbids unsafe-eval and ships no nonced script (execute_javascript steps are blocked on the product page).",
       "The previous mode=full path (see-all=reviews navigation + deeper extract) was removed because the page CSP blocks the JS-eval redirect and the engine doesn't honor `continue_on_error` at runtime. The primary review array (s9) already exposes the reviews mounted on the product page."
     ]
-  },
-  "metadata": {
-    "migrated_from": "appstore/app-details.json",
-    "legacy_system_id": "appstore"
   }
 }

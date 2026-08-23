@@ -202,9 +202,5 @@
       "The feed is virtualized; very large max_posts values may return fewer items than requested.",
       "Use linkedin_open to expand a single post with its comment thread."
     ]
-  },
-  "metadata": {
-    "migrated_from": "linkedin/feed_digest.json",
-    "legacy_system_id": "linkedin"
   }
 }

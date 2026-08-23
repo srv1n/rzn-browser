@@ -1,81 +1,71 @@
 # Contributing
 
-Most useful contributions to RZN Browser are workflows, not runtime changes. A workflow is a
-single JSON file under `workflows/<system>/`, so adding support for a new site usually means
-adding one file and one doc — no Rust required.
+The smallest useful contribution is usually one workflow file. Site selectors
+belong in workflow JSON, not in shared runtime code.
 
-## Build From Source
+Read [`docs/system/00-overview.md`](docs/system/00-overview.md), then read
+[`docs/system/workflow-authoring.md`](docs/system/workflow-authoring.md) before
+you edit a workflow.
 
-You need a Rust toolchain, [Bun](https://bun.sh) for the extension build, and Google Chrome.
+## Source setup
 
-```sh
-cargo build --release -p rzn-browser -p rzn-native-host
-cd extension && bun install && bun run build
-```
-
-For a full local install (runtime, native host, extension payload, bundled catalog):
+Install Rust, `sccache`, Bun, and a supported browser. Use Make targets:
 
 ```sh
-make install
+make setup
+make build
+make test
 ```
 
-Then load the unpacked extension from `extension/dist/chrome` at `chrome://extensions` with
-Developer mode enabled. See [docs/BROWSER_DEV_LOOP.md](docs/BROWSER_DEV_LOOP.md) for the
-day-to-day dev loop.
+Use `make rust ARGS='test -p <crate>'` for a focused Rust check. Do not call
+Cargo or Bun directly for a project build. Load the built Chrome extension from
+`extension/dist/chrome` and use a disposable browser profile for live tests.
 
-## Authoring A Workflow
+## Workflow change
 
-1. Copy a nearby workflow from `workflows/<system>/` — starting from something close beats
-   starting from a blank file.
-2. Edit the JSON against your real browser session until the flow is stable.
-3. Fill in the help block and validate:
+1. Copy a nearby file under `workflows/<system>/`.
+2. Edit parameters, steps, output, help, and side effects.
+3. Validate the file and the catalog.
+4. Run a safe read-only smoke through the normal CLI path.
 
-   ```sh
-   rzn-browser workflow validate workflows/<system>/<workflow>.json --write-help
-   ```
+```sh
+rzn-browser workflow validate workflows/<system>/<name>.json --strict --json
+rzn-browser workflow inspect <system> <name>
+rzn-browser workflow validate-catalog --strict --json
+rzn-browser run <system> <name> --param <name>=<value>
+```
 
-   `--write-help` fills in the boring param docs and then tells you what still needs a human
-   pass. Fix whatever it flags, then re-run with `--strict --json` for the final check.
-4. Confirm the callable contract and the catalog still validate:
+For a write workflow, stop at draft or review unless the operator approved the
+final action. Do not put credentials or page content in a workflow, test, log,
+or commit.
 
-   ```sh
-   rzn-browser workflow inspect <system> <workflow>
-   rzn-browser workflow validate-catalog --strict --json
-   ```
-5. Smoke it through the normal run path:
+## Code change
 
-   ```sh
-   rzn-browser run <system> <workflow> --param <name>=<value>
-   ```
+Trace the composition root and its callers before you edit. Keep the local
+supervisor socket, native-host bridge, extension message routes, and contract
+schemas aligned in one change. Put shared data shapes in the contract crate.
+Keep site-specific behavior in workflows.
 
-   For workflows that write, post, or send anything, smoke only up to the draft/review step
-   unless you explicitly intend the irreversible action.
+Run the smallest check that proves the change. Then run the wider check that
+the change can affect. Report the exact command and result. A green focused
+check does not prove an installed release or a live browser run.
 
-The authoring rules that the validator enforces — parameter types, side-effect classes, tab and
-session policy — are documented in [workflows/README.md](workflows/README.md). Read that before
-your first workflow.
+## Broken workflows and security
 
-## Submitting
+When a selector has drifted, use the CLI output from:
 
-The expected shape of a workflow submission (files, docs, examples, what makes one easy to
-accept) is described in the [Submit Workflows Back To The Repo](README.md#submit-workflows-back-to-the-repo)
-section of the README. Follow it.
+```sh
+rzn-browser report workflow-broken ...
+```
 
-A few things that apply to every PR:
+Do not include private inputs or page content in a report. Send security issues
+through [`SECURITY.md`](SECURITY.md), not a public issue.
 
-- Keep site-specific selectors and page logic inside the workflow JSON. Shared engine code stays
-  generic.
-- Run `cargo fmt`, `cargo clippy`, and `cargo test` if you touched Rust; `bun run test` in
-  `extension/` if you touched the extension.
-- Keep commits conventional (`feat:`, `fix:`, `docs:`, `chore:`) with a subject and, when the
-  "why" is not obvious, a body.
+## Review checklist
 
-## Bugs And Broken Workflows
-
-Sites change their DOM and workflows break. That is expected, and reporting it is genuinely
-useful. When a workflow fails, the CLI prints a self-contained
-`rzn-browser report workflow-broken ...` command listing exactly the non-private fields it would
-send. Paste that command into the **Workflow broken** issue template — it tells us the system,
-workflow, version, failing step, and error class without leaking your inputs or page content.
-
-For anything security-related, do not open an issue — see [SECURITY.md](SECURITY.md).
+- The changed files have a clear owner and live caller.
+- The workflow or code uses the current contract.
+- Side effects are declared honestly.
+- Tests cover the changed surface.
+- No private data or generated output is committed.
+- The report states source, install, runtime, and human proof separately.

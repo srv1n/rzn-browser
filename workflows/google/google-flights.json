@@ -151,9 +151,5 @@
       "This workflow does not pick dates or filter cabins \u2014 it returns whatever the default widget shows.",
       "For deeper flight queries (dates, cabin class), build on top of this output or open google/travel/flights directly via the orchestrator."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-flights.json",
-    "legacy_system_id": "google"
   }
 }

@@ -12,7 +12,7 @@ Run:
 
 That script:
 
-- probes `rzn-browser list google`
+- probes `rzn-browser workflow list google`
 - runs `make install` if the probe fails
 - runs `make doctor`
 
@@ -29,8 +29,8 @@ Fixes:
 1. Open `chrome://extensions`
 2. Enable Developer mode
 3. Load unpacked from the stable extension copy:
-   - macOS: `~/Library/Application Support/RZN/extension/dist-chrome`
-   - Linux: `~/.local/share/RZN/extension/dist-chrome`
+   - macOS: `~/Library/Application Support/RZN/extension/dist/chrome`
+   - Linux: `~/.local/share/rzn/extension/dist/chrome`
 4. Reload the extension if it is already installed
 5. Keep a Chrome window open
 6. Rerun `make doctor`
@@ -52,7 +52,7 @@ If a site behaves badly in a new tab but works in the live signed-in tab:
 
 If the workflow steals the operator's current tab and should not:
 
-- remove legacy active-tab fields
+- remove active-tab fields
 - run in a dedicated tab instead
 
 ## Logs
@@ -61,7 +61,7 @@ Useful places to inspect:
 
 - unified log: `~/rzn_build.log`
 - wiring check: `make doctor`
-- workflow docs: `docs/BROWSER_DEV_LOOP.md`
+- developer setup: `docs/system/developer-guide.md`
 
 ## Last Resort
 

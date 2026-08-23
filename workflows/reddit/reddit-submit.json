@@ -523,9 +523,5 @@
       "Idempotency: this workflow has SIDE EFFECTS \u2014 every submit call publishes a new post. Do not retry blindly. The publisher should check the outcome envelope and decide.",
       "Drafts (mode=draft) are supported only for kind=text and kind=link. Reddit's new composer disables the Save Draft button for image/video/gallery/poll posts; the workflow detects that case and throws REDDIT_DRAFT_NOT_SUPPORTED so the publisher can fall back to mode=submit instead of waiting for a state that will never arrive."
     ]
-  },
-  "metadata": {
-    "migrated_from": "reddit/reddit-submit.json",
-    "legacy_system_id": "reddit"
   }
 }

@@ -38,9 +38,6 @@ capability_groups:
   - id: workflow_execution
     name: "Workflow execution"
     description: "Run packaged browser workflows for repeatable tasks and smoke tests."
-    example_paths:
-      - "examples/browser_automation/search_google.json"
-      - "examples/browser_automation/packaged_google_search_v2.json"
 
   - id: session_or_account_actions
     name: "Session and account actions"
@@ -89,38 +86,6 @@ context_parameters:
     required: false
 
 quick_starts:
-  - id: open_page_and_get_title
-    title: "Open page and get title"
-    description: "Navigate to a page and read its document title as a minimal proof of life."
-    runner: workflow
-    workflow_path: "examples/browser_automation/open_page_get_title.json"
-    args:
-      page_url: "https://example.com"
-
-  - id: search_google
-    title: "Search Google"
-    description: "Run a safe read-only Google search demo that extracts organic results."
-    runner: workflow
-    workflow_path: "examples/browser_automation/search_google.json"
-    args:
-      search_query: "openai"
-
-  - id: extract_first_table
-    title: "Extract first table from page"
-    description: "Open a page with a table and extract the first table into structured rows."
-    runner: workflow
-    workflow_path: "examples/browser_automation/extract_first_table.json"
-    args:
-      page_url: "https://www.w3schools.com/html/html_tables.asp"
-
-  - id: run_packaged_workflow
-    title: "Run packaged workflow"
-    description: "Execute the packaged production Google Search workflow that ships with the browser bundle examples."
-    runner: workflow
-    workflow_path: "examples/browser_automation/packaged_google_search_v2.json"
-    args:
-      search_query: "openai"
-
 result_handling:
   tools:
     browser.session_open:

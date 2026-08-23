@@ -3,10 +3,10 @@
 //! `native_runner` is the CLI glue: it owns argument handling, the local-socket
 //! JSON-RPC client (a [`StepTransport`] impl), a [`RunEventSink`] that prints the
 //! `[OK]/[ERR]/[STOP]` progress lines, and post-processing. Everything about
-//! *running the workflow itself* — loading/parsing both manifest-v2 and legacy
-//! formats, param normalization/injection, the per-step execution loop (transient
+//! *running the workflow itself* — loading/parsing canonical workflow manifests,
+//! param normalization/injection, the per-step execution loop (transient
 //! retry, external-write guard, per-step watchdog), stop_workflow handling, output
-//! selection and `RunResultV2` assembly — lives here so both the CLI and the
+//! selection and `RunResult` assembly — lives here so both the CLI and the
 //! supervisor's in-process fleet loop can drive it.
 //!
 //! The loop never prints and never dials a socket directly: it talks to the
@@ -16,15 +16,14 @@
 use crate::workflow_failure_report::{build_failure_context, WorkflowRunFailure};
 use crate::workflow_params::{apply_parameters, inject_script_params};
 use anyhow::{anyhow, Context, Result};
-use rzn_contracts::v2::{
-    validate_manifest_value, DebugBundleV1, ParamDefV2, ParamKindV2, RunErrorV1, RunResultV2,
-    RunStatusV2, StepV2, WorkflowManifestV2, RUN_RESULT_VERSION,
+use rzn_contracts::workflow::{
+    validate_manifest_value, DebugBundle, ParamDef, ParamKind, RunError, RunResult, RunStatus,
+    WorkflowManifest, WorkflowStep, RUN_RESULT_CONTRACT,
 };
 use rzn_core::dsl;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tokio::time::Duration;
 use uuid::Uuid;
 
@@ -113,7 +112,7 @@ pub struct SessionSpec {
     /// Release session ownership without closing the dedicated tab.
     pub retain_tab_on_close: bool,
     /// Optional run lifecycle metadata forwarded to the browser session layer.
-    /// Absent metadata preserves the legacy local-session protocol.
+    /// Absent metadata preserves the local-session protocol.
     pub origin: Option<String>,
     pub job_id: Option<String>,
 }
@@ -139,7 +138,7 @@ pub enum SnapshotMode {
     OnError,
 }
 
-/// Run a fully-loaded workflow to completion and return a typed `RunResultV2`.
+/// Run a fully-loaded workflow to completion and return a typed `RunResult`.
 ///
 /// This is the contract entry point for both the CLI (via [`run_workflow`],
 /// below, which preserves the CLI's richer `Result<Option<Value>>` behavior)
@@ -150,29 +149,23 @@ pub async fn execute_workflow(
     sink: &dyn RunEventSink,
     workflow: LoadedWorkflow,
     opts: RunOptions,
-) -> RunResultV2 {
+) -> RunResult {
     let workflow_id = workflow
         .runtime_context
         .as_ref()
         .map(|context| context.workflow_id.clone())
-        .unwrap_or_else(|| "rzn.legacy.workflow".to_string());
+        .unwrap_or_else(|| "rzn.workflow".to_string());
 
     match run_workflow(transport, sink, &workflow, &opts).await {
         Ok(Some(value)) => run_result_from_output_value(value, &opts.run_id, &workflow_id),
-        Ok(None) => run_result_shell(
-            RunStatusV2::Succeeded,
-            None,
-            &opts.run_id,
-            &workflow_id,
-            None,
-        ),
+        Ok(None) => run_result_shell(RunStatus::Succeeded, None, &opts.run_id, &workflow_id, None),
         Err(err) => {
             let mut result = run_result_shell(
-                RunStatusV2::Failed,
+                RunStatus::Failed,
                 None,
                 &opts.run_id,
                 &workflow_id,
-                Some(RunErrorV1 {
+                Some(RunError {
                     code: err
                         .downcast_ref::<WorkflowRunFailure>()
                         .and_then(|failure| failure.error_code.clone())
@@ -196,28 +189,22 @@ pub(crate) fn run_result_from_output_value(
     value: Value,
     run_id: &str,
     workflow_id: &str,
-) -> RunResultV2 {
-    if let Ok(result) = serde_json::from_value::<RunResultV2>(value.clone()) {
+) -> RunResult {
+    if let Ok(result) = serde_json::from_value::<RunResult>(value.clone()) {
         return result;
     }
-    run_result_shell(
-        RunStatusV2::Succeeded,
-        Some(value),
-        run_id,
-        workflow_id,
-        None,
-    )
+    run_result_shell(RunStatus::Succeeded, Some(value), run_id, workflow_id, None)
 }
 
 pub(crate) fn run_result_shell(
-    status: RunStatusV2,
+    status: RunStatus,
     output: Option<Value>,
     run_id: &str,
     workflow_id: &str,
-    error: Option<RunErrorV1>,
-) -> RunResultV2 {
-    RunResultV2 {
-        version: RUN_RESULT_VERSION.to_string(),
+    error: Option<RunError>,
+) -> RunResult {
+    RunResult {
+        version: RUN_RESULT_CONTRACT.to_string(),
         run_id: run_id.to_string(),
         workflow_id: workflow_id.to_string(),
         status,
@@ -232,7 +219,7 @@ pub(crate) fn run_result_shell(
 }
 
 pub(crate) fn enrich_failure_result(
-    result: &mut RunResultV2,
+    result: &mut RunResult,
     error: &anyhow::Error,
     workflow_hash: &str,
 ) {
@@ -246,7 +233,7 @@ pub(crate) fn enrich_failure_result(
         &failure.classification_message,
     ));
     if let Some(capture) = failure.failure_capture.clone() {
-        result.debug = Some(DebugBundleV1 {
+        result.debug = Some(DebugBundle {
             trace_id: None,
             events: Vec::new(),
             raw: Some(capture),
@@ -610,7 +597,7 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Workflow model + loading (manifest-v2 and legacy).
+// Workflow model + loading.
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
@@ -635,28 +622,21 @@ pub struct LoadedWorkflow {
 
 #[derive(Debug, Clone)]
 pub(crate) enum RuntimeStep {
-    Legacy(Value),
     Manifest {
-        step: StepV2,
+        step: WorkflowStep,
         params: HashMap<String, String>,
     },
 }
 
 impl RuntimeStep {
-    fn id(&self) -> &str {
+    pub(crate) fn id(&self) -> &str {
         match self {
-            Self::Legacy(step) => step.get("id").and_then(Value::as_str).unwrap_or("step"),
             Self::Manifest { step, .. } => step.id.as_str(),
         }
     }
 
-    fn step_type(&self) -> String {
+    pub(crate) fn step_type(&self) -> String {
         match self {
-            Self::Legacy(step) => step
-                .get("type")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown")
-                .to_string(),
             Self::Manifest { step, .. } => step
                 .action
                 .kind
@@ -667,23 +647,16 @@ impl RuntimeStep {
         }
     }
 
-    fn timeout_ms(&self) -> u64 {
+    pub(crate) fn timeout_ms(&self) -> u64 {
         match self {
-            Self::Legacy(step) => step
-                .get("timeout_ms")
-                .and_then(Value::as_u64)
-                .or_else(|| step.get("timeoutMs").and_then(Value::as_u64))
-                .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS)
-                .max(1),
             Self::Manifest { step, .. } => {
                 step.timeout_ms.unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS).max(1)
             }
         }
     }
 
-    fn executor_step(&self) -> Value {
+    pub(crate) fn executor_step(&self) -> Value {
         match self {
-            Self::Legacy(step) => step.clone(),
             Self::Manifest { step, params } => {
                 let mut step = manifest_step_to_executor_step(step);
                 inject_script_params(&mut step, params);
@@ -698,7 +671,7 @@ fn should_handle_step_locally(step_type: &str) -> bool {
 }
 
 /// True when the executor step declares an `external_write` side effect, either
-/// at the top level (manifest steps) or nested under `action` (legacy steps).
+/// at the top level on canonical manifest steps.
 fn step_has_external_write(step: &Value) -> bool {
     let contains_external_write = |value: Option<&Value>| {
         value
@@ -712,10 +685,6 @@ fn step_has_external_write(step: &Value) -> bool {
             .unwrap_or(false)
     };
     contains_external_write(step.get("side_effects"))
-        || contains_external_write(
-            step.get("action")
-                .and_then(|action| action.get("side_effects")),
-        )
 }
 
 fn is_transient_step_error(err_str: &str) -> bool {
@@ -760,7 +729,7 @@ pub(crate) fn validate_steps(steps: &[RuntimeStep]) -> Result<()> {
     Ok(())
 }
 
-/// Parse a workflow file (manifest-v2 or legacy) into a [`LoadedWorkflow`] ready
+/// Parse a canonical workflow manifest into a [`LoadedWorkflow`] ready
 /// for [`execute_workflow`]. This is the only public constructor for the type.
 pub fn load_workflow_for_run(
     path: &str,
@@ -769,55 +738,42 @@ pub fn load_workflow_for_run(
     let content = std::fs::read_to_string(path).with_context(|| format!("Read {}", path))?;
     let value: Value = serde_json::from_str(&content).with_context(|| "Invalid JSON workflow")?;
 
-    match validate_manifest_value(&value) {
-        Ok(manifest) => {
-            return load_manifest_workflow_for_run(Path::new(path), value, manifest, params)
-        }
-        Err(issues) if is_manifest_value(&value) => {
-            return Err(anyhow!(
-                "Invalid manifest: {}",
-                format_contract_issues(issues)
-            ));
-        }
-        Err(_) => {}
-    }
+    let manifest = validate_manifest_value(&value).map_err(|issues| {
+        anyhow!(
+            "Invalid workflow manifest: {}",
+            format_contract_issues(issues)
+        )
+    })?;
+    load_manifest_workflow_for_run(Path::new(path), value, manifest, params)
+}
 
-    let workflow_value = apply_parameters(value, params);
-    validate_required_params(&workflow_value, params)?;
-    loaded_legacy_workflow(workflow_value, load_runtime_context_for_workflow(path)?)
+pub(crate) fn load_workflow_value_for_run(
+    value: Value,
+    params: &HashMap<String, String>,
+) -> Result<LoadedWorkflow> {
+    let manifest = validate_manifest_value(&value).map_err(|issues| {
+        anyhow!(
+            "Invalid workflow manifest: {}",
+            format_contract_issues(issues)
+        )
+    })?;
+    load_manifest_workflow_for_run(Path::new("<cloud-request>"), value, manifest, params)
 }
 
 fn load_manifest_workflow_for_run(
     manifest_path: &Path,
     manifest_value: Value,
-    manifest: WorkflowManifestV2,
+    manifest: WorkflowManifest,
     params: &HashMap<String, String>,
 ) -> Result<LoadedWorkflow> {
     let normalized_params = normalize_manifest_params(&manifest, params)?;
     let runtime_context = Some(runtime_context_from_manifest(manifest.clone()));
 
     if manifest.steps.is_empty() {
-        let root = workflows_root_for_path(manifest_path).ok_or_else(|| {
-            anyhow!(
-                "cannot resolve workflows root for {}",
-                manifest_path.display()
-            )
-        })?;
-        let runtime_path = manifest_runtime_workflow_path(&root, &manifest).ok_or_else(|| {
-            anyhow!(
-                "Manifest {} has no steps[] and no runtime workflow pointer",
-                manifest_path.display()
-            )
-        })?;
-        let content = std::fs::read_to_string(&runtime_path)
-            .with_context(|| format!("Read {}", runtime_path.display()))?;
-        let runtime_value: Value =
-            serde_json::from_str(&content).with_context(|| "Invalid JSON workflow")?;
-        let runtime_value = apply_parameters(runtime_value, &normalized_params);
-        let mut loaded = loaded_legacy_workflow(runtime_value, runtime_context)?;
-        loaded.prefer_current_tab =
-            loaded.prefer_current_tab || manifest.runtime.requires_existing_session;
-        return Ok(loaded);
+        return Err(anyhow!(
+            "Workflow manifest {} must declare at least one step",
+            manifest_path.display()
+        ));
     }
 
     let executable_value = apply_parameters(manifest_value, &normalized_params);
@@ -846,7 +802,7 @@ fn load_manifest_workflow_for_run(
 }
 
 fn normalize_manifest_params(
-    manifest: &WorkflowManifestV2,
+    manifest: &WorkflowManifest,
     params: &HashMap<String, String>,
 ) -> Result<HashMap<String, String>> {
     let mut input = Map::new();
@@ -886,10 +842,10 @@ fn normalize_manifest_params(
         .collect())
 }
 
-fn cli_manifest_param_value(field: &str, def: &ParamDefV2, raw: &str) -> Result<Value> {
+fn cli_manifest_param_value(field: &str, def: &ParamDef, raw: &str) -> Result<Value> {
     match def.kind {
-        ParamKindV2::Array => cli_manifest_array_param_value(field, raw),
-        ParamKindV2::Object => cli_manifest_object_param_value(field, raw),
+        ParamKind::Array => cli_manifest_array_param_value(field, raw),
+        ParamKind::Object => cli_manifest_object_param_value(field, raw),
         _ => Ok(Value::String(raw.to_string())),
     }
 }
@@ -936,44 +892,19 @@ fn cli_manifest_object_param_value(field: &str, raw: &str) -> Result<Value> {
     }
 }
 
-fn loaded_legacy_workflow(
-    workflow_value: Value,
-    runtime_context: Option<WorkflowRuntimeContext>,
-) -> Result<LoadedWorkflow> {
-    let steps = extract_steps(&workflow_value)?
-        .into_iter()
-        .map(RuntimeStep::Legacy)
-        .collect::<Vec<_>>();
-    let prefer_current_tab = workflow_prefers_current_tab(&workflow_value);
-    Ok(LoadedWorkflow {
-        report_workflow: workflow_value,
-        steps,
-        prefer_current_tab,
-        runtime_context,
-    })
-}
-
 fn load_workflow_value(path: &str) -> Result<Value> {
     let content = std::fs::read_to_string(path).with_context(|| format!("Read {}", path))?;
     let value: Value = serde_json::from_str(&content).with_context(|| "Invalid JSON workflow")?;
-    match validate_manifest_value(&value) {
-        Ok(manifest) => return workflow_value_for_manifest(Path::new(path), &manifest),
-        Err(issues) if is_manifest_value(&value) => {
-            return Err(anyhow!(
-                "Invalid manifest: {}",
-                format_contract_issues(issues)
-            ));
-        }
-        Err(_) => {}
-    }
+    validate_manifest_value(&value).map_err(|issues| {
+        anyhow!(
+            "Invalid workflow manifest: {}",
+            format_contract_issues(issues)
+        )
+    })?;
     Ok(value)
 }
 
-fn is_manifest_value(value: &Value) -> bool {
-    value.get("schema_version").and_then(Value::as_str) == Some("rzn.workflow_manifest")
-}
-
-fn format_contract_issues(issues: Vec<rzn_contracts::v2::ContractValidationIssueV2>) -> String {
+fn format_contract_issues(issues: Vec<rzn_contracts::workflow::ContractValidationIssue>) -> String {
     issues
         .into_iter()
         .map(|issue| {
@@ -987,111 +918,7 @@ fn format_contract_issues(issues: Vec<rzn_contracts::v2::ContractValidationIssue
         .join(", ")
 }
 
-fn load_runtime_context_for_workflow(
-    workflow_path: &str,
-) -> Result<Option<WorkflowRuntimeContext>> {
-    let workflow_path = PathBuf::from(workflow_path);
-    if let Ok(content) = fs::read_to_string(&workflow_path) {
-        if let Ok(value) = serde_json::from_str::<Value>(&content) {
-            if let Ok(manifest) = validate_manifest_value(&value) {
-                return Ok(Some(runtime_context_from_manifest(manifest)));
-            }
-        }
-    }
-
-    let Some(workflows_root) = workflows_root_for_path(&workflow_path) else {
-        return Ok(None);
-    };
-
-    for manifest_path in manifest_candidates(&workflows_root) {
-        let Ok(content) = fs::read_to_string(&manifest_path) else {
-            continue;
-        };
-        let Ok(value) = serde_json::from_str::<Value>(&content) else {
-            continue;
-        };
-        let Ok(manifest) = validate_manifest_value(&value) else {
-            continue;
-        };
-        let Some(runtime_path) = manifest_runtime_workflow_path(&workflows_root, &manifest) else {
-            continue;
-        };
-        if !paths_match(&runtime_path, &workflow_path) {
-            continue;
-        }
-
-        return Ok(Some(runtime_context_from_manifest(manifest)));
-    }
-
-    Ok(None)
-}
-
-fn workflow_value_for_manifest(
-    manifest_path: &Path,
-    manifest: &WorkflowManifestV2,
-) -> Result<Value> {
-    if manifest.steps.is_empty() {
-        let root = workflows_root_for_path(manifest_path).ok_or_else(|| {
-            anyhow!(
-                "cannot resolve workflows root for {}",
-                manifest_path.display()
-            )
-        })?;
-        let runtime_path = manifest_runtime_workflow_path(&root, manifest).ok_or_else(|| {
-            anyhow!(
-                "Manifest {} has no steps[] and no runtime workflow pointer",
-                manifest_path.display()
-            )
-        })?;
-        return load_workflow_value(&runtime_path.to_string_lossy());
-    }
-
-    Ok(workflow_value_from_manifest_steps(manifest))
-}
-
-fn workflow_value_from_manifest_steps(manifest: &WorkflowManifestV2) -> Value {
-    let mut required_variables = Vec::new();
-    let mut optional_variables = Vec::new();
-    for (name, def) in &manifest.params.properties {
-        let variable = json!({
-            "name": name,
-            "description": def.description.clone().unwrap_or_default(),
-            "sensitive": def.sensitive
-        });
-        if def.required {
-            required_variables.push(variable);
-        } else {
-            optional_variables.push(variable);
-        }
-    }
-
-    let steps = manifest
-        .steps
-        .iter()
-        .map(manifest_step_to_executor_step)
-        .collect::<Vec<_>>();
-
-    json!({
-        "system_id": manifest.system,
-        "id": manifest.id,
-        "name": manifest.name,
-        "description": manifest.description.as_deref().or(manifest.summary.as_deref()).unwrap_or(""),
-        "version": manifest.version,
-        "browser_automation": {
-            "use_current_tab": manifest.runtime.requires_existing_session,
-            "description": manifest.description.as_deref().or(manifest.summary.as_deref()).unwrap_or(""),
-            "sequences": [{
-                "name": manifest.id.replace(['/', '.'], "_"),
-                "description": manifest.description.as_deref().or(manifest.summary.as_deref()).unwrap_or(""),
-                "required_variables": required_variables,
-                "optional_variables": optional_variables,
-                "steps": steps
-            }]
-        }
-    })
-}
-
-fn manifest_step_to_executor_step(step: &StepV2) -> Value {
+pub(crate) fn manifest_step_to_executor_step(step: &WorkflowStep) -> Value {
     let mut map = serde_json::Map::new();
     map.insert("id".to_string(), Value::String(step.id.clone()));
     if let Some(name) = &step.name {
@@ -1153,7 +980,7 @@ fn insert_optional_string(
     }
 }
 
-fn runtime_context_from_manifest(manifest: WorkflowManifestV2) -> WorkflowRuntimeContext {
+fn runtime_context_from_manifest(manifest: WorkflowManifest) -> WorkflowRuntimeContext {
     let output_selector = manifest.result.output_selector.clone();
     WorkflowRuntimeContext {
         workflow_id: manifest.id,
@@ -1173,178 +1000,11 @@ fn runtime_context_from_manifest(manifest: WorkflowManifestV2) -> WorkflowRuntim
     }
 }
 
-fn workflows_root_for_path(workflow_path: &Path) -> Option<PathBuf> {
-    let absolute = if workflow_path.is_absolute() {
-        workflow_path.to_path_buf()
-    } else {
-        std::env::current_dir().ok()?.join(workflow_path)
-    };
-
-    for ancestor in absolute.ancestors() {
-        if ancestor.file_name().and_then(|value| value.to_str()) == Some("workflows") {
-            return Some(ancestor.to_path_buf());
-        }
-    }
-
-    absolute.parent().map(Path::to_path_buf)
-}
-
-fn manifest_candidates(root: &Path) -> Vec<PathBuf> {
-    fn visit(dir: &Path, out: &mut Vec<PathBuf>) {
-        let Ok(entries) = fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                visit(&path, out);
-                continue;
-            }
-            let Some(file_name) = path.file_name().and_then(|value| value.to_str()) else {
-                continue;
-            };
-            if file_name.ends_with(".json") {
-                out.push(path);
-            }
-        }
-    }
-
-    let mut candidates = Vec::new();
-    visit(root, &mut candidates);
-    candidates
-}
-
-fn manifest_runtime_workflow_path(root: &Path, manifest: &WorkflowManifestV2) -> Option<PathBuf> {
-    manifest
-        .runtime
-        .workflow_ref
-        .as_deref()
-        .and_then(|workflow_ref| resolve_runtime_workflow_ref(root, workflow_ref))
-        .or_else(|| {
-            manifest
-                .runtime
-                .workflow_path
-                .as_deref()
-                .map(|workflow_path| {
-                    let path = PathBuf::from(workflow_path);
-                    if path.is_absolute() {
-                        path
-                    } else {
-                        root.join(path)
-                    }
-                })
-        })
-}
-
-fn resolve_runtime_workflow_ref(root: &Path, workflow_ref: &str) -> Option<PathBuf> {
-    let normalized = normalize_workflow_ref(workflow_ref);
-    let parts = normalized.split('/').collect::<Vec<_>>();
-    if parts.len() == 2 {
-        let system = slugify_ref_part(parts[0]);
-        let workflow = slugify_ref_part(parts[1]);
-        if !system.is_empty() && !workflow.is_empty() {
-            let candidates = [
-                root.join(&system).join(format!("{workflow}.json")),
-                root.join(&system).join(format!("{system}-{workflow}.json")),
-                root.join(&system).join(format!("{system}_{workflow}.json")),
-            ];
-            for candidate in candidates {
-                if candidate.is_file() {
-                    return Some(candidate);
-                }
-            }
-            return Some(root.join(&system).join(format!("{workflow}.json")));
-        }
-    }
-
-    let path = PathBuf::from(workflow_ref);
-    Some(if path.is_absolute() {
-        path
-    } else {
-        root.join(path)
-    })
-}
-
-fn normalize_workflow_ref(input: &str) -> String {
-    input
-        .trim()
-        .replace('\\', "/")
-        .trim_matches('/')
-        .to_ascii_lowercase()
-}
-
-fn slugify_ref_part(input: &str) -> String {
-    input
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('_')
-        .to_string()
-}
-
-fn paths_match(left: &Path, right: &Path) -> bool {
-    canonicalize_lossy(left) == canonicalize_lossy(right)
-}
-
-fn canonicalize_lossy(path: &Path) -> PathBuf {
-    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
-fn validate_required_params(workflow: &Value, params: &HashMap<String, String>) -> Result<()> {
-    let required = workflow
-        .pointer("/browser_automation/sequences/0/required_variables")
-        .and_then(|value| value.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let mut missing = Vec::new();
-    for var in required {
-        if let Some(name) = var.get("name").and_then(|value| value.as_str()) {
-            if !params.contains_key(name) {
-                missing.push(name.to_string());
-            }
-        }
-    }
-    if !missing.is_empty() {
-        return Err(anyhow!(
-            "Missing required parameters: {}",
-            missing.join(", ")
-        ));
-    }
-    Ok(())
-}
-
-fn extract_steps(workflow: &Value) -> Result<Vec<Value>> {
-    let steps = workflow
-        .pointer("/browser_automation/sequences/0/steps")
-        .and_then(|value| value.as_array())
-        .cloned()
-        .ok_or_else(|| anyhow!("Workflow missing browser_automation.sequences[0].steps"))?;
-    Ok(steps)
-}
-
-fn workflow_prefers_current_tab(workflow: &Value) -> bool {
-    workflow
-        .pointer("/browser_automation/use_current_tab")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-        || workflow
-            .pointer("/browser_automation/use_active_tab")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-}
-
 // ---------------------------------------------------------------------------
 // Step payload assembly.
 // ---------------------------------------------------------------------------
 
-fn step_execution_payload(
+pub(crate) fn step_execution_payload(
     session_id: Option<&str>,
     step: &Value,
     prefer_current_tab: bool,
@@ -1504,11 +1164,11 @@ fn with_timeout(mut payload: Value, timeout_ms: u64) -> Value {
 pub(crate) fn response_success(response: &Value) -> bool {
     if let Some(status) = response
         .get("run_result")
-        .filter(|value| is_run_result_v2(value))
+        .filter(|value| is_run_result(value))
         .and_then(|value| value.get("status"))
         .and_then(Value::as_str)
         .or_else(|| {
-            is_run_result_v2(response)
+            is_run_result(response)
                 .then(|| response.get("status").and_then(Value::as_str))
                 .flatten()
         })
@@ -1664,15 +1324,15 @@ fn record_step_output(
 fn extract_run_result_for_output(response: &Value) -> Option<Value> {
     response
         .get("run_result")
-        .filter(|value| is_run_result_v2(value))
+        .filter(|value| is_run_result(value))
         .cloned()
-        .or_else(|| is_run_result_v2(response).then(|| response.clone()))
+        .or_else(|| is_run_result(response).then(|| response.clone()))
 }
 
 fn extract_payload_for_output(response: &Value) -> Option<Value> {
     if let Some(output) = response
         .get("run_result")
-        .filter(|value| is_run_result_v2(value))
+        .filter(|value| is_run_result(value))
         .and_then(|value| value.get("output"))
     {
         if !matches!(output, Value::Null | Value::Bool(_)) {
@@ -1680,7 +1340,7 @@ fn extract_payload_for_output(response: &Value) -> Option<Value> {
         }
     }
 
-    if response.get("version").and_then(|value| value.as_str()) == Some(RUN_RESULT_VERSION) {
+    if response.get("version").and_then(|value| value.as_str()) == Some(RUN_RESULT_CONTRACT) {
         return response.get("output").cloned();
     }
 
@@ -1710,19 +1370,19 @@ fn extract_payload_for_output(response: &Value) -> Option<Value> {
 }
 
 fn build_cli_run_result(runtime_context: Option<&WorkflowRuntimeContext>, output: Value) -> Value {
-    if is_run_result_v2(&output) {
+    if is_run_result(&output) {
         return output;
     }
 
     let workflow_id = runtime_context
         .map(|context| context.workflow_id.clone())
-        .unwrap_or_else(|| "rzn.legacy.workflow".to_string());
+        .unwrap_or_else(|| "rzn.workflow".to_string());
 
     json!({
-        "version": RUN_RESULT_VERSION,
+        "version": RUN_RESULT_CONTRACT,
         "run_id": format!("local-{}", Uuid::new_v4()),
         "workflow_id": workflow_id,
-        "status": RunStatusV2::Succeeded,
+        "status": RunStatus::Succeeded,
         "output": output,
         "artifacts": [],
         "warnings": [],
@@ -1781,8 +1441,8 @@ fn select_json_path(value: &Value, path: &str) -> Option<Value> {
     Some(current.clone())
 }
 
-fn is_run_result_v2(value: &Value) -> bool {
-    value.get("version").and_then(|value| value.as_str()) == Some(RUN_RESULT_VERSION)
+fn is_run_result(value: &Value) -> bool {
+    value.get("version").and_then(|value| value.as_str()) == Some(RUN_RESULT_CONTRACT)
 }
 
 #[cfg(test)]

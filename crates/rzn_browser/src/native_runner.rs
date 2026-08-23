@@ -6,7 +6,7 @@
 //! exact `[OK]/[ERR]/[STOP]` progress lines the CLI has always emitted, and the
 //! supervisor bootstrap + run-readiness preflight. The workflow loading, param
 //! normalization, per-step execution loop, retry/timeout semantics, output
-//! selection and `RunResultV2` assembly all live in [`crate::workflow_runner`].
+//! selection and `RunResult` assembly all live in [`crate::workflow_runner`].
 
 use crate::run_store::{AppendRun, RunStore};
 use crate::supervisor;
@@ -18,7 +18,7 @@ use crate::workflow_runner::{
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use rzn_contracts::v2::{RunErrorV1, RunStatusV2};
+use rzn_contracts::workflow::{RunError, RunStatus};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::future::Future;
@@ -46,7 +46,7 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
         .runtime_context
         .as_ref()
         .map(|c| c.workflow_id.clone())
-        .unwrap_or_else(|| "rzn.legacy.workflow".into());
+        .unwrap_or_else(|| "rzn.workflow".into());
     validate_steps(&workflow.steps)?;
 
     let supervisor_config = supervisor::SupervisorConfig {
@@ -90,18 +90,18 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
             &workflow_id,
         ),
         Ok(None) => crate::workflow_runner::run_result_shell(
-            RunStatusV2::Succeeded,
+            RunStatus::Succeeded,
             None,
             &opts.run_id,
             &workflow_id,
             None,
         ),
         Err(e) => crate::workflow_runner::run_result_shell(
-            RunStatusV2::Failed,
+            RunStatus::Failed,
             None,
             &opts.run_id,
             &workflow_id,
-            Some(RunErrorV1 {
+            Some(RunError {
                 code: e
                     .downcast_ref::<WorkflowRunFailure>()
                     .and_then(|failure| failure.error_code.clone())
@@ -119,7 +119,7 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
             &workflow_hash(&config.workflow_path).unwrap_or_default(),
         );
     }
-    if result.status != RunStatusV2::Succeeded && result.failure_summary.is_none() {
+    if result.status != RunStatus::Succeeded && result.failure_summary.is_none() {
         let error = result.error.as_ref();
         let code = error.map_or("unknown", |e| e.code.as_str());
         let message = error.map_or("workflow failed", |e| e.message.as_str());

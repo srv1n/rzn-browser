@@ -59,7 +59,7 @@ def section_for_file(path: str) -> str:
         return "Extension"
     if path.startswith("crates/"):
         return "Runtime"
-    if path.startswith("workflows/") or path.startswith("examples/browser_automation/"):
+    if path.startswith("workflows/"):
         return "Workflow catalog"
     if path.startswith("docs/"):
         return "Docs"

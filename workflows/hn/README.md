@@ -17,7 +17,7 @@ Three workflows cover the full HN write surface. Each one drafts the form, hard-
 
 ### `hn-submit-link-post.json`
 Submit a link post. Approval-gated.
-- **id**: `hn_submit_link_post_v1`
+- **id**: `hn/submit_link_post`
 - **params**: `post_title` (required), `post_url` (required), `post_text` (required, pass `""` for none)
 - **example**:
   ```
@@ -29,7 +29,7 @@ Submit a link post. Approval-gated.
 
 ### `hn-submit-comment.json`
 Post a root-level comment on a chosen HN item. If `item_url` is omitted, comments on whatever is currently the first item on the front page. Includes a dedupe guard against the logged-in user's own prior comments on the thread.
-- **id**: `hn_submit_comment_v1`
+- **id**: `hn/submit_comment`
 - **params**: `comment_text` (required), `item_url` (optional)
 - **examples**:
   ```
@@ -44,7 +44,7 @@ Post a root-level comment on a chosen HN item. If `item_url` is omitted, comment
 
 ### `hn-submit-reply.json`
 Reply to a specific comment by id. Approval-gated, with a dedupe guard against the logged-in user's own prior replies on the parent thread.
-- **id**: `hn_submit_reply_v1`
+- **id**: `hn/submit_reply`
 - **params**: `comment_id` (required, numeric), `comment_text` (required)
 - **example**:
   ```

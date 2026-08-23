@@ -18,7 +18,7 @@ export const ExtractionFieldSchema = z.object({
   optional: z.boolean().optional(),
 });
 
-export const ExtractionPlanV1Schema = z.object({
+export const ExtractionPlanSchema = z.object({
   version: z.literal(1),
   mode: z.enum(['single', 'list']),
   scope: ExtractionScopeSchema.optional(),
@@ -36,5 +36,4 @@ export const ExtractionPlanV1Schema = z.object({
   }
 });
 
-export type ExtractionPlanV1 = z.infer<typeof ExtractionPlanV1Schema>;
-
+export type ExtractionPlan = z.infer<typeof ExtractionPlanSchema>;

@@ -310,9 +310,5 @@
       "Mutating. Two gates (passcode + send approval).",
       "Opens a fresh tab so multiple thread replies can be orchestrated in parallel."
     ]
-  },
-  "metadata": {
-    "migrated_from": "x/x_reply_dm_thread.json",
-    "legacy_system_id": "x"
   }
 }

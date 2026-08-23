@@ -8,10 +8,6 @@ export default defineConfig({
     exclude: [
       'tests/e2e/**',
       'dist/**',
-      'dist-chrome/**',
-      'dist-edge/**',
-      'dist-chromium/**',
-      'dist-firefox/**',
       'node_modules/**',
     ],
   },

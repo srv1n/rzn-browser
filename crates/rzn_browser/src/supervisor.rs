@@ -4,13 +4,13 @@ use interprocess::local_socket::{
     traits::tokio::{Listener as _, Stream as _},
     GenericFilePath, ListenerOptions, ToFsName,
 };
-use rzn_contracts::v1::{
-    ActionResultV1, CapabilitiesV1, CloudBrowserCommandV1, CloudCommandEnvelopeV1,
-    CloudCommandResultV1, CLOUD_CONTRACT_VERSION,
+use rzn_contracts::browser::{
+    BrowserActionResult, Capabilities, CloudBrowserCommand, CloudCommandEnvelope,
+    CloudCommandResult, CLOUD_CONTRACT,
 };
-use rzn_contracts::v2::{
-    format_tab_ref, parse_tab_ref, ArtifactKindV1, ArtifactV1, DebugBundleV1, DebugEventV1,
-    RunErrorV1, RunResultV2, RunStatusV2, RunWarningV1, SideEffectClassV2, RUN_RESULT_VERSION,
+use rzn_contracts::workflow::{
+    format_tab_ref, parse_tab_ref, Artifact, ArtifactKind, DebugBundle, DebugEvent, RunError,
+    RunResult, RunStatus, RunWarning, SideEffectClass, RUN_RESULT_CONTRACT,
 };
 use rzn_core::framing::{read_frame, read_required_frame, write_frame};
 use rzn_core::runtime_paths::{
@@ -41,7 +41,7 @@ use crate::workflow_runner::{
     StepTransport, TransportError,
 };
 
-pub(crate) const RZN_LOCAL_PROTOCOL_VERSION: &str = "rzn.local.v1";
+pub(crate) const RZN_LOCAL_PROTOCOL: &str = "rzn.local";
 const SUPERVISOR_LOCK_FILENAME: &str = "rzn-supervisor.lock";
 const HANDSHAKE_TIMEOUT_MS: u64 = 2_000;
 const REQUEST_TIMEOUT_MS: u64 = 30_000;
@@ -61,7 +61,7 @@ const HEAL_STABILITY_DELAY_MS: u64 = 1_500;
 const HEAL_STABILITY_BRIDGE_WAIT_MS: u64 = 2_500;
 const TOOL_DISPATCH_RECOVERY_WAIT_MS: u64 = 2_500;
 const REQUIRED_EXTENSION_KEEPALIVE_CAPABILITY: &str = "content_keepalive_port";
-const EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION: u64 = 9;
+const EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT: u64 = 9;
 const REQUIRED_EXTENSION_BRIDGE_CAPABILITIES: &[&str] = &[
     "content_keepalive_port",
     "native_host_stdout_heartbeat",
@@ -74,7 +74,7 @@ const REQUIRED_EXTENSION_BRIDGE_CAPABILITIES: &[&str] = &[
     "epoch_chain_identity",
     "native_control_epoch_fencing",
     "supervisor_bridge_response_fencing",
-    "health_beacon_v2",
+    "health_beacon",
     "auxiliary_path_lease_guards",
     "control_plane_queue_bypass",
     "watchdog_session_quarantine",
@@ -441,11 +441,7 @@ impl BridgeTarget {
             return explicit;
         }
         let target = params.get("browser_target").unwrap_or(params);
-        if let Some(preferred) = target
-            .get("preferred")
-            .or_else(|| target.get("preferred_browser_target"))
-            .and_then(Self::explicit_from_params)
-        {
+        if let Some(preferred) = target.get("preferred").and_then(Self::explicit_from_params) {
             return Self::Preferred(Box::new(preferred));
         }
         if let Some(session_id) = session_id_from_params(params) {
@@ -461,7 +457,6 @@ impl BridgeTarget {
             .or_else(|| params.get("supervisor_bridge_id"))
             .or_else(|| target.get("bridge_id"))
             .or_else(|| target.get("supervisor_bridge_id"))
-            .or_else(|| target.get("bridge"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -470,10 +465,7 @@ impl BridgeTarget {
         }
         if let Some(browser_instance_id) = params
             .get("browser_instance_id")
-            .or_else(|| params.get("browserInstanceId"))
             .or_else(|| target.get("browser_instance_id"))
-            .or_else(|| target.get("browserInstanceId"))
-            .or_else(|| target.get("browser_instance"))
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -482,11 +474,7 @@ impl BridgeTarget {
         }
         if let Some(browser) = params
             .get("browser")
-            .or_else(|| params.get("browser_kind"))
-            .or_else(|| params.get("browserTarget"))
             .or_else(|| target.get("browser"))
-            .or_else(|| target.get("browser_kind"))
-            .or_else(|| target.get("browserTarget"))
             .and_then(Value::as_str)
             .and_then(normalize_browser_target_slug)
         {
@@ -506,16 +494,16 @@ fn string_param(params: &Value, keys: &[&str]) -> Option<String> {
 }
 
 fn tab_ref_from_params(params: &Value) -> Option<String> {
-    string_param(params, &["tab_ref", "tabRef"])
+    string_param(params, &["tab_ref"])
         .or_else(|| {
             params
                 .get("payload")
-                .and_then(|value| string_param(value, &["tab_ref", "tabRef"]))
+                .and_then(|value| string_param(value, &["tab_ref"]))
         })
         .or_else(|| {
             params
                 .get("data")
-                .and_then(|value| string_param(value, &["tab_ref", "tabRef"]))
+                .and_then(|value| string_param(value, &["tab_ref"]))
         })
 }
 
@@ -530,7 +518,6 @@ fn insert_numeric_tab_target(map: &mut serde_json::Map<String, Value>, tab_id: u
     map.entry("tab_ref_target".to_string())
         .or_insert_with(|| Value::Bool(true));
     map.remove("tab_ref");
-    map.remove("tabRef");
 }
 
 fn normalize_tab_ref_input(params: &mut Value) -> Result<Option<BridgeTarget>> {
@@ -585,13 +572,8 @@ fn inherit_browser_target_params(source: &Value, target: &mut Value) {
     for key in [
         "bridge_id",
         "supervisor_bridge_id",
-        "bridge",
         "browser_instance_id",
-        "browserInstanceId",
-        "browser_instance",
         "browser",
-        "browser_kind",
-        "browserTarget",
         "session_id",
     ] {
         if let Some(value) = source.get(key) {
@@ -1436,12 +1418,12 @@ impl SupervisorState {
             workflow_path: path.to_string_lossy().into_owned(),
         };
         let mut result = execute_workflow(&transport, &sink, workflow, opts).await;
-        // A browser step may itself return a RunResultV2-shaped payload. The
+        // A browser step may itself return a RunResult-shaped payload. The
         // local supervisor owns this run's identity, so nested transport IDs
         // must not replace the ID announced to the UI and progress tracker.
         result.run_id = run_id.clone();
         result.workflow_id = resolved_id.clone();
-        if result.status != rzn_contracts::v2::RunStatusV2::Succeeded
+        if result.status != rzn_contracts::workflow::RunStatus::Succeeded
             && result.failure_summary.is_none()
         {
             let error = result.error.as_ref();
@@ -1884,7 +1866,7 @@ impl SupervisorState {
     pub(crate) async fn dispatch(&self, method: &str, params: Value) -> Result<Value> {
         match method {
             "runtime.hello" | "runtime.status" => Ok(self.runtime_status().await),
-            "browser.targets" | "runtime.bridges" => Ok(self.browser_targets().await),
+            "browser.targets" => Ok(self.browser_targets().await),
             "runtime.ensure_ready" => self.ensure_ready(params).await,
             "runtime.heal" => self.runtime_heal(params).await,
             "cloud.status" => Ok(self.cloud_status().await),
@@ -2085,7 +2067,7 @@ impl SupervisorState {
     async fn runtime_status(&self) -> Value {
         json!({
             "ok": true,
-            "protocol": RZN_LOCAL_PROTOCOL_VERSION,
+            "protocol": RZN_LOCAL_PROTOCOL,
             "pid": std::process::id(),
             "app_base": self.paths.app_base.to_string_lossy(),
             "socket_path": self.paths.socket_path.to_string_lossy(),
@@ -2221,7 +2203,7 @@ impl SupervisorState {
             .collect::<Vec<_>>();
         json!({
             "ok": true,
-            "version": "rzn.runtime.bridges.v1",
+            "version": "rzn.runtime.bridges",
             "capabilities": {
                 "bridge_status_api": true,
                 "active_sessions": true,
@@ -2319,7 +2301,7 @@ impl SupervisorState {
         Ok(json!({
             "ok": ready,
             "ready": ready,
-            "protocol": RZN_LOCAL_PROTOCOL_VERSION,
+            "protocol": RZN_LOCAL_PROTOCOL,
             "pid": std::process::id(),
             "app_base": self.paths.app_base.to_string_lossy(),
             "browser_proxy": {
@@ -2586,7 +2568,7 @@ impl SupervisorState {
                     "requested_browser": target_match.requested_browser.clone(),
                     "loaded_browser": target_match.loaded_browser.clone(),
                     "loaded_browser_hint": target_match.loaded_browser_hint.clone(),
-                    "expected_bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION,
+                    "expected_bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT,
                     "bridge_contract_version": bridge_contract_version,
                     "bridge_contract_version_ok": bridge_contract_version_ok,
                     "extension_build_signature": extension_build_signature,
@@ -2764,7 +2746,7 @@ impl SupervisorState {
         Ok(json!({
             "ok": ready,
             "ready": ready,
-            "protocol": RZN_LOCAL_PROTOCOL_VERSION,
+            "protocol": RZN_LOCAL_PROTOCOL,
             "heal_wait_ms": heal_bridge_wait_ms,
             "stability_delay_ms": if stability_readiness.is_null() {
                 0
@@ -3770,9 +3752,9 @@ impl SupervisorState {
 
     async fn dispatch_cloud_command_to_extension(
         &self,
-        envelope: &CloudCommandEnvelopeV1,
+        envelope: &CloudCommandEnvelope,
         default_request_timeout_ms: u64,
-    ) -> CloudCommandResultV1 {
+    ) -> CloudCommandResult {
         match self
             .dispatch_cloud_command_to_extension_inner(envelope, default_request_timeout_ms)
             .await
@@ -3783,9 +3765,9 @@ impl SupervisorState {
     }
     async fn dispatch_cloud_command_to_extension_inner(
         &self,
-        envelope: &CloudCommandEnvelopeV1,
+        envelope: &CloudCommandEnvelope,
         default_request_timeout_ms: u64,
-    ) -> Result<CloudCommandResultV1> {
+    ) -> Result<CloudCommandResult> {
         let command = envelope
             .payload
             .command
@@ -4026,7 +4008,6 @@ fn native_host_rpc_allowed(method: &str) -> bool {
         method,
         "runtime.status"
             | "browser.targets"
-            | "runtime.bridges"
             | "fleet.status"
             | "fleet.disable"
             | "fleet.enroll"
@@ -4064,10 +4045,7 @@ pub(crate) fn fleet_run_notice_payload(
     payload
 }
 
-fn cloud_command_payload(
-    envelope: &CloudCommandEnvelopeV1,
-    command: &CloudBrowserCommandV1,
-) -> Value {
+fn cloud_command_payload(envelope: &CloudCommandEnvelope, command: &CloudBrowserCommand) -> Value {
     let mut payload = command.payload.clone().unwrap_or_else(|| json!({}));
     if let Some(obj) = payload.as_object_mut() {
         obj.entry("session_id".to_string())
@@ -4082,9 +4060,9 @@ fn cloud_command_payload(
 }
 
 fn cloud_command_result_from_response(
-    envelope: &CloudCommandEnvelopeV1,
+    envelope: &CloudCommandEnvelope,
     response: Value,
-) -> CloudCommandResultV1 {
+) -> CloudCommandResult {
     let success = response_success(&response)
         || response
             .pointer("/result/success")
@@ -4104,9 +4082,9 @@ fn cloud_command_result_from_response(
         .get("capabilities")
         .or_else(|| response.pointer("/result/capabilities"))
         .cloned()
-        .and_then(|value| serde_json::from_value::<CapabilitiesV1>(value).ok());
-    CloudCommandResultV1 {
-        version: CLOUD_CONTRACT_VERSION.to_string(),
+        .and_then(|value| serde_json::from_value::<Capabilities>(value).ok());
+    CloudCommandResult {
+        version: CLOUD_CONTRACT.to_string(),
         message_type: "command.result".to_string(),
         actor_id: envelope.actor_id.clone(),
         run_id: envelope.run_id.clone(),
@@ -4116,7 +4094,7 @@ fn cloud_command_result_from_response(
         success,
         finished_at_ms: now_ms(),
         trace_id: envelope.trace_id.clone(),
-        result: Some(ActionResultV1 {
+        result: Some(BrowserActionResult {
             success,
             error_code: response
                 .get("error_code")
@@ -4159,12 +4137,12 @@ fn current_tab_ref_from_response(response: &Value) -> Option<String> {
 }
 
 fn cloud_error_command_result(
-    envelope: &CloudCommandEnvelopeV1,
+    envelope: &CloudCommandEnvelope,
     error: impl Into<String>,
-) -> CloudCommandResultV1 {
+) -> CloudCommandResult {
     let error = error.into();
-    CloudCommandResultV1 {
-        version: CLOUD_CONTRACT_VERSION.to_string(),
+    CloudCommandResult {
+        version: CLOUD_CONTRACT.to_string(),
         message_type: "command.result".to_string(),
         actor_id: envelope.actor_id.clone(),
         run_id: envelope.run_id.clone(),
@@ -4174,7 +4152,7 @@ fn cloud_error_command_result(
         success: false,
         finished_at_ms: now_ms(),
         trace_id: envelope.trace_id.clone(),
-        result: Some(ActionResultV1 {
+        result: Some(BrowserActionResult {
             success: false,
             error_code: Some("SUPERVISOR_CLOUD_ERROR".to_string()),
             error: Some(error.clone()),
@@ -4196,7 +4174,7 @@ fn cloud_error_command_result(
 pub(crate) fn run_result_for_tool(tool_name: &str, response: &Value) -> Value {
     response
         .get("run_result")
-        .filter(|value| is_run_result_v2(value))
+        .filter(|value| is_run_result(value))
         .cloned()
         .unwrap_or_else(|| build_run_result_value(tool_name, response, true))
 }
@@ -4204,38 +4182,29 @@ pub(crate) fn run_result_for_tool(tool_name: &str, response: &Value) -> Value {
 fn with_run_result(tool_name: &str, mut response: Value, include_debug: bool) -> Value {
     let run_result = build_run_result_value(tool_name, &response, include_debug);
     if let Value::Object(map) = &mut response {
-        if !map.get("run_result").is_some_and(is_run_result_v2) {
+        if !map.get("run_result").is_some_and(is_run_result) {
             map.insert("run_result".to_string(), run_result);
         }
     }
     response
 }
 
-fn is_run_result_v2(value: &Value) -> bool {
-    value.get("version").and_then(Value::as_str) == Some(RUN_RESULT_VERSION)
+fn is_run_result(value: &Value) -> bool {
+    value.get("version").and_then(Value::as_str) == Some(RUN_RESULT_CONTRACT)
 }
 
 fn build_run_result_value(tool_name: &str, response: &Value, include_debug: bool) -> Value {
     serde_json::to_value(build_run_result(tool_name, response, include_debug))
-        .expect("RunResultV2 serializes")
+        .expect("RunResult serializes")
 }
 
-fn build_run_result(tool_name: &str, response: &Value, include_debug: bool) -> RunResultV2 {
+fn build_run_result(tool_name: &str, response: &Value, include_debug: bool) -> RunResult {
     let success = response_success(response);
     let status = run_status(response, success);
-    let mut warnings = collect_run_warnings(response);
-    if response.get("success").is_none() && response.get("ok").is_none() {
-        warnings.push(RunWarningV1 {
-            code: "legacy_success_missing".to_string(),
-            message:
-                "Supervisor response did not include success or ok; run result treats it as failed."
-                    .to_string(),
-            step_id: None,
-        });
-    }
+    let warnings = collect_run_warnings(response);
 
-    RunResultV2 {
-        version: RUN_RESULT_VERSION.to_string(),
+    RunResult {
+        version: RUN_RESULT_CONTRACT.to_string(),
         run_id: response
             .get("run_id")
             .and_then(|value| value.as_str())
@@ -4248,12 +4217,12 @@ fn build_run_result(tool_name: &str, response: &Value, include_debug: bool) -> R
         artifacts: collect_contract_artifacts(response),
         warnings,
         steps: Vec::new(),
-        debug: include_debug.then(|| DebugBundleV1 {
+        debug: include_debug.then(|| DebugBundle {
             trace_id: response
                 .get("trace_id")
                 .and_then(|value| value.as_str())
                 .map(str::to_string),
-            events: vec![DebugEventV1 {
+            events: vec![DebugEvent {
                 at_ms: now_ms(),
                 message: "supervisor_native_host_bridge".to_string(),
                 step_id: None,
@@ -4297,9 +4266,9 @@ fn local_tool_workflow_id(tool_name: &str) -> String {
     format!("rzn.local.{}", tool_name.replace('/', "."))
 }
 
-fn run_status(response: &Value, success: bool) -> RunStatusV2 {
+fn run_status(response: &Value, success: bool) -> RunStatus {
     if success {
-        return RunStatusV2::Succeeded;
+        return RunStatus::Succeeded;
     }
     match response
         .get("error_code")
@@ -4307,10 +4276,10 @@ fn run_status(response: &Value, success: bool) -> RunStatusV2 {
         .and_then(|value| value.as_str())
         .unwrap_or_default()
     {
-        "POLICY_SIDE_EFFECT_UNDECLARED" => RunStatusV2::PolicyBlocked,
-        "TIMEOUT" | "TIMED_OUT" | "EXTENSION_BRIDGE_TIMEOUT" => RunStatusV2::TimedOut,
-        "CANCELLED" | "CANCELED" => RunStatusV2::Cancelled,
-        _ => RunStatusV2::Failed,
+        "POLICY_SIDE_EFFECT_UNDECLARED" => RunStatus::PolicyBlocked,
+        "TIMEOUT" | "TIMED_OUT" | "EXTENSION_BRIDGE_TIMEOUT" => RunStatus::TimedOut,
+        "CANCELLED" | "CANCELED" => RunStatus::Cancelled,
+        _ => RunStatus::Failed,
     }
 }
 
@@ -4357,8 +4326,8 @@ fn select_standard_output(response: &Value) -> Option<Value> {
     }
 }
 
-fn run_error(response: &Value, status: &RunStatusV2) -> Option<RunErrorV1> {
-    if *status == RunStatusV2::Succeeded {
+fn run_error(response: &Value, status: &RunStatus) -> Option<RunError> {
+    if *status == RunStatus::Succeeded {
         return None;
     }
     let error_value = response.get("error");
@@ -4372,7 +4341,7 @@ fn run_error(response: &Value, status: &RunStatusV2) -> Option<RunErrorV1> {
         .or_else(|| response.get("error_msg").and_then(|value| value.as_str()))
         .unwrap_or("Run failed")
         .to_string();
-    Some(RunErrorV1 {
+    Some(RunError {
         code: response
             .get("error_code")
             .or_else(|| error_value.and_then(|value| value.get("code")))
@@ -4399,19 +4368,19 @@ fn collect_response_array(response: &Value, key: &str) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-fn collect_run_warnings(response: &Value) -> Vec<RunWarningV1> {
+fn collect_run_warnings(response: &Value) -> Vec<RunWarning> {
     collect_response_array(response, "warnings")
         .into_iter()
         .enumerate()
         .map(|(index, warning)| {
             if let Some(message) = warning.as_str() {
-                return RunWarningV1 {
+                return RunWarning {
                     code: format!("warning_{index}"),
                     message: message.to_string(),
                     step_id: None,
                 };
             }
-            RunWarningV1 {
+            RunWarning {
                 code: warning
                     .get("code")
                     .and_then(|value| value.as_str())
@@ -4431,15 +4400,11 @@ fn collect_run_warnings(response: &Value) -> Vec<RunWarningV1> {
         .collect()
 }
 
-fn collect_contract_artifacts(response: &Value) -> Vec<ArtifactV1> {
+fn collect_contract_artifacts(response: &Value) -> Vec<Artifact> {
     let mut artifacts = Vec::new();
     if let Some(raw_artifacts) = response.get("artifacts").and_then(|value| value.as_array()) {
         for raw in raw_artifacts {
-            artifacts.push(contract_artifact(
-                raw,
-                artifacts.len(),
-                ArtifactKindV1::Json,
-            ));
+            artifacts.push(contract_artifact(raw, artifacts.len(), ArtifactKind::Json));
         }
     }
     if let Some(downloads) = response.get("downloads").and_then(|value| value.as_array()) {
@@ -4447,15 +4412,15 @@ fn collect_contract_artifacts(response: &Value) -> Vec<ArtifactV1> {
             artifacts.push(contract_artifact(
                 download,
                 artifacts.len(),
-                ArtifactKindV1::Download,
+                ArtifactKind::Download,
             ));
         }
     }
     artifacts
 }
 
-fn contract_artifact(raw: &Value, index: usize, default_kind: ArtifactKindV1) -> ArtifactV1 {
-    ArtifactV1 {
+fn contract_artifact(raw: &Value, index: usize, default_kind: ArtifactKind) -> Artifact {
+    Artifact {
         id: raw
             .get("id")
             .and_then(|value| value.as_str())
@@ -4502,13 +4467,13 @@ fn artifact_uri(raw: &Value) -> Option<String> {
         .or_else(|| Some(format!("inline:{}", raw)))
 }
 
-fn parse_artifact_kind(kind: &str) -> Option<ArtifactKindV1> {
+fn parse_artifact_kind(kind: &str) -> Option<ArtifactKind> {
     match kind {
-        "file" => Some(ArtifactKindV1::File),
-        "download" => Some(ArtifactKindV1::Download),
-        "screenshot" => Some(ArtifactKindV1::Screenshot),
-        "json" => Some(ArtifactKindV1::Json),
-        "text" => Some(ArtifactKindV1::Text),
+        "file" => Some(ArtifactKind::File),
+        "download" => Some(ArtifactKind::Download),
+        "screenshot" => Some(ArtifactKind::Screenshot),
+        "json" => Some(ArtifactKind::Json),
+        "text" => Some(ArtifactKind::Text),
         _ => None,
     }
 }
@@ -4568,10 +4533,10 @@ fn observed_side_effects(tool_name: &str, params: &Value) -> Vec<String> {
     let mut effects = HashSet::new();
     match tool_name {
         "browser.session_open" | "browser.session_close" => {
-            insert_side_effect(&mut effects, SideEffectClassV2::BrowserState);
+            insert_side_effect(&mut effects, SideEffectClass::BrowserState);
         }
         "browser.snapshot" | "browser.poll_events" => {
-            insert_side_effect(&mut effects, SideEffectClassV2::ReadOnly);
+            insert_side_effect(&mut effects, SideEffectClass::ReadOnly);
         }
         "browser.execute_step" => {
             if let Some(explicit) = params.get("step").and_then(|step| step.get("side_effects")) {
@@ -4606,11 +4571,11 @@ fn observed_side_effects(tool_name: &str, params: &Value) -> Vec<String> {
     effects
 }
 
-fn insert_side_effect(effects: &mut HashSet<String>, class: SideEffectClassV2) {
+fn insert_side_effect(effects: &mut HashSet<String>, class: SideEffectClass) {
     effects.insert(class.as_str().to_string());
 }
 
-fn side_effects_for_step_type(step_type: &str) -> &'static [SideEffectClassV2] {
+fn side_effects_for_step_type(step_type: &str) -> &'static [SideEffectClass] {
     match step_type {
         "get_page_source"
         | "get_element_text"
@@ -4620,11 +4585,11 @@ fn side_effects_for_step_type(step_type: &str) -> &'static [SideEffectClassV2] {
         | "extract"
         | "extract_structured_data"
         | "assert_selector_state"
-        | "take_screenshot" => &[SideEffectClassV2::ReadOnly],
+        | "take_screenshot" => &[SideEffectClass::ReadOnly],
         "same_origin_request" => &[
-            SideEffectClassV2::ReadOnly,
-            SideEffectClassV2::ExternalRead,
-            SideEffectClassV2::NetworkAccess,
+            SideEffectClass::ReadOnly,
+            SideEffectClass::ExternalRead,
+            SideEffectClass::NetworkAccess,
         ],
         "navigate"
         | "navigate_to_url"
@@ -4645,36 +4610,36 @@ fn side_effects_for_step_type(step_type: &str) -> &'static [SideEffectClassV2] {
         | "close_current_tab"
         | "execute_javascript"
         | "javascript"
-        | "eval" => &[SideEffectClassV2::BrowserState],
+        | "eval" => &[SideEffectClass::BrowserState],
         "upload_file" => &[
-            SideEffectClassV2::BrowserState,
-            SideEffectClassV2::ExternalWrite,
+            SideEffectClass::BrowserState,
+            SideEffectClass::ExternalWrite,
         ],
         "download_file" | "download" | "download_images" => &[
-            SideEffectClassV2::BrowserState,
-            SideEffectClassV2::Download,
-            SideEffectClassV2::ExternalRead,
-            SideEffectClassV2::FileWrite,
-            SideEffectClassV2::NetworkAccess,
+            SideEffectClass::BrowserState,
+            SideEffectClass::Download,
+            SideEffectClass::ExternalRead,
+            SideEffectClass::FileWrite,
+            SideEffectClass::NetworkAccess,
         ],
-        "submit_input" => &[SideEffectClassV2::BrowserState],
-        _ => &[SideEffectClassV2::BrowserState],
+        "submit_input" => &[SideEffectClass::BrowserState],
+        _ => &[SideEffectClass::BrowserState],
     }
 }
 
-fn side_effects_for_static_command(cmd: &str) -> &'static [SideEffectClassV2] {
+fn side_effects_for_static_command(cmd: &str) -> &'static [SideEffectClass] {
     match cmd {
         "get_dom_snapshot"
         | "get_dom_hash"
         | "process_dom"
         | "detect_auto_list"
         | "execute_extraction_plan"
-        | "observe" => &[SideEffectClassV2::ReadOnly],
+        | "observe" => &[SideEffectClass::ReadOnly],
         "get_cdp_context" | "get_ax_tree" | "get_interactive_elements" => {
-            &[SideEffectClassV2::BrowserState]
+            &[SideEffectClass::BrowserState]
         }
         "cdp_action" | "set_flags" | "enable_debug" | "disable_debug" => {
-            &[SideEffectClassV2::BrowserState]
+            &[SideEffectClass::BrowserState]
         }
         _ => &[],
     }
@@ -4742,8 +4707,8 @@ fn side_effect_set_from_array(value: Option<&Value>) -> HashSet<String> {
         .map(|items| {
             items
                 .iter()
-                .filter_map(|item| serde_json::from_value::<SideEffectClassV2>(item.clone()).ok())
-                .map(SideEffectClassV2::as_str)
+                .filter_map(|item| serde_json::from_value::<SideEffectClass>(item.clone()).ok())
+                .map(SideEffectClass::as_str)
                 .map(str::to_string)
                 .collect()
         })
@@ -4956,7 +4921,7 @@ pub(crate) async fn serve(config: SupervisorConfig) -> Result<SupervisorServeRep
 
     let report = SupervisorServeReport {
         ok: true,
-        protocol: RZN_LOCAL_PROTOCOL_VERSION,
+        protocol: RZN_LOCAL_PROTOCOL,
         pid: std::process::id(),
         app_base: state.paths.app_base.to_string_lossy().to_string(),
         socket_path: state.paths.socket_path.to_string_lossy().to_string(),
@@ -5075,7 +5040,7 @@ async fn handle_connection(
 
     let response = json!({
         "ok": true,
-        "protocol": RZN_LOCAL_PROTOCOL_VERSION,
+        "protocol": RZN_LOCAL_PROTOCOL,
         "pid": std::process::id()
     });
     write_frame(&mut stream, &serde_json::to_vec(&response)?).await?;
@@ -5131,8 +5096,7 @@ async fn handle_native_bridge_connection(
 ) -> Result<()> {
     let id = hello.get("id").cloned().unwrap_or(Value::Null);
     let params = hello.get("params").cloned().unwrap_or_else(|| json!({}));
-    let ok = params.get("version").and_then(|value| value.as_str())
-        == Some(RZN_LOCAL_PROTOCOL_VERSION)
+    let ok = params.get("version").and_then(|value| value.as_str()) == Some(RZN_LOCAL_PROTOCOL)
         && params.get("token").and_then(|value| value.as_str()) == Some(token.as_str())
         && params.get("role").and_then(|value| value.as_str()) == Some("native_host_bridge");
     if !ok {
@@ -5179,7 +5143,7 @@ async fn handle_native_bridge_connection(
         "id": id,
         "result": {
             "ok": true,
-            "protocol": RZN_LOCAL_PROTOCOL_VERSION,
+            "protocol": RZN_LOCAL_PROTOCOL,
             "bridge_id": bridge_id,
             "supervisor_boot_id": state.supervisor_boot_id.clone(),
             "supervisor_bridge_epoch": bridge_epoch,
@@ -5453,7 +5417,7 @@ fn bridge_probe_contract_version(value: &Value) -> Option<u64> {
 }
 
 fn bridge_probe_contract_version_ok(value: &Value) -> bool {
-    bridge_probe_contract_version(value).unwrap_or(0) >= EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION
+    bridge_probe_contract_version(value).unwrap_or(0) >= EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT
 }
 
 fn bridge_probe_required_capabilities_map(value: &Value) -> Value {
@@ -5501,7 +5465,7 @@ fn bridge_probe_has_target_resolution_error(probe: &Value) -> bool {
 fn bridge_readiness_capability_policy() -> Value {
     json!({
         "mode": "global_readiness_gate",
-        "expected_bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION,
+        "expected_bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT,
         "required_capabilities": REQUIRED_EXTENSION_BRIDGE_CAPABILITIES,
         "reason": "The loaded extension must advertise the current bridge contract and reliability capabilities; a responsive extension without them is treated as a stale bundle, not as a transport failure."
     })
@@ -5592,7 +5556,7 @@ fn bridge_readiness_diagnostic(connected: bool, responsive: bool, probe: Option<
                 .and_then(|probe| probe.get("target_resolution_error"))
                 .cloned()
                 .unwrap_or(Value::Null),
-            "expected_bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION,
+            "expected_bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT,
             "loaded_bridge_contract_version": probe
                 .and_then(|probe| probe.get("bridge_contract_version"))
                 .cloned()
@@ -5887,7 +5851,7 @@ mod tests {
     fn workflows_list_merges_local_cache_health_and_never_run_rows() {
         let local = vec![
             workflow_list_fixture("local-only", "local", "local-hash"),
-            workflow_list_fixture("both", "local", "old-hash"),
+            workflow_list_fixture("both", "local", "previous-hash"),
             workflow_list_fixture("never-run", "local", "never-hash"),
         ];
         let cached = vec![
@@ -6033,7 +5997,7 @@ mod tests {
             "epoch_chain_identity": true,
             "native_control_epoch_fencing": true,
             "supervisor_bridge_response_fencing": true,
-            "health_beacon_v2": true,
+            "health_beacon": true,
             "auxiliary_path_lease_guards": true,
             "control_plane_queue_bypass": true,
             "watchdog_session_quarantine": true,
@@ -6051,7 +6015,7 @@ mod tests {
                 "result": {
                     "pong": true,
                     "extension_build_signature": build,
-                    "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION,
+                    "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT,
                     "extension_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                     "extension_origin": "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/",
                     "browser_instance_id": "browser-instance-test",
@@ -6228,7 +6192,7 @@ mod tests {
                 "extension_manifest_version": 3,
                 "extension_target_hint": "chromium-mv3",
                 "extension_build_signature": "fresh-build",
-                "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION,
+                "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT,
                 "extension_worker_boot_id": "extension-worker-a",
                 "browser_diagnostics": {
                     "user_agent": "diagnostic-only"
@@ -6257,7 +6221,7 @@ mod tests {
         );
         assert_eq!(
             matched.bridge_contract_version,
-            Some(EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION)
+            Some(EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT)
         );
         assert_eq!(
             matched.extension_worker_boot_id.as_deref(),
@@ -6375,7 +6339,7 @@ mod tests {
                         "browser_instance_id": "browser-instance-one",
                         "extension_target": "chrome",
                         "extension_build_signature": "build-one",
-                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION,
+                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT,
                         "extension_worker_boot_id": "worker-one",
                         "extension_manifest_version": 3,
                         "extension_target_hint": "chromium-mv3",
@@ -6427,10 +6391,10 @@ mod tests {
                         "browser_instance_id": "browser-instance-two",
                         "extension_target": "edge",
                         "extension_build_signature": "build-two",
-                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION,
+                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT,
                         "extension_worker_boot_id": "worker-two",
-                        "extension_manifest_version": 2,
-                        "extension_target_hint": "firefox-mv2",
+                        "extension_manifest_version": 3,
+                        "extension_target_hint": "chromium-mv3",
                         "browser_diagnostics": {
                             "user_agent": "diagnostic-two"
                         }
@@ -6483,7 +6447,7 @@ mod tests {
                     "/native_host_bridge/health/bridges/second-bridge/current_bridge_metadata/extension_target_hint"
                 )
                 .and_then(Value::as_str),
-            Some("firefox-mv2")
+            Some("chromium-mv3")
         );
         assert_eq!(
             status
@@ -6551,7 +6515,7 @@ mod tests {
                         "browser_instance_id": "browser-instance-chrome",
                         "extension_target": "chrome",
                         "extension_build_signature": "chrome-build",
-                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION
+                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT
                     }
                 }),
                 7,
@@ -6566,7 +6530,7 @@ mod tests {
                         "browser_instance_id": "browser-instance-edge",
                         "extension_target": "edge",
                         "extension_build_signature": "edge-build",
-                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION
+                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT
                     }
                 }),
                 9,
@@ -6658,7 +6622,7 @@ mod tests {
         );
         assert_eq!(
             paths.token_path,
-            PathBuf::from("/tmp/rzn-supervisor-test/secure/rzn-supervisor-token-v1")
+            PathBuf::from("/tmp/rzn-supervisor-test/secure/rzn-supervisor-token")
         );
         assert_eq!(
             paths.lock_path,
@@ -6783,7 +6747,7 @@ mod tests {
                 json!({ "cmd": "observe", "payload": {} }),
             )
             .await
-            .expect("static compatibility command returns structured browser-target error");
+            .expect("static command returns structured browser-target error");
         assert_eq!(
             response.get("error_code").and_then(Value::as_str),
             Some("NO_BROWSER_BRIDGE_CONNECTED")
@@ -6835,7 +6799,7 @@ mod tests {
                     "success": true,
                     "result": {
                         "pong": true,
-                        "extension_build_signature": "old-build",
+                        "extension_build_signature": "stale-build",
                         "capabilities": {}
                     }
                 }
@@ -6876,7 +6840,7 @@ mod tests {
         );
         assert_eq!(
             readiness.pointer("/diagnostic/observed/loaded_extension_build_signature"),
-            Some(&json!("old-build"))
+            Some(&json!("stale-build"))
         );
         assert_eq!(
             readiness.pointer("/diagnostic/observed/expected_capabilities/content_keepalive_port"),
@@ -7235,10 +7199,10 @@ mod tests {
     #[tokio::test]
     async fn native_bridge_retry_timeout_clears_reconnected_bridge() {
         let state = Arc::new(SupervisorState::new(test_config()));
-        let (old_tx, old_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        drop(old_rx);
+        let (retired_tx, retired_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        drop(retired_rx);
         state
-            .register_native_bridge("old-bridge".to_string(), old_tx)
+            .register_native_bridge("retired-bridge".to_string(), retired_tx)
             .await;
 
         let state_for_reconnect = state.clone();
@@ -7403,9 +7367,9 @@ mod tests {
     #[tokio::test]
     async fn native_bridge_registry_keeps_other_bridges_and_pending_calls() {
         let state = Arc::new(SupervisorState::new(test_config()));
-        let (old_tx, _old_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        let old_epoch = state
-            .register_native_bridge("old-bridge".to_string(), old_tx)
+        let (retired_tx, _retired_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let retired_epoch = state
+            .register_native_bridge("retired-bridge".to_string(), retired_tx)
             .await;
         let (fresh_tx, mut fresh_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         let fresh_epoch = state
@@ -7414,18 +7378,18 @@ mod tests {
 
         assert_eq!(state.native_bridges.lock().await.len(), 2);
 
-        let (old_pending_tx, old_pending_rx) = oneshot::channel();
+        let (retired_pending_tx, retired_pending_rx) = oneshot::channel();
         let (fresh_pending_tx, _fresh_pending_rx) = oneshot::channel();
         {
             let mut pending = state.native_bridge_pending.lock().await;
             pending.insert(
-                "old-call".to_string(),
+                "retired-call".to_string(),
                 PendingNativeCall {
-                    bridge_id: "old-bridge".to_string(),
-                    bridge_epoch: old_epoch,
+                    bridge_id: "retired-bridge".to_string(),
+                    bridge_epoch: retired_epoch,
                     method: "execute_step".to_string(),
                     deadline_at_ms: now_ms() + 1_000,
-                    responder: old_pending_tx,
+                    responder: retired_pending_tx,
                 },
             );
             pending.insert(
@@ -7440,9 +7404,9 @@ mod tests {
             );
         }
 
-        state.clear_native_bridge("old-bridge").await;
+        state.clear_native_bridge("retired-bridge").await;
 
-        assert!(old_pending_rx.await.is_ok());
+        assert!(retired_pending_rx.await.is_ok());
         let bridges = state.native_bridges.lock().await;
         assert_eq!(bridges.len(), 1);
         assert!(bridges.contains_key("fresh-bridge"));
@@ -7995,7 +7959,7 @@ mod tests {
                         "extension_target": "chrome",
                         "extension_target_hint": "chromium-mv3",
                         "extension_build_signature": "chrome-build",
-                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION
+                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT
                     }
                 }),
                 7,
@@ -8021,7 +7985,7 @@ mod tests {
                         "extension_target": "edge",
                         "extension_target_hint": "edge-mv3",
                         "extension_build_signature": "edge-build",
-                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION
+                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT
                     }
                 }),
                 9,
@@ -8046,7 +8010,7 @@ mod tests {
                         "extension_target": "edge",
                         "extension_target_hint": "edge-mv3",
                         "extension_build_signature": "edge-build-two",
-                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION
+                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT
                     }
                 }),
                 11,
@@ -9136,12 +9100,12 @@ mod tests {
             .insert("session-1".to_string(), session);
 
         let response = state
-            .dispatch("runtime.bridges", json!({}))
+            .dispatch("browser.targets", json!({}))
             .await
-            .expect("runtime.bridges succeeds");
+            .expect("browser.targets succeeds");
         assert_eq!(
             response.get("version").and_then(Value::as_str),
-            Some("rzn.runtime.bridges.v1")
+            Some("rzn.runtime.bridges")
         );
         assert_eq!(
             response
@@ -9473,7 +9437,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn one_browser_compat_old_payloads_route_without_target_flags() {
+    async fn single_bridge_defaults_route_without_target_flags() {
         let state = Arc::new(SupervisorState::new(test_config()));
         let (chrome_tx, mut chrome_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         register_bridge_with_target_for_test(
@@ -9635,7 +9599,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn one_browser_compat_zero_errors_and_multi_bridge_defaults_are_ambiguous() {
+    async fn bridge_selection_reports_missing_and_ambiguous_targets() {
         let empty = SupervisorState::new(test_config());
         let no_bridge = empty
             .try_dispatch_supervisor_browser_tool(
@@ -10132,11 +10096,11 @@ mod tests {
         let state = Arc::new(SupervisorState::new(test_config()));
         let chrome_origin = "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/";
         let conflicting_origin = "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/";
-        let (old_chrome_tx, _old_chrome_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (retired_chrome_tx, _retired_chrome_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         register_bridge_with_identity_for_test(
             &state,
-            "chrome-old",
-            old_chrome_tx,
+            "chrome-retired",
+            retired_chrome_tx,
             "chrome-instance",
             "chrome",
             chrome_origin,
@@ -10153,11 +10117,11 @@ mod tests {
             .expect("session id")
             .to_string();
 
-        state.clear_native_bridge("chrome-old").await;
+        state.clear_native_bridge("chrome-retired").await;
         {
             let sessions = state.sessions.lock().await;
             let session = sessions.get(&session_id).expect("session remains bound");
-            assert_eq!(session.bridge_id, "chrome-old");
+            assert_eq!(session.bridge_id, "chrome-retired");
             assert_eq!(
                 session.browser_instance_id.as_deref(),
                 Some("chrome-instance")
@@ -10760,9 +10724,9 @@ mod tests {
     #[tokio::test]
     async fn execute_step_channel_close_returns_transient_step_failure() {
         let state = Arc::new(SupervisorState::new(test_config()));
-        let (old_tx, mut old_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let (retired_tx, mut retired_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         state
-            .register_native_bridge("old-bridge".to_string(), old_tx)
+            .register_native_bridge("retired-bridge".to_string(), retired_tx)
             .await;
 
         let state_for_call = state.clone();
@@ -10775,7 +10739,7 @@ mod tests {
                 .await
         });
 
-        let first = old_rx.recv().await.expect("extension call frame");
+        let first = retired_rx.recv().await.expect("extension call frame");
         let first: Value = serde_json::from_slice(&first).expect("extension call json");
         assert_eq!(
             first.get("method").and_then(Value::as_str),
@@ -10786,7 +10750,7 @@ mod tests {
         state
             .register_native_bridge("fresh-bridge".to_string(), fresh_tx)
             .await;
-        state.clear_native_bridge("old-bridge").await;
+        state.clear_native_bridge("retired-bridge").await;
 
         let value = timeout(Duration::from_millis(250), call)
             .await
@@ -10828,7 +10792,7 @@ mod tests {
                 &json!({
                     "result": {
                         "extension_build_signature": "fresh-build",
-                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION,
+                        "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT,
                         "supervisor_bridge_epoch": 4,
                         "native_host_pid": 12345,
                         "native_host_boot_id": "native-host-fresh",
@@ -10857,7 +10821,7 @@ mod tests {
         );
         assert_eq!(
             health.last_successful_bridge_contract_version,
-            Some(EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION)
+            Some(EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT)
         );
         assert_eq!(health.last_successful_native_port_epoch, Some(7));
         assert_eq!(health.last_successful_ping_latency_ms, Some(17));
@@ -11161,7 +11125,7 @@ mod tests {
             "success": true,
             "result": {
                 "pong": true,
-                "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_CONTRACT_VERSION,
+                "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT,
                 "capabilities": {
                     "content_keepalive_port": true,
                     "native_host_stdout_heartbeat": true,
@@ -11174,7 +11138,7 @@ mod tests {
                     "epoch_chain_identity": true,
                     "native_control_epoch_fencing": true,
                     "supervisor_bridge_response_fencing": true,
-                    "health_beacon_v2": true,
+                    "health_beacon": true,
                     "auxiliary_path_lease_guards": true,
                     "control_plane_queue_bypass": true,
                     "watchdog_session_quarantine": true,
@@ -11293,21 +11257,21 @@ mod tests {
         });
 
         let run_result = run_result_for_tool("browser.execute_step", &response);
-        let typed = serde_json::from_value::<RunResultV2>(run_result.clone())
-            .expect("supervisor emits contract-compatible RunResultV2");
+        let typed = serde_json::from_value::<RunResult>(run_result.clone())
+            .expect("supervisor emits RunResult");
 
-        assert_eq!(typed.version.as_str(), RUN_RESULT_VERSION);
+        assert_eq!(typed.version.as_str(), RUN_RESULT_CONTRACT);
         assert_eq!(typed.workflow_id.as_str(), "workflow/example");
-        assert_eq!(typed.status, RunStatusV2::Succeeded);
+        assert_eq!(typed.status, RunStatus::Succeeded);
         assert_eq!(typed.output, Some(json!({ "answer": 42 })));
         assert_eq!(typed.warnings[0].code, "TRUNCATED");
-        assert_eq!(typed.artifacts[0].kind, ArtifactKindV1::Download);
+        assert_eq!(typed.artifacts[0].kind, ArtifactKind::Download);
         assert_eq!(typed.artifacts[0].uri, "/tmp/file.txt");
         assert!(typed.debug.expect("debug").raw.is_some());
         assert_eq!(
             run_result.get("run_envelope"),
             None,
-            "supervisor must not emit the old typed-looking run envelope"
+            "supervisor must not emit a run envelope"
         );
     }
 
@@ -11328,27 +11292,27 @@ mod tests {
         );
 
         let run_result = run_result_for_tool("browser.execute_step", &response);
-        let typed = serde_json::from_value::<RunResultV2>(run_result)
-            .expect("supervisor emits contract-compatible RunResultV2");
+        let typed =
+            serde_json::from_value::<RunResult>(run_result).expect("supervisor emits RunResult");
 
         assert_eq!(typed.workflow_id, "x.open");
     }
 
     #[test]
-    fn run_result_ignores_non_v2_embedded_envelope() {
+    fn run_result_replaces_invalid_embedded_result() {
         let response = json!({
             "ok": true,
             "workflow_id": "x.open",
             "result": { "answer": 42 },
-            "run_result": { "version": "old", "workflow_id": "wrong" }
+            "run_result": { "version": "other", "workflow_id": "wrong" }
         });
 
         let run_result = run_result_for_tool("browser.execute_step", &response);
-        let typed = serde_json::from_value::<RunResultV2>(run_result)
-            .expect("supervisor emits contract-compatible RunResultV2");
+        let typed =
+            serde_json::from_value::<RunResult>(run_result).expect("supervisor emits RunResult");
 
         assert_eq!(typed.workflow_id, "x.open");
-        assert_eq!(typed.status, RunStatusV2::Succeeded);
+        assert_eq!(typed.status, RunStatus::Succeeded);
         assert_eq!(typed.output, Some(json!({ "answer": 42 })));
     }
 
@@ -11369,13 +11333,13 @@ mod tests {
 
         let blocked = enforce_manifest_side_effect_policy("browser.execute_step", &params)
             .expect("browser state mutation must be declared");
-        let typed = serde_json::from_value::<RunResultV2>(
+        let typed = serde_json::from_value::<RunResult>(
             blocked
                 .get("run_result")
                 .cloned()
                 .expect("blocked response includes run_result"),
         )
-        .expect("blocked response emits contract-compatible RunResultV2");
+        .expect("blocked response emits RunResult");
 
         assert_eq!(blocked.get("ok"), Some(&json!(false)));
         assert_eq!(typed.workflow_id, "x.open");
@@ -11383,7 +11347,7 @@ mod tests {
             blocked.get("error_code"),
             Some(&json!("POLICY_SIDE_EFFECT_UNDECLARED"))
         );
-        assert_eq!(typed.status, RunStatusV2::PolicyBlocked);
+        assert_eq!(typed.status, RunStatus::PolicyBlocked);
         assert_eq!(
             blocked.pointer("/policy/undeclared_side_effects/0"),
             Some(&json!("browser_state"))
@@ -11405,7 +11369,7 @@ mod tests {
     }
 
     #[test]
-    fn observed_side_effects_use_manifest_v2_taxonomy() {
+    fn observed_side_effects_use_manifest_taxonomy() {
         let observed = observed_side_effects(
             "browser.execute_step",
             &json!({

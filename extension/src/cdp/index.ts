@@ -8,7 +8,7 @@ export { cdpClient, type CDPCommand, type CDPResult, type CDPTarget } from './cd
 // === Complete CDP Type System ===
 export * from './types';
 
-// === Legacy CDP module wrappers removed in favor of Frame Router ===
+// === Frame Router entry point ===
 export { cdp, CDP } from './cdpHelper';
 export { 
   buildUnifiedSnapshot, 

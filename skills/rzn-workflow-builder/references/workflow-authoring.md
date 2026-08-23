@@ -10,9 +10,8 @@ Use this reference when creating, editing, or validating workflow JSONs.
 
 Production workflows use one file: the normal workflow JSON path under
 `workflows/<system>/`. The JSON body must declare
-`"schema_version": "rzn.workflow_manifest"`. Do not create production
-`*.manifest.json` or `*.manifest.v2.json` sidecars, and do not maintain V1/V2
-pairs.
+`"schema_version": "rzn.workflow_manifest"`. Do not create manifest sidecars.
+Keep one canonical JSON file per workflow.
 
 Treat `rzn-browser workflow inspect <system> <workflow> --json` as the
 handoff contract. If another agent cannot discover the params, types,
@@ -23,8 +22,8 @@ not ready.
 
 ```bash
 # inspect shipped packs
-rzn-browser list
-rzn-browser list google
+rzn-browser workflow list
+rzn-browser workflow list google
 
 # inspect the manifest contract agents will call
 rzn-browser workflow inspect google search
@@ -123,8 +122,8 @@ Set `runtime.requires_existing_session: true` only when:
 - the user is already on the target surface and wants the agent to continue there
 
 Do not add `use_current_tab`, `use_active_tab`, or `current_tab_id` to
-production workflow JSON. Those are legacy/manual-debug concepts, not the
-authoring standard.
+production workflow JSON. Use a dedicated tab unless the workflow genuinely
+requires an existing session.
 
 ## Validation Loop
 
@@ -139,7 +138,7 @@ Use the smallest loop possible while preserving the manifest gate:
 
 Useful runtime notes:
 
-- `rzn-browser list google` checks that the CLI is installed and the catalog resolves.
+- `rzn-browser workflow list google` checks that the CLI is installed and the catalog resolves.
 - `make doctor` checks native-host wiring and manifest state.
 - `~/rzn_build.log` is the main unified log file.
 

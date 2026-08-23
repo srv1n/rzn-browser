@@ -100,7 +100,7 @@ mapfile -t WORKTREE_LINES < <(git status --porcelain)
 for line in "${WORKTREE_LINES[@]}"; do
   path="${line:3}"
   case "$path" in
-    Cargo.lock|crates/*/Cargo.toml|extension/package.json|extension/src/manifest.base.json|scripts/plugins/config/rzn-browser.json|extension/dist-chrome/*|extension/dist-firefox/*)
+    Cargo.lock|crates/*/Cargo.toml|extension/package.json|extension/src/manifest.base.json|scripts/plugins/config/rzn-browser.json|extension/dist/chrome/*)
       ;;
     *)
       echo "[ERROR] Release flow found unexpected worktree changes after checks: $path"

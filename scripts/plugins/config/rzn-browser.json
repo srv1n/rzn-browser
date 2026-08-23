@@ -17,10 +17,6 @@
       "source": "resources/systems/browser_automation",
       "dest": "resources/systems/browser_automation"
     },
-    {
-      "source": "examples/browser_automation",
-      "dest": "examples/browser_automation"
-    }
   ],
   "payloads": [
     {

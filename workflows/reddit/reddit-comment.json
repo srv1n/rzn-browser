@@ -340,9 +340,5 @@
       "For target=comment_id both post_url (the thread permalink or parent post URL) and comment_id must be provided \u2014 the workflow navigates to post_url and scopes the reply to #thing_t1_<comment_id>.",
       "read_first=yes adds ~5s of scroll/pause time; use it when the caller wants 'read-then-comment' behavior."
     ]
-  },
-  "metadata": {
-    "migrated_from": "reddit/reddit-comment.json",
-    "legacy_system_id": "reddit"
   }
 }

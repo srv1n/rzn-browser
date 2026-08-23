@@ -274,7 +274,6 @@ test.describe('Enhanced actions e2e', () => {
       clear_first: false,
       simulate_typing: true,
       delay_ms: 0,
-      force_legacy: true,
     }));
 
     expect(fillResp.success).toBeTruthy();
@@ -313,7 +312,6 @@ test.describe('Enhanced actions e2e', () => {
       selector: "textarea[name='message']",
       pierce_shadow: true,
       visible: true,
-      force_legacy: true,
       timeout_ms: 2000,
     }));
     expect(waitResp.success).toBeTruthy();
@@ -323,7 +321,6 @@ test.describe('Enhanced actions e2e', () => {
       selector: "textarea[name='message']",
       value: "O'Reilly",
       pierce_shadow: true,
-      force_legacy: true,
     }));
     expect(fillResp.success).toBeTruthy();
 
@@ -530,16 +527,16 @@ test.describe('Enhanced actions e2e', () => {
     expect(bridgeMainEval.success).toBeTruthy();
     expect(bridgeMainEval.result?.result).toBe('main-ready');
 
-    const legacyExecute = await page.evaluate(async () => (window as any).__rznExecuteStep({
+    const directExecute = await page.evaluate(async () => (window as any).__rznExecuteStep({
       type: 'execute_javascript',
       script: 'document.querySelector(\"#message\").value',
     }));
-    expect(legacyExecute.success).toBeTruthy();
-    expect(legacyExecute.result?.world).toBe('main');
+    expect(directExecute.success).toBeTruthy();
+    expect(directExecute.result?.world).toBe('main');
     expect(['page_bridge_main_world_compat', 'chrome_scripting_main_world']).toContain(
-      legacyExecute.result?.execution_backend
+      directExecute.result?.execution_backend
     );
-    expect(legacyExecute.result?.result).toBe('Hello from isolated');
+    expect(directExecute.result?.result).toBe('Hello from isolated');
 
     const safeParamsEval = await page.evaluate(async () => (window as any).__rznExecuteStep({
       type: 'execute_javascript',
@@ -704,7 +701,7 @@ test.describe('Enhanced actions e2e', () => {
       let handshake: any = null;
       for (let i = 0; i < 10; i += 1) {
         try {
-          handshake = await chrome.tabs.sendMessage(tab.id, { cmd: 'rzn_handshake_v1' });
+          handshake = await chrome.tabs.sendMessage(tab.id, { cmd: 'rzn_handshake' });
           if (handshake?.success) break;
         } catch {}
         await delay(150);
@@ -713,7 +710,7 @@ test.describe('Enhanced actions e2e', () => {
       let execute: any = null;
       if (handshake?.success) {
         execute = await chrome.tabs.sendMessage(tab.id, {
-          cmd: 'rzn_execute_step_v1',
+          cmd: 'rzn_execute_step',
           req_id: 'pw-open-new-tab-exec-js',
           payload: {
             step: {
@@ -744,7 +741,7 @@ test.describe('Enhanced actions e2e', () => {
     await srv.close();
   });
 
-  test('background can handshake with and drive versioned content-script commands', async () => {
+  test('background can handshake with and drive content-script commands', async () => {
     const extensionPath = path.resolve(__dirname, '../../dist/chrome');
     const userDataDir = path.resolve(__dirname, '../../.pw-user-data-handshake');
     fs.rmSync(userDataDir, { recursive: true, force: true });
@@ -787,7 +784,7 @@ test.describe('Enhanced actions e2e', () => {
           let handshake: any = null;
           for (let i = 0; i < 10; i += 1) {
             try {
-              handshake = await chrome.tabs.sendMessage(tab.id, { cmd: 'rzn_handshake_v1' });
+              handshake = await chrome.tabs.sendMessage(tab.id, { cmd: 'rzn_handshake' });
               break;
             } catch {
               await delay(150);
@@ -799,7 +796,7 @@ test.describe('Enhanced actions e2e', () => {
           }
 
           const execute = await chrome.tabs.sendMessage(tab.id, {
-            cmd: 'rzn_execute_step_v1',
+            cmd: 'rzn_execute_step',
             req_id: 'pw-versioned-execute-step',
             payload: {
               step: {
@@ -810,7 +807,7 @@ test.describe('Enhanced actions e2e', () => {
           });
 
           const domSnapshot = await chrome.tabs.sendMessage(tab.id, {
-            cmd: 'rzn_get_dom_snapshot_v1',
+            cmd: 'rzn_get_dom_snapshot',
             req_id: 'pw-versioned-dom-snapshot',
             payload: {
               options: {
@@ -1328,7 +1325,7 @@ test.describe('Enhanced actions e2e', () => {
     await srv.close();
   });
 
-  test('wait_for_element respects timeout_ms in legacy handler', async () => {
+  test('wait_for_element respects timeout_ms in standard handler', async () => {
     const extensionPath = path.resolve(__dirname, '../../dist/chrome');
     const userDataDir = path.resolve(__dirname, '../../.pw-user-data');
 
@@ -1352,7 +1349,6 @@ test.describe('Enhanced actions e2e', () => {
       type: 'wait_for_element',
       selector: '#delayed',
       timeout_ms: 100,
-      force_legacy: true,
     }));
     const elapsedMs = Date.now() - startedAt;
 

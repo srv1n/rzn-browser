@@ -40,7 +40,7 @@ include:
 exclude:
   - target/**
   - node_modules/**
-  - extension/dist*/**
+  - extension/dist/**
   - logs/**
 YAML
   fi
@@ -66,8 +66,8 @@ PROMPT="$RUN_DIR/prompt.txt"
   echo "Run Dir: $RUN_DIR"
   echo "Shortlist Count: $(wc -l < "$SHORTLIST" | tr -d ' ')"
   echo
-  echo "Map: docs/REPO_MAP.md"
-  echo "Workflow: docs/LLM_SCOPED_WORKFLOW.md"
+  echo "System docs: docs/system/00-overview.md"
+  echo "Workflow: docs/system/workflow-authoring.md"
   echo "Tree: docs/index/TREE.md"
   echo
   echo "Guidance: Limit edits to files in shortlist.txt."

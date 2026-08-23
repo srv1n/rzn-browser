@@ -231,9 +231,5 @@
       "`published` and `views` are the human-readable strings YouTube renders (e.g. '2.3m views', '4 years ago'). Parse downstream if you need numeric values.",
       "Requires a standard browser session. No sign-in required."
     ]
-  },
-  "metadata": {
-    "migrated_from": "youtube/youtube-search.json",
-    "legacy_system_id": "youtube"
   }
 }

@@ -122,9 +122,6 @@ pub struct PlanConfig {
     /// LLM provider to use (openai or gemini)
     pub llm_provider: String,
 
-    /// OpenAI API key (deprecated, use llm_api_key)
-    pub openai_api_key: String,
-
     /// LLM API key (for the selected provider)
     pub llm_api_key: String,
 
@@ -250,7 +247,6 @@ impl Default for PlanConfig {
 
         Self {
             llm_provider,
-            openai_api_key: std::env::var("OPENAI_API_KEY").unwrap_or_default(), // Keep for backward compatibility
             llm_api_key: api_key,
             model,
             execution_model,

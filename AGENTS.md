@@ -26,31 +26,14 @@ This applies in the primary checkout and in every Git worktree.
 
 A Codex or Claude session opened directly by the user implements the requested work itself.
 
-Use Tusker for task contracts, packets, dependencies, proof, gates, review, and lifecycle state. Interactive work may inspect a tracked task with:
+Use the repository task tracker for task contracts, dependencies, proof, gates,
+review, and lifecycle state. Read only the task context needed for the change.
 
-- `tusker show <TASK-ID> --capsule`
-- `tusker packet <TASK-ID> --for agent`
-
-Do not start the Tusker daemon, dispatch automation, or launch nested `codex exec`/`claude -p` workers unless the user explicitly requests automation.
+Do not start a tracker daemon, dispatch automation, or launch nested
+`codex exec`/`claude -p` workers unless the user explicitly requests
+automation.
 
 ### Automated work
 
-Tusker automation is opt-in. Use `tusker automation plan`, dispatch, or the resident daemon only when the user explicitly asks to automate, dispatch, queue, or run unattended work.
-
-A process carrying `TUSKER_ATTEMPT_ID` is a dispatched worker. It must follow the claimed-run protocol, work only its claimed task, and must not spawn another runner.
-
-`tusker automation plan` is read-only and does not authorize dispatch by itself.
-
-<!-- tusker:epic-index:begin -->
-## Tusker
-
-Use Tusker for tracked repo work.
-
-- Task mechanics live in the installed `tusker` skill.
-- Project knowledge starts at `tusker/SKILL.md` when present, otherwise `tusker/README.md`.
-- Start runnable work with `tusker next`; inspect named work with `tusker show <TASK-ID> --capsule`.
-- Do not read `tusker/events`, `_generated`, `attempts`, `evidence`, `Attachments`, raw logs, or full task files unless the task explicitly requires it.
-- End each meaningful work turn with concise actionable feedback in `tusker/feedback/agents/`; skip when there is no Tusker signal.
-- Feedback is for the Tusker builders, not for this product. Report only friction in the task-control plane: finding/selecting tasks, packet/context quality, CLI help and errors, state transitions, gates, proof/evidence, validation budget, closeout, handoff, or environment/bootstrap needed to use Tusker.
-- Do not put app bugs, feature ideas, implementation summaries, build failures, or product UX notes in `tusker/feedback/agents/` unless the point is how Tusker made the agent workflow harder or more repetitive.
-<!-- tusker:epic-index:end -->
+Automation is opt-in. Use it only when the user explicitly asks to automate,
+dispatch, queue, or run unattended work.

@@ -145,9 +145,5 @@
       "No dates / occupancy params here \u2014 defaults to whatever the widget shows.",
       "If you need date/occupancy filters, drive google.com/travel/hotels directly via orchestrator."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-hotels.json",
-    "legacy_system_id": "google"
   }
 }

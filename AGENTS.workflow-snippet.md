@@ -3,7 +3,7 @@
 Keep `AGENTS.md` short.
 
 Point contributors and agents to:
-- the public issue templates for intake (a change issue maps to the contract sections of a Tusker task)
+- the public issue templates for intake and the change contract
 - the PR template for evidence
 - the project repo docs for architecture or policy
 

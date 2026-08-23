@@ -267,9 +267,5 @@
       "`card_text` is a raw fallback blob; prefer `app_name` + `developer_or_subtitle` for clean data.",
       "Limit is hardcoded at 20 (one App Store search page has ~10\u201315 cards visible)."
     ]
-  },
-  "metadata": {
-    "migrated_from": "appstore/search.json",
-    "legacy_system_id": "appstore"
   }
 }

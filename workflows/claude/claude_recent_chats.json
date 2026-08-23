@@ -185,9 +185,5 @@
       "Requires a logged-in Claude session in the active Chrome profile.",
       "Day filtering was removed in v1.1.0 because Claude no longer exposes per-thread timestamps in the sidebar DOM."
     ]
-  },
-  "metadata": {
-    "migrated_from": "claude/claude_recent_chats.json",
-    "legacy_system_id": "claude"
   }
 }

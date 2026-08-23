@@ -41,9 +41,9 @@ rzn-browser run x reply-dm-thread --param thread_url="https://x.com/messages/123
 
 ## Design rules
 
-- **One workflow per distinct capability.** `x_open` absorbs the old `x_open_post` + `x_open_article` + `x_thread` (auto-detected from URL + DOM). `x_search_posts` absorbs the old `search-user-window` + `search-top-from-user`. Tab policy is no longer a reason to split.
-- **No `_v1` suffix on filenames.** `id` and `version` live inside the JSON.
-- **Dedicated tab by default.** Production workflows do not use active-tab legacy fields, so parallel runs do not collide.
+- **One workflow per distinct capability.** `x_open` handles post, article, and
+  thread URLs; `x_search_posts` handles time-window and top-post searches.
+- **Dedicated tab by default.** Parallel runs do not collide.
 - **JavaScript first, CDP only when forced.** Composer activation and final send clicks use `click_element { use_cdp: true }` because X gesture-gates those surfaces. Non-composer actions, such as opening the DM composer or clicking Like, should start with the standard non-CDP `click_element` path and rely on follow-up assertions to catch ignored clicks.
 - **Review gates are mandatory for mutating flows.** `request_user_intervention` with `approval_mode: "ask_user"` and `continue_on_timeout: false` — timing out stops the workflow rather than falling through to send.
 
@@ -54,8 +54,3 @@ rzn-browser run x reply-dm-thread --param thread_url="https://x.com/messages/123
 - Landing-page consent banners can intercept clicks on the search box but do not block `location.assign` — direct URL navigation is used everywhere.
 - X Chat may redirect `/messages` → `/i/chat` and gate the inbox behind passcode onboarding. `x_send_dm` and `x_reply_dm_thread` treat that onboarding surface as a first-class state with its own review gate.
 - Operators can override approval behavior at runtime with `RZN_APPROVAL_MODE` / `RZN_INTERVENTION_POLICY` and `RZN_CONTINUE_ON_TIMEOUT` / `RZN_APPROVAL_CONTINUE_ON_TIMEOUT`.
-
-## Catalog
-
-- `resources/cards/social/x_v1.json` — canonical card catalog.
-- `resources/cards/social/x_browser_profile_v1.json` — browser-connector operation registry (points at the catalog).

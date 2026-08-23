@@ -230,9 +230,5 @@
       "For date-windowed results use `x_search_posts` instead.",
       "Opens a fresh tab for parallel-safe execution."
     ]
-  },
-  "metadata": {
-    "migrated_from": "x/x_profile_posts.json",
-    "legacy_system_id": "x"
   }
 }

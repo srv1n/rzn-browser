@@ -51,9 +51,5 @@
     ],
     "returns": ["{ tabId, closed, already_missing }. already_missing=true is a successful idempotent cleanup."],
     "notes": ["This workflow has no current-tab or active-tab fallback. Omit --tab-ref and it reports no_tab_id_available rather than closing an unrelated tab."]
-  },
-  "metadata": {
-    "migrated_from": "chatgpt/chatgpt_close.json",
-    "legacy_system_id": "chatgpt"
   }
 }

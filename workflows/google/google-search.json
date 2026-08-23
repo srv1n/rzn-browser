@@ -206,9 +206,5 @@
       "If results are empty, dismiss_popups may have failed on a consent gate — check the browser tab.",
       "Unknown vertical values fall back to web."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-search.json",
-    "legacy_system_id": "google"
   }
 }

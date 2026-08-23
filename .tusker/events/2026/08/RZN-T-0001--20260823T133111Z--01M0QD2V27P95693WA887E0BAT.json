@@ -1,0 +1,15 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-08-23T13:31:11Z",
+  "event_kind": "status_changed",
+  "id": "01M0QD2V27P95693WA887E0BAT",
+  "object": "RZN-T-0001",
+  "object_kind": "task",
+  "payload": {
+    "from": "review",
+    "reason": "User rejected preserved legacy/history concepts; expand to one pre-ship canonical code and documentation surface.",
+    "to": "rework"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

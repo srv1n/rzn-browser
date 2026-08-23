@@ -200,9 +200,5 @@
       "The widget toggles F/C based on Google's locale guess for the session \u2014 the workflow does not force a unit. Inspect the temperature field's trailing unit if you need to normalize.",
       "Forecast (next-day) extraction is not included; this is current conditions only."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-weather.json",
-    "legacy_system_id": "google"
   }
 }

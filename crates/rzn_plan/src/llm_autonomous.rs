@@ -1,4 +1,4 @@
-// Unified autonomous planner (formerly *_v2). Kept API identical.
+// Unified autonomous planner.
 use crate::{
     broker_client::BrokerClient,
     element_ref::TargetSpec,
@@ -66,11 +66,7 @@ struct SelectorDescriptor {
 fn tool_llm_enabled_from_config(config: &PlanConfig) -> bool {
     match ProviderType::from_str(&config.llm_provider) {
         Some(ProviderType::OpenAI) => {
-            let api_key = if !config.llm_api_key.trim().is_empty() {
-                &config.llm_api_key
-            } else {
-                &config.openai_api_key
-            };
+            let api_key = &config.llm_api_key;
             // Local OpenAI-compatible servers do not need a real key.
             !api_key.trim().is_empty()
                 || !crate::openai_client::is_openai_host(&crate::openai_client::resolve_base_url())
@@ -217,7 +213,7 @@ impl LLMAutonomousPlanner {
                 .or_else(|| resp.get("captcha_detected").and_then(|v| v.as_bool()))
                 .unwrap_or(false);
             if detected {
-                // Optional in-page notice (best-effort, no payload support in StepKind v1)
+                // Optional in-page notice. The current StepKind has no payload for this notice.
                 let _ = self
                     .execute_step_record(Step {
                         id: format!("captcha_ui_{}", Uuid::new_v4()),
@@ -302,7 +298,7 @@ impl LLMAutonomousPlanner {
                     };
 
                     // Prefer stable element ids provided by the content script snapshot.
-                    // Fallback to a deterministic id derived from the current element order.
+                    // Use a deterministic id derived from the current element order.
                     let encoded_id = el
                         .get("id")
                         .or_else(|| el.get("encoded_id"))
@@ -1010,8 +1006,7 @@ impl LLMAutonomousPlanner {
         let correlation_id = Uuid::new_v4().to_string();
 
         // Enable tool-first planning only when the selected provider is OpenAI.
-        // The selected PlanConfig is authoritative; environment-only fallback lives in
-        // PlanConfig::default for compatibility with legacy callers.
+        // The selected PlanConfig is authoritative. Keep planner defaults aligned with it.
         let tool_llm_enabled = tool_llm_enabled_from_config(config);
 
         Self {
@@ -2258,7 +2253,7 @@ Rules:
             Ok(v) => v,
             Err(e) => {
                 warn!("AX schema extraction LLM error: {}", e);
-                // Mark attempt to allow policy to proceed with fallback
+                // Mark the attempt so policy can continue with the next current strategy.
                 self.planner_state
                     .update_context("ax_attempted".to_string(), "true".to_string());
                 return Ok(None);
@@ -2733,7 +2728,7 @@ Rules:
             .cloned()
             .unwrap_or(json!({}));
 
-        // Prefer autoList from processDom (IDs are already mapped)
+        // Prefer the item list from processDom (IDs are already mapped)
         if let Some(al) = root.get("autoList") {
             if let Some(ids) = al.get("itemIds").and_then(|v| v.as_array()) {
                 let idset: std::collections::HashSet<String> = ids
@@ -2755,7 +2750,7 @@ Rules:
                 }
             }
         } else {
-            // Fallback: separate detector, intersect by xpaths
+            // Use the current detector when processDom does not return an item list.
             if let Ok(auto) = self.broker_client.detect_auto_list(None).await {
                 let aroot = auto.get("result").unwrap_or(&auto);
                 if let Some(items) = aroot.get("items").and_then(|v| v.as_array()) {
@@ -3046,9 +3041,7 @@ Rules:
             }
         };
         let auto_r = auto.get("result").unwrap_or(&auto);
-        // Support multiple response shapes:
-        // - New `detect_auto_list`: { containerSelector, itemSelector, items: [{href,...}] }
-        // - Older "DOM processor" style: { autoList: { itemIds, containerSelector, itemSelector }, idToUrl: {id: url} }
+        // The detector returns { containerSelector, itemSelector, items: [{href,...}] }.
         let items = auto_r
             .get("items")
             .and_then(|v| v.as_array())
@@ -3117,44 +3110,6 @@ Rules:
                     continue;
                 }
                 if href.starts_with("javascript:") || href == "#" {
-                    continue;
-                }
-                let resolved = if href.starts_with("http://") || href.starts_with("https://") {
-                    Some(href)
-                } else {
-                    base_parsed
-                        .as_ref()
-                        .and_then(|b| b.join(&href).ok())
-                        .map(|u| u.to_string())
-                };
-                let Some(resolved) = resolved else { continue };
-                let resolved = unwrap_redirect_like(&resolved);
-                if !resolved.starts_with("http://") && !resolved.starts_with("https://") {
-                    continue;
-                }
-                if !hrefs.contains(&resolved) {
-                    hrefs.push(resolved);
-                }
-            }
-        } else if let Some(auto_list) = auto_r.get("autoList").and_then(|v| v.as_object()) {
-            let id_to_url = auto_r.get("idToUrl").and_then(|v| v.as_object());
-            let item_ids = auto_list
-                .get("itemIds")
-                .and_then(|v| v.as_array())
-                .cloned()
-                .unwrap_or_default();
-            for idv in item_ids {
-                let id = idv.as_str().unwrap_or("").trim();
-                if id.is_empty() {
-                    continue;
-                }
-                let href = id_to_url
-                    .and_then(|m| m.get(id))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .trim()
-                    .to_string();
-                if href.is_empty() {
                     continue;
                 }
                 let resolved = if href.starts_with("http://") || href.starts_with("https://") {
@@ -3257,93 +3212,7 @@ Rules:
                     }
                 }
 
-                let best = if candidates.is_empty() {
-                    // Backwards-compatible: fall back to the single "best" candidate fields.
-                    let auto2_list = auto2_r.get("autoList").unwrap_or(auto2_r);
-                    let csel = auto2_list
-                        .get("containerSelector")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .trim()
-                        .to_string();
-                    let isel = auto2_list
-                        .get("itemSelector")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .trim()
-                        .to_string();
-                    if csel.is_empty() || isel.is_empty() {
-                        None
-                    } else {
-                        // If we have per-item snippets, avoid accepting short, non-review lists (e.g. feature bullets).
-                        let items = auto2_r
-                            .get("items")
-                            .and_then(|v| v.as_array())
-                            .cloned()
-                            .unwrap_or_default();
-                        if !items.is_empty() {
-                            let mut total_len = 0usize;
-                            let mut count = 0usize;
-                            let mut has_review_signal = false;
-                            let mut has_rating_signal = false;
-                            let mut has_verified_signal = false;
-                            let mut price_like_hits = 0usize;
-                            for it in &items {
-                                if let Some(t) = it.get("text").and_then(|v| v.as_str()) {
-                                    let lt = t.to_lowercase();
-                                    total_len += t.len();
-                                    count += 1;
-                                    if t.contains('★')
-                                        || lt.contains("out of 5")
-                                        || lt.contains("stars")
-                                    {
-                                        has_rating_signal = true;
-                                        has_review_signal = true;
-                                    }
-                                    if lt.contains("review") {
-                                        has_review_signal = true;
-                                    }
-                                    if lt.contains("verified purchase") || lt.contains("verified") {
-                                        has_verified_signal = true;
-                                    }
-                                    if t.contains('$')
-                                        || lt.contains("offers from")
-                                        || lt.contains("deal")
-                                        || lt.contains("add to cart")
-                                    {
-                                        price_like_hits += 1;
-                                    }
-                                }
-                            }
-                            let avg_len = if count > 0 {
-                                total_len as f64 / count as f64
-                            } else {
-                                0.0
-                            };
-                            let price_ratio = if count > 0 {
-                                price_like_hits as f64 / count as f64
-                            } else {
-                                0.0
-                            };
-                            // Heuristic:
-                            // - reject short lists with no review markers
-                            // - reject "product card" lists (prices/offers) unless we see strong review markers like "verified purchase"
-                            // - if the instruction explicitly asks for reviews, require a rating-like signal (stars/out-of-5)
-                            if (!has_review_signal && avg_len < 60.0)
-                                || (price_ratio > 0.15 && !has_verified_signal)
-                                || (wants_reviews && !has_rating_signal)
-                            {
-                                None
-                            } else {
-                                Some((csel, isel))
-                            }
-                        } else {
-                            Some((csel, isel))
-                        }
-                    }
-                } else {
-                    Self::pick_best_review_candidate(&candidates, wants_reviews)
-                };
+                let best = Self::pick_best_review_candidate(&candidates, wants_reviews);
 
                 if let Some((csel, isel)) = best {
                     // Don't stop on the first "kinda plausible" list. Many pages have repeated
@@ -4037,54 +3906,10 @@ Rules:
         };
 
         // Prefer validated extraction plans (scoped, deterministic).
-        let mut results = match self.broker_client.execute_extraction_plan(plan).await {
+        let results = match self.broker_client.execute_extraction_plan(plan).await {
             Ok(resp) => extract_rows(&resp),
             Err(_) => Vec::new(),
         };
-
-        // Fallback for older extension builds: use legacy `extract_structured_data` if the
-        // validated plan isn't supported or returns empty.
-        if results.is_empty() {
-            let scoped = if Self::is_specific_container_selector(container_sel) {
-                format!("{} {}", container_sel.trim(), item_sel.trim())
-            } else {
-                item_sel.trim().to_string()
-            };
-            if !scoped.is_empty() {
-                let extract = Step {
-                    id: format!("extract_comments_fallback_{}", Uuid::new_v4()),
-                    name: "Extract comments/reviews (fallback)".to_string(),
-                    kind: StepKind::ExtractStructuredData {
-                        item_selector: scoped,
-                        limit: None,
-                        fields: vec![FieldSpec {
-                            name: "comment".into(),
-                            selector: "*".into(),
-                            attribute: None,
-                            post_processing: vec![],
-                        }],
-                        frame_id: None,
-                        extraction_type: None,
-                    },
-                };
-                if let Ok(resp) = self.execute_step_record(extract).await {
-                    results = extract_rows(&resp);
-                    if results.is_empty() {
-                        let keys: Vec<String> = resp
-                            .as_object()
-                            .map(|o| o.keys().cloned().collect())
-                            .unwrap_or_default();
-                        warn!(
-                            "top-links comments macro: fallback extract returned empty for {} (resp_keys={:?}, error={:?}, error_code={:?})",
-                            href,
-                            keys,
-                            resp.get("error").and_then(|v| v.as_str()),
-                            resp.get("error_code").and_then(|v| v.as_str())
-                        );
-                    }
-                }
-            }
-        }
 
         results
     }
@@ -5242,11 +5067,7 @@ Rules:
             // Generic auto-list detection (with minimal backoff to avoid scroll oscillation)
             for attempt in 0..1 {
                 if let Ok(auto) = self.broker_client.detect_auto_list(None).await {
-                    // Broker may unwrap `result` (see read_response_from_broker). Handle both forms.
-                    let obj = auto
-                        .get("items")
-                        .and_then(|_| auto.as_object())
-                        .or_else(|| auto.get("result").and_then(|v| v.as_object()));
+                    let obj = auto.get("result").and_then(|value| value.as_object());
                     if let Some(obj) = obj {
                         if let Some(items) = obj.get("items").and_then(|v| v.as_array()) {
                             if !items.is_empty() {
@@ -5647,7 +5468,7 @@ Rules:
                                     return Ok(json!({ "results": items }));
                                 }
                                 Ok(None) => {
-                                    // Mark attempt; fall back to legacy extract below
+                                    // Mark the attempt; continue with the current structured path.
                                     self.planner_state.update_context(
                                         "ax_attempted".to_string(),
                                         "true".to_string(),
@@ -5735,11 +5556,7 @@ Rules:
                 // Retry auto-list detection with small waits/scrolls (domain-agnostic)
                 for attempt in 0..3 {
                     if let Ok(auto) = self.broker_client.detect_auto_list(None).await {
-                        // Broker may unwrap `result` (see read_response_from_broker). Handle both forms.
-                        let obj = auto
-                            .get("items")
-                            .and_then(|_| auto.as_object())
-                            .or_else(|| auto.get("result").and_then(|v| v.as_object()));
+                        let obj = auto.get("result").and_then(|value| value.as_object());
                         if let Some(obj) = obj {
                             if let Some(items) = obj.get("items").and_then(|v| v.as_array()) {
                                 if !items.is_empty() {
@@ -5891,7 +5708,7 @@ Rules:
                     }
                 }
 
-                // Fallback: legacy structured extraction via content-script
+                // Build a structured extraction step for explicit field requests.
                 let fields = action.args.first().cloned().unwrap_or(json!({}));
                 Step {
                     id: format!("extract_{}", Uuid::new_v4()),
@@ -6165,7 +5982,7 @@ mod tests {
         // Pipe transport is fine here; execute_step is never called
         let planner = LLMAutonomousPlanner::new(
             llm_client,
-            BrokerClient::new(crate::broker_client::Transport::Pipe),
+            BrokerClient::new(crate::broker_client::Transport::Native),
         );
 
         // Test direct JSON response
@@ -6254,7 +6071,7 @@ mod tests {
         let llm_client = LLMClient::with_provider(Box::new(DummyProvider));
         let mut planner = LLMAutonomousPlanner::new(
             llm_client,
-            BrokerClient::new(crate::broker_client::Transport::Pipe),
+            BrokerClient::new(crate::broker_client::Transport::Native),
         );
 
         planner.conversation_history.clear();
@@ -6305,7 +6122,6 @@ mod tests {
     fn fix_tool_llm_follows_plan_config_provider() {
         let mut config = PlanConfig {
             llm_provider: "dummy".to_string(),
-            openai_api_key: "sk-legacy".to_string(),
             llm_api_key: "sk-config".to_string(),
             ..PlanConfig::default()
         };
@@ -6316,9 +6132,6 @@ mod tests {
         assert!(tool_llm_enabled_from_config(&config));
 
         config.llm_api_key.clear();
-        assert!(tool_llm_enabled_from_config(&config));
-
-        config.openai_api_key.clear();
         assert!(!tool_llm_enabled_from_config(&config));
     }
 }

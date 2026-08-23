@@ -65,7 +65,6 @@ test.describe('Extraction - Search-like page', () => {
 
     const resp = await page.evaluate(async () => (window as any).__rznExecuteStep({
       type: 'extract_structured_data',
-      force_legacy: true,
       item_selector: '#search .result',
       fields: [
         { name: 'title', selector: 'h3' },

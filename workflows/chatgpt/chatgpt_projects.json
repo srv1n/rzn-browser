@@ -74,9 +74,6 @@
     "requires_existing_session": false,
     "timeout_ms": 90000
   },
-  "metadata": {
-    "legacy_system_id": "chatgpt"
-  },
   "result": {
     "artifact_policy": {
       "prefer_downloads": false

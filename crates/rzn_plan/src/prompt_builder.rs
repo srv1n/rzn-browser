@@ -191,7 +191,7 @@ impl PromptBuilder {
         ]
     }
 
-    /// Build planner prompt using DOM snapshot (legacy format)
+    /// Build planner prompt using a DOM snapshot.
     pub fn build_snapshot_planner_prompt(
         &self,
         goal: &str,
@@ -300,7 +300,7 @@ impl PromptBuilder {
         ));
         lines.push(String::new());
         lines.push("Element targeting: idx is 0-based. ref is @e{idx+1}.".to_string());
-        lines.push("Preferred targeting in executed steps: selector=\"@eN\" (fallback: selector=\"<css>\").".to_string());
+        lines.push("Preferred targeting in executed steps: selector=\"@eN\" (alternative: selector=\"<css>\").".to_string());
         lines.push(
             "If you see UNKNOWN_REF at runtime: take a fresh snapshot and retry with the new refs."
                 .to_string(),

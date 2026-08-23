@@ -374,9 +374,5 @@
       "When item_url is omitted, the workflow reads the first .athing row on news.ycombinator.com/. The 'first item' is whatever HN serves at that moment \u2014 this is intentional, not a bug.",
       "The approval gate uses request_user_intervention with no timeout. Click Continue (submit) or Stop (leave as draft)."
     ]
-  },
-  "metadata": {
-    "migrated_from": "hn/hn-submit-comment.json",
-    "legacy_system_id": "hacker_news"
   }
 }

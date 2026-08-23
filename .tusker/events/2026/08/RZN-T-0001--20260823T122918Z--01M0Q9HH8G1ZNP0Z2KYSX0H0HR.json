@@ -1,0 +1,15 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-08-23T12:29:18Z",
+  "event_kind": "status_changed",
+  "id": "01M0Q9HH8G1ZNP0Z2KYSX0H0HR",
+  "object": "RZN-T-0001",
+  "object_kind": "task",
+  "payload": {
+    "from": "review",
+    "reason": "Contract filled; verification in progress.",
+    "to": "ready"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

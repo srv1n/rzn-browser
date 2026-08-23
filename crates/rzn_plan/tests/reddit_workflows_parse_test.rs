@@ -11,7 +11,7 @@ fn repo_root() -> PathBuf {
 }
 
 #[test]
-fn reddit_workflows_parse_as_v1_workflow() {
+fn reddit_workflows_parse_as_workflow() {
     let workflows = [
         "workflows/reddit/reddit-comment.json",
         "workflows/reddit/reddit-dm.json",

@@ -12,15 +12,9 @@ import { elementResolver } from '../resolver/elementResolver';
 import { inputLadder, InputAction } from '../input/ladder_content';
 import { flightRecorder } from '../recorder/flightRecorder';
 
-// Enhanced action types that support both legacy selectors and new TargetSpec
+// Enhanced actions use TargetSpec for all element targeting.
 export interface EnhancedActionBase {
-  // New targeting system (preferred)
-  target_spec?: TargetSpec;
-  
-  // Selector compatibility support
-  selector?: string;
-  css?: string;
-  xpath?: string;
+  target_spec: TargetSpec;
   
   // Action-specific options
   timeout?: number;
@@ -58,11 +52,10 @@ export interface EnhancedExtractAction extends EnhancedActionBase {
   type: 'extract_structured_data';
   fields: Array<{
     name: string;
-    selector?: string;
     target_spec?: TargetSpec;
     attribute?: string;
   }>;
-  // Optional hint (kept for compatibility); no site-specific fast paths in runtime.
+  // Optional label for the extracted data.
   extraction_type?: string;
 }
 
@@ -90,37 +83,13 @@ export class EnhancedActionExecutor {
     const startTime = performance.now();
     
     try {
-      // Convert legacy selectors to TargetSpec if needed
-      const targetSpec = this.normalizeTargetSpec(action);
-      if (!targetSpec) {
-        const result = createResultEnvelope(
-          null,
-          InputRung.DOM,
-          false,
-          performance.now() - startTime,
-          undefined,
-          'No valid targeting method provided'
-        );
-        
-        // Record failed action
-        await flightRecorder.recordAction(
-          action.type, 
-          false, 
-          performance.now() - startTime,
-          'No valid targeting method provided',
-          { action }
-        );
-        
-        return result;
-      }
-
       // Resolve element with retries
       let resolvedElement: ResolvedElement;
       let lastError: string | undefined;
       
       for (let attempt = 0; attempt < (action.retry_count || this.retryAttempts); attempt++) {
         try {
-          resolvedElement = await elementResolver.resolve(targetSpec);
+          resolvedElement = await elementResolver.resolve(action.target_spec);
           break;
         } catch (error) {
           lastError = error instanceof Error ? error.message : 'Element resolution failed';
@@ -303,10 +272,9 @@ export class EnhancedActionExecutor {
           try {
             let fieldElement = domElement;
             
-            // If field has its own selector, find that element
-            if (field.selector || field.target_spec) {
-              const fieldTarget = field.target_spec || { css: field.selector };
-              const fieldResolved = await elementResolver.resolve(fieldTarget);
+            // If field has its own target, find that element.
+            if (field.target_spec) {
+              const fieldResolved = await elementResolver.resolve(field.target_spec);
               const fieldDOM = await this.resolveToDOMElement(fieldResolved);
               if (fieldDOM) {
                 fieldElement = fieldDOM;
@@ -392,27 +360,6 @@ export class EnhancedActionExecutor {
         error instanceof Error ? error.message : 'Text extraction failed'
       );
     }
-  }
-
-  /**
-   * Convert legacy selectors to TargetSpec
-   */
-  private normalizeTargetSpec(action: EnhancedActionBase): TargetSpec | null {
-    // If we already have a target_spec, use it
-    if (action.target_spec) {
-      return action.target_spec;
-    }
-
-    // Convert legacy selectors
-    if (action.css || action.selector) {
-      return { css: action.css || action.selector };
-    }
-
-    if (action.xpath) {
-      return { xpath: action.xpath };
-    }
-
-    return null;
   }
 
   /**

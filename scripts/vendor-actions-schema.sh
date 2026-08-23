@@ -6,10 +6,10 @@ if [ $# -lt 1 ]; then
   exit 1
 fi
 
-SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/schema/actions-v1.json"
+SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/schema/actions.json"
 DEST_ROOT="$1"
 DEST_DIR="$DEST_ROOT/schema"
-DEST="$DEST_DIR/actions-v1.json"
+DEST="$DEST_DIR/actions.json"
 
 mkdir -p "$DEST_DIR"
 cp "$SRC" "$DEST"

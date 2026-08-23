@@ -5,7 +5,7 @@ $hostName = if ($env:RZN_NATIVE_HOST_NAME) { $env:RZN_NATIVE_HOST_NAME } else { 
 $extensionId = if ($env:RZN_CHROME_EXTENSION_ID) { $env:RZN_CHROME_EXTENSION_ID } else { "bogjdnehdficgkhklinmnbgiiofbamji" }
 $installRoot = if ($env:RZN_RUNTIME_DIR) { $env:RZN_RUNTIME_DIR } else { Join-Path $env:LOCALAPPDATA "RZN" }
 $binDir = Join-Path $installRoot "bin"
-$extensionDir = Join-Path $installRoot "extension\dist-chrome"
+$extensionDir = Join-Path $installRoot "extension\dist\chrome"
 $manifestDir = Join-Path $installRoot "native-host"
 $manifestPath = Join-Path $manifestDir "$hostName.json"
 
@@ -33,7 +33,7 @@ function Add-ToUserPath([string]$PathEntry) {
 foreach ($required in @(
   (Join-Path $scriptDir "bin\rzn-browser.exe"),
   (Join-Path $scriptDir "bin\rzn-native-host.exe"),
-  (Join-Path $scriptDir "extension\dist-chrome\manifest.json")
+  (Join-Path $scriptDir "extension\dist\chrome\manifest.json")
 )) {
   if (-not (Test-Path -LiteralPath $required)) {
     throw "Missing packaged file: $required"
@@ -52,7 +52,7 @@ Write-Host "[INFO] Installing stable extension copy into: $extensionDir"
 if (Test-Path -LiteralPath $extensionDir) {
   Remove-Item -Recurse -Force $extensionDir
 }
-Copy-Item -Recurse -Force (Join-Path $scriptDir "extension\dist-chrome") $extensionDir
+Copy-Item -Recurse -Force (Join-Path $scriptDir "extension\dist\chrome") $extensionDir
 
 $manifestPayload = @{
   name = $hostName

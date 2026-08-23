@@ -231,9 +231,5 @@
       "Shorts tab is intentionally not a mode. If needed, pass the full `/@handle/shorts` URL as `channel` \u2014 the resolver will respect the explicit path.",
       "For a video's comments/recommendations use `youtube video`. For playlist contents use `youtube playlist`."
     ]
-  },
-  "metadata": {
-    "migrated_from": "youtube/youtube-channel.json",
-    "legacy_system_id": "youtube"
   }
 }

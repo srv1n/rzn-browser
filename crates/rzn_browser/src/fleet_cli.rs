@@ -8,7 +8,7 @@
 //! Config shape (shared contract with FLA-T-0003):
 //! ```json
 //! {
-//!   "version": "rzn.fleet.device_config.v1",
+//!   "version": "rzn.fleet.device_config",
 //!   "server_url": "https://fleet.example.com",
 //!   "device_id": "dev_42",
 //!   "device_token": "fld_...",
@@ -21,9 +21,8 @@
 
 use anyhow::{bail, Context, Result};
 use clap::{Args, Subcommand};
-use rzn_contracts::fleet_v1::{
-    FleetDeviceSelfV1, FleetDeviceStatusV1, FleetEnrollRequestV1, FleetEnrollResponseV1,
-    FleetErrorV1,
+use rzn_contracts::fleet::{
+    FleetDeviceSelf, FleetDeviceStatus, FleetEnrollRequest, FleetEnrollResponse, FleetError,
 };
 use rzn_core::runtime_paths::{default_app_base_dir, env_trimmed};
 use serde::{Deserialize, Serialize};
@@ -33,7 +32,7 @@ use std::time::Duration;
 use url::Url;
 
 /// Version tag pinned into `fleet_config.json`.
-const FLEET_DEVICE_CONFIG_VERSION: &str = "rzn.fleet.device_config.v1";
+const FLEET_DEVICE_CONFIG_CONTRACT: &str = "rzn.fleet.device_config";
 /// Basename of the device config file in the runtime dir.
 const FLEET_CONFIG_FILENAME: &str = "fleet_config.json";
 /// Env override for the config path (primarily for tests / advanced operators).
@@ -168,7 +167,7 @@ fn delete_fleet_config(path: &Path) -> Result<bool> {
 
 pub(crate) async fn enroll_from_rpc(server: &str, code: &str) -> Result<Value> {
     let server_url = normalize_fleet_server_url(server)?;
-    let request = FleetEnrollRequestV1 {
+    let request = FleetEnrollRequest {
         code: code.to_string(),
         device_name: default_device_name(),
         platform: device_platform(),
@@ -201,7 +200,7 @@ pub(crate) fn unenroll_from_rpc() -> Result<Value> {
 async fn run_enroll(args: FleetEnrollArgs) -> Result<()> {
     let server_url = normalize_fleet_server_url(&args.server)?;
     let device_name = args.name.clone().unwrap_or_else(default_device_name);
-    let request = FleetEnrollRequestV1 {
+    let request = FleetEnrollRequest {
         code: args.code.clone(),
         device_name,
         platform: device_platform(),
@@ -235,7 +234,7 @@ async fn run_enroll(args: FleetEnrollArgs) -> Result<()> {
 async fn perform_enroll(
     client: &reqwest::Client,
     server_url: &str,
-    request: &FleetEnrollRequestV1,
+    request: &FleetEnrollRequest,
     config_path: &Path,
     force: bool,
 ) -> Result<FleetDeviceConfig> {
@@ -259,10 +258,10 @@ async fn perform_enroll(
         bail!("enrollment failed: {}", describe_http_error(status, &body));
     }
 
-    let enroll: FleetEnrollResponseV1 =
+    let enroll: FleetEnrollResponse =
         serde_json::from_str(&body).context("decode enroll response")?;
     let config = FleetDeviceConfig {
-        version: FLEET_DEVICE_CONFIG_VERSION.to_string(),
+        version: FLEET_DEVICE_CONFIG_CONTRACT.to_string(),
         server_url: server_url.to_string(),
         device_id: enroll.device_id.clone(),
         device_token: enroll.device_token.clone(),
@@ -335,7 +334,7 @@ async fn fetch_device_self(
     client: &reqwest::Client,
     server_url: &str,
     device_token: &str,
-) -> Result<FleetDeviceSelfV1> {
+) -> Result<FleetDeviceSelf> {
     let url = format!("{server_url}/v1/fleet/device/self");
     let response = client
         .get(&url)
@@ -356,7 +355,7 @@ async fn fetch_device_self(
 
 fn build_status_report(
     config: &FleetDeviceConfig,
-    device_self: Option<&FleetDeviceSelfV1>,
+    device_self: Option<&FleetDeviceSelf>,
     server_reachable: bool,
     loop_state: Value,
 ) -> FleetStatusReport {
@@ -540,7 +539,7 @@ fn is_loopback_url(url: &Url) -> bool {
 }
 
 fn describe_http_error(status: reqwest::StatusCode, body: &str) -> String {
-    if let Ok(err) = serde_json::from_str::<FleetErrorV1>(body) {
+    if let Ok(err) = serde_json::from_str::<FleetError>(body) {
         return format!("{} ({})", err.message, err.code);
     }
     let trimmed = body.trim();
@@ -559,13 +558,13 @@ fn cli_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
-/// Capabilities advertised at enroll. `fleet_poll_v1` marks fleet-protocol support;
+/// Capabilities advertised at enroll. `fleet_poll` marks fleet-protocol support;
 /// the rest describe this device's actor surface.
 fn device_capabilities() -> Vec<String> {
     vec![
-        "fleet_poll_v1".to_string(),
+        "fleet_poll".to_string(),
         "extension_actor".to_string(),
-        "workflow_runner_v2".to_string(),
+        "workflow_runner".to_string(),
     ]
 }
 
@@ -590,11 +589,11 @@ fn os_hostname() -> Option<String> {
     env_trimmed("COMPUTERNAME")
 }
 
-fn device_status_str(status: &FleetDeviceStatusV1) -> &'static str {
+fn device_status_str(status: &FleetDeviceStatus) -> &'static str {
     match status {
-        FleetDeviceStatusV1::Active => "active",
-        FleetDeviceStatusV1::Dormant => "dormant",
-        FleetDeviceStatusV1::Revoked => "revoked",
+        FleetDeviceStatus::Active => "active",
+        FleetDeviceStatus::Dormant => "dormant",
+        FleetDeviceStatus::Revoked => "revoked",
     }
 }
 
@@ -640,7 +639,7 @@ mod tests {
 
     fn sample_config() -> FleetDeviceConfig {
         FleetDeviceConfig {
-            version: FLEET_DEVICE_CONFIG_VERSION.to_string(),
+            version: FLEET_DEVICE_CONFIG_CONTRACT.to_string(),
             server_url: "https://fleet.example.com".to_string(),
             device_id: "dev_42".to_string(),
             device_token: "fld_secret_value".to_string(),
@@ -695,8 +694,8 @@ mod tests {
     // A1: enroll happy path writes a valid 0600 config; token stored, not returned in a print.
     #[tokio::test]
     async fn enroll_happy_path_writes_config() {
-        async fn enroll_ok() -> Json<FleetEnrollResponseV1> {
-            Json(FleetEnrollResponseV1 {
+        async fn enroll_ok() -> Json<FleetEnrollResponse> {
+            Json(FleetEnrollResponse {
                 device_id: "dev_enrolled".to_string(),
                 device_token: "fld_top_secret".to_string(),
                 tenant_id: "tnt_9".to_string(),
@@ -708,7 +707,7 @@ mod tests {
 
         let dir = temp_dir("enroll-ok");
         let path = dir.join(FLEET_CONFIG_FILENAME);
-        let request = FleetEnrollRequestV1 {
+        let request = FleetEnrollRequest {
             code: "otc_abc".to_string(),
             device_name: "unit-test-device".to_string(),
             platform: device_platform(),
@@ -725,7 +724,7 @@ mod tests {
         assert_eq!(config.device_token, "fld_top_secret");
         assert_eq!(config.tenant_id, "tnt_9");
         assert_eq!(config.poll_interval_seconds, Some(45));
-        assert_eq!(config.version, FLEET_DEVICE_CONFIG_VERSION);
+        assert_eq!(config.version, FLEET_DEVICE_CONFIG_CONTRACT);
 
         let on_disk = read_fleet_config(&path).unwrap().unwrap();
         assert_eq!(on_disk, config);
@@ -738,11 +737,11 @@ mod tests {
     // A1: invalid/expired code surfaces the server's actionable message, non-zero.
     #[tokio::test]
     async fn enroll_rejects_invalid_code() {
-        async fn enroll_bad() -> (StatusCode, Json<FleetErrorV1>) {
+        async fn enroll_bad() -> (StatusCode, Json<FleetError>) {
             (
                 StatusCode::BAD_REQUEST,
-                Json(FleetErrorV1 {
-                    code: rzn_contracts::fleet_v1::error_codes::ENROLLMENT_CODE_INVALID.to_string(),
+                Json(FleetError {
+                    code: rzn_contracts::fleet::error_codes::ENROLLMENT_CODE_INVALID.to_string(),
                     message: "enrollment code invalid or expired".to_string(),
                 }),
             )
@@ -751,7 +750,7 @@ mod tests {
 
         let dir = temp_dir("enroll-bad");
         let path = dir.join(FLEET_CONFIG_FILENAME);
-        let request = FleetEnrollRequestV1 {
+        let request = FleetEnrollRequest {
             code: "otc_bad".to_string(),
             device_name: "unit-test-device".to_string(),
             platform: device_platform(),
@@ -777,8 +776,8 @@ mod tests {
     // A1: an existing enrollment requires --force to overwrite.
     #[tokio::test]
     async fn enroll_requires_force_to_overwrite() {
-        async fn enroll_ok() -> Json<FleetEnrollResponseV1> {
-            Json(FleetEnrollResponseV1 {
+        async fn enroll_ok() -> Json<FleetEnrollResponse> {
+            Json(FleetEnrollResponse {
                 device_id: "dev_second".to_string(),
                 device_token: "fld_second".to_string(),
                 tenant_id: "tnt_2".to_string(),
@@ -792,7 +791,7 @@ mod tests {
         let path = dir.join(FLEET_CONFIG_FILENAME);
         write_fleet_config(&path, &sample_config()).unwrap();
 
-        let request = FleetEnrollRequestV1 {
+        let request = FleetEnrollRequest {
             code: "otc_new".to_string(),
             device_name: "unit-test-device".to_string(),
             platform: device_platform(),
@@ -828,11 +827,11 @@ mod tests {
     // A2: status --json shape from a fixture config + mocked self endpoint.
     #[tokio::test]
     async fn status_json_shape_from_fixture_and_mock() {
-        async fn device_self() -> Json<FleetDeviceSelfV1> {
-            Json(FleetDeviceSelfV1 {
+        async fn device_self() -> Json<FleetDeviceSelf> {
+            Json(FleetDeviceSelf {
                 device_id: "dev_42".to_string(),
                 name: "sarav-mbp".to_string(),
-                status: FleetDeviceStatusV1::Active,
+                status: FleetDeviceStatus::Active,
                 tenant_id: "tnt_1".to_string(),
                 last_seen_at_ms: Some(1_720_000_000_000),
             })

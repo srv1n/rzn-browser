@@ -22,7 +22,7 @@ cd "${REPO_ROOT}"
 
 echo "[INFO] Probing local RZN runtime..."
 if command -v rzn-browser >/dev/null 2>&1; then
-  if rzn-browser list google >/dev/null 2>&1; then
+  if rzn-browser workflow list google >/dev/null 2>&1; then
     echo "[OK] rzn-browser is installed and the workflow catalog resolves."
     echo "[INFO] Running doctor check..."
     make doctor
@@ -46,8 +46,8 @@ Manual steps:
 1. Open chrome://extensions
 2. Enable Developer mode
 3. Load unpacked from the stable extension copy
-   macOS: ~/Library/Application Support/RZN/extension/dist-chrome
-   Linux: ~/.local/share/RZN/extension/dist-chrome
+   macOS: ~/Library/Application Support/RZN/extension/dist/chrome
+   Linux: ~/.local/share/RZN/extension/dist/chrome
 4. Keep a Chrome window open
 5. Rerun: make doctor
 EOF

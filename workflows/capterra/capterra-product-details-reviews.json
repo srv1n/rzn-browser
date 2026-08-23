@@ -165,12 +165,8 @@
     ],
     "notes": [
       "Capterra is fronted by Cloudflare. Cold sessions may hit a 'Just a moment...' challenge \u2014 open the URL once in the same browser profile to clear it before re-running.",
-      "Source of truth is script[type='application/ld+json'] containing @type='SoftwareApplication'. The DOM-scraping approach in v1 returned zero reviews because Capterra removed [itemprop='review'] markup.",
+      "Source of truth is script[type='application/ld+json'] containing @type='SoftwareApplication'. The DOM does not expose review markup, so the workflow reads reviews from JSON-LD instead.",
       "JSON-LD only ships ~25 reviews per page. Pagination via ?page=N would need a follow-up workflow if deep coverage is required."
     ]
-  },
-  "metadata": {
-    "migrated_from": "capterra/capterra-product-details-reviews.json",
-    "legacy_system_id": "capterra"
   }
 }

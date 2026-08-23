@@ -1,0 +1,16 @@
+{
+  "actor": "tusker:reconcile",
+  "at": "2026-08-23T12:29:13Z",
+  "event_kind": "updated",
+  "id": "01M0Q9HBGHKCR07DE2KC755XKX",
+  "object": "project",
+  "object_kind": "domain",
+  "payload": {
+    "path": "knowledge/domains/project/INDEX.md",
+    "previous_state_rev": "sha256:a47eda365f9bcde4f9f74adfdd8fbac82f517164bffa77c05317913f7dfeb475",
+    "source": "state_rev_repair",
+    "state_rev": "sha256:fe516dd491ac9da9a693325a2ade8065912ab8ead7ef17da5b509f1f80c4a372"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

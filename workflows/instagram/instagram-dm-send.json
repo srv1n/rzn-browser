@@ -197,9 +197,5 @@
       "The thread composer is a ProseMirror-style contenteditable; this workflow uses document.execCommand('insertText', false, text) which is the only reliable path to trip Instagram's send-button enable logic.",
       "Rate limiting is an Instagram-side concern: don't loop faster than a real user would. Space batched DMs with a real delay between calls."
     ]
-  },
-  "metadata": {
-    "migrated_from": "instagram/instagram-dm-send.json",
-    "legacy_system_id": "instagram"
   }
 }

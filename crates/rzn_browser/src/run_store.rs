@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use rzn_contracts::v2::{RunResultV2, RunStatusV2};
+use rzn_contracts::workflow::{RunResult, RunStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -42,7 +42,7 @@ pub struct AppendRun<'a> {
     pub started_at: i64,
     pub ended_at: i64,
     pub params: &'a Value,
-    pub result: &'a RunResultV2,
+    pub result: &'a RunResult,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -106,7 +106,7 @@ impl RunStore {
         let params_name = format!("{}.params.json", safe_id(&run.result.run_id));
         write_json_atomic(&self.root.join(&result_name), run.result)?;
         write_params_0600(&self.root.join(&params_name), run.params)?;
-        if run.result.status != RunStatusV2::Succeeded {
+        if run.result.status != RunStatus::Succeeded {
             let failure_name = format!("{}.failure.json", safe_id(&run.result.run_id));
             let context = failure_context_from_result(run.result);
             let _ = write_json_atomic(&self.root.join(failure_name), &context);
@@ -175,7 +175,7 @@ impl RunStore {
         ))
     }
 
-    pub fn get(&self, run_id: &str) -> Result<Option<(RunRecord, RunResultV2)>> {
+    pub fn get(&self, run_id: &str) -> Result<Option<(RunRecord, RunResult)>> {
         let _guard = self
             .lock
             .lock()
@@ -223,7 +223,7 @@ impl RunStore {
     }
 }
 
-fn failure_context_from_result(result: &RunResultV2) -> Value {
+fn failure_context_from_result(result: &RunResult) -> Value {
     let encoded = serde_json::to_value(result).unwrap_or(Value::Null);
     let mut context = serde_json::Map::new();
     let console = result
@@ -328,12 +328,12 @@ fn write_params_0600(path: &Path, value: &Value) -> Result<()> {
     Ok(())
 }
 
-fn status_str(status: &RunStatusV2) -> &'static str {
+fn status_str(status: &RunStatus) -> &'static str {
     match status {
-        RunStatusV2::Succeeded => "succeeded",
-        RunStatusV2::Failed | RunStatusV2::PolicyBlocked => "failed",
-        RunStatusV2::Cancelled => "cancelled",
-        RunStatusV2::TimedOut => "timed_out",
+        RunStatus::Succeeded => "succeeded",
+        RunStatus::Failed | RunStatus::PolicyBlocked => "failed",
+        RunStatus::Cancelled => "cancelled",
+        RunStatus::TimedOut => "timed_out",
     }
 }
 
@@ -374,15 +374,15 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rzn_contracts::v2::{DebugBundleV1, FailureSummaryV1, RunErrorV1, RUN_RESULT_VERSION};
+    use rzn_contracts::workflow::{DebugBundle, FailureSummary, RunError, RUN_RESULT_CONTRACT};
     use uuid::Uuid;
 
     fn temp() -> PathBuf {
         std::env::temp_dir().join(format!("rzn-run-store-{}", Uuid::new_v4()))
     }
-    fn result(id: &str, status: RunStatusV2) -> RunResultV2 {
-        RunResultV2 {
-            version: RUN_RESULT_VERSION.into(),
+    fn result(id: &str, status: RunStatus) -> RunResult {
+        RunResult {
+            version: RUN_RESULT_CONTRACT.into(),
             run_id: id.into(),
             workflow_id: "wf".into(),
             status,
@@ -401,14 +401,14 @@ mod tests {
         let base = temp();
         let store = RunStore::open(&base).unwrap();
         let params = serde_json::json!({"secret":"value"});
-        let mut failed = result("r2", RunStatusV2::Failed);
-        failed.error = Some(RunErrorV1 {
+        let mut failed = result("r2", RunStatus::Failed);
+        failed.error = Some(RunError {
             code: "x".into(),
             message: "boom".into(),
             step_id: None,
             retry_hint: None,
         });
-        failed.failure_summary = Some(FailureSummaryV1 {
+        failed.failure_summary = Some(FailureSummary {
             error_class: "engine_error".into(),
             failing_step_index: Some(2),
             fingerprint: "abc".into(),
@@ -421,7 +421,7 @@ mod tests {
                 started_at: 1,
                 ended_at: 2,
                 params: &params,
-                result: &result("r1", RunStatusV2::Succeeded),
+                result: &result("r1", RunStatus::Succeeded),
             })
             .unwrap();
         store
@@ -468,7 +468,7 @@ mod tests {
         let store = RunStore::open(&base).unwrap();
         let params = serde_json::json!({});
         for i in 0..3 {
-            let r = result(&format!("r{i}"), RunStatusV2::Succeeded);
+            let r = result(&format!("r{i}"), RunStatus::Succeeded);
             store
                 .append(AppendRun {
                     origin: "mcp",
@@ -511,10 +511,8 @@ mod tests {
                     let store = RunStore::open(base).unwrap();
                     let params = serde_json::json!({});
                     for item in 0..25 {
-                        let run = result(
-                            &format!("worker-{worker}-run-{item}"),
-                            RunStatusV2::Succeeded,
-                        );
+                        let run =
+                            result(&format!("worker-{worker}-run-{item}"), RunStatus::Succeeded);
                         store
                             .append(AppendRun {
                                 origin: "mcp",
@@ -548,14 +546,14 @@ mod tests {
         let base = temp();
         let store = RunStore::open(&base).unwrap();
         let params = serde_json::json!({"query":"rust", "page":2});
-        let mut failed = result("replay-source", RunStatusV2::Failed);
-        failed.error = Some(RunErrorV1 {
+        let mut failed = result("replay-source", RunStatus::Failed);
+        failed.error = Some(RunError {
             code: "timeout".into(),
             message: "x".repeat(8 * 1024),
             step_id: None,
             retry_hint: None,
         });
-        failed.debug = Some(DebugBundleV1 {
+        failed.debug = Some(DebugBundle {
             trace_id: None,
             events: vec![],
             raw: Some(serde_json::json!({
@@ -586,8 +584,8 @@ mod tests {
         assert_eq!(context["dom_excerpt"].as_str().unwrap().len(), 4 * 1024);
         assert!(context.get("capture_unavailable").is_none());
 
-        let mut capture_failed = result("capture-failed", RunStatusV2::Failed);
-        capture_failed.error = Some(RunErrorV1 {
+        let mut capture_failed = result("capture-failed", RunStatus::Failed);
+        capture_failed.error = Some(RunError {
             code: "snapshot_failed".into(),
             message: "run failure remains primary".into(),
             step_id: None,

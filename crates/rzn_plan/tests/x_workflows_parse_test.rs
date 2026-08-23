@@ -11,7 +11,7 @@ fn repo_root() -> PathBuf {
 }
 
 #[test]
-fn x_workflows_parse_as_v1_workflow() {
+fn x_workflows_parse_as_workflow() {
     let workflows = [
         "workflows/x/x_home_timeline_digest.json",
         "workflows/x/x_open.json",

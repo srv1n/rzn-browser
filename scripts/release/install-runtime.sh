@@ -130,11 +130,11 @@ case "$(uname -s)" in
 esac
 
 BIN_DIR="$INSTALL_ROOT/bin"
-EXT_DIR="$INSTALL_ROOT/extension/dist-chrome"
+EXT_DIR="$INSTALL_ROOT/extension/dist/chrome"
 MANIFEST_PATH="$CHROME_HOST_DIR/$HOST_NAME.json"
 GLOBAL_BIN_DIR=$(default_global_bin_dir)
 
-for required in "$SCRIPT_DIR/bin/rzn-browser" "$SCRIPT_DIR/bin/rzn-native-host" "$SCRIPT_DIR/extension/dist-chrome/manifest.json"; do
+for required in "$SCRIPT_DIR/bin/rzn-browser" "$SCRIPT_DIR/bin/rzn-native-host" "$SCRIPT_DIR/extension/dist/chrome/manifest.json"; do
   if [ ! -e "$required" ]; then
     echo "[ERROR] Missing packaged file: $required" >&2
     exit 1
@@ -150,7 +150,7 @@ install_file_atomic "$SCRIPT_DIR/bin/rzn-native-host" "$BIN_DIR/rzn-native-host"
 echo "[INFO] Installing stable extension copy into: $EXT_DIR"
 guarded_rm_rf "$EXT_DIR" "$INSTALL_ROOT" "runtime extension"
 mkdir -p "$(dirname "$EXT_DIR")"
-cp -R "$SCRIPT_DIR/extension/dist-chrome" "$EXT_DIR"
+cp -R "$SCRIPT_DIR/extension/dist/chrome" "$EXT_DIR"
 
 if [ -d "$SCRIPT_DIR/skills" ]; then
   echo "[INFO] Installing bundled skills into: $INSTALL_ROOT/skills/builtin"

@@ -74,7 +74,7 @@ rzn-browser run chatgpt send --param project_id="g-p-6a1c…" --param message_te
   is surfaced unchanged. Do not immediately retry either result. Higher-level
   callers such as `chatgpt-handoff` must own the durable account-wide cooldown.
 - To re-capture the picker markup after a future UI change, run a read-only DOM probe through rzn-browser itself (`rzn-browser run <probe>.json`) rather than working from screenshots — the Chrome bridge is the same one the workflow uses.
-- **`model_slug` and `model_effort` are free-form labels.** They are matched against whatever the account actually offers, so nothing is hard-coded to one lane. Defaults are `GPT-5.6 Sol` / `Pro`. `model_version` is still accepted for older callers but ignored — the version is part of the model label now.
+- **`model_slug` and `model_effort` are free-form labels.** They are matched against whatever the account actually offers, so nothing is hard-coded to one lane. Defaults are `GPT-5.6 Sol` / `Pro`. `model_version` is accepted and ignored; the version is part of the model label now.
 - **Advanced-panel selection.** ChatGPT moved model and effort behind the composer pill: click the pill (labelled with the current effort, e.g. `Pro`), expand **Advanced**, then open the **Model** or **Effort** row for the option submenu. The workflow opens the panel once per selection and commits each option with a trusted CDP click, because ChatGPT drops synthetic clicks there.
 - **Hard-fail on bad commit.** Before typing the prompt, the workflow reopens the Advanced panel and reads back the Model and Effort rows. A mismatch throws `model_selection_verify_failed` instead of sending under another lane; pass `require_exact_model=false` to send anyway and have the applied values reported.
 - **Row markup, verified live 2026-08-07.** Rows are `div[role=menuitem][aria-haspopup=menu]` inside `[data-testid=composer-intelligence-picker-content]`; the label and value are sibling nodes, so `textContent` reads `ModelGPT-5.6 Sol` with **no separating space** — match on `^Model`, never `^Model\b`. Options are `div[role=menuitemradio]` carrying `aria-checked`. The picker also keeps an `inert` copy of the collapsed view mounted next to the advanced view, so matching must skip `[inert]` subtrees or it selects a dead row.
@@ -92,17 +92,3 @@ rzn-browser run chatgpt send --param project_id="g-p-6a1c…" --param message_te
   Use `chatgpt close` with that same `--tab-ref` for idempotent cleanup; it has no
   active-tab fallback.
 - `chatgpt_read` writes one `chatgpt-attachments-<chat_id>.zip` to the browser default Downloads folder; the result payload also carries `attachment_urls` (cookie-bound signed URLs) and `attachments_zip` (name, file_count, size_bytes, errors). Generated-image downloads land as individual files in the Downloads folder.
-
-## Old / Archived
-
-Earlier versions of every workflow live in `archive/workflows/chatgpt/` for reference. They are NOT discovered by the workflow runner. Each was retired because a single canonical workflow now covers its purpose:
-
-| Archived | Replaced by |
-| --- | --- |
-| `chatgpt_new_chat_send_v1`, `chatgpt_new_chat_send_attachment_v1`, `chatgpt_continue_chat_v1`, `chatgpt_send_current_composer_v1` (+ `_js_v1`) | `chatgpt_send` |
-| `chatgpt_export_chat`, `chatgpt_export_chat_v1` | `chatgpt_read --param mode="transcript"` |
-| `chatgpt_export_full_chat`, `chatgpt_export_full_chat_v1` | `chatgpt_read --param mode="full"` |
-| `chatgpt_get_response`, `chatgpt_get_response_v1` | `chatgpt_read --param mode="latest"` |
-| `chatgpt_images_get_latest_v1`, `chatgpt_images_download_current_rendered_v1` | `chatgpt_images_download` |
-| `chatgpt_images_new_generation_v1`, `chatgpt_images_new_generation_attachment_v1`, `chatgpt_images_generate_and_download_v1` | `chatgpt_send --param tool="image_gen"` (+ `chatgpt_images_download` to save locally) |
-| `chatgpt_download_attachment_v1` | `chatgpt_read` auto-downloads user attachments. For rare button-backed artifacts not in the API payload, restore from archive on demand. |

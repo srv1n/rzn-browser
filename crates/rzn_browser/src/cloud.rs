@@ -1,4 +1,3 @@
-use crate::workflow_params::apply_parameters;
 use anyhow::{anyhow, bail, Context, Result};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
@@ -9,10 +8,10 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use clap::{Args, Subcommand};
 use futures_util::{SinkExt, StreamExt};
-use rzn_contracts::v1::{
-    ActionResultV1, ActorHelloV1, ActorReadyV1, CapabilitiesV1, CloudBrowserCommandV1,
-    CloudCommandAckV1, CloudCommandEnvelopeV1, CloudCommandKindV1, CloudCommandPayloadV1,
-    CloudCommandResultV1, CLOUD_CONTRACT_VERSION,
+use rzn_contracts::browser::{
+    ActorHello, ActorReady, BrowserActionResult, Capabilities, CloudBrowserCommand,
+    CloudCommandAck, CloudCommandEnvelope, CloudCommandKind, CloudCommandPayload,
+    CloudCommandResult, CLOUD_CONTRACT,
 };
 use rzn_core::secure_files::write_secret_file;
 use serde::{Deserialize, Serialize};
@@ -32,8 +31,8 @@ use uuid::Uuid;
 const DEFAULT_CLOUD_SERVER_URL: &str = "http://127.0.0.1:8787";
 const DEFAULT_HEARTBEAT_INTERVAL_MS: u64 = 30_000;
 const DEFAULT_WORKFLOW_TIMEOUT_MS: u64 = 45_000;
-const CLOUD_ACTOR_CONFIG_VERSION: &str = "rzn.cloud.actor_config.v1";
-const CONTROL_PLANE_STATE_VERSION: &str = "rzn.cloud.control_plane_state.v1";
+const CLOUD_ACTOR_CONFIG_CONTRACT: &str = "rzn.cloud.actor_config";
+const CONTROL_PLANE_STATE_CONTRACT: &str = "rzn.cloud.control_plane_state";
 const CLOUD_HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const CLOUD_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 static CLOUD_HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
@@ -319,7 +318,7 @@ struct RunWorkflowResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BrowserCommandRequest {
     actor_id: String,
-    command: CloudBrowserCommandV1,
+    command: CloudBrowserCommand,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     run_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -337,7 +336,7 @@ struct BrowserCommandRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct BrowserCommandResponse {
     run: RunRecord,
-    result: CloudCommandResultV1,
+    result: CloudCommandResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -352,7 +351,7 @@ struct ActorSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     extension_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    capabilities: Option<CapabilitiesV1>,
+    capabilities: Option<Capabilities>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     metadata: Option<Value>,
 }
@@ -377,7 +376,7 @@ struct PersistedActorRegistration {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     extension_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    capabilities: Option<CapabilitiesV1>,
+    capabilities: Option<Capabilities>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     metadata: Option<Value>,
 }
@@ -405,7 +404,7 @@ struct ActorRegistration {
     paired_at_ms: u64,
     last_seen_ms: u64,
     extension_version: Option<String>,
-    capabilities: Option<CapabilitiesV1>,
+    capabilities: Option<Capabilities>,
     metadata: Option<Value>,
     connection: Option<ActorConnection>,
 }
@@ -413,7 +412,7 @@ struct ActorRegistration {
 #[derive(Debug, Clone)]
 struct PendingCommand {
     actor_id: String,
-    envelope: CloudCommandEnvelopeV1,
+    envelope: CloudCommandEnvelope,
     queued_at_ms: u64,
     last_dispatched_at_ms: Option<u64>,
     accepted_at_ms: Option<u64>,
@@ -462,7 +461,7 @@ struct ControlPlaneState {
     pairing_codes: RwLock<HashMap<String, PairingCodeRecord>>,
     actors: RwLock<HashMap<String, ActorRegistration>>,
     runs: RwLock<HashMap<String, RunRecord>>,
-    command_waiters: Mutex<HashMap<String, oneshot::Sender<CloudCommandResultV1>>>,
+    command_waiters: Mutex<HashMap<String, oneshot::Sender<CloudCommandResult>>>,
     pending_commands: Mutex<HashMap<String, PendingCommand>>,
     persist_lock: Mutex<()>,
 }
@@ -598,9 +597,9 @@ impl ControlPlaneState {
 
     async fn register_actor_connection(
         &self,
-        hello: &ActorHelloV1,
+        hello: &ActorHello,
         sender: mpsc::UnboundedSender<String>,
-    ) -> Result<ActorReadyV1> {
+    ) -> Result<ActorReady> {
         let mut actors = self.actors.write().await;
         let actor = actors
             .get_mut(&hello.actor_id)
@@ -615,8 +614,8 @@ impl ControlPlaneState {
             connected_at_ms: now_ms(),
         });
 
-        Ok(ActorReadyV1 {
-            version: CLOUD_CONTRACT_VERSION.to_string(),
+        Ok(ActorReady {
+            version: CLOUD_CONTRACT.to_string(),
             message_type: "actor.ready".to_string(),
             actor_id: hello.actor_id.clone(),
             heartbeat_interval_ms: DEFAULT_HEARTBEAT_INTERVAL_MS,
@@ -641,7 +640,7 @@ impl ControlPlaneState {
         }
     }
 
-    async fn mark_command_acked(&self, command_ack: &CloudCommandAckV1) {
+    async fn mark_command_acked(&self, command_ack: &CloudCommandAck) {
         if let Some(pending) = self
             .pending_commands
             .lock()
@@ -652,7 +651,7 @@ impl ControlPlaneState {
         }
     }
 
-    async fn complete_command(&self, command_result: CloudCommandResultV1) {
+    async fn complete_command(&self, command_result: CloudCommandResult) {
         self.pending_commands
             .lock()
             .await
@@ -670,9 +669,9 @@ impl ControlPlaneState {
     async fn dispatch_command(
         &self,
         actor_id: &str,
-        envelope: CloudCommandEnvelopeV1,
+        envelope: CloudCommandEnvelope,
         timeout: Duration,
-    ) -> Result<CloudCommandResultV1> {
+    ) -> Result<CloudCommandResult> {
         if !self.actors.read().await.contains_key(actor_id) {
             bail!("Unknown actor {}", actor_id);
         }
@@ -824,7 +823,7 @@ impl ControlPlaneState {
             .collect::<Vec<_>>();
         let runs = self.runs.read().await.values().cloned().collect::<Vec<_>>();
         let snapshot = PersistedControlPlaneState {
-            version: CONTROL_PLANE_STATE_VERSION.to_string(),
+            version: CONTROL_PLANE_STATE_CONTRACT.to_string(),
             actors,
             runs,
         };
@@ -931,7 +930,7 @@ async fn pair_actor(args: CloudPairArgs) -> Result<()> {
         .context("Decode pair response")?;
 
     let config = LocalCloudActorConfig {
-        version: CLOUD_ACTOR_CONFIG_VERSION.to_string(),
+        version: CLOUD_ACTOR_CONFIG_CONTRACT.to_string(),
         actor_id: response.actor_id.clone(),
         workspace_id: response.workspace_id.clone(),
         actor_token: response.actor_token.clone(),
@@ -1030,7 +1029,7 @@ async fn exec_command(args: CloudExecCommandArgs) -> Result<()> {
 
     let request = BrowserCommandRequest {
         actor_id: args.actor_id,
-        command: CloudBrowserCommandV1 {
+        command: CloudBrowserCommand {
             cmd: args.cmd,
             payload: load_optional_json_input(
                 args.payload_json.as_deref(),
@@ -1081,7 +1080,7 @@ async fn exec_step(args: CloudExecStepArgs) -> Result<()> {
 
     let request = BrowserCommandRequest {
         actor_id: args.actor_id,
-        command: CloudBrowserCommandV1 {
+        command: CloudBrowserCommand {
             cmd: "execute_step".to_string(),
             payload: Some(payload),
             data: None,
@@ -1297,7 +1296,7 @@ async fn actor_socket(socket: WebSocket, state: Arc<ControlPlaneState>, actor_id
 
     let hello = loop {
         match stream.next().await {
-            Some(Ok(Message::Text(text))) => match serde_json::from_str::<ActorHelloV1>(&text) {
+            Some(Ok(Message::Text(text))) => match serde_json::from_str::<ActorHello>(&text) {
                 Ok(hello) => break hello,
                 Err(error) => {
                     super::write_log(
@@ -1363,12 +1362,12 @@ async fn actor_socket(socket: WebSocket, state: Arc<ControlPlaneState>, actor_id
     while let Some(message) = stream.next().await {
         match message {
             Ok(Message::Text(text)) => {
-                if let Ok(result) = serde_json::from_str::<CloudCommandResultV1>(&text) {
+                if let Ok(result) = serde_json::from_str::<CloudCommandResult>(&text) {
                     state.touch_actor(&actor_id).await;
                     state.complete_command(result).await;
                     continue;
                 }
-                if let Ok(ack) = serde_json::from_str::<CloudCommandAckV1>(&text) {
+                if let Ok(ack) = serde_json::from_str::<CloudCommandAck>(&text) {
                     state.touch_actor(&actor_id).await;
                     state.mark_command_acked(&ack).await;
                     continue;
@@ -1419,8 +1418,8 @@ async fn perform_browser_command(
     };
     state.upsert_run(&run).await;
 
-    let envelope = CloudCommandEnvelopeV1 {
-        version: CLOUD_CONTRACT_VERSION.to_string(),
+    let envelope = CloudCommandEnvelope {
+        version: CLOUD_CONTRACT.to_string(),
         message_type: "command.execute".to_string(),
         actor_id: request.actor_id.clone(),
         run_id: run_id.clone(),
@@ -1431,8 +1430,8 @@ async fn perform_browser_command(
         trace_id: Some(run_id.clone()),
         parent_command_id: None,
         planner_step_index: Some(0),
-        payload: CloudCommandPayloadV1 {
-            kind: CloudCommandKindV1::BrowserCommand,
+        payload: CloudCommandPayload {
+            kind: CloudCommandKind::BrowserCommand,
             command: Some(normalized_command.clone()),
             side_effecting: Some(
                 request
@@ -1498,12 +1497,13 @@ async fn perform_workflow_run(
     state: Arc<ControlPlaneState>,
     request: RunWorkflowRequest,
 ) -> Result<RunRecord> {
-    let mut workflow = request.workflow;
-    workflow = apply_parameters(workflow, &request.parameters);
-    validate_required_params(&workflow, &request.parameters)?;
-    let steps = extract_steps(&workflow)?;
-    validate_steps(&steps)?;
-    let prefer_current_tab = workflow_prefers_current_tab(&workflow);
+    let loaded =
+        crate::workflow_runner::load_workflow_value_for_run(request.workflow, &request.parameters)?;
+    let workflow = loaded.report_workflow;
+    let steps = loaded.steps;
+    let runtime_context = loaded.runtime_context;
+    crate::workflow_runner::validate_steps(&steps)?;
+    let prefer_current_tab = loaded.prefer_current_tab;
 
     let run_id = Uuid::new_v4().to_string();
     let session_id = request
@@ -1532,22 +1532,9 @@ async fn perform_workflow_run(
         .max(1);
 
     for (step_index, step) in steps.iter().enumerate() {
-        let step_id = step
-            .get("id")
-            .and_then(|value| value.as_str())
-            .unwrap_or("step")
-            .to_string();
-        let step_type = step
-            .get("type")
-            .and_then(|value| value.as_str())
-            .unwrap_or("unknown")
-            .to_string();
-        let step_timeout_ms = step
-            .get("timeout_ms")
-            .and_then(|value| value.as_u64())
-            .or_else(|| step.get("timeoutMs").and_then(|value| value.as_u64()))
-            .unwrap_or(default_timeout_ms)
-            .max(1);
+        let step_id = step.id().to_string();
+        let step_type = step.step_type();
+        let step_timeout_ms = step.timeout_ms().min(default_timeout_ms).max(1);
         let command_id = Uuid::new_v4().to_string();
         let started_at_ms = now_ms();
 
@@ -1569,9 +1556,15 @@ async fn perform_workflow_run(
             continue;
         }
 
-        let payload = step_execution_payload(Some(&session_id), step, prefer_current_tab);
-        let envelope = CloudCommandEnvelopeV1 {
-            version: CLOUD_CONTRACT_VERSION.to_string(),
+        let executor_step = step.executor_step();
+        let payload = crate::workflow_runner::step_execution_payload(
+            Some(&session_id),
+            &executor_step,
+            prefer_current_tab,
+            runtime_context.as_ref(),
+        );
+        let envelope = CloudCommandEnvelope {
+            version: CLOUD_CONTRACT.to_string(),
             message_type: "command.execute".to_string(),
             actor_id: request.actor_id.clone(),
             run_id: run_id.clone(),
@@ -1582,9 +1575,9 @@ async fn perform_workflow_run(
             trace_id: Some(run_id.clone()),
             parent_command_id: None,
             planner_step_index: Some(step_index as u32),
-            payload: CloudCommandPayloadV1 {
-                kind: CloudCommandKindV1::BrowserCommand,
-                command: Some(rzn_contracts::v1::CloudBrowserCommandV1 {
+            payload: CloudCommandPayload {
+                kind: CloudCommandKind::BrowserCommand,
+                command: Some(rzn_contracts::browser::CloudBrowserCommand {
                     cmd: "execute_step".to_string(),
                     payload: Some(payload),
                     data: None,
@@ -1668,7 +1661,7 @@ async fn perform_workflow_run(
     Ok(run)
 }
 
-fn browser_command_step_id(command: &CloudBrowserCommandV1) -> String {
+fn browser_command_step_id(command: &CloudBrowserCommand) -> String {
     command
         .payload
         .as_ref()
@@ -1678,7 +1671,7 @@ fn browser_command_step_id(command: &CloudBrowserCommandV1) -> String {
         .unwrap_or_else(|| command.cmd.clone())
 }
 
-fn browser_command_session_id(command: &CloudBrowserCommandV1) -> Option<String> {
+fn browser_command_session_id(command: &CloudBrowserCommand) -> Option<String> {
     command
         .payload
         .as_ref()
@@ -1688,9 +1681,9 @@ fn browser_command_session_id(command: &CloudBrowserCommandV1) -> Option<String>
 }
 
 fn normalize_browser_command_session(
-    command: &CloudBrowserCommandV1,
+    command: &CloudBrowserCommand,
     session_id: &str,
-) -> CloudBrowserCommandV1 {
+) -> CloudBrowserCommand {
     let mut normalized = command.clone();
     match normalized.payload.as_mut() {
         Some(Value::Object(payload)) => {
@@ -1709,7 +1702,7 @@ fn normalize_browser_command_session(
     normalized
 }
 
-fn browser_command_step_type(command: &CloudBrowserCommandV1) -> String {
+fn browser_command_step_type(command: &CloudBrowserCommand) -> String {
     command
         .payload
         .as_ref()
@@ -1719,11 +1712,10 @@ fn browser_command_step_type(command: &CloudBrowserCommandV1) -> String {
         .unwrap_or_else(|| command.cmd.clone())
 }
 
-fn default_side_effecting_for_command(command: &CloudBrowserCommandV1) -> bool {
+fn default_side_effecting_for_command(command: &CloudBrowserCommand) -> bool {
     match command.cmd.as_str() {
         "get_active_tab"
         | "get_dom_snapshot"
-        | "get_pruned_dom"
         | "get_dom_hash"
         | "process_dom"
         | "detect_auto_list"
@@ -1744,7 +1736,7 @@ fn default_side_effecting_for_command(command: &CloudBrowserCommandV1) -> bool {
 }
 
 fn build_browser_command_metadata(
-    command: &CloudBrowserCommandV1,
+    command: &CloudBrowserCommand,
     request_metadata: Option<Value>,
 ) -> Value {
     let mut metadata = serde_json::Map::new();
@@ -1772,13 +1764,13 @@ fn build_browser_command_metadata(
 }
 
 fn failed_command_result(
-    envelope: &CloudCommandEnvelopeV1,
+    envelope: &CloudCommandEnvelope,
     error_code: &str,
     error: impl Into<String>,
-) -> CloudCommandResultV1 {
+) -> CloudCommandResult {
     let error = error.into();
-    CloudCommandResultV1 {
-        version: CLOUD_CONTRACT_VERSION.to_string(),
+    CloudCommandResult {
+        version: CLOUD_CONTRACT.to_string(),
         message_type: "command.result".to_string(),
         actor_id: envelope.actor_id.clone(),
         run_id: envelope.run_id.clone(),
@@ -1788,7 +1780,7 @@ fn failed_command_result(
         success: false,
         finished_at_ms: now_ms(),
         trace_id: envelope.trace_id.clone(),
-        result: Some(ActionResultV1 {
+        result: Some(BrowserActionResult {
             success: false,
             error_code: Some(error_code.to_string()),
             error: Some(error.clone()),
@@ -1829,7 +1821,7 @@ pub fn resolve_cloud_actor_config_path(path_override: Option<&str>) -> PathBuf {
             candidate.display()
         );
     }
-    default_cloud_config_dir().join("cloud_actor_v1.json")
+    default_cloud_config_dir().join("cloud_actor.json")
 }
 
 fn default_cloud_config_dir() -> PathBuf {
@@ -1962,7 +1954,7 @@ fn resolve_control_plane_state_path() -> PathBuf {
     let base = dirs::config_dir()
         .or_else(dirs::home_dir)
         .unwrap_or_else(|| PathBuf::from("."));
-    base.join("rzn").join("cloud_control_plane_state_v1.json")
+    base.join("rzn").join("cloud_control_plane_state.json")
 }
 
 fn load_control_plane_state(public_url: &str) -> Result<ControlPlaneState> {
@@ -1981,7 +1973,7 @@ fn load_control_plane_state(public_url: &str) -> Result<ControlPlaneState> {
         .with_context(|| format!("Read control plane state {}", state_file.display()))?;
     let persisted: PersistedControlPlaneState =
         serde_json::from_slice(&bytes).context("Parse control plane state JSON")?;
-    if persisted.version != CONTROL_PLANE_STATE_VERSION {
+    if persisted.version != CONTROL_PLANE_STATE_CONTRACT {
         bail!(
             "Unsupported control plane state version {} in {}",
             persisted.version,
@@ -2021,76 +2013,10 @@ fn load_control_plane_state(public_url: &str) -> Result<ControlPlaneState> {
     Ok(state)
 }
 
-fn validate_required_params(workflow: &Value, params: &HashMap<String, String>) -> Result<()> {
-    let required = workflow
-        .pointer("/browser_automation/sequences/0/required_variables")
-        .and_then(|value| value.as_array())
-        .cloned()
-        .unwrap_or_default();
-
-    let mut missing = Vec::new();
-    for var in required {
-        if let Some(name) = var.get("name").and_then(|value| value.as_str()) {
-            if !params.contains_key(name) {
-                missing.push(name.to_string());
-            }
-        }
-    }
-    if !missing.is_empty() {
-        bail!("Missing required parameters: {}", missing.join(", "));
-    }
-    Ok(())
-}
-
-fn extract_steps(workflow: &Value) -> Result<Vec<Value>> {
-    workflow
-        .pointer("/browser_automation/sequences/0/steps")
-        .and_then(|value| value.as_array())
-        .cloned()
-        .ok_or_else(|| anyhow!("Workflow missing browser_automation.sequences[0].steps"))
-}
-
-fn workflow_prefers_current_tab(workflow: &Value) -> bool {
-    workflow
-        .pointer("/browser_automation/use_current_tab")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false)
-        || workflow
-            .pointer("/browser_automation/use_active_tab")
-            .and_then(|value| value.as_bool())
-            .unwrap_or(false)
-}
-
-fn step_execution_payload(
-    session_id: Option<&str>,
-    step: &Value,
-    prefer_current_tab: bool,
-) -> Value {
-    let mut payload = json!({
-        "step": step,
-    });
-    if let Some(session_id) = session_id {
-        payload["session_id"] = Value::String(session_id.to_string());
-    }
-    if prefer_current_tab {
-        payload["use_current_tab"] = Value::Bool(true);
-    }
-    payload
-}
-
-fn validate_steps(steps: &[Value]) -> Result<()> {
-    for (index, step) in steps.iter().enumerate() {
-        if let Err(error) = rzn_core::dsl::validate_action_value(step) {
-            bail!("Step {} failed schema validation: {}", index + 1, error);
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rzn_contracts::v1::{ActionResultV1, CloudBrowserCommandV1};
+    use rzn_contracts::browser::{BrowserActionResult, CloudBrowserCommand};
 
     #[test]
     fn websocket_url_uses_wss_except_loopback() {
@@ -2109,9 +2035,7 @@ mod tests {
     fn cloud_config_path_rejects_parent_traversal_after_allowed_prefix() {
         let base = default_cloud_config_dir();
 
-        assert!(is_allowed_cloud_config_path(
-            &base.join("cloud_actor_v1.json")
-        ));
+        assert!(is_allowed_cloud_config_path(&base.join("cloud_actor.json")));
         assert!(!is_allowed_cloud_config_path(
             &base.join("rzn").join("..").join("..").join("outside.json")
         ));
@@ -2134,77 +2058,14 @@ mod tests {
         assert_eq!(bearer_token_from_headers(&headers), None);
     }
 
-    #[test]
-    fn apply_parameters_substitutes_strings_and_script_params() {
-        let workflow = json!({
-            "browser_automation": {
-                "sequences": [{
-                    "steps": [{
-                        "type": "execute_javascript",
-                        "script": "return params.query"
-                    }, {
-                        "type": "navigate_to_url",
-                        "url": "https://example.com?q={query}"
-                    }]
-                }]
-            }
-        });
-        let params = HashMap::from([("query".to_string(), "rust".to_string())]);
-
-        let applied = apply_parameters(workflow, &params);
-        assert_eq!(
-            applied
-                .pointer("/browser_automation/sequences/0/steps/1/url")
-                .and_then(|value| value.as_str()),
-            Some("https://example.com?q=rust")
-        );
-        assert_eq!(
-            applied
-                .pointer("/browser_automation/sequences/0/steps/0/params/query")
-                .and_then(|value| value.as_str()),
-            Some("rust")
-        );
-    }
-
-    #[test]
-    fn apply_parameters_expands_chained_param_defaults() {
-        let workflow = json!({
-            "browser_automation": {
-                "sequences": [{
-                    "steps": [{
-                        "type": "navigate_to_url",
-                        "url": "{app_url}"
-                    }]
-                }]
-            }
-        });
-        let params = HashMap::from([
-            (
-                "app_url".to_string(),
-                "https://apps.apple.com/{country}/app/id{app_id}".to_string(),
-            ),
-            ("country".to_string(), "us".to_string()),
-            ("app_id".to_string(), "123456789".to_string()),
-        ]);
-
-        let applied = apply_parameters(workflow, &params);
-
-        assert_eq!(
-            applied
-                .pointer("/browser_automation/sequences/0/steps/0/url")
-                .and_then(|value| value.as_str()),
-            Some("https://apps.apple.com/us/app/id123456789")
-        );
-    }
-
-    fn sample_hello(actor_id: &str) -> ActorHelloV1 {
-        ActorHelloV1 {
-            version: CLOUD_CONTRACT_VERSION.to_string(),
+    fn sample_hello(actor_id: &str) -> ActorHello {
+        ActorHello {
+            version: CLOUD_CONTRACT.to_string(),
             message_type: "actor.hello".to_string(),
             actor_id: actor_id.to_string(),
             workspace_id: "workspace-1".to_string(),
             extension_version: "0.1.0".to_string(),
-            capabilities: CapabilitiesV1 {
+            capabilities: Capabilities {
                 extension_actor: true,
                 cdp_available: true,
                 cdp_enabled: false,
@@ -2214,9 +2075,9 @@ mod tests {
         }
     }
 
-    fn sample_envelope(actor_id: &str, command_id: &str) -> CloudCommandEnvelopeV1 {
-        CloudCommandEnvelopeV1 {
-            version: CLOUD_CONTRACT_VERSION.to_string(),
+    fn sample_envelope(actor_id: &str, command_id: &str) -> CloudCommandEnvelope {
+        CloudCommandEnvelope {
+            version: CLOUD_CONTRACT.to_string(),
             message_type: "command.execute".to_string(),
             actor_id: actor_id.to_string(),
             run_id: "run-1".to_string(),
@@ -2227,9 +2088,9 @@ mod tests {
             trace_id: Some("trace-1".to_string()),
             parent_command_id: None,
             planner_step_index: Some(0),
-            payload: CloudCommandPayloadV1 {
-                kind: CloudCommandKindV1::BrowserCommand,
-                command: Some(CloudBrowserCommandV1 {
+            payload: CloudCommandPayload {
+                kind: CloudCommandKind::BrowserCommand,
+                command: Some(CloudBrowserCommand {
                     cmd: "execute_step".to_string(),
                     payload: Some(json!({
                         "session_id": "session-1",
@@ -2249,7 +2110,7 @@ mod tests {
     fn sample_browser_command_request(actor_id: &str) -> BrowserCommandRequest {
         BrowserCommandRequest {
             actor_id: actor_id.to_string(),
-            command: CloudBrowserCommandV1 {
+            command: CloudBrowserCommand {
                 cmd: "execute_step".to_string(),
                 payload: Some(json!({
                     "session_id": "session-1",
@@ -2271,7 +2132,7 @@ mod tests {
         }
     }
 
-    fn sample_result(actor_id: &str, command_id: &str) -> CloudCommandResultV1 {
+    fn sample_result(actor_id: &str, command_id: &str) -> CloudCommandResult {
         sample_result_with_session(actor_id, command_id, "session-1")
     }
 
@@ -2279,9 +2140,9 @@ mod tests {
         actor_id: &str,
         command_id: &str,
         session_id: &str,
-    ) -> CloudCommandResultV1 {
-        CloudCommandResultV1 {
-            version: CLOUD_CONTRACT_VERSION.to_string(),
+    ) -> CloudCommandResult {
+        CloudCommandResult {
+            version: CLOUD_CONTRACT.to_string(),
             message_type: "command.result".to_string(),
             actor_id: actor_id.to_string(),
             run_id: "run-1".to_string(),
@@ -2291,7 +2152,7 @@ mod tests {
             success: true,
             finished_at_ms: now_ms(),
             trace_id: Some("trace-1".to_string()),
-            result: Some(ActionResultV1 {
+            result: Some(BrowserActionResult {
                 success: true,
                 error_code: None,
                 error: None,
@@ -2351,7 +2212,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let first_envelope: CloudCommandEnvelopeV1 = serde_json::from_str(&first_payload).unwrap();
+        let first_envelope: CloudCommandEnvelope = serde_json::from_str(&first_payload).unwrap();
         assert_eq!(first_envelope.command_id, "command-1");
 
         state.clear_actor_connection(actor_id).await;
@@ -2364,8 +2225,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let second_envelope: CloudCommandEnvelopeV1 =
-            serde_json::from_str(&second_payload).unwrap();
+        let second_envelope: CloudCommandEnvelope = serde_json::from_str(&second_payload).unwrap();
         assert_eq!(second_envelope.command_id, "command-1");
 
         state
@@ -2394,8 +2254,8 @@ mod tests {
         );
 
         state
-            .mark_command_acked(&CloudCommandAckV1 {
-                version: CLOUD_CONTRACT_VERSION.to_string(),
+            .mark_command_acked(&CloudCommandAck {
+                version: CLOUD_CONTRACT.to_string(),
                 message_type: "command.ack".to_string(),
                 actor_id: actor_id.to_string(),
                 run_id: "run-1".to_string(),
@@ -2455,7 +2315,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let envelope: CloudCommandEnvelopeV1 = serde_json::from_str(&first_payload).unwrap();
+        let envelope: CloudCommandEnvelope = serde_json::from_str(&first_payload).unwrap();
         assert_eq!(
             envelope
                 .payload
@@ -2517,7 +2377,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        let envelope: CloudCommandEnvelopeV1 = serde_json::from_str(&first_payload).unwrap();
+        let envelope: CloudCommandEnvelope = serde_json::from_str(&first_payload).unwrap();
         assert_eq!(envelope.session_id, "payload-session-1");
         assert_eq!(
             envelope

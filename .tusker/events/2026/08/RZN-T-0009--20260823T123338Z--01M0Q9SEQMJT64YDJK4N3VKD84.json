@@ -1,0 +1,13 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-08-23T12:33:38Z",
+  "event_kind": "created",
+  "id": "01M0Q9SEQMJT64YDJK4N3VKD84",
+  "object": "RZN-T-0009",
+  "object_kind": "task",
+  "payload": {
+    "path": "work/tasks/RZN-T-0009.md"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

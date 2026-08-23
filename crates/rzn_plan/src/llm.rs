@@ -1065,15 +1065,8 @@ impl LLMClient {
         // Create appropriate provider
         let provider: Arc<dyn LLMProvider> = match provider_type {
             ProviderType::OpenAI => {
-                // For backward compatibility, try llm_api_key first, then openai_api_key
-                let api_key = if !config.llm_api_key.is_empty() {
-                    config.llm_api_key.clone()
-                } else {
-                    config.openai_api_key.clone()
-                };
-
                 Arc::new(OpenAIClient::new(
-                    api_key,
+                    config.llm_api_key.clone(),
                     config.model.clone(),
                     config.llm_timeout,
                 )?)

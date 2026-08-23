@@ -119,7 +119,6 @@ jobs:
 
       - name: Check extension artifacts
         run: |
-          test -d extension/dist-chrome
           test -d extension/dist/chrome
           test -d extension/dist/edge
           test -d extension/dist/chromium

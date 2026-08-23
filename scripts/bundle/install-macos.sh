@@ -8,7 +8,7 @@ EXTENSION_ID="__RZN_EXTENSION_ID__"
 
 INSTALL_ROOT="${RZN_BUNDLE_INSTALL_ROOT:-${HOME}/Library/Application Support/RZN}"
 BIN_DIR="${INSTALL_ROOT}/bin"
-EXT_DIR="${INSTALL_ROOT}/extension/dist-chrome"
+EXT_DIR="${INSTALL_ROOT}/extension/dist/chrome"
 CHROME_HOST_DIR="${RZN_BUNDLE_CHROME_HOST_DIR:-${HOME}/Library/Application Support/Google/Chrome/NativeMessagingHosts}"
 MANIFEST_PATH="${CHROME_HOST_DIR}/${HOST_NAME}.json"
 GLOBAL_BIN_DIR="${RZN_BUNDLE_GLOBAL_BIN_DIR:-${HOME}/.local/bin}"
@@ -104,7 +104,7 @@ mkdir -p "$BIN_DIR" "$CHROME_HOST_DIR" "$GLOBAL_BIN_DIR"
 for required in \
   "${SCRIPT_DIR}/bin/rzn-browser" \
   "${SCRIPT_DIR}/bin/rzn-native-host" \
-  "${SCRIPT_DIR}/extension/dist-chrome/manifest.json"
+  "${SCRIPT_DIR}/extension/dist/chrome/manifest.json"
 do
   if [[ ! -e "$required" ]]; then
     echo "[ERROR] Missing bundle file: ${required#${SCRIPT_DIR}/}"
@@ -119,7 +119,7 @@ install_file_atomic "${SCRIPT_DIR}/bin/rzn-native-host" "${BIN_DIR}/rzn-native-h
 echo "[INFO] Installing stable extension copy to: ${EXT_DIR}"
 guarded_rm_rf "${EXT_DIR}" "${INSTALL_ROOT}" "runtime extension"
 mkdir -p "$(dirname "${EXT_DIR}")"
-cp -R "${SCRIPT_DIR}/extension/dist-chrome" "${EXT_DIR}"
+cp -R "${SCRIPT_DIR}/extension/dist/chrome" "${EXT_DIR}"
 
 if [[ -d "${SCRIPT_DIR}/skills" ]]; then
   echo "[INFO] Installing bundled skills to: ${INSTALL_ROOT}/skills/builtin"

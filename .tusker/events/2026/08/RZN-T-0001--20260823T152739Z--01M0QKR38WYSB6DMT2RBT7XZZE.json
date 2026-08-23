@@ -1,0 +1,18 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-08-23T15:27:39Z",
+  "event_kind": "verification_removed",
+  "id": "01M0QKR38WYSB6DMT2RBT7XZZE",
+  "object": "RZN-T-0001",
+  "object_kind": "task",
+  "payload": {
+    "blocked_by": "",
+    "check": "git diff --check",
+    "covers": "A1,A2",
+    "index": 4,
+    "notes": "patch hygiene",
+    "result": "pending"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

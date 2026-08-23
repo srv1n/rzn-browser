@@ -406,9 +406,5 @@
       "The product-facts step (s5) extracts title, price, rating, rating_count, availability, brand, first_bullet, asin, and the spec table text blob.",
       "No anti-bot priming — reuse an existing Amazon session if available to avoid challenges."
     ]
-  },
-  "metadata": {
-    "migrated_from": "amazon/amazon-product-key-facts-reviews.json",
-    "legacy_system_id": "amazon"
   }
 }

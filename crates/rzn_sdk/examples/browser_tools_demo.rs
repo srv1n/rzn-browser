@@ -1,4 +1,4 @@
-use rzn_sdk::contracts::v1::{ActionV1, TargetV1};
+use rzn_sdk::contracts::browser::{BrowserAction, BrowserTarget};
 use rzn_sdk::prelude::*;
 use std::env;
 
@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
 
     if let Some(url) = url {
         let _ = tools
-            .act(ActionV1::NavigateToUrl {
+            .act(BrowserAction::NavigateToUrl {
                 url,
                 wait: Some("domcontentloaded".to_string()),
             })
@@ -49,8 +49,8 @@ async fn main() -> Result<()> {
         .find(|e| e.tag == "input" || e.tag == "textarea")
     {
         let _ = tools
-            .act(ActionV1::ClickElement {
-                target: TargetV1::from_encoded_id(first_input.encoded_id.clone()),
+            .act(BrowserAction::ClickElement {
+                target: BrowserTarget::from_encoded_id(first_input.encoded_id.clone()),
                 random_offset: Some(true),
                 timeout_ms: Some(3000),
             })

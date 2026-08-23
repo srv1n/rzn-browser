@@ -1,7 +1,7 @@
 //! Native Messaging host that forwards browser extension messages to the local runtime.
 //!
 //! Chrome owns this process, so this binary stays a thin extension-to-supervisor
-//! bridge over the supervisor `rzn.local.v1` IPC path.
+//! bridge over the supervisor `rzn.local` IPC path.
 //!
 //! Chrome/Edge native messaging framing:
 //!   [4-byte little-endian length][UTF-8 JSON bytes]
@@ -42,7 +42,7 @@ mod cloud;
 const CHROME_TO_NATIVE_HOST_MAX_BYTES: usize = 64 * 1024 * 1024; // Chrome protocol limit.
 const NATIVE_HOST_TO_CHROME_MAX_BYTES: usize = 1024 * 1024; // Chrome protocol limit.
 const EXTENSION_CALL_TIMEOUT_MS: u64 = 20000;
-const LOCAL_RUNTIME_PROTOCOL: &str = "rzn.local.v1";
+const LOCAL_RUNTIME_PROTOCOL: &str = "rzn.local";
 const SUPERVISOR_EXTENSION_CALL_METHOD: &str = "native_host.extension_call";
 const SUPERVISOR_SHUTDOWN_METHOD: &str = "native_host.shutdown";
 const STDOUT_HEARTBEAT_INTERVAL_MS: u64 = 20_000;
@@ -61,19 +61,19 @@ fn native_host_boot_id() -> &'static str {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum RuntimeBridgeKind {
-    SupervisorLocalV1,
+    SupervisorLocal,
 }
 
 impl RuntimeBridgeKind {
     fn label(self) -> &'static str {
         match self {
-            Self::SupervisorLocalV1 => "supervisor_local_v1",
+            Self::SupervisorLocal => "supervisor_local",
         }
     }
 
     fn protocol(self) -> &'static str {
         match self {
-            Self::SupervisorLocalV1 => LOCAL_RUNTIME_PROTOCOL,
+            Self::SupervisorLocal => LOCAL_RUNTIME_PROTOCOL,
         }
     }
 }
@@ -271,7 +271,7 @@ fn candidate_endpoints_from_bases(
         supervisor_token_override.as_ref(),
     ) {
         push_unique(UpstreamEndpoint {
-            kind: RuntimeBridgeKind::SupervisorLocalV1,
+            kind: RuntimeBridgeKind::SupervisorLocal,
             socket_path: sock.clone(),
             token_path: tok.clone(),
         });
@@ -281,7 +281,7 @@ fn candidate_endpoints_from_bases(
         let (supervisor_socket, supervisor_token) = supervisor_paths_for_base(&candidate.base);
         if supervisor_socket.exists() && supervisor_token.exists() {
             push_unique(UpstreamEndpoint {
-                kind: RuntimeBridgeKind::SupervisorLocalV1,
+                kind: RuntimeBridgeKind::SupervisorLocal,
                 socket_path: supervisor_socket,
                 token_path: supervisor_token,
             });
@@ -311,7 +311,7 @@ async fn connect_upstream_runtime(
     launch_context: &NativeHostLaunchContext,
 ) -> Result<LocalSocketStream> {
     match endpoint.kind {
-        RuntimeBridgeKind::SupervisorLocalV1 => {
+        RuntimeBridgeKind::SupervisorLocal => {
             connect_supervisor_runtime(&endpoint.socket_path, &endpoint.token_path, launch_context)
                 .await
         }
@@ -345,13 +345,11 @@ async fn connect_supervisor_runtime(
         "version": LOCAL_RUNTIME_PROTOCOL,
         "token": token,
         "role": "native_host_bridge",
-        "client": native_host_client_metadata(RuntimeBridgeKind::SupervisorLocalV1),
+        "client": native_host_client_metadata(RuntimeBridgeKind::SupervisorLocal),
         "capabilities": {
             "chrome_native_messaging": true,
             "extension_rpc": true,
-            "accepts_extension_call_method": SUPERVISOR_EXTENSION_CALL_METHOD,
-            "legacy_cloud_actor_owner": false,
-            "cloud_actor_owner": "supervisor"
+            "accepts_extension_call_method": SUPERVISOR_EXTENSION_CALL_METHOD
         },
         "cloud": cloud::native_host_cloud_bridge_status()
     });
@@ -431,7 +429,7 @@ async fn connect_supervisor_client(
         "type": "rzn_local_handshake",
         "v": 1,
         "token": token,
-        "client": native_host_client_metadata(RuntimeBridgeKind::SupervisorLocalV1)
+        "client": native_host_client_metadata(RuntimeBridgeKind::SupervisorLocal)
     });
     write_frame(&mut stream, serde_json::to_vec(&handshake)?.as_slice()).await?;
     let resp = read_frame(&mut stream).await?;
@@ -455,7 +453,7 @@ async fn call_supervisor_client(
     let mut last_error: Option<anyhow::Error> = None;
     for endpoint in endpoints
         .into_iter()
-        .filter(|endpoint| endpoint.kind == RuntimeBridgeKind::SupervisorLocalV1)
+        .filter(|endpoint| endpoint.kind == RuntimeBridgeKind::SupervisorLocal)
     {
         match connect_supervisor_client(&endpoint.socket_path, &endpoint.token_path).await {
             Ok(mut stream) => {
@@ -1495,7 +1493,7 @@ mod tests {
         );
 
         assert_eq!(endpoints.len(), 1);
-        assert_eq!(endpoints[0].kind, RuntimeBridgeKind::SupervisorLocalV1);
+        assert_eq!(endpoints[0].kind, RuntimeBridgeKind::SupervisorLocal);
         assert_eq!(
             endpoints[0].socket_path,
             PathBuf::from("/tmp/supervisor.sock")
@@ -1523,7 +1521,7 @@ mod tests {
         let endpoints = candidate_endpoints_from_bases(&[base], None, None);
 
         assert_eq!(endpoints.len(), 1);
-        assert_eq!(endpoints[0].kind, RuntimeBridgeKind::SupervisorLocalV1);
+        assert_eq!(endpoints[0].kind, RuntimeBridgeKind::SupervisorLocal);
         assert_eq!(endpoints[0].socket_path, socket_path);
         assert_eq!(endpoints[0].token_path, token_path);
 
@@ -1998,9 +1996,6 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("preferred_when_socket_and_token_exist")
         );
-        assert!(response
-            .pointer(&format!("/result/{}", concat!("legacy", "_browser_bridge")))
-            .is_none());
         assert_eq!(
             response
                 .pointer("/result/cloud/runtime_owner")

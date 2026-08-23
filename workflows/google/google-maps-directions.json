@@ -283,9 +283,5 @@
       "When 'mode' is omitted, the default 'driving' is substituted into the URL.",
       "Steps panel only opens after clicking the route card; if click fails, the steps array will be empty but summary will still be populated."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-maps-directions.json",
-    "legacy_system_id": "google"
   }
 }

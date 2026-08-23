@@ -1,0 +1,30 @@
+filters:
+  and:
+    - file.ext == "md"
+    - 'schema == "tusker.epic/v7"'
+properties:
+  id:
+    displayName: ID
+  title:
+    displayName: Title
+  status:
+    displayName: Status
+  priority:
+    displayName: Priority
+  owner:
+    displayName: Owner
+views:
+  - type: table
+    name: "Open Epics"
+    filters:
+      and:
+        - 'status != "done"'
+        - 'status != "cancelled"'
+    order: [id, title, status, priority, owner]
+  - type: table
+    name: Archive
+    filters:
+      or:
+        - 'status == "done"'
+        - 'status == "cancelled"'
+    order: [id, title, status, owner]

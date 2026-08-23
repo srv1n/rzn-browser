@@ -116,7 +116,6 @@ function browserNavigator(options: BrowserInstanceIdOptions): BrowserInstanceNav
 }
 
 function extensionTargetHint(manifestVersion: number | null): string {
-  if (manifestVersion === 2) return 'firefox-mv2';
   if (manifestVersion === 3) return 'chromium-mv3';
   return 'unknown';
 }

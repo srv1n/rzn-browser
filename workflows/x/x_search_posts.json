@@ -290,9 +290,5 @@
       "Empty optional params are detected via the standard cleanArg helper.",
       "timeline_mode=top uses the Top tab; latest and live both land on the Live tab."
     ]
-  },
-  "metadata": {
-    "migrated_from": "x/x_search_posts.json",
-    "legacy_system_id": "x"
   }
 }

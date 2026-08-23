@@ -246,9 +246,5 @@
       "Dedupe guard compares normalised whitespace + lowercase against existing comments by the same logged-in user on the parent thread.",
       "The approval gate uses request_user_intervention with no timeout. Click Continue (submit) or Stop (leave as draft)."
     ]
-  },
-  "metadata": {
-    "migrated_from": "hn/hn-submit-reply.json",
-    "legacy_system_id": "hacker_news"
   }
 }

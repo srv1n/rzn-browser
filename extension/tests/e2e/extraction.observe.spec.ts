@@ -78,7 +78,6 @@ test.describe('Observe → Extract hybrid', () => {
 
     const extractResp = await page.evaluate((sel) => (window as any).__rznExecuteStep({
       type: 'extract_structured_data',
-      force_legacy: true,
       item_selector: sel,
       fields: [
         { name: 'title', selector: '.title' },
@@ -97,4 +96,3 @@ test.describe('Observe → Extract hybrid', () => {
     await srv.close();
   });
 });
-

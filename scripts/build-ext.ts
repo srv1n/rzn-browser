@@ -5,7 +5,7 @@ import path from 'path';
 type JsonRecord = Record<string, any>;
 
 export const CHROMIUM_EXTENSION_TARGETS = ['chrome', 'edge', 'chromium'] as const;
-export const EXTENSION_BUILD_TARGETS = ['chrome', 'firefox', 'edge', 'chromium'] as const;
+export const EXTENSION_BUILD_TARGETS = ['chrome', 'edge', 'chromium'] as const;
 export const RZN_NATIVE_HOST_NAME = 'com.rzn.browser.broker';
 export const RZN_DEV_EXTENSION_ID = 'bogjdnehdficgkhklinmnbgiiofbamji';
 export const RZN_DEV_EXTENSION_ORIGIN = `chrome-extension://${RZN_DEV_EXTENSION_ID}/`;
@@ -16,7 +16,6 @@ type BuildOptions = {
   rootDir?: string;
   distSourceDir?: string;
   distRootDir?: string;
-  layout?: 'legacy' | 'nested';
   copyFiles?: boolean;
   buildSignature?: string;
 };
@@ -115,10 +114,7 @@ export async function buildManifestForTarget(
 export async function buildFor(browser: ExtensionBuildTarget, options: BuildOptions = {}) {
   const rootDir = options.rootDir ?? process.cwd();
   const distRootDir = options.distRootDir ?? path.join(rootDir, 'extension');
-  const distDir =
-    options.layout === 'nested'
-      ? path.join(distRootDir, browser)
-      : path.join(distRootDir, `dist-${browser}`);
+  const distDir = path.join(distRootDir, browser);
   const buildSignatureValue = options.buildSignature ?? buildSignature();
   const merged = await buildManifestForTarget(browser, rootDir);
   const cachebusterVersion = (CHROMIUM_EXTENSION_TARGETS as readonly string[]).includes(browser)
@@ -147,10 +143,7 @@ async function main() {
 export async function copyBuiltFiles(browser: ExtensionBuildTarget, options: BuildOptions = {}) {
   const rootDir = options.rootDir ?? process.cwd();
   const distRootDir = options.distRootDir ?? path.join(rootDir, 'extension');
-  const distDir =
-    options.layout === 'nested'
-      ? path.join(distRootDir, browser)
-      : path.join(distRootDir, `dist-${browser}`);
+  const distDir = path.join(distRootDir, browser);
   const sourceDir = options.distSourceDir ?? path.join(rootDir, 'extension', 'dist');
   await copyDir(sourceDir, distDir);
 }
@@ -195,12 +188,6 @@ function parseCliArgs(argv: string[]): { targets: ExtensionBuildTarget[]; option
       options.distSourceDir = path.resolve(next());
     } else if (arg === '--dist-root') {
       options.distRootDir = path.resolve(next());
-    } else if (arg === '--layout') {
-      const layout = next();
-      if (layout !== 'legacy' && layout !== 'nested') {
-        throw new Error(`Invalid --layout ${layout}; expected legacy or nested`);
-      }
-      options.layout = layout;
     } else if (arg === '--build-signature') {
       options.buildSignature = next();
     } else if (arg === '--no-copy') {

@@ -21,7 +21,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use rzn_contracts::fleet_v1::FleetWorkflowFetchResponseV1;
+use rzn_contracts::fleet::FleetWorkflowFetchResponse;
 
 /// Content hash of a manifest: sha256 hex over the compact `serde_json`
 /// serialization of the value with object keys recursively sorted (byte order).
@@ -162,7 +162,7 @@ pub trait ManifestFetcher: Send + Sync {
         &self,
         workflow_id: &str,
         content_hash: &str,
-    ) -> Result<FleetWorkflowFetchResponseV1, FetchError>;
+    ) -> Result<FleetWorkflowFetchResponse, FetchError>;
 }
 
 /// Content-hash-addressed on-device manifest cache.
@@ -397,7 +397,7 @@ fn touch_mtime(path: &Path) {
 }
 
 /// Real [`ManifestFetcher`]: `GET {server}/v1/fleet/workflows/{id}/{hash}` with
-/// a device-token bearer credential, decoding [`FleetWorkflowFetchResponseV1`].
+/// a device-token bearer credential, decoding [`FleetWorkflowFetchResponse`].
 pub struct HttpManifestFetcher {
     client: reqwest::Client,
     server_url: String,
@@ -433,7 +433,7 @@ impl ManifestFetcher for HttpManifestFetcher {
         &self,
         workflow_id: &str,
         content_hash: &str,
-    ) -> Result<FleetWorkflowFetchResponseV1, FetchError> {
+    ) -> Result<FleetWorkflowFetchResponse, FetchError> {
         let url = format!(
             "{}/v1/fleet/workflows/{}/{}",
             self.server_url, workflow_id, content_hash
@@ -452,7 +452,7 @@ impl ManifestFetcher for HttpManifestFetcher {
             )));
         }
         response
-            .json::<FleetWorkflowFetchResponseV1>()
+            .json::<FleetWorkflowFetchResponse>()
             .await
             .map_err(|err| FetchError::new(format!("failed to decode manifest from {url}: {err}")))
     }
@@ -491,9 +491,9 @@ mod tests {
             &self,
             workflow_id: &str,
             content_hash: &str,
-        ) -> Result<FleetWorkflowFetchResponseV1, FetchError> {
+        ) -> Result<FleetWorkflowFetchResponse, FetchError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(FleetWorkflowFetchResponseV1 {
+            Ok(FleetWorkflowFetchResponse {
                 workflow_id: workflow_id.to_string(),
                 content_hash: content_hash.to_string(),
                 manifest: self.manifest.clone(),

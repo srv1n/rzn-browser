@@ -1,0 +1,16 @@
+{
+  "actor": "tusker:reconcile",
+  "at": "2026-08-23T12:29:13Z",
+  "event_kind": "updated",
+  "id": "01M0Q9HBYRNG6FEJHS1YQB8J46",
+  "object": "RZN",
+  "object_kind": "epic",
+  "payload": {
+    "path": "work/epics/RZN.md",
+    "previous_state_rev": "sha256:ef9ebfca11367cff283164d9f4ae5b51a55b205d108841399f9cf27d57b663d9",
+    "source": "state_rev_repair",
+    "state_rev": "sha256:9f772cb65c3ae2788694665bcf6a225deff90b7a811af2a49fcf4d7d1ca677d7"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

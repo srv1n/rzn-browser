@@ -1,7 +1,7 @@
 //! Contract tests for the ads-intelligence workflow packs (ADI epic).
 //!
 //! These run with NO live site: they parse the pack manifests and validate
-//! sample output manifests against the shared schema (`schema/ads-manifest-v1.json`).
+//! sample output manifests against the shared schema (`schema/ads-manifest.json`).
 
 use std::path::PathBuf;
 
@@ -22,7 +22,7 @@ fn load(rel: &str) -> Value {
     serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parse {} as JSON: {}", path.display(), e))
 }
 
-/// Every ads pack must parse as a v1 workflow manifest with real steps and a
+/// Every ads pack must parse as a workflow manifest with real steps and a
 /// result selector. Add new packs (e.g. the Meta Ad Library pack) to this list.
 #[test]
 fn ads_packs_parse_as_manifest() {
@@ -57,8 +57,8 @@ fn ads_packs_parse_as_manifest() {
 /// recognized `source` discriminator, and a malformed one must be rejected.
 #[test]
 fn ads_manifest_fixtures_validate_against_shared_schema() {
-    let schema = load("schema/ads-manifest-v1.json");
-    let compiled = JSONSchema::compile(&schema).expect("compile ads-manifest-v1 schema");
+    let schema = load("schema/ads-manifest.json");
+    let compiled = JSONSchema::compile(&schema).expect("compile ads-manifest schema");
 
     // Each ads pack's produced manifest validates and carries its own source discriminator.
     let valid_fixtures = [

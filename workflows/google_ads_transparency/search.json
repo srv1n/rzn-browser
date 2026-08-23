@@ -6,7 +6,7 @@
   "system": "google_ads_transparency",
   "capability": "google_ads_transparency.search",
   "summary": "Search the Google Ads Transparency Center by advertiser name and enumerate that advertiser's ads (creative id, format, first/last shown dates, preview) into a source-discriminated manifest.",
-  "description": "Drives the real Ads Transparency Center UI (homepage search box -> advertiser typeahead -> click suggestion) to resolve an advertiser, then reads that advertiser's creatives from the site's own SearchService.SearchCreatives RPC via a same-origin fetch (page xsrf token, region-scoped). Paginates by the response cursor up to a configurable cap. Pure read. Emits a manifest validating against schema/ads-manifest-v1.json with source=google_ads_transparency.",
+  "description": "Drives the real Ads Transparency Center UI (homepage search box -> advertiser typeahead -> click suggestion) to resolve an advertiser, then reads that advertiser's creatives from the site's own SearchService.SearchCreatives RPC via a same-origin fetch (page xsrf token, region-scoped). Paginates by the response cursor up to a configurable cap. Pure read. Emits a manifest validating against schema/ads-manifest.json with source=google_ads_transparency.",
   "params": {
     "properties": {
       "advertiser": {
@@ -18,7 +18,7 @@
         "kind": "string",
         "required": false,
         "default": "US",
-        "description": "Region to scope ads to. v1 supports 'US' (returns an error naming supported regions otherwise). Recorded in the manifest query."
+        "description": "Region to scope ads to. The current implementation supports 'US' (returns an error naming supported regions otherwise). Recorded in the manifest query."
       },
       "cap": {
         "kind": "integer",
@@ -268,7 +268,7 @@
     "summary": "Search Google Ads Transparency Center by advertiser and list that advertiser's ads.",
     "parameters": {
       "advertiser": "Advertiser name to search (drives the real typeahead).",
-      "region": "Region scope; v1 supports US (default).",
+      "region": "Region scope; US is currently supported (default).",
       "cap": "Max ads to collect (default 30, hard cap 300)."
     },
     "examples": [

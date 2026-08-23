@@ -571,7 +571,7 @@ mod tests {
             product: "rzn-browser".to_string(),
             flow_kind: "workflow".to_string(),
             system: "google".to_string(),
-            workflow: "google/search-v1".to_string(),
+            workflow: "google/search".to_string(),
             version: "2026-04-24.1".to_string(),
             step: "search_button".to_string(),
             error: "button_not_found".to_string(),
@@ -590,7 +590,7 @@ mod tests {
                 "product": "rzn-browser",
                 "flow_kind": "workflow",
                 "surface": "google",
-                "flow": "google/search-v1",
+                "flow": "google/search",
                 "flow_version": "2026-04-24.1",
                 "failed_stage": "search_button",
                 "error": "button_not_found",
@@ -605,7 +605,7 @@ mod tests {
                 product: "rzn-browser".to_string(),
                 flow_kind: "workflow".to_string(),
                 system: "google".to_string(),
-                workflow: "google/search-v1".to_string(),
+                workflow: "google/search".to_string(),
                 version: "2026-04-24.1".to_string(),
                 step: "search_button".to_string(),
                 error: "button_not_found".to_string(),
@@ -625,7 +625,7 @@ mod tests {
   "product": "rzn-browser",
   "flow_kind": "workflow",
   "surface": "google",
-  "flow": "google/search-v1",
+  "flow": "google/search",
   "flow_version": "2026-04-24.1",
   "failed_stage": "search_button",
   "error": "button_not_found",
@@ -642,7 +642,7 @@ mod tests {
             product: "rzn-browser".to_string(),
             flow_kind: "workflow".to_string(),
             system: "google".to_string(),
-            workflow: "google/search-v1".to_string(),
+            workflow: "google/search".to_string(),
             version: "1.0.0".to_string(),
             step: "https://example.com?q=private".to_string(),
             error: "element_not_found".to_string(),
@@ -657,7 +657,7 @@ mod tests {
     #[test]
     fn simulated_failure_command_contains_only_safe_fields() {
         let workflow = json!({
-            "id": "google/search-v1",
+            "id": "google/search",
             "version": "2026-04-24.1",
             "browser_automation": {"sequences": [{"steps": []}]}
         });
@@ -671,7 +671,7 @@ mod tests {
         );
         let block = render_failure_report_block(&ctx);
 
-        assert!(block.contains("--workflow google/search-v1"));
+        assert!(block.contains("--workflow google/search"));
         assert!(block.contains("--error button_not_found"));
         assert!(!block.contains("https://google.com"));
         assert!(!block.contains("private"));
@@ -703,10 +703,10 @@ mod tests {
     fn endpoint_resolution_prefers_full_override_then_base_url() {
         assert_eq!(
             resolve_workflow_report_url(
-                Some("https://legacy.example.test/custom-report"),
+                Some("https://alternate.example.test/custom-report"),
                 Some("https://base.example.test")
             ),
-            "https://legacy.example.test/custom-report"
+            "https://alternate.example.test/custom-report"
         );
         assert_eq!(
             resolve_workflow_report_url(None, Some("https://base.example.test/")),
@@ -724,7 +724,7 @@ mod tests {
             product: "rzn-browser".to_string(),
             flow_kind: "workflow".to_string(),
             system: "google".to_string(),
-            workflow: "google/search-v1".to_string(),
+            workflow: "google/search".to_string(),
             version: "2026-04-24.1".to_string(),
             step: "search_button".to_string(),
             error: "button_not_found".to_string(),
@@ -745,7 +745,7 @@ mod tests {
                 "product": "rzn-browser",
                 "flow_kind": "workflow",
                 "surface": "google",
-                "flow": "google/search-v1",
+                "flow": "google/search",
                 "flow_version": "2026-04-24.1",
                 "failed_stage": "search_button",
                 "error": "button_not_found",
@@ -759,7 +759,7 @@ mod tests {
     #[test]
     fn host_failure_builder_returns_same_sanitized_contract_from_raw_failure() {
         let workflow = json!({
-            "id": "google/search-v1",
+            "id": "google/search",
             "version": "2026-04-24.1",
             "browser_automation": {"sequences": [{"steps": []}]}
         });
@@ -778,7 +778,7 @@ mod tests {
         assert_eq!(value["submission_mode"], "host_auto");
         assert_eq!(value["source"], "rzn-browser-host");
         assert_eq!(value["surface"], "google");
-        assert_eq!(value["flow"], "google/search-v1");
+        assert_eq!(value["flow"], "google/search");
         assert_eq!(value["flow_version"], "2026-04-24.1");
         assert_eq!(value["failed_stage"], "search_button");
         assert_eq!(value["error"], "button_not_found");

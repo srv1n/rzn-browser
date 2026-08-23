@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 pub const SUPERVISOR_SOCKET_FILENAME: &str = "rzn-supervisor.sock";
-pub const SUPERVISOR_TOKEN_FILENAME: &str = "rzn-supervisor-token-v1";
+pub const SUPERVISOR_TOKEN_FILENAME: &str = "rzn-supervisor-token";
 pub const SUPERVISOR_SOCKET_ENV_KEYS: &[&str] = &[
     "RZN_LOCAL_RUNTIME_SOCKET_PATH",
     "RZN_SUPERVISOR_SOCKET_PATH",
@@ -80,7 +80,10 @@ pub fn platform_app_base_candidates() -> Vec<PathBuf> {
 
     if bases.is_empty() {
         if let Some(home) = dirs::home_dir() {
-            push_unique(&mut bases, home.join(".rzn-browser"));
+            push_unique(
+                &mut bases,
+                home.join(if cfg!(target_os = "linux") { "rzn" } else { "RZN" }),
+            );
         }
     }
 
@@ -101,7 +104,11 @@ pub fn candidate_app_bases() -> Vec<PathBuf> {
     }
 
     if bases.is_empty() {
-        bases.push(PathBuf::from(".rzn-browser"));
+        bases.push(PathBuf::from(if cfg!(target_os = "linux") {
+            "rzn"
+        } else {
+            "RZN"
+        }));
     }
 
     bases
@@ -111,7 +118,13 @@ pub fn default_app_base_dir() -> PathBuf {
     candidate_app_bases()
         .into_iter()
         .next()
-        .unwrap_or_else(|| PathBuf::from(".rzn-browser"))
+        .unwrap_or_else(|| {
+            PathBuf::from(if cfg!(target_os = "linux") {
+                "rzn"
+            } else {
+                "RZN"
+            })
+        })
 }
 
 fn push_unique(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
@@ -139,9 +152,9 @@ fn ordered_app_base_candidates_for_root(root: &Path) -> Vec<PathBuf> {
 
 fn app_base_names_by_platform() -> &'static [&'static str] {
     if cfg!(target_os = "linux") {
-        &["rzn", "RZN", "rzn-browser", "rzn_debug"]
+        &["rzn"]
     } else {
-        &["RZN", "rzn", "rzn-browser", "rzn_debug"]
+        &["RZN"]
     }
 }
 
@@ -177,7 +190,7 @@ mod tests {
         assert_eq!(socket, PathBuf::from("/tmp/RZN/run/rzn-supervisor.sock"));
         assert_eq!(
             token,
-            PathBuf::from("/tmp/RZN/secure/rzn-supervisor-token-v1")
+            PathBuf::from("/tmp/RZN/secure/rzn-supervisor-token")
         );
     }
 
@@ -188,11 +201,12 @@ mod tests {
             .expect("clock drift")
             .as_nanos();
         let root = std::env::temp_dir().join(format!("rzn-runtime-paths-{}", unique));
-        fs::create_dir_all(root.join("RZN")).expect("create RZN root");
+        let canonical_name = app_base_names_by_platform()[0];
+        fs::create_dir_all(root.join(canonical_name)).expect("create canonical root");
 
         let candidates = ordered_app_base_candidates_for_root(&root);
 
-        assert_eq!(candidates.first(), Some(&root.join("RZN")));
+        assert_eq!(candidates.first(), Some(&root.join(canonical_name)));
 
         let _ = fs::remove_dir_all(root);
     }

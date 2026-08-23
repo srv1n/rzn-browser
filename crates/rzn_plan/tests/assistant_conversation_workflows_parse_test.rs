@@ -11,7 +11,7 @@ fn repo_root() -> PathBuf {
 }
 
 #[test]
-fn assistant_conversation_workflows_parse_as_v1_workflow() {
+fn assistant_conversation_workflows_parse_as_workflow() {
     let workflows = [
         "workflows/chatgpt/chatgpt_recent_chats.json",
         "workflows/chatgpt/chatgpt_read.json",

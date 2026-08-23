@@ -278,9 +278,5 @@
       "Mutating. Pauses at the in-page review gate with approval_mode=ask_user.",
       "Opens a fresh tab \u2014 safe for parallel runs."
     ]
-  },
-  "metadata": {
-    "migrated_from": "x/x_reply_post.json",
-    "legacy_system_id": "x"
   }
 }

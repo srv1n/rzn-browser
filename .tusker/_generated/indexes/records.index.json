@@ -1,0 +1,150 @@
+{
+  "generatedAt": "2026-08-23T11:05:15Z",
+  "items": [
+    {
+      "created": "",
+      "id": "",
+      "path": "Dashboard.md",
+      "record_id": "",
+      "schema_version": 0,
+      "status": "",
+      "tags": null,
+      "title": "",
+      "type": "",
+      "updated": "",
+      "work_revision": 0
+    },
+    {
+      "created": "2026-08-23",
+      "id": "",
+      "path": "README.md",
+      "record_id": "",
+      "schema_version": 0,
+      "status": "",
+      "tags": [
+        "tusker-generated"
+      ],
+      "title": "Overview",
+      "type": "note",
+      "updated": "2026-08-23",
+      "work_revision": 0
+    },
+    {
+      "created": "",
+      "id": "",
+      "path": "knowledge/domains/project/glossary.md",
+      "record_id": "",
+      "schema_version": 0,
+      "status": "",
+      "tags": null,
+      "title": "",
+      "type": "",
+      "updated": "",
+      "work_revision": 0
+    },
+    {
+      "created": "",
+      "id": "project",
+      "path": "knowledge/domains/project/INDEX.md",
+      "record_id": "",
+      "schema_version": 0,
+      "status": "current",
+      "tags": null,
+      "title": "Project",
+      "type": "",
+      "updated": "",
+      "work_revision": 0
+    },
+    {
+      "created": "",
+      "id": "project/canon",
+      "path": "knowledge/domains/project/CANON.md",
+      "record_id": "",
+      "schema_version": 0,
+      "status": "current",
+      "tags": null,
+      "title": "Project Canon",
+      "type": "",
+      "updated": "",
+      "work_revision": 0
+    },
+    {
+      "created": "",
+      "id": "",
+      "path": "dashboards/active-runs.md",
+      "record_id": "",
+      "schema_version": 0,
+      "status": "",
+      "tags": null,
+      "title": "",
+      "type": "",
+      "updated": "",
+      "work_revision": 0
+    },
+    {
+      "created": "",
+      "id": "",
+      "path": "dashboards/agent-ready.md",
+      "record_id": "",
+      "schema_version": 0,
+      "status": "",
+      "tags": null,
+      "title": "",
+      "type": "",
+      "updated": "",
+      "work_revision": 0
+    },
+    {
+      "created": "",
+      "id": "",
+      "path": "dashboards/review-queue.md",
+      "record_id": "",
+      "schema_version": 0,
+      "status": "",
+      "tags": null,
+      "title": "",
+      "type": "",
+      "updated": "",
+      "work_revision": 0
+    },
+    {
+      "created": "",
+      "id": "",
+      "path": "dashboards/human-actions.md",
+      "record_id": "",
+      "schema_version": 0,
+      "status": "",
+      "tags": null,
+      "title": "",
+      "type": "",
+      "updated": "",
+      "work_revision": 0
+    },
+    {
+      "created": "",
+      "id": "",
+      "path": "dashboards/ci-waiting.md",
+      "record_id": "",
+      "schema_version": 0,
+      "status": "",
+      "tags": null,
+      "title": "",
+      "type": "",
+      "updated": "",
+      "work_revision": 0
+    },
+    {
+      "created": "",
+      "id": "",
+      "path": "SKILL.md",
+      "record_id": "",
+      "schema_version": 0,
+      "status": "current",
+      "tags": null,
+      "title": "",
+      "type": "",
+      "updated": "",
+      "work_revision": 0
+    }
+  ]
+}

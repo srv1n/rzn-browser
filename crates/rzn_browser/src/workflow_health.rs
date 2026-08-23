@@ -1,5 +1,5 @@
 use crate::run_store::RunRecord;
-use rzn_contracts::v2::FailureSummaryV1;
+use rzn_contracts::workflow::FailureSummary;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -71,9 +71,9 @@ pub fn failure_summary(
     step: Option<usize>,
     code: &str,
     message: &str,
-) -> FailureSummaryV1 {
+) -> FailureSummary {
     let class = classify_error(code, message);
-    FailureSummaryV1 {
+    FailureSummary {
         error_class: class.as_str().into(),
         failing_step_index: step,
         fingerprint: fingerprint(workflow_hash, step, class),

@@ -1,0 +1,20 @@
+{
+  "actor": "tusker:reconcile",
+  "at": "2026-08-23T12:33:56Z",
+  "event_kind": "updated",
+  "id": "01M0Q9T030T48M572VP0CWAM62",
+  "object": "RZN-T-0008",
+  "object_kind": "task",
+  "payload": {
+    "changes": {
+      "readiness": {
+        "from": "held",
+        "to": "ready"
+      }
+    },
+    "source": "projection",
+    "state_rev": "sha256:539deab5453563fba8298d8206526d25dc6274e1cd19be7ece1fe0fe78192531"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

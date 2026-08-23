@@ -8,9 +8,8 @@ This archive is a self-contained runtime payload for a single platform release.
 | --- | --- |
 | `bin/rzn-browser*` | Main CLI/runtime entrypoint |
 | `bin/rzn-native-host*` | Chrome native messaging host |
-| `extension/dist-chrome/` | Unpacked extension bundle to load in Chrome |
+| `extension/dist/chrome/` | Unpacked extension bundle to load in Chrome |
 | `workflows/` | Shipped workflow catalog |
-| `examples/browser_automation/` | Packaged examples |
 | `release-manifest.json` | Build metadata for this bundle |
 
 ## Install

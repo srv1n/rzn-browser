@@ -1,0 +1,16 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-08-23T12:30:47Z",
+  "event_kind": "verification_added",
+  "id": "01M0Q9M7HWX7WRFXHFY83G7JMW",
+  "object": "RZN-T-0001",
+  "object_kind": "task",
+  "payload": {
+    "blocked_by": "",
+    "check": "command: tusker validate --vault ./.tusker --json",
+    "covers": "A1,A3",
+    "result": "pending"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

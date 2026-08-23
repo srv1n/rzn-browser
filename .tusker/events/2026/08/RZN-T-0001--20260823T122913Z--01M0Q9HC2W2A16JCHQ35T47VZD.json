@@ -1,0 +1,36 @@
+{
+  "actor": "tusker:reconcile",
+  "at": "2026-08-23T12:29:13Z",
+  "event_kind": "updated",
+  "id": "01M0Q9HC2W2A16JCHQ35T47VZD",
+  "object": "RZN-T-0001",
+  "object_kind": "task",
+  "payload": {
+    "changes": {
+      "next_action": {
+        "from": "Execute the task contract and satisfy proof mode.",
+        "to": "Review evidence and close or return to rework."
+      },
+      "next_owner": {
+        "from": "agent",
+        "to": "reviewer"
+      },
+      "next_ref": {
+        "from": "RZN-T-0001",
+        "to": ""
+      },
+      "next_source": {
+        "from": "task",
+        "to": "review_policy"
+      },
+      "readiness": {
+        "from": "held",
+        "to": "waiting_on_review"
+      }
+    },
+    "source": "projection",
+    "state_rev": "sha256:253c3eb026e372a4ce1fafa41d8df4e5f8bc02923ed33c9d2e6f8f72390b6f59"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

@@ -274,9 +274,5 @@
       "HN aggressively flags duplicate URL submissions. Search HN for the URL before submitting if there is any doubt.",
       "The approval gate uses request_user_intervention with no timeout. The workflow blocks until the operator clicks Continue (submit) or Stop (leave as draft)."
     ]
-  },
-  "metadata": {
-    "migrated_from": "hn/hn-submit-link-post.json",
-    "legacy_system_id": "hacker_news"
   }
 }

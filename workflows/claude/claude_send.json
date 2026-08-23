@@ -311,9 +311,5 @@
       "Attachment support requires the extension patched with empty/placeholder-safe upload_file; if uploads seem to silently skip, reload the rzn-browser extension.",
       "Model selection uses the model picker DOM; \"More models\" submenu is opened automatically if the requested slug is not in the main menu."
     ]
-  },
-  "metadata": {
-    "migrated_from": "claude/claude_send.json",
-    "legacy_system_id": "claude"
   }
 }

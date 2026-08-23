@@ -1,0 +1,80 @@
+schema: tusker.factory-intake-contract/v1
+contract_version: 1.1.0
+title: Canonical factory-intake routing contract
+description: >-
+  Routes a semantically understood request plus explicit structural scope to an
+  inert analysis, singleton, direct-interactive, or delivery-plan path.
+product_questions:
+  - desired outcome
+  - observable acceptance and important failure cases
+  - constraints, priorities, and non-goals
+  - unresolved authority, credential, legal, or subjective decisions
+factory_mechanics:
+  - task and epic identities
+  - dependencies, waves, and runners
+  - proof modes, evidence locations, retry policy, and daemon lifecycle
+  - plan import, preflight, and delivery execution mechanics
+decision_table:
+  - id: analysis
+    intent: analysis
+    route: read_only_analysis
+    durable_mutation: none
+    execution_authority: none
+    remedy: Answer from repository evidence; ask only a material product question.
+  - id: unattended
+    intent: unattended_delivery
+    route: delivery_plan
+    durable_mutation: versioned_plan_and_held_import
+    execution_authority: fingerprint_bound_start_delivery
+    remedy: Review the plan, then use one exact fingerprint-bound Start delivery action after preflight.
+  - id: planned_or_structural_multi_unit
+    intent: planning_or_tasking
+    route: delivery_plan
+    durable_mutation: versioned_plan_and_held_import
+    execution_authority: none
+    remedy: Produce a versioned delivery plan and import it held; do not hand-create a task series.
+  - id: singleton_record
+    intent: singleton_record
+    scope: singleton
+    route: direct_singleton
+    durable_mutation: held_or_backlog_singleton
+    execution_authority: none
+    remedy: Create one genuine singleton contract; do not manufacture a wave.
+  - id: bounded_direct_implementation
+    intent: implementation
+    scope: singleton
+    route: direct_interactive
+    durable_mutation: singleton_contract_only
+    execution_authority: explicit_direct_request
+    remedy: Deliver the one bounded change interactively; inspect for a live automated owner first.
+  - id: implementation_with_multi_unit_scope
+    intent: implementation
+    scope: multi_unit
+    route: delivery_plan
+    durable_mutation: versioned_plan_and_held_import
+    execution_authority: fingerprint_bound_start_delivery
+    remedy: Plan first; unattended execution requires the exact Start delivery action after preflight.
+structural_multi_unit_signals:
+  - independently_provable_outcomes
+  - multiple_domains
+  - concurrent_lanes
+  - shared_scarce_resource
+  - rollout_or_recovery_phase
+  - multiple_implementation_units
+  - multiple_reviewer_packets
+guardrails:
+  - analysis_is_read_only
+  - import_is_inert
+  - tracked_modifying_work_requires_work_start
+  - dispatched_worker_verifies_existing_claim
+  - reviewer_submits_typed_result_only
+  - deterministic_handlers_own_close_and_successor_wake
+  - epic_is_never_execution_authority
+  - project_automation_is_separate_explicit_opt_in
+  - fresh_dispatch_scope_is_armed_waves
+  - start_does_not_enable_project_automation
+  - start_does_not_start_or_install_daemon
+  - start_does_not_authorize_release_or_paid_work
+  - start_does_not_satisfy_human_gates
+  - start_does_not_include_unrelated_work
+  - start_requires_current_plan_fingerprint

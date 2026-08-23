@@ -151,11 +151,6 @@ pub fn format_browser_targets_result(data: &Value) -> Option<String> {
     output.push_str(&format!("{}\n", "Browser targets".green().bold()));
     output.push_str(&format!("status: {}\n", status));
     output.push_str(&format!("count: {}\n", targets.len()));
-    if data.get("compat_source").and_then(Value::as_str).is_some() {
-        output.push_str(
-            "note: target list came from runtime.status compatibility fallback; restart the supervisor after upgrading.\n",
-        );
-    }
     if let Some(default_target) = data.get("default_target").filter(|value| !value.is_null()) {
         output.push_str(&format!(
             "default: {}\n",

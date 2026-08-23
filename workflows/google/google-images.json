@@ -238,9 +238,5 @@
       "If you need the original image URL for each result, build a follow-up workflow that clicks each card and reads the side-panel a[href] \u2014 that's a separate (slow, brittle) effort.",
       "The grid is virtualized; only viewport-visible images get extracted."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-images.json",
-    "legacy_system_id": "google"
   }
 }

@@ -143,9 +143,5 @@
       "Same auth path as chatgpt_export_chat / chatgpt_export_full_chat: page session token, no separate login.",
       "To generate images first, run chatgpt_send with `tool=image_gen`, then call this workflow with the resulting chat_id."
     ]
-  },
-  "metadata": {
-    "migrated_from": "chatgpt/chatgpt_images_download.json",
-    "legacy_system_id": "chatgpt"
   }
 }

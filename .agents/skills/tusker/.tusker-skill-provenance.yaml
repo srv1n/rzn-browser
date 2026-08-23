@@ -1,0 +1,10 @@
+schema: tusker.skill-materialization/v1
+source_kind: embedded
+source_identity: embedded://tusker/skills/tusker
+compatibility_schema: tusker.skill-compatibility/v1
+compatibility_fingerprint: sha256:da5c341a7caac4fe0a4311fd0062ea469f40b347b205d423ebbc2c678e68866a
+canonical_payload_fingerprint: sha256:fa36e045da91422dcdc1a2f327772085c40b27b61b5b2de397a9ce01125c653f
+factory_intake_contract_schema: tusker.factory-intake-contract/v1
+factory_intake_contract_version: 1.1.0
+factory_intake_contract_fingerprint: sha256:15ec23480f22cb10b83bc945465abedd279e3954e777dcecb0815571799fbe18
+payload_fingerprint: sha256:fa36e045da91422dcdc1a2f327772085c40b27b61b5b2de397a9ce01125c653f

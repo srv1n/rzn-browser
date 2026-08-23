@@ -15,7 +15,7 @@ describe('build info', () => {
 
   it('defaults unset or unsupported extension build targets to unknown', () => {
     expect(normalizeExtensionTarget(undefined)).toBe('unknown');
-    expect(normalizeExtensionTarget('firefox')).toBe('unknown');
+    expect(normalizeExtensionTarget('safari')).toBe('unknown');
     expect(normalizeExtensionTarget('')).toBe('unknown');
     expect(RZN_EXTENSION_TARGET).toBe('unknown');
   });

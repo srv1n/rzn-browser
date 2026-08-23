@@ -19,10 +19,6 @@
   "exclude": [
     "../scripts/**/*",
     "node_modules",
-    "dist",
-    "dist-chrome",
-    "dist-edge",
-    "dist-chromium",
-    "dist-firefox"
+    "dist"
   ]
 }

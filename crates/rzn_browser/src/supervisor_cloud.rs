@@ -1,8 +1,8 @@
 use anyhow::{anyhow, bail, Context, Result};
 use futures_util::{SinkExt, StreamExt};
-use rzn_contracts::v1::{
-    ActionResultV1, ActorHelloV1, ActorReadyV1, CapabilitiesV1, CloudCommandAckV1,
-    CloudCommandEnvelopeV1, CloudCommandKindV1, CloudCommandResultV1, CLOUD_CONTRACT_VERSION,
+use rzn_contracts::browser::{
+    ActorHello, ActorReady, BrowserActionResult, Capabilities, CloudCommandAck,
+    CloudCommandEnvelope, CloudCommandKind, CloudCommandResult, CLOUD_CONTRACT,
 };
 use rzn_core::secure_files::write_secret_file;
 use serde_json::{json, Value};
@@ -21,7 +21,7 @@ use url::Url;
 
 use crate::cloud::{resolve_cloud_actor_config_path, LocalCloudActorConfig};
 
-const CLOUD_ACTOR_CONFIG_VERSION: &str = "rzn.cloud.actor_config.v1";
+const CLOUD_ACTOR_CONFIG_CONTRACT: &str = "rzn.cloud.actor_config";
 const DEFAULT_CONNECT_TIMEOUT_MS: u64 = 15_000;
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_EXTENSION_RPC_GRACE_MS: u64 = 5_000;
@@ -29,9 +29,9 @@ const CONFIG_RELOAD_INTERVAL_MS: u64 = 5_000;
 const MAX_CACHED_COMMAND_RESULTS: usize = 256;
 
 pub(crate) struct CloudDispatchRequest {
-    pub envelope: CloudCommandEnvelopeV1,
+    pub envelope: CloudCommandEnvelope,
     pub default_request_timeout_ms: u64,
-    pub respond_to: oneshot::Sender<CloudCommandResultV1>,
+    pub respond_to: oneshot::Sender<CloudCommandResult>,
 }
 
 #[derive(Clone)]
@@ -64,11 +64,11 @@ enum CloudActorControlMessage {
 #[derive(Default)]
 struct CommandResultCache {
     order: Vec<String>,
-    entries: HashMap<String, CloudCommandResultV1>,
+    entries: HashMap<String, CloudCommandResult>,
 }
 
 impl CommandResultCache {
-    fn get(&self, command_id: &str) -> Option<CloudCommandResultV1> {
+    fn get(&self, command_id: &str) -> Option<CloudCommandResult> {
         self.entries.get(command_id).cloned()
     }
 
@@ -77,7 +77,7 @@ impl CommandResultCache {
         self.entries.clear();
     }
 
-    fn insert(&mut self, command_id: String, result: CloudCommandResultV1) {
+    fn insert(&mut self, command_id: String, result: CloudCommandResult) {
         if !self.entries.contains_key(&command_id) {
             self.order.push(command_id.clone());
         }
@@ -408,13 +408,13 @@ async fn run_cloud_actor_session<S>(
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
-    let hello = ActorHelloV1 {
-        version: CLOUD_CONTRACT_VERSION.to_string(),
+    let hello = ActorHello {
+        version: CLOUD_CONTRACT.to_string(),
         message_type: "actor.hello".to_string(),
         actor_id: config.actor_id.clone(),
         workspace_id: config.workspace_id.clone(),
         extension_version: env!("CARGO_PKG_VERSION").to_string(),
-        capabilities: CapabilitiesV1 {
+        capabilities: Capabilities {
             extension_actor: true,
             cdp_available: true,
             cdp_enabled: false,
@@ -435,9 +435,9 @@ where
     while let Some(message) = socket.next().await {
         match message {
             Ok(Message::Text(text)) => {
-                let envelope: CloudCommandEnvelopeV1 =
+                let envelope: CloudCommandEnvelope =
                     serde_json::from_str(&text).context("Decode cloud command envelope")?;
-                if envelope.payload.kind != CloudCommandKindV1::BrowserCommand {
+                if envelope.payload.kind != CloudCommandKind::BrowserCommand {
                     let result = error_command_result(
                         &envelope,
                         "Unsupported cloud command kind; only browser_command is implemented"
@@ -494,12 +494,12 @@ where
 }
 
 async fn dispatch_command_with_dedupe(
-    envelope: CloudCommandEnvelopeV1,
+    envelope: CloudCommandEnvelope,
     default_request_timeout_ms: u64,
     dispatch_tx: mpsc::UnboundedSender<CloudDispatchRequest>,
     result_cache: Arc<Mutex<CommandResultCache>>,
     status: Arc<Mutex<CloudActorRuntimeState>>,
-) -> CloudCommandResultV1 {
+) -> CloudCommandResult {
     if let Some(cached) = result_cache.lock().await.get(&envelope.command_id) {
         return cached;
     }
@@ -523,16 +523,16 @@ async fn dispatch_command_with_dedupe(
 }
 
 async fn dispatch_command(
-    envelope: CloudCommandEnvelopeV1,
+    envelope: CloudCommandEnvelope,
     default_request_timeout_ms: u64,
     dispatch_tx: mpsc::UnboundedSender<CloudDispatchRequest>,
-) -> CloudCommandResultV1 {
+) -> CloudCommandResult {
     let timeout_ms = compute_request_timeout_ms(
         envelope.deadline_ms,
         default_request_timeout_ms,
         DEFAULT_EXTENSION_RPC_GRACE_MS,
     );
-    let (respond_to, response_rx) = oneshot::channel::<CloudCommandResultV1>();
+    let (respond_to, response_rx) = oneshot::channel::<CloudCommandResult>();
     if dispatch_tx
         .send(CloudDispatchRequest {
             envelope: envelope.clone(),
@@ -565,7 +565,7 @@ async fn dispatch_command(
 
 async fn wait_for_actor_ready<S>(
     socket: &mut tokio_tungstenite::WebSocketStream<S>,
-) -> Result<ActorReadyV1>
+) -> Result<ActorReady>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -575,7 +575,7 @@ where
             .context("Timed out waiting for actor.ready")?;
         match maybe_message {
             Some(Ok(Message::Text(text))) => {
-                let ready: ActorReadyV1 =
+                let ready: ActorReady =
                     serde_json::from_str(&text).context("Decode actor.ready")?;
                 return Ok(ready);
             }
@@ -644,9 +644,9 @@ async fn mark_cloud_actor_disconnected(status: &Arc<Mutex<CloudActorRuntimeState
     guard.inflight_command_id = None;
 }
 
-fn command_ack(envelope: &CloudCommandEnvelopeV1) -> CloudCommandAckV1 {
-    CloudCommandAckV1 {
-        version: CLOUD_CONTRACT_VERSION.to_string(),
+fn command_ack(envelope: &CloudCommandEnvelope) -> CloudCommandAck {
+    CloudCommandAck {
+        version: CLOUD_CONTRACT.to_string(),
         message_type: "command.ack".to_string(),
         actor_id: envelope.actor_id.clone(),
         run_id: envelope.run_id.clone(),
@@ -659,12 +659,12 @@ fn command_ack(envelope: &CloudCommandEnvelopeV1) -> CloudCommandAckV1 {
 }
 
 fn error_command_result(
-    envelope: &CloudCommandEnvelopeV1,
+    envelope: &CloudCommandEnvelope,
     error: impl Into<String>,
-) -> CloudCommandResultV1 {
+) -> CloudCommandResult {
     let error = error.into();
-    CloudCommandResultV1 {
-        version: CLOUD_CONTRACT_VERSION.to_string(),
+    CloudCommandResult {
+        version: CLOUD_CONTRACT.to_string(),
         message_type: "command.result".to_string(),
         actor_id: envelope.actor_id.clone(),
         run_id: envelope.run_id.clone(),
@@ -674,7 +674,7 @@ fn error_command_result(
         success: false,
         finished_at_ms: now_ms(),
         trace_id: envelope.trace_id.clone(),
-        result: Some(ActionResultV1 {
+        result: Some(BrowserActionResult {
             success: false,
             error_code: Some("SUPERVISOR_CLOUD_ERROR".to_string()),
             error: Some(error.clone()),
@@ -717,7 +717,7 @@ fn load_local_actor_config() -> Result<Option<LocalCloudActorConfig>> {
 fn normalize_local_actor_config(
     mut config: LocalCloudActorConfig,
 ) -> Result<LocalCloudActorConfig> {
-    if config.version != CLOUD_ACTOR_CONFIG_VERSION {
+    if config.version != CLOUD_ACTOR_CONFIG_CONTRACT {
         bail!("Unsupported cloud actor config version {}", config.version);
     }
     config.server_url = normalize_server_url(&config.server_url)?;
@@ -843,11 +843,11 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rzn_contracts::v1::{CloudBrowserCommandV1, CloudCommandPayloadV1};
+    use rzn_contracts::browser::{CloudBrowserCommand, CloudCommandPayload};
 
-    fn sample_envelope(command_id: &str) -> CloudCommandEnvelopeV1 {
-        CloudCommandEnvelopeV1 {
-            version: CLOUD_CONTRACT_VERSION.to_string(),
+    fn sample_envelope(command_id: &str) -> CloudCommandEnvelope {
+        CloudCommandEnvelope {
+            version: CLOUD_CONTRACT.to_string(),
             message_type: "command.execute".to_string(),
             actor_id: "actor-1".to_string(),
             run_id: "run-1".to_string(),
@@ -858,9 +858,9 @@ mod tests {
             trace_id: Some("trace-1".to_string()),
             parent_command_id: None,
             planner_step_index: Some(0),
-            payload: CloudCommandPayloadV1 {
-                kind: CloudCommandKindV1::BrowserCommand,
-                command: Some(CloudBrowserCommandV1 {
+            payload: CloudCommandPayload {
+                kind: CloudCommandKind::BrowserCommand,
+                command: Some(CloudBrowserCommand {
                     cmd: "execute_step".to_string(),
                     payload: Some(json!({
                         "session_id": "session-1",
@@ -875,9 +875,9 @@ mod tests {
         }
     }
 
-    fn sample_result(envelope: &CloudCommandEnvelopeV1) -> CloudCommandResultV1 {
-        CloudCommandResultV1 {
-            version: CLOUD_CONTRACT_VERSION.to_string(),
+    fn sample_result(envelope: &CloudCommandEnvelope) -> CloudCommandResult {
+        CloudCommandResult {
+            version: CLOUD_CONTRACT.to_string(),
             message_type: "command.result".to_string(),
             actor_id: envelope.actor_id.clone(),
             run_id: envelope.run_id.clone(),
@@ -887,7 +887,7 @@ mod tests {
             success: true,
             finished_at_ms: now_ms(),
             trace_id: envelope.trace_id.clone(),
-            result: Some(ActionResultV1 {
+            result: Some(BrowserActionResult {
                 success: true,
                 error_code: None,
                 error: None,
@@ -905,7 +905,7 @@ mod tests {
 
     fn sample_actor_config() -> LocalCloudActorConfig {
         LocalCloudActorConfig {
-            version: CLOUD_ACTOR_CONFIG_VERSION.to_string(),
+            version: CLOUD_ACTOR_CONFIG_CONTRACT.to_string(),
             actor_id: "actor-1".to_string(),
             actor_token: "token-1".to_string(),
             workspace_id: "workspace-1".to_string(),

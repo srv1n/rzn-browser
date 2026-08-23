@@ -1,0 +1,30 @@
+filters:
+  and:
+    - file.ext == "md"
+    - 'schema == "tusker.task/v7"'
+properties:
+  id:
+    displayName: ID
+  title:
+    displayName: Title
+  epic:
+    displayName: Epic
+  wave:
+    displayName: Wave
+  status:
+    displayName: Status
+  readiness:
+    displayName: Readiness
+  priority:
+    displayName: Priority
+  next_owner:
+    displayName: Next owner
+  next_action:
+    displayName: Next action
+views:
+  - type: table
+    name: "CI Waiting"
+    filters:
+      and:
+        - 'readiness == "waiting_on_ci"'
+    order: [id, title, wave, epic, next_action]

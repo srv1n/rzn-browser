@@ -65,13 +65,13 @@ test.describe('Form wizard fixture', () => {
     };
 
     // Step 1
-    await exec({ type: 'fill_input_field', selector: '#email', value: 'rzn.tester@example.com', force_legacy: true });
-    await exec({ type: 'fill_input_field', selector: '#password', value: 'rznpass12345', force_legacy: true });
+    await exec({ type: 'fill_input_field', selector: '#email', value: 'rzn.tester@example.com' });
+    await exec({ type: 'fill_input_field', selector: '#password', value: 'rznpass12345' });
     await expect(page.locator('#email')).toHaveValue('rzn.tester@example.com');
     await expect(page.locator('#password')).toHaveValue('rznpass12345');
-    await exec({ type: 'click_element', selector: '#planPro', force_legacy: true });
+    await exec({ type: 'click_element', selector: '#planPro' });
     await expect(page.locator('#planPro')).toBeChecked();
-    await exec({ type: 'click_element', selector: '#nextBtn', force_legacy: true });
+    await exec({ type: 'click_element', selector: '#nextBtn' });
     const afterStep1 = await page.evaluate(() => {
       const get = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.value || '';
       const plan = (document.querySelector("input[name='plan']:checked") as HTMLInputElement | null)?.value || '';
@@ -82,15 +82,15 @@ test.describe('Form wizard fixture', () => {
     await expect(page.locator('#step-2')).toBeVisible();
 
     // Step 2
-    await exec({ type: 'fill_input_field', selector: '#firstName', value: 'Ada', force_legacy: true });
-    await exec({ type: 'fill_input_field', selector: '#lastName', value: 'Lovelace', force_legacy: true });
-    await exec({ type: 'fill_input_field', selector: '#zip', value: '94107', force_legacy: true });
-    await exec({ type: 'click_element', selector: '#terms', force_legacy: true });
+    await exec({ type: 'fill_input_field', selector: '#firstName', value: 'Ada' });
+    await exec({ type: 'fill_input_field', selector: '#lastName', value: 'Lovelace' });
+    await exec({ type: 'fill_input_field', selector: '#zip', value: '94107' });
+    await exec({ type: 'click_element', selector: '#terms' });
     await expect(page.locator('#firstName')).toHaveValue('Ada');
     await expect(page.locator('#lastName')).toHaveValue('Lovelace');
     await expect(page.locator('#zip')).toHaveValue('94107');
     await expect(page.locator('#terms')).toBeChecked();
-    await exec({ type: 'click_element', selector: '#nextBtn', force_legacy: true });
+    await exec({ type: 'click_element', selector: '#nextBtn' });
     await expect
       .poll(async () => {
         return page.evaluate(() => (window as any).__rznWizard?.getStep?.() ?? 0);

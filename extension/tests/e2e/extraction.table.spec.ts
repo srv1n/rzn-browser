@@ -71,7 +71,6 @@ test.describe('Extraction - Table rows', () => {
 
     const resp = await page.evaluate(async () => (window as any).__rznExecuteStep({
       type: 'extract_structured_data',
-      force_legacy: true,
       item_selector: '#prices tbody tr',
       fields: [
         { name: 'label', selector: 'td:first-child' },

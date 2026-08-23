@@ -10,7 +10,8 @@ rzn-browser run google <workflow> --param key=value [--param key=value]
 
 - File on disk: `google-<resource>.json` (kebab-case).
 - Catalog reference (auto-derived from the filename): `google/<resource>`.
-- Internal `id` field: `google_<resource>_v<N>` (snake_case, version pinned in id; bump `version` field for changes — never rename the file with a `-v2` suffix).
+- Internal `id` field: `google/<resource>`; keep the filename stable and bump
+  the JSON `version` field when the contract changes.
 
 ## Workflows
 
@@ -54,19 +55,21 @@ make build-ext
 make reload-ext
 ```
 
-## Verticals folded into `google/search`
+## Search verticals
 
-The `vertical` enum on `google/search` covers what used to be separate workflows (`google-news`, `google-books`):
+The `vertical` enum on `google/search` supports news and books:
 
 ```
 rzn-browser run google search --param search_query="AI regulation" --param vertical=news
 rzn-browser run google search --param search_query="category theory" --param vertical=books
 ```
 
-Shopping (`google-shopping` previously) is **not** folded in. Google moved shopping to a React widget surface (`udm=28`) without clean per-product anchors; the old `tbm=shop` extractor no longer works. Building a usable shopping workflow needs its own dedicated effort.
+Shopping is not included. Google serves it through a React widget surface
+(`udm=28`) without clean per-product anchors; it needs a dedicated workflow.
 
 `google/images` stays as its own workflow because the image-grid output shape (URLs + alt text) genuinely differs from organic title/url/snippet results.
 
-## Modes folded into `google/lens`
+## Lens modes
 
-`google/lens` accepts `mode=text` (default — visible page text) or `mode=items` (enumerated clickable result targets). The previous `google-lens-detect` workflow has been folded into this enum.
+`google/lens` accepts `mode=text` (default — visible page text) or
+`mode=items` (enumerated clickable result targets).

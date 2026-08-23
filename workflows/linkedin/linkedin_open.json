@@ -177,9 +177,5 @@
       "Only comments already rendered on the page are returned (cap 10); the workflow does not click to load more.",
       "Counts are strings and default to \"0\" when not visible."
     ]
-  },
-  "metadata": {
-    "migrated_from": "linkedin/open.json",
-    "legacy_system_id": "linkedin"
   }
 }

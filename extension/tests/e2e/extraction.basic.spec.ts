@@ -66,7 +66,6 @@ test.describe('Extraction - Basic single-layer list', () => {
 
     const resp = await page.evaluate(async () => (window as any).__rznExecuteStep({
       type: 'extract_structured_data',
-      force_legacy: true,
       item_selector: '#list .item',
       fields: [
         { name: 'title', selector: '.title' },

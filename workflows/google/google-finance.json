@@ -298,9 +298,5 @@
       "If a field comes back empty, verify against the live page; the regex captures may need a refresh.",
       "Only a single ticker per run; for batch lookups, call repeatedly."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-finance.json",
-    "legacy_system_id": "google"
   }
 }

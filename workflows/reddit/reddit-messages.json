@@ -178,9 +178,5 @@
       "source=inbox requires an authenticated old.reddit.com session.",
       "source=chats pierces shadow DOM to find conversation rows. Results are paired room/time/last-message triples \u2014 the first N=50 threads shown in the chat sidebar."
     ]
-  },
-  "metadata": {
-    "migrated_from": "reddit/reddit-messages.json",
-    "legacy_system_id": "reddit"
   }
 }

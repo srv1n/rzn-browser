@@ -3,7 +3,7 @@ const { createHash } = require('crypto');
 const { join } = require('path');
 
 const repoRoot = join(__dirname, '..');
-const schemaPath = join(repoRoot, 'schema', 'actions-v1.json');
+const schemaPath = join(repoRoot, 'schema', 'actions.json');
 const typesPath = join(repoRoot, 'extension', 'src', 'types', 'actions.ts');
 
 const schemaContent = readFileSync(schemaPath, 'utf8');
@@ -33,4 +33,4 @@ if (recordedVersion !== schemaVersion) {
   process.exit(1);
 }
 
-console.log('actions.ts matches schema/actions-v1.json');
+console.log('actions.ts matches schema/actions.json');

@@ -178,9 +178,5 @@
       "Source language is auto-detected by Google.",
       "For long-form translation or document upload, use the Translate SPA directly \u2014 this workflow only targets the Search widget."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-translate.json",
-    "legacy_system_id": "google"
   }
 }

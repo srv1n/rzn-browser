@@ -201,9 +201,5 @@
       "The composer is a textarea with aria-label 'Add a comment…' and the submit button is labeled 'Post' or 'Share' depending on Instagram's surface. Both labels are handled.",
       "Over-length guard: strings longer than 2200 characters return over_length without opening the composer."
     ]
-  },
-  "metadata": {
-    "migrated_from": "instagram/instagram-post-comment.json",
-    "legacy_system_id": "instagram"
   }
 }

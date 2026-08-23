@@ -24,15 +24,8 @@ done
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BACKEND_DIR=${BACKEND_DIR:-"$REPO_ROOT/../backend"}
 [[ -f "$BACKEND_DIR/Cargo.toml" ]] || { echo "backend not found: $BACKEND_DIR" >&2; exit 1; }
-for task in FLT-T-000{1..8}; do
-  task_file="$BACKEND_DIR/.tusker/work/tasks/$task.md"
-  [[ -f "$task_file" ]] || { echo "missing backend task contract: $task" >&2; exit 1; }
-  task_status=$(awk -F'"' '/^status:/{print $2; exit}' "$task_file")
-  case "$task_status" in
-    review|done) ;;
-    *) echo "backend prerequisite $task is $task_status (need review/done)" >&2; exit 1 ;;
-  esac
-done
+# The backend project owns its change records. This smoke test checks the
+# backend build and its live health endpoint below.
 
 # Every mutable path is below ROOT. Supplying RZN_FLEET_SMOKE_ROOT lets Tier 2
 # launch Chrome/native-host against the same known app base; ROOT is still erased.

@@ -6,7 +6,7 @@
   "system": "meta_ad_library",
   "capability": "meta_ad_library.search",
   "summary": "Search the public Meta Ad Library by keyword or by advertiser and enumerate matching ads (library id, started date, media type, ad copy) into a source-discriminated manifest.",
-  "description": "Reads the public Meta Ad Library (facebook.com/ads/library) using Meta's documented URL parameters. mode=keyword does a keyword+country search; mode=advertiser resolves the advertiser's Facebook Page id (from the keyword result, or an explicit page_id) and scopes to view_all_page_id so all ads belong to that advertiser. Scrapes ad cards from the rendered DOM (parsed by the stable 'Library ID' / 'Started running on' / 'Sponsored' text anchors), scroll-accumulating up to a configurable cap. Pure read. Emits a manifest validating against schema/ads-manifest-v1.json with source=meta_ad_library.",
+  "description": "Reads the public Meta Ad Library (facebook.com/ads/library) using Meta's documented URL parameters. mode=keyword does a keyword+country search; mode=advertiser resolves the advertiser's Facebook Page id (from the keyword result, or an explicit page_id) and scopes to view_all_page_id so all ads belong to that advertiser. Scrapes ad cards from the rendered DOM (parsed by the stable 'Library ID' / 'Started running on' / 'Sponsored' text anchors), scroll-accumulating up to a configurable cap. Pure read. Emits a manifest validating against schema/ads-manifest.json with source=meta_ad_library.",
   "params": {
     "properties": {
       "query": {

@@ -97,7 +97,7 @@ impl BrowserRuntimeMcpBackend for SupervisorBackend {
             let structured = supervisor::call(self.config.clone(), method, params).await?;
             let run_result = supervisor::run_result_for_tool(tool_name, &structured);
             if let Ok(typed) =
-                serde_json::from_value::<rzn_contracts::v2::RunResultV2>(run_result.clone())
+                serde_json::from_value::<rzn_contracts::workflow::RunResult>(run_result.clone())
             {
                 let base = self
                     .config

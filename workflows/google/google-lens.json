@@ -188,9 +188,5 @@
       "Local file uploads aren't supported here — Lens needs a fetchable URL. For a local file, separately host it and pass the URL.",
       "Lens UI is heavily client-rendered; extraction is best-effort and selectors can drift."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-lens.json",
-    "legacy_system_id": "google"
   }
 }

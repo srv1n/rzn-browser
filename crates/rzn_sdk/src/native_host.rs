@@ -495,16 +495,6 @@ pub fn native_host_manifest_path_for_browser(kind: BrowserKind) -> Result<PathBu
     native_host_manifest_path_for_browser_on_os(kind, &home, NativeHostInstallOs::current())
 }
 
-/// Best-effort location for Chrome's user-level Native Messaging Hosts directory.
-///
-/// Notes:
-/// - macOS/Linux use filesystem directories.
-/// - Windows uses registry-based registration; this helper returns an error.
-#[deprecated(note = "use native_host_dir_for_browser(BrowserKind::Chrome)")]
-pub fn chrome_native_host_dir() -> Result<PathBuf> {
-    native_host_dir_for_browser(BrowserKind::Chrome)
-}
-
 /// Install the RZN native host manifest into a browser's user-level directory.
 ///
 /// This writes `${native_host_dir_for_browser(browser)}/com.rzn.browser.broker.json`.
@@ -601,20 +591,6 @@ fn merged_windows_shared_manifest_origins(
     )
 }
 
-/// Install the RZN native host manifest into Chrome's user-level directory.
-///
-/// This writes `${chrome_native_host_dir()}/com.rzn.browser.broker.json`.
-#[deprecated(note = "use install_rzn_native_host_for_browser(BrowserKind::Chrome, ...)")]
-pub fn install_rzn_native_host_for_chrome(
-    native_host_path: impl AsRef<Path>,
-    extension_id: &str,
-) -> Result<PathBuf> {
-    Ok(
-        install_rzn_native_host_for_browser(BrowserKind::Chrome, native_host_path, extension_id)?
-            .manifest_path,
-    )
-}
-
 /// Attempt to resolve a usable native host executable path for local development and packaging.
 ///
 /// Resolution order:
@@ -665,12 +641,6 @@ pub fn install_rzn_native_host_for_browser_auto(
 ) -> Result<NativeHostInstallReport> {
     let native_host_path = resolve_native_host_executable_path()?;
     install_rzn_native_host_for_browser(browser, native_host_path, extension_id)
-}
-
-/// Install the native host manifest using an auto-resolved executable path.
-#[deprecated(note = "use install_rzn_native_host_for_browser_auto(BrowserKind::Chrome, ...)")]
-pub fn install_rzn_native_host_for_chrome_auto(extension_id: &str) -> Result<PathBuf> {
-    Ok(install_rzn_native_host_for_browser_auto(BrowserKind::Chrome, extension_id)?.manifest_path)
 }
 
 /// Remove the RZN native host manifest from a browser's user-level directory.
@@ -773,17 +743,6 @@ fn uninstall_windows_native_host_registry(
     Ok(false)
 }
 
-/// Remove the RZN native host manifest from Chrome's user-level directory.
-#[deprecated(note = "use uninstall_rzn_native_host_for_browser(BrowserKind::Chrome)")]
-pub fn uninstall_rzn_native_host_for_chrome() -> Result<()> {
-    uninstall_rzn_native_host_for_browser(BrowserKind::Chrome).map(|_| ())
-}
-
-#[deprecated(note = "use native_host_manifest_path_for_browser(BrowserKind::Chrome)")]
-pub fn native_host_manifest_path_for_chrome() -> Result<PathBuf> {
-    native_host_manifest_path_for_browser(BrowserKind::Chrome)
-}
-
 pub fn read_manifest(path: impl AsRef<Path>) -> Result<NativeMessagingHostManifest> {
     let contents = std::fs::read_to_string(path)?;
     Ok(serde_json::from_str(&contents)?)
@@ -797,12 +756,6 @@ pub fn read_installed_rzn_native_host_manifest_for_browser(
         return Ok(None);
     }
     Ok(Some(read_manifest(path)?))
-}
-
-#[deprecated(note = "use read_installed_rzn_native_host_manifest_for_browser(BrowserKind::Chrome)")]
-pub fn read_installed_rzn_native_host_manifest_for_chrome(
-) -> Result<Option<NativeMessagingHostManifest>> {
-    read_installed_rzn_native_host_manifest_for_browser(BrowserKind::Chrome)
 }
 
 #[cfg(test)]
@@ -1213,7 +1166,7 @@ mod tests {
     }
 
     #[test]
-    fn one_origin_manifest_json_matches_compatibility_shape() {
+    fn one_origin_manifest_json_has_expected_fields() {
         let native_host = temp_native_host_executable("one-origin");
         let native_host = std::fs::canonicalize(native_host).unwrap();
         let manifest = NativeMessagingHostManifest::rzn_native_host(

@@ -56,7 +56,7 @@ import {
 // CDP Lease Manager - keeps sessions alive briefly to avoid repeated attach/detach
 type TabId = number;
 const CDP_LEASE_TTL_MS = 1500;
-const CDP_LEASE_STORAGE_KEY = 'rzn_cdp_leases_v1';
+const CDP_LEASE_STORAGE_KEY = 'rzn_cdp_leases';
 const CDP_LEASE_SWEEP_ALARM_NAME = 'rzn-cdp-lease-sweep';
 const CDP_LEASE_SWEEP_PERIOD_MINUTES = 0.5;
 const leaseTimers = new Map<TabId, number>(); // timeout id
@@ -510,8 +510,8 @@ const EXTENSION_WORKER_BOOT_ID =
   typeof crypto?.randomUUID === 'function'
     ? `extension-worker-${crypto.randomUUID()}`
     : `extension-worker-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-const CLOUD_ACTOR_CONFIG_VERSION = 'rzn.cloud.actor_config.v1';
-const RZN_BRIDGE_CONTRACT_VERSION = 9;
+const CLOUD_ACTOR_CONFIG_CONTRACT = 'rzn.cloud.actor_config';
+const RZN_BRIDGE_PROTOCOL_LEVEL = 9;
 const CLOUD_UI_NATIVE_TIMEOUT_MS = 10_000;
 const CLOUD_UI_PAIRING_TTL_SECS = 600;
 type NativeControlCallback = {
@@ -871,7 +871,7 @@ function markBrokerRequestTimedOut(requestId: string, lease?: BrokerRequestLease
 
 const DEFAULT_WORKFLOW_SESSION_ID = 'default';
 const CONTROL_PLANE_WORKFLOW_SESSION_ID = '__control_plane';
-const WORKFLOW_SESSION_STORAGE_KEY = 'workflow_sessions_v1';
+const WORKFLOW_SESSION_STORAGE_KEY = 'workflow_sessions';
 const fleetWindows = new FleetWindowRegistry();
 
 interface WorkflowSessionState {
@@ -2287,9 +2287,9 @@ async function waitForTabUrl(
 }
 
 const CONTENT_SCRIPT_PROTOCOL_VERSION = 'rzn-cs-2026-03-17-3';
-const CONTENT_SCRIPT_HANDSHAKE_CMD = 'rzn_handshake_v1';
-const CONTENT_SCRIPT_EXECUTE_STEP_CMD = 'rzn_execute_step_v1';
-const CONTENT_SCRIPT_DOM_SNAPSHOT_CMD = 'rzn_get_dom_snapshot_v1';
+const CONTENT_SCRIPT_HANDSHAKE_CMD = 'rzn_handshake';
+const CONTENT_SCRIPT_EXECUTE_STEP_CMD = 'rzn_execute_step';
+const CONTENT_SCRIPT_DOM_SNAPSHOT_CMD = 'rzn_get_dom_snapshot';
 const RZN_NOTIFICATION_ICON_DATA_URL = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(
   `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
     <rect width="128" height="128" rx="24" fill="#111827"/>
@@ -2647,10 +2647,6 @@ async function executeDirectTypeTextStep(tabId: number, step: any): Promise<any>
         tabId,
       },
       tabId,
-      legacy: {
-        textLength: 0,
-        tabId,
-      },
     });
   }
 
@@ -4000,7 +3996,6 @@ const BROKER_COMMAND_REGISTRY = new Map<string, BrokerCommandRegistration>([
   'get_dom_hash',
   'get_dom_snapshot',
   'get_interactive_elements',
-  'get_pruned_dom',
   'native_input_response',
   'observe',
   'ping',
@@ -4142,7 +4137,7 @@ async function handleBrokerMessage(
         current_tab_id: workflowTabId,
         extension_build_signature: RZN_BUILD_SIGNATURE,
         extension_target: RZN_EXTENSION_TARGET,
-        bridge_contract_version: RZN_BRIDGE_CONTRACT_VERSION,
+        bridge_contract_version: RZN_BRIDGE_PROTOCOL_LEVEL,
         extension_worker_boot_id: EXTENSION_WORKER_BOOT_ID,
         ...browserInstanceIdentity,
         supervisor_boot_id: message.rzn_bridge?.supervisor_boot_id || null,
@@ -4186,7 +4181,7 @@ async function handleBrokerMessage(
           epoch_chain_identity: true,
           native_control_epoch_fencing: true,
           supervisor_bridge_response_fencing: true,
-          health_beacon_v2: true,
+          health_beacon: true,
           auxiliary_path_lease_guards: true,
           control_plane_queue_bypass: true,
           watchdog_session_quarantine: true,
@@ -5324,7 +5319,7 @@ async function handleBrokerMessage(
         error_msg: (error as Error).message
       });
     }
-  } else if (registeredCommand === 'get_pruned_dom' || registeredCommand === 'get_dom_snapshot' || registeredCommand === 'get_dom_hash' || registeredCommand === 'process_dom' || registeredCommand === 'detect_auto_list' || registeredCommand === 'execute_extraction_plan' ||
+  } else if (registeredCommand === 'get_dom_snapshot' || registeredCommand === 'get_dom_hash' || registeredCommand === 'process_dom' || registeredCommand === 'detect_auto_list' || registeredCommand === 'execute_extraction_plan' ||
              (registeredCommand === 'execute_step' && message.payload?.step?.type === 'get_dom_snapshot')) {
     // Forward to content script for DOM processing - use workflow tab if available
     try {
@@ -7805,7 +7800,7 @@ async function pairCloudActorFromUi(payload: any): Promise<any> {
     'cloud_set_config',
     {
       config: {
-        version: CLOUD_ACTOR_CONFIG_VERSION,
+        version: CLOUD_ACTOR_CONFIG_CONTRACT,
         actor_id: redeemed.actor_id,
         workspace_id: redeemed.workspace_id,
         actor_token: redeemed.actor_token,
@@ -8049,33 +8044,6 @@ if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
         sendResponse({ success: false, error: error?.message || String(error) });
       }
     })();
-    return true;
-  }
-
-  // Handle test messages
-  if (message.type === 'PING') {
-    sendResponse({ success: true });
-    return false;
-  }
-
-  // Site profiles were removed from runtime (selectors are workflow/test data only).
-  // Keep these message types as a compatibility stub for older tooling.
-  if (message.type === 'CHECK_SITE_PROFILE') {
-    sendResponse({ success: false, error: 'SITE_PROFILES_DISABLED' });
-    return false;
-  }
-
-  if (message.type === 'GET_SITE_PROFILES') {
-    sendResponse({ success: false, error: 'SITE_PROFILES_DISABLED' });
-    return false;
-  }
-
-  if (message.type === 'GET_FEATURE_FLAGS') {
-    getFlags(message.domain || '').then(flags => {
-      sendResponse({ success: true, flags });
-    }).catch(error => {
-      sendResponse({ success: false, error: error.message });
-    });
     return true;
   }
 

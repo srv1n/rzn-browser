@@ -49,17 +49,12 @@
       "model_effort": "Effort label exactly as it appears in Advanced > Effort (e.g. \"Instant\", \"Medium\", \"High\", \"Extra High\", \"Pro\"). Defaults to Pro.",
       "model_slug": "Model label exactly as it appears in Advanced > Model (e.g. \"GPT-5.6 Sol\", \"GPT-5.5\", \"o3\"). Defaults to GPT-5.6 Sol.",
       "tool": "Single tool toggle to enable before sending. Defaults to none.",
-      "model_version": "Accepted for backwards compatibility and ignored. The version is part of the model label now (e.g. \"GPT-5.6 Sol\"), so use model_slug.",
       "require_exact_model": "Hard-fail when the applied model/effort does not match the request. Defaults to true; set false to send anyway and report what was applied."
     },
     "returns": [],
     "summary": "One workflow that sends a message to ChatGPT. New thread when chat_id is empty, continue thread when chat_id is set. Optional attachments (0..N), optional model/effort, optional tool toggle."
   },
   "id": "chatgpt/send",
-  "metadata": {
-    "legacy_system_id": "chatgpt",
-    "migrated_from": "chatgpt/chatgpt_send.json"
-  },
   "name": "ChatGPT: Send",
   "params": {
     "additional_params": false,
@@ -109,11 +104,6 @@
       },
       "project_id": {
         "description": "Optional. Start the new chat inside this ChatGPT Project. Accepts a project gizmo id (g-p-...), its short_url (g-p-...-slug), or a full https://chatgpt.com/g/.../project URL. Ignored when chat_id is set (continuing an existing thread already keeps its project).",
-        "kind": "string",
-        "required": false
-      },
-      "model_version": {
-        "description": "Accepted for backwards compatibility and ignored; the version now lives inside the model label. Use model_slug.",
         "kind": "string",
         "required": false
       },

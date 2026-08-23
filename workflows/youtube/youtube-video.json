@@ -256,9 +256,5 @@
       "Recommendations skip Shorts rails and chapter/mix entries. Playlists in the sidebar are returned with kind=playlist.",
       "For search-then-open flows use `youtube search` first, then feed the `video_id` here."
     ]
-  },
-  "metadata": {
-    "migrated_from": "youtube/youtube-video.json",
-    "legacy_system_id": "youtube"
   }
 }

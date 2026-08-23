@@ -81,8 +81,8 @@ fi
 echo ""
 echo "Supervisor runtime files:"
 APP_BASE="${APP_BASE:-$HOME/Library/Application Support/RZN}"
-SOCKET="$APP_BASE/run/supervisor.sock"
-TOKEN="$APP_BASE/secure/supervisor.token"
+SOCKET="$APP_BASE/run/rzn-supervisor.sock"
+TOKEN="$APP_BASE/secure/rzn-supervisor-token"
 if [[ -S "$SOCKET" && -f "$TOKEN" ]]; then
   echo "[OK] Supervisor socket/token present under: $APP_BASE"
 else

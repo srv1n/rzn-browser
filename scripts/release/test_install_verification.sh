@@ -70,7 +70,7 @@ PAYLOAD
 
 write_fake_runtime_bundle() {
   local bundle_root="$1"
-  mkdir -p "$bundle_root/bin" "$bundle_root/extension/dist-chrome"
+  mkdir -p "$bundle_root/bin" "$bundle_root/extension/dist/chrome"
   cp "$ROOT_DIR/scripts/release/install-runtime.sh" "$bundle_root/install.sh"
   chmod +x "$bundle_root/install.sh"
   cat > "$bundle_root/bin/rzn-browser" <<'BROWSER'
@@ -86,7 +86,7 @@ BROWSER
 exit 0
 HOST
   chmod +x "$bundle_root/bin/rzn-browser" "$bundle_root/bin/rzn-native-host"
-  printf '{"manifest_version":3}\n' > "$bundle_root/extension/dist-chrome/manifest.json"
+  printf '{"manifest_version":3}\n' > "$bundle_root/extension/dist/chrome/manifest.json"
 }
 
 run_bootstrap_install() {

@@ -216,9 +216,5 @@
       "Opens a dedicated workflow tab (use_current_tab=false), so this workflow is safe to run in parallel with other dedicated-tab instagram flows.",
       "Rate limiting is an Instagram-side concern: don't loop faster than a real user would."
     ]
-  },
-  "metadata": {
-    "migrated_from": "instagram/instagram-follow-account.json",
-    "legacy_system_id": "instagram"
   }
 }

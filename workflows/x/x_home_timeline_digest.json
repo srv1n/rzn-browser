@@ -179,9 +179,5 @@
       "Requires an already-logged-in x.com session in the browser.",
       "Read-only: no likes, follows, or posts are ever issued."
     ]
-  },
-  "metadata": {
-    "migrated_from": "x/x_home_timeline_digest.json",
-    "legacy_system_id": "x"
   }
 }

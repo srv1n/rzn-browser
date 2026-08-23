@@ -24,7 +24,7 @@ If the runtime is already healthy, the script exits quickly. If not, it runs the
 5. Inspect and validate the manifest contract with `workflow inspect` and
    `workflow validate --strict`.
 6. Keep site-specific selectors and DOM logic inside the workflow JSON or workflow-local docs, not in shared engine code.
-7. If the workflow is worth keeping, add docs under `docs/workflows/<system>/` and keep the workflow filename canonical.
+7. If the workflow is worth keeping, update its pack README when users need more context.
 
 Read [references/workflow-authoring.md](references/workflow-authoring.md) before editing or generating a workflow.
 
@@ -71,8 +71,7 @@ Read [references/workflow-authoring.md](references/workflow-authoring.md) for co
 When the user wants a workflow contributed back to the repo:
 
 1. Add the workflow JSON under `workflows/<system>/`.
-2. Add or update `docs/workflows/<system>/README.md`.
-3. Add one markdown doc per workflow under `docs/workflows/<system>/`.
+2. Add or update `workflows/<system>/README.md` when the pack needs user notes.
 4. Include required params, output shape, and one runnable example.
 5. Add a parse test, smoke flow, or validation note when the change is non-trivial.
 

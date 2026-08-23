@@ -366,9 +366,5 @@
       "Three review-extraction passes: initial render, after scroll-down, and after an optional pagination click. The pagination step is marked continue_on_error so listings without a 'Next' control don't fail the run.",
       "Item selector targets '.review-card, [data-review-region]'. Fields rely on '[id^=review-text-width-]' for body and '.wt-screen-reader-only' for the textual star rating."
     ]
-  },
-  "metadata": {
-    "migrated_from": "etsy/etsy-listing-details-reviews.json",
-    "legacy_system_id": "etsy"
   }
 }

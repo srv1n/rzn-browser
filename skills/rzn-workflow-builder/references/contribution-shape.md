@@ -7,7 +7,7 @@ Use this reference when preparing a workflow or pack for the repo.
 Put files here:
 
 - workflow JSON: `workflows/<system>/`
-- system docs: `docs/workflows/<system>/`
+- pack notes: `workflows/<system>/README.md`
 
 Keep the contribution small and obvious:
 
@@ -21,7 +21,7 @@ Keep the contribution small and obvious:
 Good workflow submissions usually include:
 
 - one canonical workflow JSON filename
-- a system `README.md` under `docs/workflows/<system>/`
+- a system `README.md` under `workflows/<system>/` when the pack needs one
 - one markdown file per workflow
 - a runnable example command
 - parameter notes

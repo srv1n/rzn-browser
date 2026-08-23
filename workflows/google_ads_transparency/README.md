@@ -23,7 +23,7 @@ rzn-browser run google_ads_transparency search --param advertiser="Booking.com" 
 - `advertiser` (required) — advertiser name to search. Typed into the real
   search box; the top **advertiser** suggestion (not a website suggestion) is
   selected.
-- `region` (default `US`) — region to scope ads to. **v1 supports `US`** and
+- `region` (default `US`) — region to scope ads to. The workflow supports `US` and
   returns a manifest with `error: "region_not_supported:<X> (supported: US)"`
   for anything else. The requested region is always recorded in `query`.
 - `cap` (default `30`, min `1`, max `300`) — maximum ads to collect. Pagination
@@ -42,7 +42,7 @@ the next request. This yields clean `id` / `format` / date fields that the grid
 DOM does not expose, in one request per page.
 
 The result is a manifest that validates against
-[`schema/ads-manifest-v1.json`](../../schema/ads-manifest-v1.json) with
+[`schema/ads-manifest.json`](../../schema/ads-manifest.json) with
 `source: "google_ads_transparency"` — the shared shape used by every ads pack
 (the Meta Ad Library pack emits the same shape with `source: "meta_ad_library"`).
 

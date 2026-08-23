@@ -52,7 +52,7 @@ card's Library ID in the page data, then re-navigates to
 explicit `page_id` to skip resolution.
 
 The result validates against
-[`schema/ads-manifest-v1.json`](../../schema/ads-manifest-v1.json) with
+[`schema/ads-manifest.json`](../../schema/ads-manifest.json) with
 `source: "meta_ad_library"` — the shared shape the Google Ads Transparency pack
 also emits.
 

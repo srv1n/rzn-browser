@@ -179,9 +179,5 @@
       "Publisher and age come from the '.publishing' div inside each story card (first/last non-bullet text node, separated by a U+2022 bullet).",
       "Publisher and timestamp fields can still come back as 'N/A' on some story types (sponsored content, video-only items)."
     ]
-  },
-  "metadata": {
-    "migrated_from": "finance/yahoo-news.json",
-    "legacy_system_id": "finance"
   }
 }

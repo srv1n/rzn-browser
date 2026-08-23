@@ -1,9 +1,9 @@
 use crate::host::RuntimeTransport;
 use crate::Result;
-use rzn_contracts::v1::{
-    ActionResultV1, ActionV1, CapabilitiesV1, DebugModeV1, ElementV1, SnapshotMetadataV1,
-    SnapshotV1, SpatialInfoV1, TargetV1, TranscriptEntryV1, TranscriptV1, ViewportV1,
-    CONTRACT_VERSION,
+use rzn_contracts::browser::{
+    BrowserActionResult, BrowserAction, Capabilities, DebugMode, BrowserElement, SnapshotMetadata,
+    BrowserSnapshot, SpatialInfo, BrowserTarget, TranscriptEntry, BrowserTranscript, Viewport,
+    BROWSER_CONTRACT,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -102,9 +102,9 @@ pub struct Session {
     client: rzn_plan::broker_client::BrokerClient,
     next_id: u64,
     snapshot_generation: u64,
-    last_snapshot: Option<SnapshotV1>,
+    last_snapshot: Option<BrowserSnapshot>,
     selector_by_encoded_id: HashMap<String, String>,
-    transcript: TranscriptV1,
+    transcript: BrowserTranscript,
     config: SessionConfig,
 }
 
@@ -146,8 +146,8 @@ impl Session {
             snapshot_generation: 0,
             last_snapshot: None,
             selector_by_encoded_id: HashMap::new(),
-            transcript: TranscriptV1 {
-                version: CONTRACT_VERSION.to_string(),
+            transcript: BrowserTranscript {
+                version: BROWSER_CONTRACT.to_string(),
                 entries: Vec::new(),
             },
             config,
@@ -162,15 +162,15 @@ impl Session {
         Ok(())
     }
 
-    pub fn transcript(&self) -> &TranscriptV1 {
+    pub fn transcript(&self) -> &BrowserTranscript {
         &self.transcript
     }
 
-    pub fn last_snapshot(&self) -> Option<&SnapshotV1> {
+    pub fn last_snapshot(&self) -> Option<&BrowserSnapshot> {
         self.last_snapshot.as_ref()
     }
 
-    pub async fn snapshot(&mut self) -> Result<SnapshotV1> {
+    pub async fn snapshot(&mut self) -> Result<BrowserSnapshot> {
         let request = Self::dom_snapshot_message(
             format!("snap-{}", self.snapshot_generation + 1),
             self.config.snapshot_max_elements,
@@ -183,7 +183,7 @@ impl Session {
         .map_err(|_| Error::Timeout(self.config.snapshot_timeout))?
         .map_err(crate::host::map_plan_error)?;
 
-        let capabilities: Option<CapabilitiesV1> = resp
+        let capabilities: Option<Capabilities> = resp
             .get("capabilities")
             .cloned()
             .and_then(|v| serde_json::from_value(v).ok());
@@ -215,15 +215,15 @@ impl Session {
         Ok(snapshot)
     }
 
-    pub async fn apply(&mut self, action: ActionV1) -> Result<ActionResultV1> {
+    pub async fn apply(&mut self, action: BrowserAction) -> Result<BrowserActionResult> {
         let started_at_ms = now_ms();
         let id = self.alloc_id("act");
 
         let raw_response = match &action {
-            ActionV1::EnableDebug { mode, ttl_ms } => {
+            BrowserAction::EnableDebug { mode, ttl_ms } => {
                 let mode_str = match mode {
-                    DebugModeV1::Enrichment => "enrichment",
-                    DebugModeV1::Rescue => "rescue",
+                    DebugMode::Enrichment => "enrichment",
+                    DebugMode::Rescue => "rescue",
                 };
                 tokio::time::timeout(
                     self.config.action_timeout,
@@ -233,7 +233,7 @@ impl Session {
                 .map_err(|_| Error::Timeout(self.config.action_timeout))?
                 .map_err(crate::host::map_plan_error)?
             }
-            ActionV1::DisableDebug => {
+            BrowserAction::DisableDebug => {
                 tokio::time::timeout(self.config.action_timeout, self.client.disable_debug())
                     .await
                     .map_err(|_| Error::Timeout(self.config.action_timeout))?
@@ -265,7 +265,7 @@ impl Session {
         let result = Self::map_action_result(raw_response);
         let finished_at_ms = now_ms();
 
-        self.transcript.entries.push(TranscriptEntryV1 {
+        self.transcript.entries.push(TranscriptEntry {
             id,
             started_at_ms,
             finished_at_ms,
@@ -303,20 +303,20 @@ impl Session {
         raw: RawDomSnapshot,
         generation: u64,
         max_elements: u32,
-        capabilities: Option<CapabilitiesV1>,
-    ) -> SnapshotV1 {
-        let elements: Vec<ElementV1> = raw
+        capabilities: Option<Capabilities>,
+    ) -> BrowserSnapshot {
+        let elements: Vec<BrowserElement> = raw
             .elements
             .into_iter()
             .take(max_elements as usize)
             .enumerate()
-            .map(|(idx, el)| ElementV1 {
+            .map(|(idx, el)| BrowserElement {
                 encoded_id: element_encoded_id(generation, idx),
                 tag: el.tag,
                 text: el.text,
                 attributes: el.attributes,
                 selector: el.selector,
-                spatial_info: el.spatial_info.map(|s| SpatialInfoV1 {
+                spatial_info: el.spatial_info.map(|s| SpatialInfo {
                     x: s.x,
                     y: s.y,
                     width: s.width,
@@ -327,14 +327,14 @@ impl Session {
             })
             .collect();
 
-        SnapshotV1 {
-            version: CONTRACT_VERSION.to_string(),
+        BrowserSnapshot {
+            version: BROWSER_CONTRACT.to_string(),
             dom_hash: raw.hash,
-            metadata: SnapshotMetadataV1 {
+            metadata: SnapshotMetadata {
                 timestamp: raw.metadata.timestamp,
                 url: raw.metadata.url,
                 title: raw.metadata.title,
-                viewport: ViewportV1 {
+                viewport: Viewport {
                     width: raw.metadata.viewport.width,
                     height: raw.metadata.viewport.height,
                 },
@@ -345,7 +345,7 @@ impl Session {
         }
     }
 
-    fn resolve_target_selector(&self, target: &TargetV1) -> std::result::Result<String, Error> {
+    fn resolve_target_selector(&self, target: &BrowserTarget) -> std::result::Result<String, Error> {
         if let Some(selector) = target.selector.as_ref() {
             if !selector.trim().is_empty() {
                 return Ok(selector.clone());
@@ -377,29 +377,29 @@ impl Session {
     fn action_to_step(
         &self,
         id: &str,
-        action: &ActionV1,
+        action: &BrowserAction,
     ) -> std::result::Result<rzn_core::Step, Error> {
         use rzn_core::StepKind;
 
         let name = match action {
-            ActionV1::NavigateToUrl { .. } => "Navigate",
-            ActionV1::ClickElement { .. } => "Click",
-            ActionV1::FillInputField { .. } => "Fill",
-            ActionV1::PressSpecialKey { .. } => "Press key",
-            ActionV1::WaitForElement { .. } => "Wait",
-            ActionV1::GetElementText { .. } => "Get text",
-            ActionV1::GetPageSource => "Get page source",
-            ActionV1::EnableDebug { .. } => "Enable debug",
-            ActionV1::DisableDebug => "Disable debug",
+            BrowserAction::NavigateToUrl { .. } => "Navigate",
+            BrowserAction::ClickElement { .. } => "Click",
+            BrowserAction::FillInputField { .. } => "Fill",
+            BrowserAction::PressSpecialKey { .. } => "Press key",
+            BrowserAction::WaitForElement { .. } => "Wait",
+            BrowserAction::GetElementText { .. } => "Get text",
+            BrowserAction::GetPageSource => "Get page source",
+            BrowserAction::EnableDebug { .. } => "Enable debug",
+            BrowserAction::DisableDebug => "Disable debug",
         }
         .to_string();
 
         let kind = match action {
-            ActionV1::NavigateToUrl { url, wait } => StepKind::NavigateToUrl {
+            BrowserAction::NavigateToUrl { url, wait } => StepKind::NavigateToUrl {
                 url: url.clone(),
                 wait: wait.clone(),
             },
-            ActionV1::ClickElement {
+            BrowserAction::ClickElement {
                 target,
                 random_offset,
                 timeout_ms,
@@ -409,7 +409,7 @@ impl Session {
                 random_offset: *random_offset,
                 timeout_ms: *timeout_ms,
             },
-            ActionV1::FillInputField {
+            BrowserAction::FillInputField {
                 target,
                 value,
                 clear_first,
@@ -425,7 +425,7 @@ impl Session {
                 delay_ms: *delay_ms,
                 timeout_ms: *timeout_ms,
             },
-            ActionV1::PressSpecialKey {
+            BrowserAction::PressSpecialKey {
                 target,
                 key,
                 timeout_ms,
@@ -435,20 +435,20 @@ impl Session {
                 frame_id: target.frame_id.clone(),
                 timeout_ms: *timeout_ms,
             },
-            ActionV1::WaitForElement { target, timeout_ms } => StepKind::WaitForElement {
+            BrowserAction::WaitForElement { target, timeout_ms } => StepKind::WaitForElement {
                 selector: self.resolve_target_selector(target)?,
                 frame_id: target.frame_id.clone(),
                 timeout_ms: *timeout_ms,
                 condition: Some("visible".to_string()),
             },
-            ActionV1::GetElementText { target } => StepKind::GetElementText {
+            BrowserAction::GetElementText { target } => StepKind::GetElementText {
                 selector: self.resolve_target_selector(target)?,
                 frame_id: target.frame_id.clone(),
             },
-            ActionV1::GetPageSource => StepKind::GetPageSource,
-            ActionV1::EnableDebug { .. } | ActionV1::DisableDebug => {
+            BrowserAction::GetPageSource => StepKind::GetPageSource,
+            BrowserAction::EnableDebug { .. } | BrowserAction::DisableDebug => {
                 return Err(Error::Runtime(
-                    "debug enable/disable is not a StepKind; call Session.apply(ActionV1::EnableDebug/DisableDebug)".to_string(),
+                    "debug enable/disable is not a StepKind; call Session.apply(BrowserAction::EnableDebug/DisableDebug)".to_string(),
                 ))
             }
         };
@@ -456,7 +456,7 @@ impl Session {
         Ok(rzn_core::Step::new(id.to_string(), name, kind))
     }
 
-    fn map_action_result(raw: Value) -> ActionResultV1 {
+    fn map_action_result(raw: Value) -> BrowserActionResult {
         let success = raw
             .get("success")
             .and_then(|v| v.as_bool())
@@ -484,9 +484,9 @@ impl Session {
         let capabilities = raw
             .get("capabilities")
             .cloned()
-            .and_then(|v| serde_json::from_value::<CapabilitiesV1>(v).ok());
+            .and_then(|v| serde_json::from_value::<Capabilities>(v).ok());
 
-        ActionResultV1 {
+        BrowserActionResult {
             success,
             error_code,
             error,
@@ -549,7 +549,7 @@ mod tests {
         encoded_id: String,
         selector: &str,
     ) -> Session {
-        let element = ElementV1 {
+        let element = BrowserElement {
             encoded_id: encoded_id.clone(),
             tag: "button".to_string(),
             text: None,
@@ -560,18 +560,18 @@ mod tests {
 
         Session {
             client: rzn_plan::broker_client::BrokerClient::new(
-                rzn_plan::broker_client::Transport::Tcp,
+                rzn_plan::broker_client::Transport::Native,
             ),
             next_id: 1,
             snapshot_generation: generation,
-            last_snapshot: Some(SnapshotV1 {
-                version: CONTRACT_VERSION.to_string(),
+            last_snapshot: Some(BrowserSnapshot {
+                version: BROWSER_CONTRACT.to_string(),
                 dom_hash: "hash".to_string(),
-                metadata: SnapshotMetadataV1 {
+                metadata: SnapshotMetadata {
                     timestamp: 123,
                     url: "https://example.test".to_string(),
                     title: "Example".to_string(),
-                    viewport: ViewportV1 {
+                    viewport: Viewport {
                         width: 800,
                         height: 600,
                     },
@@ -581,8 +581,8 @@ mod tests {
                 capabilities: None,
             }),
             selector_by_encoded_id: HashMap::from([(encoded_id, selector.to_string())]),
-            transcript: TranscriptV1 {
-                version: CONTRACT_VERSION.to_string(),
+            transcript: BrowserTranscript {
+                version: BROWSER_CONTRACT.to_string(),
                 entries: Vec::new(),
             },
             config: SessionConfig::default(),
@@ -626,7 +626,7 @@ mod tests {
         let stale_id = element_encoded_id(1, 0);
 
         let err = session
-            .resolve_target_selector(&TargetV1::from_encoded_id(stale_id.clone()))
+            .resolve_target_selector(&BrowserTarget::from_encoded_id(stale_id.clone()))
             .expect_err("old snapshot element id must be rejected");
 
         match err {
@@ -650,7 +650,7 @@ mod tests {
 
         assert_eq!(
             session
-                .resolve_target_selector(&TargetV1::from_encoded_id(current_id))
+                .resolve_target_selector(&BrowserTarget::from_encoded_id(current_id))
                 .expect("current snapshot element id resolves"),
             "#current-button"
         );

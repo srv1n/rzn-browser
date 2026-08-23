@@ -100,29 +100,6 @@ describe('browser instance id', () => {
     });
   });
 
-  it('reports the Firefox manifest target hint without user-agent routing', () => {
-    expect(
-      extensionRuntimePingMetadata({
-        runtime: {
-          id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-          getManifest: () => ({ manifest_version: 2, name: 'RZN Browser Automation', version: '0.1.1' }),
-        },
-        navigator: {
-          userAgent: 'diagnostic Firefox UA',
-        },
-      })
-    ).toMatchObject({
-      extension_id: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-      extension_origin: 'chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/',
-      extension_target: 'unknown',
-      extension_manifest_version: 2,
-      extension_target_hint: 'firefox-mv2',
-      browser_diagnostics: {
-        user_agent: 'diagnostic Firefox UA',
-      },
-    });
-  });
-
   it('falls back to crypto.getRandomValues when randomUUID is unavailable', () => {
     let next = 0;
     const id = generateBrowserInstanceId({

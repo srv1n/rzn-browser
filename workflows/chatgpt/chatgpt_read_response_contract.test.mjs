@@ -58,10 +58,10 @@ assert.equal(completed.selected_message_id, 'answer-message');
 assert.deepEqual(completed.messages.map((item) => item.id), ['boundary-message', 'preamble-message', 'answer-message']);
 assert.equal(completed.messages.find((item) => item.id === completed.selected_message_id).text, 'final\n\nanswer');
 assert.deepEqual(completed.attachments_downloaded, []);
-const legacy = await run('completed', null);
-assert.equal('response_state' in legacy, false);
-assert.equal(legacy.mode, 'latest');
-assert.ok(Array.isArray(legacy.messages));
+const completed = await run('completed', null);
+assert.equal('response_state' in completed, false);
+assert.equal(completed.mode, 'latest');
+assert.ok(Array.isArray(completed.messages));
 for (const kind of ['not-started', 'streaming', 'ack-then-streaming']) {
   const result = await run(kind);
   assert.equal(result.response_state, kind === 'not-started' ? 'not_started' : 'streaming');

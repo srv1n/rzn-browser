@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Build + package a shareable macOS arm64 bundle containing:
 # - rzn-browser + rzn-native-host
-# - unpacked Chrome extension (dist-chrome)
+# - unpacked Chrome extension (extension/dist/chrome)
 # - workflows + packaged examples
 # - install/doctor scripts + README
 
@@ -17,7 +17,7 @@ Usage: scripts/package_macos_arm64_bundle.sh [--force-ext] [--skip-rust] [--skip
 Environment overrides:
   RZN_BUNDLE_HOST_NAME           Native host name (default: com.rzn.browser.broker)
   RZN_BUNDLE_EXTENSION_ID        Allowed extension ID (default: bogjdnehdficgkhklinmnbgiiofbamji)
-  RZN_BUNDLE_FORCE_EXT_BUILD=1   Force rebuild extension even if dist-chrome exists
+  RZN_BUNDLE_FORCE_EXT_BUILD=1   Force rebuild extension even if extension/dist/chrome exists
   RZN_BUNDLE_SKIP_RUST=1         Skip cargo build
   RZN_BUNDLE_SKIP_EXT=1          Skip extension build
 
@@ -89,12 +89,12 @@ if [[ "$SKIP_EXT" != "1" ]]; then
   NEED_EXT_BUILD=0
   if [[ "${RZN_BUNDLE_FORCE_EXT_BUILD:-0}" == "1" || "$FORCE_EXT" == "1" ]]; then
     NEED_EXT_BUILD=1
-  elif [[ ! -f "extension/dist-chrome/manifest.json" ]]; then
+  elif [[ ! -f "extension/dist/chrome/manifest.json" ]]; then
     NEED_EXT_BUILD=1
   fi
 
   if [[ "$NEED_EXT_BUILD" == "1" ]]; then
-    echo "[INFO] Building extension (dist-chrome)"
+    echo "[INFO] Building extension (extension/dist/chrome)"
     pushd extension >/dev/null
     if [[ ! -d "node_modules" ]]; then
       bun install
@@ -103,7 +103,7 @@ if [[ "$SKIP_EXT" != "1" ]]; then
     popd >/dev/null
     bun scripts/build-ext.ts
   else
-    echo "[INFO] extension/dist-chrome exists; skipping extension build (use --force-ext to rebuild)"
+    echo "[INFO] extension/dist/chrome exists; skipping extension build (use --force-ext to rebuild)"
   fi
 else
   echo "[INFO] Skipping extension build (RZN_BUNDLE_SKIP_EXT=1)"
@@ -117,8 +117,8 @@ if [[ ! -x "target/release/rzn-browser" ]]; then
   echo "[ERROR] Missing built CLI at target/release/rzn-browser"
   exit 1
 fi
-if [[ ! -f "extension/dist-chrome/manifest.json" ]]; then
-  echo "[ERROR] Missing extension build at extension/dist-chrome/manifest.json"
+if [[ ! -f "extension/dist/chrome/manifest.json" ]]; then
+  echo "[ERROR] Missing extension build at extension/dist/chrome/manifest.json"
   exit 1
 fi
 
@@ -135,13 +135,11 @@ cp -f target/release/rzn-native-host "${STAGE_DIR}/bin/rzn-native-host"
 cp -f target/release/rzn-browser "${STAGE_DIR}/bin/rzn-browser"
 chmod +x "${STAGE_DIR}/bin/rzn-native-host" "${STAGE_DIR}/bin/rzn-browser" || true
 
-mkdir -p "${STAGE_DIR}/extension"
-cp -R "extension/dist-chrome" "${STAGE_DIR}/extension/dist-chrome"
+mkdir -p "${STAGE_DIR}/extension/dist"
+cp -R "extension/dist/chrome" "${STAGE_DIR}/extension/dist/chrome"
 
 cp -R "workflows" "${STAGE_DIR}/workflows"
 cp -R "skills" "${STAGE_DIR}/skills"
-mkdir -p "${STAGE_DIR}/examples"
-cp -R "examples/browser_automation" "${STAGE_DIR}/examples/browser_automation"
 cp -R "schema" "${STAGE_DIR}/schema"
 if [[ -f ".env.example" ]]; then
   cp -f ".env.example" "${STAGE_DIR}/.env.example"
@@ -188,4 +186,4 @@ echo "[INFO] Creating zip: $ZIP_PATH"
 )
 
 echo "[OK] Bundle created: $ZIP_PATH"
-echo "[INFO] Next: share the zip, then your friend runs install-macos.sh and loads extension/dist-chrome"
+echo "[INFO] Next: share the zip, then your friend runs install-macos.sh and loads extension/dist/chrome"

@@ -200,9 +200,5 @@
       "abstract is pulled from div.abstract.author and may include a leading section title (e.g. 'Summary').",
       "Read-only: no login is performed by this workflow. If the active Chrome profile already carries institutional/entitlement cookies, ScienceDirect may surface gated content; that is a session-state effect, not an explicit auth step here."
     ]
-  },
-  "metadata": {
-    "migrated_from": "sciencedirect/sciencedirect-paper-access.json",
-    "legacy_system_id": "sciencedirect_paper"
   }
 }

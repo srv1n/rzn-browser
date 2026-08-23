@@ -210,9 +210,5 @@
       "The post action bar is resolved by walking up from the unique 'Comment' SVG in the article and finding the sibling Like/Unlike SVG — robust against class-name churn but assumes Instagram keeps the single shared action bar layout.",
       "Rate limiting is an Instagram-side concern: don't loop faster than a real user would. Space batched likes with a real delay between calls."
     ]
-  },
-  "metadata": {
-    "migrated_from": "instagram/instagram-post-like.json",
-    "legacy_system_id": "instagram"
   }
 }

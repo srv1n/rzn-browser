@@ -156,9 +156,5 @@
       "If onboarding is gating access, finish the X Chat passcode setup manually before using reply workflows.",
       "Opens a fresh tab so parallel runs don't interfere."
     ]
-  },
-  "metadata": {
-    "migrated_from": "x/x_open_dm_thread.json",
-    "legacy_system_id": "x"
   }
 }

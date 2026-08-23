@@ -1,4 +1,4 @@
-use rzn_contracts::v2::ActionKindV2;
+use rzn_contracts::workflow::WorkflowActionKind;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
@@ -58,7 +58,7 @@ fn production_manifest_actions_are_first_class_contract_kinds() {
                 continue;
             }
 
-            let decoded = serde_json::from_value::<ActionKindV2>(Value::String(kind.to_string()));
+            let decoded = serde_json::from_value::<WorkflowActionKind>(Value::String(kind.to_string()));
             match decoded {
                 Ok(decoded) if decoded.engine_step_type() == Some(kind) => {}
                 Ok(decoded) => unknown_actions.push(format!(

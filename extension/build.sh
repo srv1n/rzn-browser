@@ -3,10 +3,10 @@ set -euo pipefail
 
 TARGET="${1:-all}"
 case "$TARGET" in
-    all|chrome|edge|chromium|firefox) ;;
+    all|chrome|edge|chromium) ;;
     *)
         echo "Unsupported extension build target: ${TARGET}" >&2
-        echo "Expected one of: all, chrome, edge, chromium, firefox" >&2
+        echo "Expected one of: all, chrome, edge, chromium" >&2
         exit 2
         ;;
 esac
@@ -22,7 +22,7 @@ echo "Using RZN_BUILD_SIGNATURE=${RZN_BUILD_SIGNATURE}"
 
 TARGETS=("$TARGET")
 if [ "$TARGET" = "all" ]; then
-    TARGETS=(chrome edge chromium firefox)
+    TARGETS=(chrome edge chromium)
     rm -rf "${SCRIPT_DIR}/dist"
     mkdir -p "${SCRIPT_DIR}/dist"
 fi
@@ -76,18 +76,8 @@ build_target() {
         --target "$target" \
         --source-dir "$build_dir" \
         --dist-root "${SCRIPT_DIR}/dist" \
-        --layout nested \
         --build-signature "$RZN_BUILD_SIGNATURE")
 
-    if [ "$target" = "chrome" ]; then
-        echo "Generating chrome legacy dist-chrome alias..."
-        (cd "$ROOT_DIR" && bun scripts/build-ext.ts \
-            --target chrome \
-            --source-dir "$build_dir" \
-            --dist-root "$SCRIPT_DIR" \
-            --layout legacy \
-            --build-signature "$RZN_BUILD_SIGNATURE")
-    fi
 }
 
 for target in "${TARGETS[@]}"; do

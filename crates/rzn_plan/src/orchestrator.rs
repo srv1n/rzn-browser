@@ -11,18 +11,17 @@ use crate::{
     prompt_builder::PromptBuilder,
     self_healing::SelfHealer,
     telemetry::{LLMUsage, TelemetryCollector, TelemetryConfig},
-    wait_strategies::{DOMObservation, SmartWaitStrategy},
+    wait_strategies::SmartWaitStrategy,
     workflow_manager::WorkflowManager,
     ExecutionResult, PlanConfig, PlanError, PlanRequest, PlanResponse, PlanResult, PlanningSession,
     RunRequest, RunResponse, StepExecution,
 };
+use ansi_term;
 use base64::engine::general_purpose;
 use base64::Engine;
+use log::{debug, error, info, warn};
 use regex::{Regex, RegexBuilder};
 use rzn_core::{Step, StepKind, Workflow};
-// Removed heuristic planner dependencies - using LLM-only planning
-use ansi_term;
-use log::{debug, error, info, warn};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -39,13 +38,12 @@ pub struct Orchestrator {
     prompt_builder: PromptBuilder,
     self_healer: SelfHealer,
     broker_client: BrokerClient,
-    // heuristic_planner: HeuristicPlanner, // Removed - using LLM-only planning
     plan_sanitizer: PlanSanitizer,
     policy_gate: PolicyGate,
     current_dom_context: Option<DomContext>,
     dom_revision: u64, // For DOM delta tracking (optimization #7)
     telemetry_collector: Option<TelemetryCollector>,
-    // New DOM snapshot system components
+    // DOM snapshot components
     failure_cache: FailureCache,
     use_snapshot_system: bool,
     // DOM hash tracking for loop detection in Validator tier
@@ -179,12 +177,7 @@ impl Orchestrator {
         let prompt_builder = PromptBuilder::new();
         let self_healer = SelfHealer::new(config.max_healing_attempts);
         let policy_gate = PolicyGate::from_env();
-        let transport = match config.broker_transport.as_str() {
-            "native" | "endpoint" | "auto" => Transport::Native,
-            "pipe" => Transport::Pipe,
-            _ => Transport::Tcp,
-        };
-        let mut broker_client = BrokerClient::new(transport);
+        let mut broker_client = BrokerClient::new(Transport::Native);
 
         //  Connect to broker immediately to ensure it's available
         let quiet_stdout = std::env::var("RZN_JSON")
@@ -219,7 +212,6 @@ impl Orchestrator {
             prompt_builder,
             self_healer,
             broker_client,
-            // heuristic_planner: HeuristicPlanner::new(), // Removed - using LLM-only planning
             plan_sanitizer: PlanSanitizer::new(),
             policy_gate,
             current_dom_context: None,
@@ -488,15 +480,7 @@ impl Orchestrator {
         self.execute_llm_planning(request).await
     }
 
-    /// Legacy plan method - redirects to plan_auto for backward compatibility
-    pub async fn plan(&mut self, request: PlanRequest) -> PlanResult<PlanResponse> {
-        println!(
-            "[WARNING]  Using legacy 'plan' method - consider using 'plan_auto' or 'plan_llm_only'"
-        );
-        self.plan_auto(request).await
-    }
-
-    /// Plan and execute using the new DOM snapshot-based three-tier system
+    /// Plan and execute using the DOM snapshot-based three-tier system
     pub async fn plan_with_snapshots(&mut self, request: PlanRequest) -> PlanResult<PlanResponse> {
         println!("\n{}", "═".repeat(80));
         println!(
@@ -663,8 +647,8 @@ impl Orchestrator {
                     &session.history,
                 )
             } else {
-                // Fallback to empty prompt if no snapshot available
-                warn!("No DOM snapshot available, using fallback prompt");
+                // Use an empty prompt when the optional snapshot is not available.
+                warn!("No DOM snapshot available, using an empty prompt");
                 vec![
                     json!({
                         "role": "system",
@@ -854,7 +838,7 @@ impl Orchestrator {
                     &session.current_url,
                 )
             } else {
-                warn!("No DOM snapshot for navigator, using fallback");
+                warn!("No DOM snapshot for navigator, using an empty prompt");
                 vec![
                     json!({
                         "role": "system",
@@ -1564,40 +1548,6 @@ impl Orchestrator {
                             }
 
                             final_data = Some(data.clone());
-
-                            // [TARGET] AUTO-EXTRACTION DETECTION: Check if this data came from auto-extraction
-                            if let Some(extraction_data) = data.get("extraction_data") {
-                                info!("[SEARCH] DEBUG: Found extraction_data in payload");
-                                let auto_extracted = data
-                                    .get("auto_extracted")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
-                                let goal_completed = data
-                                    .get("goal_completed")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false);
-                                info!(
-                                    "[SEARCH] DEBUG: auto_extracted={}, goal_completed={}",
-                                    auto_extracted, goal_completed
-                                );
-
-                                if auto_extracted && goal_completed {
-                                    info!("[TARGET] AUTO-EXTRACTION COMPLETED! Workflow goal achieved.");
-                                    info!(
-                                        " Final extracted data: {}",
-                                        serde_json::to_string_pretty(extraction_data)
-                                            .unwrap_or_else(|_| "Failed to serialize".to_string())
-                                    );
-
-                                    // Set final_data to the extraction_data for display
-                                    final_data = Some(extraction_data.clone());
-
-                                    // Mark planning as complete and break out of loop
-                                    break;
-                                }
-                            } else {
-                                info!("[SEARCH] DEBUG: No extraction_data found in payload");
-                            }
                         }
 
                         // [SEARCH] DEBUG: Special handling for extraction steps
@@ -2110,10 +2060,10 @@ impl Orchestrator {
         let key = extraction_type
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
-            // Treat "search_results" as the default (keep legacy array output so CLI pretty-prints).
+            // Keep the search-results payload as a plain array for CLI output.
             .filter(|s| !s.eq_ignore_ascii_case("search_results"));
 
-        // Legacy behavior: plain array merge (keeps google_search pretty output).
+        // The search-results payload uses a plain array. Merge duplicate rows once.
         if key.is_none() {
             match final_data {
                 Some(Value::Array(existing)) if payload.is_array() => {
@@ -2210,8 +2160,7 @@ impl Orchestrator {
                     }
                 }
 
-                // For non-search extractions that are explicitly limited to 1, unwrap the array
-                // to a single object for cleaner structured outputs.
+                // For a non-search extraction limited to one row, return that row directly.
                 if limit == &Some(1) {
                     if let Some(t) = extraction_type.as_deref() {
                         if !t.eq_ignore_ascii_case("search_results") && items.len() == 1 {
@@ -2640,37 +2589,7 @@ impl Orchestrator {
                         .unwrap_or_else(|_| "Failed to serialize".to_string())
                 );
 
-                // [SEARCH] DEBUG: Log response structure for auto-extraction debugging
-                if let StepKind::GetElementText { .. } = &step.kind {
-                    info!("[SEARCH] DEBUG: get_element_text response structure:");
-                    info!(
-                        "  - Full response: {}",
-                        serde_json::to_string_pretty(&response)
-                            .unwrap_or_else(|_| "Failed to serialize".to_string())
-                    );
-                    if let Some(result) = response.get("result") {
-                        info!("  - Has 'result' field");
-                        if let Some(result_steps) = result.get("steps") {
-                            info!(
-                                "  - result.steps exists: {} items",
-                                result_steps.as_array().map(|a| a.len()).unwrap_or(0)
-                            );
-                        }
-                    }
-                    if let Some(steps) = response.get("steps") {
-                        info!(
-                            "  - Has top-level 'steps' field: {} items",
-                            steps.as_array().map(|a| a.len()).unwrap_or(0)
-                        );
-                        if let Some(steps_array) = steps.as_array() {
-                            for (i, step) in steps_array.iter().enumerate() {
-                                info!("  - Step {}: {:?}", i, step);
-                            }
-                        }
-                    }
-                }
-
-                // Process DOM with both old and new methods for compatibility
+                // Reduce the page and build the structured DOM context used by the planner.
                 let reduced_dom = self.dom_analyzer.reduce_html(&raw_dom)?;
 
                 // Debug: Log DOM reduction effectiveness
@@ -2694,10 +2613,6 @@ impl Orchestrator {
                     .extract_dom_context(&raw_dom, &session.current_url)
                     .map_err(|e| PlanError::DomError(format!("DOM processing failed: {}", e)))?;
 
-                //  CRITICAL FIX: Don't try to detect URL from DOM content
-                // Let the browser provide the actual URL instead of guessing
-                let detected_url = None;
-
                 let execution_result = match response.get("success") {
                     Some(success) if success.as_bool() == Some(false) => {
                         let error_msg = response
@@ -2716,7 +2631,7 @@ impl Orchestrator {
                         // Reset failure counter on success
                         session.failure_tracker.record_success();
 
-                        //  FIX: Update URL from multiple sources
+                        // Update the URL from the broker session or response.
                         let mut url_updated = false;
 
                         // 1. Try to get URL from broker session
@@ -2747,305 +2662,16 @@ impl Orchestrator {
                             }
                         }
 
-                        // 3. Fallback: Use detected URL from DOM analysis
-                        if !url_updated {
-                            if let Some(dom_url) = detected_url {
-                                if dom_url != session.current_url {
-                                    info!(
-                                        " URL updated from DOM analysis: {} -> {}",
-                                        session.current_url, dom_url
-                                    );
-                                    session.current_url = dom_url;
-                                    url_updated = true;
-                                }
-                            }
-                        }
-
-                        // 4. No special handling needed - browser will provide actual URL
-
                         if url_updated {
                             info!("[TARGET] URL change detected - LLM will now see the new page context");
                         }
 
-                        // Check for extracted data in response
-                        let payload = response.get("extracted_data").cloned();
-                        if payload.is_some() {
-                            info!(" Extracted data found in response");
-                        }
-
-                        // [TARGET] EARLY AUTO-EXTRACTION CHECK: For get_element_text steps
-                        // Check if the extension auto-extracted the data immediately
-                        if let StepKind::GetElementText { .. } = &step.kind {
-                            // Check in steps array first (most likely location)
-                            if let Some(steps) = response.get("steps").and_then(|s| s.as_array()) {
-                                for step_result in steps {
-                                    if let Some(step_data) = step_result.get("data") {
-                                        if step_data.is_object()
-                                            && step_data
-                                                .get("auto_extracted")
-                                                .and_then(|v| v.as_bool())
-                                                == Some(true)
-                                            && step_data
-                                                .get("goal_completed")
-                                                .and_then(|v| v.as_bool())
-                                                == Some(true)
-                                        {
-                                            if let Some(extraction_data) =
-                                                step_data.get("extraction_data")
-                                            {
-                                                info!("[TARGET] AUTO-EXTRACTION DETECTED IMMEDIATELY! Goal completed by extension.");
-                                                info!(
-                                                    " Auto-extracted data: {}",
-                                                    serde_json::to_string_pretty(extraction_data)
-                                                        .unwrap_or_else(
-                                                            |_| "Failed to serialize".to_string()
-                                                        )
-                                                );
-
-                                                // Return success with the auto-extraction flags preserved
-                                                let mut result_with_flags = serde_json::Map::new();
-                                                result_with_flags.insert(
-                                                    "auto_extracted".to_string(),
-                                                    json!(true),
-                                                );
-                                                result_with_flags.insert(
-                                                    "goal_completed".to_string(),
-                                                    json!(true),
-                                                );
-                                                result_with_flags.insert(
-                                                    "extraction_data".to_string(),
-                                                    extraction_data.clone(),
-                                                );
-
-                                                return Ok((
-                                                    ExecutionResult::Success {
-                                                        payload: Some(serde_json::Value::Object(
-                                                            result_with_flags,
-                                                        )),
-                                                    },
-                                                    raw_dom.clone(),
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        //  CRITICAL FIX: Capture inspection data for failed extractions
-                        if let StepKind::ExtractStructuredData { .. } = &step.kind {
-                            if let Some(extracted_data) = &payload {
-                                if let Some(array) = extracted_data.as_array() {
-                                    if array.is_empty() {
-                                        println!("[WARNING]  EXTRACTION RETURNED 0 ITEMS - Capturing inspection data for LLM feedback");
-
-                                        // Capture inspection data from response and store it for LLM feedback
-                                        if let Some(inspection_data) =
-                                            self.extract_inspection_data_from_response(&response)
-                                        {
-                                            println!(
-                                                " INSPECTION DATA CAPTURED: {}",
-                                                serde_json::to_string_pretty(&inspection_data)
-                                                    .unwrap_or_else(
-                                                        |_| "Failed to serialize".to_string()
-                                                    )
-                                            );
-
-                                            // Store inspection data in session for LLM feedback
-                                            let inspection_step = StepExecution {
-                                                step: Step {
-                                                    id: format!("{}_inspection", step.id),
-                                                    name: "Page Inspection for Failed Extraction"
-                                                        .to_string(),
-                                                    kind: StepKind::GetPageSource, // Placeholder step type
-                                                },
-                                                result: ExecutionResult::Success {
-                                                    payload: Some(inspection_data),
-                                                },
-                                                timestamp: chrono::Utc::now(),
-                                                dom_snapshot: Some(reduced_dom.clone()),
-                                            };
-
-                                            session.history.push(inspection_step);
-                                            info!("[NOTE] Added inspection data to session history for LLM feedback");
-                                        } else {
-                                            println!("[WARNING]  No inspection data found in response - LLM will use standard guidance");
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // [TARGET] AUTO-EXTRACTION DETECTION: Check if the extension auto-extracted goal data
-                        // This happens when get_element_text finds goal-relevant data and auto-extracts it
-
-                        // First check in the result.steps array (where the extension puts it)
-                        if let Some(result_data) = response.get("result") {
-                            if let Some(steps_array) =
-                                result_data.get("steps").and_then(|s| s.as_array())
-                            {
-                                for step_result in steps_array {
-                                    // Check for auto-extraction flags in step data
-                                    if let Some(step_data) = step_result.get("data") {
-                                        // Handle both object data (with auto_extracted flag) and direct data
-                                        if step_data.is_object() {
-                                            if let (Some(auto_extracted), Some(goal_completed)) = (
-                                                step_data
-                                                    .get("auto_extracted")
-                                                    .and_then(|v| v.as_bool()),
-                                                step_data
-                                                    .get("goal_completed")
-                                                    .and_then(|v| v.as_bool()),
-                                            ) {
-                                                if auto_extracted && goal_completed {
-                                                    if let Some(extraction_data) =
-                                                        step_data.get("extraction_data")
-                                                    {
-                                                        info!("[TARGET] AUTO-EXTRACTION DETECTED! Goal completed by extension.");
-                                                        info!(
-                                                            " Auto-extracted data: {}",
-                                                            serde_json::to_string_pretty(
-                                                                extraction_data
-                                                            )
-                                                            .unwrap_or_else(|_| {
-                                                                "Failed to serialize".to_string()
-                                                            })
-                                                        );
-
-                                                        // Send to LLM for verification
-                                                        let verification_result = self
-                                                            .verify_extraction_with_llm(
-                                                                &session.goal,
-                                                                extraction_data,
-                                                                step_data
-                                                                    .get("text")
-                                                                    .and_then(|t| t.as_str()),
-                                                            )
-                                                            .await;
-
-                                                        match verification_result {
-                                                            Ok(verified_data) => {
-                                                                info!("[OK] LLM verified extraction is complete and correct");
-                                                                // Return the data with auto-extraction flags so the main loop can detect it
-                                                                let mut result_with_flags =
-                                                                    serde_json::Map::new();
-                                                                result_with_flags.insert(
-                                                                    "auto_extracted".to_string(),
-                                                                    json!(true),
-                                                                );
-                                                                result_with_flags.insert(
-                                                                    "goal_completed".to_string(),
-                                                                    json!(true),
-                                                                );
-                                                                result_with_flags.insert(
-                                                                    "extraction_data".to_string(),
-                                                                    verified_data,
-                                                                );
-                                                                return Ok((ExecutionResult::Success {
-                                                                    payload: Some(serde_json::Value::Object(result_with_flags))
-                                                                }, raw_dom.clone()));
-                                                            }
-                                                            Err(e) => {
-                                                                warn!("[WARNING] LLM verification failed: {}, continuing with planning", e);
-                                                                // Don't return, let the LLM continue planning
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Also check in the top-level steps array (for backwards compatibility)
-                        if let Some(steps) = response.get("steps").and_then(|s| s.as_array()) {
-                            for step_result in steps {
-                                // For get_element_text, check if data is an object with auto_extracted flag
-                                if let Some(step_data) = step_result.get("data") {
-                                    // Log what we found for debugging
-                                    if let StepKind::GetElementText { .. } = &step.kind {
-                                        info!(
-                                            "[SEARCH] DEBUG: Found step data type: {}",
-                                            if step_data.is_object() {
-                                                "object"
-                                            } else if step_data.is_string() {
-                                                "string"
-                                            } else {
-                                                "other"
-                                            }
-                                        );
-
-                                        if step_data.is_object() {
-                                            info!(
-                                                "[SEARCH] DEBUG: Step data keys: {:?}",
-                                                step_data
-                                                    .as_object()
-                                                    .map(|o| o.keys().collect::<Vec<_>>())
-                                            );
-                                        }
-                                    }
-
-                                    if step_data.is_object() {
-                                        if let (Some(auto_extracted), Some(goal_completed)) = (
-                                            step_data
-                                                .get("auto_extracted")
-                                                .and_then(|v| v.as_bool()),
-                                            step_data
-                                                .get("goal_completed")
-                                                .and_then(|v| v.as_bool()),
-                                        ) {
-                                            if auto_extracted && goal_completed {
-                                                if let Some(extraction_data) =
-                                                    step_data.get("extraction_data")
-                                                {
-                                                    info!("[TARGET] AUTO-EXTRACTION DETECTED (top-level)! Goal completed by extension.");
-                                                    info!(
-                                                        " Auto-extracted data: {}",
-                                                        serde_json::to_string_pretty(
-                                                            extraction_data
-                                                        )
-                                                        .unwrap_or_else(
-                                                            |_| "Failed to serialize".to_string()
-                                                        )
-                                                    );
-
-                                                    // For now, skip LLM verification to test if auto-extraction detection works
-                                                    info!("[START] FAST PATH: Skipping LLM verification for testing");
-
-                                                    // Return the data with auto-extraction flags so the main loop can detect it
-                                                    let mut result_with_flags =
-                                                        serde_json::Map::new();
-                                                    result_with_flags.insert(
-                                                        "auto_extracted".to_string(),
-                                                        json!(true),
-                                                    );
-                                                    result_with_flags.insert(
-                                                        "goal_completed".to_string(),
-                                                        json!(true),
-                                                    );
-                                                    result_with_flags.insert(
-                                                        "extraction_data".to_string(),
-                                                        extraction_data.clone(),
-                                                    );
-                                                    return Ok((
-                                                        ExecutionResult::Success {
-                                                            payload: Some(
-                                                                serde_json::Value::Object(
-                                                                    result_with_flags,
-                                                                ),
-                                                            ),
-                                                        },
-                                                        raw_dom.clone(),
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        let payload = response
+                            .get("results")
+                            .and_then(Value::as_array)
+                            .and_then(|results| results.first())
+                            .and_then(|result| result.get("result"))
+                            .cloned();
 
                         ExecutionResult::Success { payload }
                     }
@@ -3081,45 +2707,11 @@ impl Orchestrator {
                 info!("   └─ History steps: {}", session.history.len());
 
                 // Apply wait strategy after step execution
-                if wait_strategy.observe_after_action {
-                    // Check if response contains DOM observations from the extension
-                    if let Some(dom_observations) =
-                        response.get("data").and_then(|d| d.get("domChanges"))
-                    {
-                        let observations: DOMObservation =
-                            serde_json::from_value(dom_observations.clone()).unwrap_or({
-                                DOMObservation {
-                                    has_significant_changes: false,
-                                    new_interactive_elements: 0,
-                                    dom_stabilized: true,
-                                    observation_duration_ms: 0,
-                                    changes_count: 0,
-                                }
-                            });
-
-                        info!("[SEARCH] DOM observations after {}: changes={}, new_elements={}, stabilized={}",
-                            action_type,
-                            observations.changes_count,
-                            observations.new_interactive_elements,
-                            observations.dom_stabilized);
-
-                        // Determine if additional wait is needed
-                        if let Some(additional_wait) = observations.needs_additional_wait() {
-                            info!(
-                                "⏳ Waiting additional {}ms for DOM to stabilize",
-                                additional_wait.as_millis()
-                            );
-                            tokio::time::sleep(additional_wait).await;
-                        }
-                    } else if wait_strategy.wait_for_stability.is_some() {
-                        // If no observations but wait_for_stability is configured, apply default wait
-                        let wait_ms = wait_strategy.observation_duration.unwrap_or(500);
-                        info!(
-                            "⏳ Applying default wait of {}ms after {}",
-                            wait_ms, action_type
-                        );
-                        tokio::time::sleep(Duration::from_millis(wait_ms)).await;
-                    }
+                if wait_strategy.observe_after_action && wait_strategy.wait_for_stability.is_some()
+                {
+                    let wait_ms = wait_strategy.observation_duration.unwrap_or(500);
+                    info!("⏳ Applying wait of {}ms after {}", wait_ms, action_type);
+                    tokio::time::sleep(Duration::from_millis(wait_ms)).await;
                 }
 
                 Ok((execution_result, raw_dom))
@@ -3295,91 +2887,33 @@ impl Orchestrator {
                 // Debug log the response structure
                 // info!("[SEARCH] DEBUG: Raw response from broker: {}", serde_json::to_string_pretty(&response).unwrap_or_else(|_| "Failed to serialize".to_string()));
 
-                // Check if this was an extraction step and extract the data
+                // The broker returns one typed action result for each workflow step.
+                let action_result = response
+                    .get("results")
+                    .and_then(Value::as_array)
+                    .and_then(|results| results.first());
+
                 match step {
                     Step {
                         kind: StepKind::ExtractStructuredData { .. },
                         ..
                     } => {
-                        // First check if results (plural) is at top level
-                        if let Some(results) = response.get("results") {
-                            info!("[SEARCH] DEBUG: Found 'results' at top level");
-                            if let Some(results_array) = results.as_array() {
-                                if !results_array.is_empty() {
-                                    // Get the first array in results (our extraction data)
-                                    if let Some(first_result) = results_array.first() {
-                                        if first_result.is_array() {
-                                            info!("[SEARCH] DEBUG: Found extraction array with {} items", first_result.as_array().unwrap().len());
-                                            return Ok((
-                                                ExecutionResult::Success {
-                                                    payload: Some(first_result.clone()),
-                                                },
-                                                raw_dom.clone(),
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Also check if result (singular) is at top level for backward compatibility
-                        if let Some(result) = response.get("result") {
-                            info!("[SEARCH] DEBUG: Found 'result' at top level");
-                            if result.is_array() {
-                                info!(
-                                    "[SEARCH] DEBUG: Result is array with {} items",
-                                    result.as_array().unwrap().len()
-                                );
-                                return Ok((
-                                    ExecutionResult::Success {
-                                        payload: Some(result.clone()),
-                                    },
-                                    raw_dom.clone(),
-                                ));
-                            }
-                        }
-
-                        // Look for extracted data in the response
-                        if let Some(steps) = response.get("steps") {
-                            if let Some(steps_array) = steps.as_array() {
-                                for step_result in steps_array {
-                                    if let Some(data) = step_result.get("data") {
-                                        if data.is_array() || data.is_object() {
-                                            return Ok((
-                                                ExecutionResult::Success {
-                                                    payload: Some(data.clone()),
-                                                },
-                                                raw_dom.clone(),
-                                            ));
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // If no data found, return empty array
+                        let payload = action_result
+                            .and_then(|result| result.get("result"))
+                            .cloned()
+                            .unwrap_or_else(|| json!([]));
                         Ok((
                             ExecutionResult::Success {
-                                payload: Some(serde_json::json!([])),
+                                payload: Some(payload),
                             },
-                            raw_dom.clone(),
+                            raw_dom,
                         ))
                     }
                     _ => {
-                        // For non-extraction steps, return the primary step result when available.
-                        // Background execution wraps step outputs under result.results[0].
-                        let payload = response
-                            .pointer("/result/results/0")
-                            .cloned()
-                            .or_else(|| {
-                                response
-                                    .get("results")
-                                    .and_then(|v| v.as_array())
-                                    .and_then(|a| a.first())
-                                    .cloned()
-                            })
-                            .or_else(|| response.get("result").cloned());
-
-                        Ok((ExecutionResult::Success { payload }, raw_dom.clone()))
+                        let payload = action_result
+                            .and_then(|result| result.get("result"))
+                            .cloned();
+                        Ok((ExecutionResult::Success { payload }, raw_dom))
                     }
                 }
             }
@@ -3441,8 +2975,6 @@ impl Orchestrator {
         Ok(workflow)
     }
 
-    // Removed: convert_to_heuristic_context method - using LLM-only planning
-
     /// Execute infinite scroll macro by expanding into atomic scroll+wait+count cycles
     async fn execute_infinite_scroll_macro(
         &mut self,
@@ -3483,51 +3015,55 @@ impl Orchestrator {
                     let reduced_dom = self.dom_analyzer.reduce_html(&raw_dom)?;
                     session.current_dom = reduced_dom;
 
-                    // Extract count from response
-                    if let Some(steps) = response.get("steps").and_then(|s| s.as_array()) {
-                        if let Some(step_result) = steps.first() {
-                            if let Some(data) = step_result.get("data") {
-                                if let Some(count) = data.get("count").and_then(|c| c.as_u64()) {
-                                    let new_count = count as u32;
-                                    info!(
-                                        " Current item count: {} (was: {})",
-                                        new_count, current_count
-                                    );
+                    // Extract the count from the first typed action result.
+                    if let Some(count) = response
+                        .get("results")
+                        .and_then(Value::as_array)
+                        .and_then(|results| results.first())
+                        .and_then(|result| result.get("result"))
+                        .and_then(|result| result.get("count"))
+                        .and_then(Value::as_u64)
+                    {
+                        let new_count = count as u32;
+                        info!(
+                            " Current item count: {} (was: {})",
+                            new_count, current_count
+                        );
 
-                                    // Check if we've reached our target
-                                    if new_count >= target_count {
-                                        info!("[TARGET] Infinite scroll complete: reached target of {} items", target_count);
-                                        return Ok(ExecutionResult::Success {
-                                            payload: Some(serde_json::json!({
-                                                "items_found": new_count,
-                                                "cycles_completed": cycles + 1,
-                                                "target_reached": true
-                                            })),
-                                        });
-                                    }
-
-                                    // Check if no new items were loaded
-                                    if new_count == current_count {
-                                        no_new_items_count += 1;
-                                        if no_new_items_count >= 3 {
-                                            info!("🛑 Infinite scroll stopped: no new items loaded for 3 consecutive cycles");
-                                            return Ok(ExecutionResult::Success {
-                                                payload: Some(serde_json::json!({
-                                                    "items_found": new_count,
-                                                    "cycles_completed": cycles + 1,
-                                                    "target_reached": false,
-                                                    "reason": "no_new_items"
-                                                })),
-                                            });
-                                        }
-                                    } else {
-                                        no_new_items_count = 0; // Reset counter if new items were found
-                                    }
-
-                                    current_count = new_count;
-                                }
-                            }
+                        // Check if we've reached our target
+                        if new_count >= target_count {
+                            info!(
+                                "[TARGET] Infinite scroll complete: reached target of {} items",
+                                target_count
+                            );
+                            return Ok(ExecutionResult::Success {
+                                payload: Some(serde_json::json!({
+                                    "items_found": new_count,
+                                    "cycles_completed": cycles + 1,
+                                    "target_reached": true
+                                })),
+                            });
                         }
+
+                        // Check if no new items were loaded
+                        if new_count == current_count {
+                            no_new_items_count += 1;
+                            if no_new_items_count >= 3 {
+                                info!("🛑 Infinite scroll stopped: no new items loaded for 3 consecutive cycles");
+                                return Ok(ExecutionResult::Success {
+                                    payload: Some(serde_json::json!({
+                                        "items_found": new_count,
+                                        "cycles_completed": cycles + 1,
+                                        "target_reached": false,
+                                        "reason": "no_new_items"
+                                    })),
+                                });
+                            }
+                        } else {
+                            no_new_items_count = 0; // Reset counter if new items were found
+                        }
+
+                        current_count = new_count;
                     }
                 }
                 Err(e) => {
@@ -3598,116 +3134,6 @@ impl Orchestrator {
                 "reason": "max_cycles_reached"
             })),
         })
-    }
-
-    /// Extract inspection data from broker response for LLM feedback
-    fn extract_inspection_data_from_response(&self, response: &Value) -> Option<Value> {
-        // Look for inspection data in the response - this comes from the browser extension
-        // The extension collects this data during extract_structured_data operations
-
-        // First check if inspection data is at the top level of the response
-        if let Some(inspection) = response.get("inspection_data") {
-            return Some(inspection.clone());
-        }
-
-        // Then check in the steps array for extraction step results
-        if let Some(steps) = response.get("steps") {
-            if let Some(steps_array) = steps.as_array() {
-                for step_result in steps_array {
-                    // Look for extract_structured_data steps
-                    if let Some(step_type) = step_result.get("type") {
-                        if step_type.as_str() == Some("extract_structured_data") {
-                            // Check for inspection data in this step
-                            if let Some(data) = step_result.get("data") {
-                                // The browser extension logs inspection results in the step data
-                                // Look for fields that indicate inspection was performed
-                                if data.get("_inspection").is_some()
-                                    || data.get("inspection_result").is_some()
-                                    || data.get("discovered").is_some()
-                                    || data.get("pageTitle").is_some()
-                                {
-                                    return Some(data.clone());
-                                }
-
-                                // Also check for debug information
-                                if let Some(debug_fields) = data.as_object() {
-                                    let mut inspection_info = serde_json::Map::new();
-                                    let mut has_inspection_data = false;
-
-                                    // Look for debug fields that contain page information
-                                    for (key, value) in debug_fields {
-                                        if key.ends_with("_debug") {
-                                            inspection_info.insert(key.clone(), value.clone());
-                                            has_inspection_data = true;
-                                        }
-                                    }
-
-                                    if has_inspection_data {
-                                        return Some(Value::Object(inspection_info));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Look for inspection data in the combined DOM response
-        // The extension might include page structure information
-        if let Some(html_content) = response.get("html_content") {
-            if let Some(html_str) = html_content.as_str() {
-                // Create basic inspection data from the page content
-                let mut inspection = serde_json::Map::new();
-                inspection.insert(
-                    "source".to_string(),
-                    Value::String("html_analysis".to_string()),
-                );
-                inspection.insert(
-                    "html_length".to_string(),
-                    Value::Number(serde_json::Number::from(html_str.len())),
-                );
-
-                // Basic DOM element counting for LLM feedback
-                let div_count = html_str.matches("<div").count();
-                let span_count = html_str.matches("<span").count();
-                let a_count = html_str.matches("<a ").count();
-                let input_count = html_str.matches("<input").count();
-                let button_count = html_str.matches("<button").count();
-
-                let mut element_counts = serde_json::Map::new();
-                element_counts.insert(
-                    "div".to_string(),
-                    Value::Number(serde_json::Number::from(div_count)),
-                );
-                element_counts.insert(
-                    "span".to_string(),
-                    Value::Number(serde_json::Number::from(span_count)),
-                );
-                element_counts.insert(
-                    "a".to_string(),
-                    Value::Number(serde_json::Number::from(a_count)),
-                );
-                element_counts.insert(
-                    "input".to_string(),
-                    Value::Number(serde_json::Number::from(input_count)),
-                );
-                element_counts.insert(
-                    "button".to_string(),
-                    Value::Number(serde_json::Number::from(button_count)),
-                );
-
-                inspection.insert("element_counts".to_string(), Value::Object(element_counts));
-                inspection.insert("message".to_string(), Value::String(
-                    "Page structure analysis: Use this information to choose better selectors for extraction.".to_string()
-                ));
-
-                return Some(Value::Object(inspection));
-            }
-        }
-
-        // No inspection data found
-        None
     }
 
     ///  CRITICAL FIX: Enhanced wait for element that polls for actual content
@@ -3786,34 +3212,34 @@ impl Orchestrator {
                         // Check for actual text content if this is a cricket widget or dynamic content
                         let has_meaningful_content = if is_cricket_widget {
                             // For cricket widgets, check if we have actual score data
-                            if let Some(steps) = response.get("steps").and_then(|s| s.as_array()) {
-                                if let Some(step_result) = steps.first() {
-                                    if let Some(data) = step_result.get("data") {
-                                        if let Some(text) = data.as_str() {
-                                            let meaningful_text = !text.trim().is_empty()
-                                                && !text.trim().eq_ignore_ascii_case("loading")
-                                                && !text.trim().eq_ignore_ascii_case("...")
-                                                && (text.contains(char::is_numeric)
-                                                    || text.contains("runs")
-                                                    || text.contains("wickets")
-                                                    || text.contains("over"));
+                            if let Some(text) = response
+                                .get("results")
+                                .and_then(Value::as_array)
+                                .and_then(|results| results.first())
+                                .and_then(|result| result.get("result"))
+                                .and_then(Value::as_str)
+                            {
+                                let meaningful_text = !text.trim().is_empty()
+                                    && !text.trim().eq_ignore_ascii_case("loading")
+                                    && !text.trim().eq_ignore_ascii_case("...")
+                                    && (text.contains(char::is_numeric)
+                                        || text.contains("runs")
+                                        || text.contains("wickets")
+                                        || text.contains("over"));
 
-                                            if meaningful_text {
-                                                info!("🏏 Cricket widget has meaningful content: \"{}\"", text.trim());
-                                            } else {
-                                                info!("🏏 Cricket widget present but content not ready: \"{}\"", text.trim());
-                                            }
-
-                                            meaningful_text
-                                        } else {
-                                            false
-                                        }
-                                    } else {
-                                        false
-                                    }
+                                if meaningful_text {
+                                    info!(
+                                        "🏏 Cricket widget has meaningful content: \"{}\"",
+                                        text.trim()
+                                    );
                                 } else {
-                                    false
+                                    info!(
+                                        "🏏 Cricket widget present but content not ready: \"{}\"",
+                                        text.trim()
+                                    );
                                 }
+
+                                meaningful_text
                             } else {
                                 false
                             }
@@ -3887,77 +3313,6 @@ impl Orchestrator {
             message: error_msg,
             retry_suggested: true,
         })
-    }
-
-    /// Verify auto-extracted data with LLM
-    async fn verify_extraction_with_llm(
-        &self,
-        goal: &str,
-        extracted_data: &Value,
-        raw_text: Option<&str>,
-    ) -> PlanResult<Value> {
-        info!("[BOT] Verifying auto-extraction with LLM");
-
-        let messages = vec![
-            json!({
-                "role": "system",
-                "content": "You are a browser automation verification assistant. Your job is to verify if auto-extracted data correctly satisfies the user's goal. Be strict but reasonable in your verification."
-            }),
-            json!({
-                "role": "user",
-                "content": format!(
-                    "Goal: {}\n\nExtracted Data:\n{}\n\nRaw Text (if available):\n{}\n\nPlease verify:\n1. Does this data correctly fulfill the goal?\n2. Is the data complete?\n3. Is the data accurate?\n\nRespond with JSON:\n{{\n  \"is_complete\": true/false,\n  \"is_accurate\": true/false,\n  \"verified_data\": <cleaned/formatted data>,\n  \"reasoning\": \"explanation\"\n}}",
-                    goal,
-                    serde_json::to_string_pretty(extracted_data).unwrap_or_else(|_| "Failed to serialize".to_string()),
-                    raw_text.unwrap_or("Not provided")
-                )
-            }),
-        ];
-
-        match self.llm_client.chat(messages, Some(0.1)).await {
-            Ok(response) => {
-                // Parse LLM response
-                match serde_json::from_str::<Value>(&response.content) {
-                    Ok(verification) => {
-                        let is_complete = verification
-                            .get("is_complete")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let is_accurate = verification
-                            .get("is_accurate")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-
-                        if is_complete && is_accurate {
-                            info!("[OK] LLM verification passed");
-                            Ok(verification
-                                .get("verified_data")
-                                .cloned()
-                                .unwrap_or_else(|| extracted_data.clone()))
-                        } else {
-                            let reasoning = verification
-                                .get("reasoning")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("Verification failed");
-                            Err(PlanError::LLMError(format!(
-                                "Verification failed: {}",
-                                reasoning
-                            )))
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to parse LLM verification response: {}", e);
-                        // If LLM response parsing fails, trust the auto-extraction
-                        Ok(extracted_data.clone())
-                    }
-                }
-            }
-            Err(e) => {
-                warn!("LLM verification request failed: {}", e);
-                // If LLM fails, trust the auto-extraction
-                Ok(extracted_data.clone())
-            }
-        }
     }
 
     /// Convert validated action from navigator back to Step format for execution
@@ -4515,7 +3870,7 @@ impl Orchestrator {
         })
     }
 
-    // New CDP-based architecture methods
+    // Mode-selected execution methods
 
     /// Execute step with TargetSpec and mode selection
     pub async fn execute_step_with_mode_selection(

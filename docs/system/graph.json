@@ -1,0 +1,145 @@
+{
+  "nodes": [
+    {
+      "subject": "architecture",
+      "kind": "canonical",
+      "path": "docs/system/architecture.md",
+      "title": "Architecture",
+      "status": ""
+    },
+    {
+      "subject": "cli-runtime",
+      "kind": "canonical",
+      "path": "docs/system/cli-runtime.md",
+      "title": "CLI and runtime",
+      "status": ""
+    },
+    {
+      "subject": "contracts-sdk",
+      "kind": "canonical",
+      "path": "docs/system/contracts-sdk.md",
+      "title": "Contracts and Rust SDK",
+      "status": ""
+    },
+    {
+      "subject": "developer-guide",
+      "kind": "canonical",
+      "path": "docs/system/developer-guide.md",
+      "title": "Developer guide",
+      "status": ""
+    },
+    {
+      "subject": "documentation",
+      "kind": "canonical",
+      "path": "docs/system/documentation.md",
+      "title": "Documentation guide",
+      "status": ""
+    },
+    {
+      "subject": "extension-native-host",
+      "kind": "canonical",
+      "path": "docs/system/extension-native-host.md",
+      "title": "Extension and native host",
+      "status": ""
+    },
+    {
+      "subject": "installation-operations",
+      "kind": "canonical",
+      "path": "docs/system/installation-operations.md",
+      "title": "Installation and operations",
+      "status": ""
+    },
+    {
+      "subject": "overview",
+      "kind": "canonical",
+      "path": "docs/system/00-overview.md",
+      "title": "System overview",
+      "status": ""
+    },
+    {
+      "subject": "release",
+      "kind": "canonical",
+      "path": "docs/system/release.md",
+      "title": "Release",
+      "status": ""
+    },
+    {
+      "subject": "security",
+      "kind": "canonical",
+      "path": "docs/system/security.md",
+      "title": "Security and privacy",
+      "status": ""
+    },
+    {
+      "subject": "testing",
+      "kind": "canonical",
+      "path": "docs/system/testing.md",
+      "title": "Testing",
+      "status": ""
+    },
+    {
+      "subject": "workflow-authoring",
+      "kind": "canonical",
+      "path": "docs/system/workflow-authoring.md",
+      "title": "Workflow authoring",
+      "status": ""
+    }
+  ],
+  "edges": [
+    {
+      "from": "architecture",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "cli-runtime",
+      "to": "architecture",
+      "kind": "part_of"
+    },
+    {
+      "from": "contracts-sdk",
+      "to": "architecture",
+      "kind": "part_of"
+    },
+    {
+      "from": "developer-guide",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "documentation",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "extension-native-host",
+      "to": "architecture",
+      "kind": "part_of"
+    },
+    {
+      "from": "installation-operations",
+      "to": "developer-guide",
+      "kind": "part_of"
+    },
+    {
+      "from": "release",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "security",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "testing",
+      "to": "overview",
+      "kind": "part_of"
+    },
+    {
+      "from": "workflow-authoring",
+      "to": "overview",
+      "kind": "part_of"
+    }
+  ]
+}

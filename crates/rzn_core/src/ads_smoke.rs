@@ -1,6 +1,6 @@
 //! Smoke check / selector-drift detection for the ads-intelligence workflow packs
 //! (ADI epic). Given a produced ads manifest, it (1) validates against the shared
-//! schema `schema/ads-manifest-v1.json` and (2) checks that the fields most likely
+//! schema `schema/ads-manifest.json` and (2) checks that the fields most likely
 //! to break when a site changes its markup are still populated across the ads.
 //!
 //! A healthy manifest returns `ok = true`; an empty, schema-invalid, or degraded
@@ -14,7 +14,7 @@ use serde_json::Value;
 
 /// The shared ads-manifest schema, embedded at compile time so the checker needs
 /// no filesystem access at runtime.
-const ADS_MANIFEST_SCHEMA: &str = include_str!("../../../schema/ads-manifest-v1.json");
+const ADS_MANIFEST_SCHEMA: &str = include_str!("../../../schema/ads-manifest.json");
 
 /// Minimum fraction of ads that must carry a baseline field before it is
 /// considered healthy (below this reads as selector drift).

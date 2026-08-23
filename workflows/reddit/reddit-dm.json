@@ -263,9 +263,5 @@
       "If the recipient's profile has no chat link (DMs disabled / blocked), the workflow fails at the 'Extract chat link' step with a clear error.",
       "message_body must be URL-encoded. Do not pass raw text with special characters \u2014 decodeURIComponent will mangle it."
     ]
-  },
-  "metadata": {
-    "migrated_from": "reddit/reddit-dm.json",
-    "legacy_system_id": "reddit"
   }
 }

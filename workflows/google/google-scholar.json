@@ -246,9 +246,5 @@
       "Scholar aggressively rate-limits scraping; expect intermittent 429s on busy sessions.",
       "url is the paper's primary link (often direct PDF or publisher page), not a Scholar-internal link."
     ]
-  },
-  "metadata": {
-    "migrated_from": "google/google-scholar.json",
-    "legacy_system_id": "google"
   }
 }

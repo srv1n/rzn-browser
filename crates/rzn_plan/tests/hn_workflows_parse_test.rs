@@ -11,7 +11,7 @@ fn repo_root() -> PathBuf {
 }
 
 #[test]
-fn hn_workflows_parse_as_v1_workflow() {
+fn hn_workflows_parse_as_workflow() {
     let workflows = [
         "workflows/hn/hn-submit-link-post.json",
         "workflows/hn/hn-submit-comment.json",

@@ -3,8 +3,8 @@
 Discover the installed Reddit routes and their effective source:
 
 ```bash
-rzn-browser list reddit
-rzn-browser list reddit --json
+rzn-browser workflow list reddit
+rzn-browser workflow list reddit --json
 ```
 
 Inspect a route before running it:

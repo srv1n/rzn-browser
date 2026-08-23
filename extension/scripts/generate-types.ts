@@ -6,7 +6,7 @@ import { createHash } from 'crypto';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // Read the JSON schema
-const schemaPath = join(__dirname, '../../schema/actions-v1.json');
+const schemaPath = join(__dirname, '../../schema/actions.json');
 const schemaContent = readFileSync(schemaPath, 'utf8');
 const schema = JSON.parse(schemaContent);
 const schemaHash = createHash('sha256').update(schemaContent).digest('hex');
@@ -14,7 +14,7 @@ const schemaVersion = schema.schema_version ?? 'unknown';
 
 // Generate TypeScript types from JSON schema
 function generateTypeScript(schema: any): string {
-  let code = `// Auto-generated from schema/actions-v1.json
+  let code = `// Auto-generated from schema/actions.json
 // schema-version: ${schemaVersion}
 // schema-sha256: ${schemaHash}
 // DO NOT EDIT MANUALLY
