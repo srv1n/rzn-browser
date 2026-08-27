@@ -33,7 +33,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot, Mutex};
-use tokio::time::{timeout, Duration};
+use tokio::time::{timeout, Duration, Instant};
 use tracing::{info, warn};
 use uuid::Uuid;
 
@@ -49,6 +49,7 @@ const STDOUT_HEARTBEAT_INTERVAL_MS: u64 = 20_000;
 const STDOUT_HEARTBEAT_CMD: &str = "native_host_heartbeat";
 const EXTENSION_TIMEOUT_SHUTDOWN_GRACE_MS: u64 = 1_000;
 const NATIVE_READER_EXIT_UPSTREAM_FLUSH_GRACE_MS: u64 = 1_000;
+const SUPERVISOR_RESPAWN_COOLDOWN_MS: u64 = 5_000;
 const OVERSIZE_ARTIFACT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const OVERSIZE_ARTIFACT_MAX_FILES: usize = 50;
 static NATIVE_HOST_BOOT_ID: OnceLock<String> = OnceLock::new();
@@ -304,6 +305,55 @@ fn candidate_endpoints(
         supervisor_socket_override,
         supervisor_token_override,
     )
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SupervisorLaunch {
+    executable: PathBuf,
+    app_base: PathBuf,
+}
+
+fn supervisor_launch_from_executable(native_host_executable: &Path) -> Option<SupervisorLaunch> {
+    let resolved = std::fs::canonicalize(native_host_executable)
+        .unwrap_or_else(|_| native_host_executable.to_path_buf());
+    let app_base = infer_app_base_from_executable(&resolved)?;
+    let executable = resolved
+        .parent()?
+        .join(format!("rzn-browser{}", std::env::consts::EXE_SUFFIX));
+    Some(SupervisorLaunch {
+        executable,
+        app_base,
+    })
+}
+
+fn spawn_local_supervisor() -> Result<()> {
+    let native_host_executable =
+        std::env::current_exe().context("resolve native host executable")?;
+    let launch = supervisor_launch_from_executable(&native_host_executable)
+        .context("infer installed supervisor location")?;
+    if !launch.executable.is_file() {
+        return Err(anyhow!(
+            "sibling supervisor executable not found at {}",
+            launch.executable.display()
+        ));
+    }
+
+    let mut command = std::process::Command::new(&launch.executable);
+    command
+        .arg("supervisor")
+        .arg("serve")
+        .arg("--app-base")
+        .arg(&launch.app_base)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    command.spawn().context("spawn sibling supervisor")?;
+    Ok(())
 }
 
 async fn connect_upstream_runtime(
@@ -1185,6 +1235,8 @@ async fn endpoint_manager_loop(
     active_bridges: Arc<Mutex<HashSet<UpstreamKey>>>,
     shutdown_tx: mpsc::UnboundedSender<String>,
 ) {
+    let may_spawn_supervisor = socket_arg.is_none() && token_arg.is_none();
+    let mut last_supervisor_spawn_attempt: Option<Instant> = None;
     loop {
         let endpoints = candidate_endpoints(socket_arg.clone(), token_arg.clone());
 
@@ -1229,6 +1281,19 @@ async fn endpoint_manager_loop(
                         e
                     );
                 }
+            }
+        }
+
+        if may_spawn_supervisor
+            && active_bridges.lock().await.is_empty()
+            && last_supervisor_spawn_attempt.map_or(true, |attempt| {
+                attempt.elapsed() >= Duration::from_millis(SUPERVISOR_RESPAWN_COOLDOWN_MS)
+            })
+        {
+            last_supervisor_spawn_attempt = Some(Instant::now());
+            match spawn_local_supervisor() {
+                Ok(()) => info!("Started sibling browser supervisor"),
+                Err(error) => warn!("Failed to start sibling browser supervisor: {}", error),
             }
         }
 
@@ -1526,6 +1591,21 @@ mod tests {
         assert_eq!(endpoints[0].token_path, token_path);
 
         let _ = std::fs::remove_dir_all(base_dir);
+    }
+
+    #[test]
+    fn supervisor_launch_uses_the_installed_sibling_and_app_base() {
+        let launch = supervisor_launch_from_executable(Path::new("/tmp/RZN/bin/rzn-native-host"))
+            .expect("installed layout");
+
+        assert_eq!(launch.app_base, PathBuf::from("/tmp/RZN"));
+        assert_eq!(
+            launch.executable,
+            PathBuf::from(format!(
+                "/tmp/RZN/bin/rzn-browser{}",
+                std::env::consts::EXE_SUFFIX
+            ))
+        );
     }
 
     #[test]
