@@ -156,7 +156,9 @@ def zip_directory(src: Path, dest: Path) -> None:
 
 def write_sidecars(asset: Path, *, version: str, kind: str, platform_slug: str | None) -> None:
     digest = sha256_file(asset)
-    asset.with_suffix(asset.suffix + ".sha256").write_text(f"{digest}  {asset.name}\n")
+    asset.with_suffix(asset.suffix + ".sha256").write_bytes(
+        f"{digest}  {asset.name}\n".encode("utf-8")
+    )
     asset.with_suffix(asset.suffix + ".manifest.json").write_text(
         json.dumps(
             {
