@@ -50,7 +50,7 @@ rzn-browser run chatgpt send --param chat_id="01234567-89ab-cdef-0123-456789abcd
 rzn-browser run chatgpt send --param entry_url="https://chatgpt.com/" --param message_text="Compare these" --param attachment_file_paths='["/Users/me/a.txt","/Users/me/b.txt"]'
 rzn-browser run chatgpt send --param entry_url="https://chatgpt.com/" --param message_text="A watercolor skyline at dusk" --param tool="image_gen"
 
-# Explicit model + effort (defaults are GPT-5.6 Sol / Pro)
+# Explicit model + effort (defaults are GPT-5.6 Sol / Medium)
 rzn-browser run chatgpt send --param message_text="Reason about this carefully" --param model_slug="GPT-5.6 Sol" --param model_effort="Pro"
 rzn-browser run chatgpt send --param message_text="Quick sanity check" --param model_slug="GPT-5.5" --param model_effort="Medium"
 
@@ -74,7 +74,7 @@ rzn-browser run chatgpt send --param project_id="g-p-6a1c…" --param message_te
   is surfaced unchanged. Do not immediately retry either result. Higher-level
   callers such as `chatgpt-handoff` must own the durable account-wide cooldown.
 - To re-capture the picker markup after a future UI change, run a read-only DOM probe through rzn-browser itself (`rzn-browser run <probe>.json`) rather than working from screenshots — the Chrome bridge is the same one the workflow uses.
-- **`model_slug` and `model_effort` are free-form labels.** They are matched against whatever the account actually offers, so nothing is hard-coded to one lane. Defaults are `GPT-5.6 Sol` / `Pro`. `model_version` is accepted and ignored; the version is part of the model label now.
+- **`model_slug` and `model_effort` are free-form labels.** They are matched against whatever the account actually offers, so nothing is hard-coded to one lane. Defaults are `GPT-5.6 Sol` / `Medium`. `model_version` is accepted and ignored; the version is part of the model label now.
 - **Advanced-panel selection.** ChatGPT moved model and effort behind the composer pill: click the pill (labelled with the current effort, e.g. `Pro`), expand **Advanced**, then open the **Model** or **Effort** row for the option submenu. The workflow opens the panel once per selection and commits each option with a trusted CDP click, because ChatGPT drops synthetic clicks there.
 - **Hard-fail on bad commit.** Before typing the prompt, the workflow reopens the Advanced panel and reads back the Model and Effort rows. A mismatch throws `model_selection_verify_failed` instead of sending under another lane; pass `require_exact_model=false` to send anyway and have the applied values reported.
 - **Row markup, verified live 2026-08-07.** Rows are `div[role=menuitem][aria-haspopup=menu]` inside `[data-testid=composer-intelligence-picker-content]`; the label and value are sibling nodes, so `textContent` reads `ModelGPT-5.6 Sol` with **no separating space** — match on `^Model`, never `^Model\b`. Options are `div[role=menuitemradio]` carrying `aria-checked`. The picker also keeps an `inert` copy of the collapsed view mounted next to the advanced view, so matching must skip `[inert]` subtrees or it selects a dead row.

@@ -70,6 +70,7 @@ PAYLOAD
 
 write_fake_runtime_bundle() {
   local bundle_root="$1"
+  local version="${2:-0.1.1}"
   mkdir -p "$bundle_root/bin" "$bundle_root/extension/dist/chrome"
   cp "$ROOT_DIR/scripts/release/install-runtime.sh" "$bundle_root/install.sh"
   chmod +x "$bundle_root/install.sh"
@@ -86,7 +87,11 @@ BROWSER
 exit 0
 HOST
   chmod +x "$bundle_root/bin/rzn-browser" "$bundle_root/bin/rzn-native-host"
-  printf '{"manifest_version":3}\n' > "$bundle_root/extension/dist/chrome/manifest.json"
+  printf '{"manifest_version":3,"version":"%s"}\n' "$version" > "$bundle_root/extension/dist/chrome/manifest.json"
+  printf '{"extension_target":"chrome","build_signature":"v%s"}\n' "$version" > "$bundle_root/extension/dist/chrome/rzn-build.json"
+  for required in background.js contentScript.js pageBridge.js popup.html dashboard.html; do
+    printf '%s\n' "$version" > "$bundle_root/extension/dist/chrome/$required"
+  done
 }
 
 run_bootstrap_install() {
@@ -259,6 +264,21 @@ verified_codesign_log="$tmp_dir/verified-codesign.log"
 run_runtime_install "$bundle_root" "$tmp_dir/runtime-verified" "$tmp_dir/global-verified" "$verified_xattr_log" "$verified_codesign_log" 1
 [[ -s "$verified_xattr_log" ]] || fail "xattr was not called after checksum verification"
 grep -q -- "--force" "$verified_codesign_log" || fail "codesign repair was not called after checksum verification"
+[[ -f "$tmp_dir/runtime-verified/extension/dist/chrome/dashboard.html" ]] || fail "runtime install omitted dashboard.html"
+
+printf 'stale\n' > "$tmp_dir/runtime-verified/extension/dist/chrome/stale.js"
+write_fake_runtime_bundle "$bundle_root" "0.1.2"
+run_runtime_install "$bundle_root" "$tmp_dir/runtime-verified" "$tmp_dir/global-verified" "$verified_xattr_log" "$verified_codesign_log" 1
+grep -q '"version":"0.1.2"' "$tmp_dir/runtime-verified/extension/dist/chrome/manifest.json" || fail "runtime extension did not update in place"
+[[ ! -e "$tmp_dir/runtime-verified/extension/dist/chrome/stale.js" ]] || fail "runtime extension update retained stale files"
+
+case_install_root="$tmp_dir/case-runtime/RZN"
+case_legacy_root="$tmp_dir/case-runtime/rzn"
+mkdir -p "$case_legacy_root/extension/dist-chrome"
+printf '{"manifest_version":3,"version":"0.1.1"}\n' > "$case_legacy_root/extension/dist-chrome/manifest.json"
+run_runtime_install "$bundle_root" "$case_install_root" "$tmp_dir/case-global" "$tmp_dir/case-xattr.log" "$tmp_dir/case-codesign.log" 1
+grep -q '"version":"0.1.2"' "$case_legacy_root/extension/dist-chrome/manifest.json" || fail "legacy loaded extension path was not refreshed"
+[[ -f "$case_legacy_root/extension/dist-chrome/dashboard.html" ]] || fail "legacy loaded extension path omitted dashboard.html"
 
 bundle_macos_root="$tmp_dir/bundle-macos"
 write_fake_runtime_bundle "$bundle_macos_root"

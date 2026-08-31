@@ -6708,7 +6708,7 @@ async fn handle_update(args: UpdateArgs) -> Result<(), Box<dyn std::error::Error
     let repo = std::env::var("RZN_INSTALL_REPO").unwrap_or_else(|_| args.repo.clone());
     let available = match args.version.as_deref() {
         Some(tag) => tag.to_string(),
-        None => latest_release_tag(&repo).unwrap_or_else(|_| "unknown".to_string()),
+        None => latest_release_tag(&repo)?,
     };
 
     println!("rzn-browser update");
@@ -6716,7 +6716,7 @@ async fn handle_update(args: UpdateArgs) -> Result<(), Box<dyn std::error::Error
     println!("  available: {} ({})", available, repo);
 
     if args.check {
-        println!("Nothing installed (--check).");
+        println!("Check only; no changes made.");
         return Ok(());
     }
 
@@ -6795,7 +6795,7 @@ async fn handle_update(args: UpdateArgs) -> Result<(), Box<dyn std::error::Error
     let _ = fs::remove_dir_all(&temp_root);
     println!();
     println!(
-        "Updated to {}. Run `rzn-browser workflow list` to see the refreshed catalog.",
+        "Updated to {}. Reload the RZN extension in Chrome, then run `rzn-browser supervisor ensure-ready`.",
         available
     );
     Ok(())

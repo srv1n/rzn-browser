@@ -1,0 +1,450 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "linkedin/company-jobs",
+  "name": "LinkedIn: Company Jobs",
+  "version": "1.0.0",
+  "system": "linkedin",
+  "capability": "linkedin.company_jobs",
+  "summary": "Open a company's LinkedIn Jobs tab, follow its own Show all jobs link, and return the open roles plus a hiring-location breakdown.",
+  "description": "Open a LinkedIn company page's Jobs tab, click the page's own Show all jobs link into the company-filtered jobs search, set the location filter through the real search box, and return the open roles. Each role carries job_id, title, company, location, workplace type (Remote / Hybrid / On-site), how long ago it was posted, and the canonical /jobs/view/ URL. Also returns the total result count LinkedIn reports and a hiring_locations tally built from the returned cards, which answers where the company is currently hiring. Read-only: never clicks Apply, Easy Apply, or Save.",
+  "params": {
+    "properties": {
+      "company": {
+        "kind": "string",
+        "required": true,
+        "description": "A LinkedIn company slug (e.g. stripe) OR a full https://www.linkedin.com/company/<slug>/ URL."
+      },
+      "location": {
+        "kind": "string",
+        "required": false,
+        "description": "Location filter typed into the jobs search box (e.g. Bengaluru, United States). Defaults to Worldwide.",
+        "default": "Worldwide"
+      },
+      "max_jobs": {
+        "kind": "integer",
+        "required": false,
+        "description": "Maximum number of job cards to return. Defaults to 25. Hard cap 50.",
+        "default": 25,
+        "min": 1,
+        "max": 50
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": true,
+    "timeout_ms": 300000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.linkedin.com/feed/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the LinkedIn feed so the company page is entered from a logged-in same-origin tab",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Dwell on the feed like a human before moving on",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const clean=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};let raw=clean(arg0);let slug=raw;if(raw.indexOf('/company/')!==-1){slug=(raw.split('/company/')[1]||'').split('?')[0].split('/')[0];}else if(raw.indexOf('/school/')!==-1){slug=(raw.split('/school/')[1]||'').split('?')[0].split('/')[0];}else{slug=raw.replace(/^@+/,'').split('?')[0].split('/')[0];}if(!slug)slug=raw;try{sessionStorage.setItem('__rzn_cj_slug',JSON.stringify(slug));}catch(e){}const url='https://www.linkedin.com/company/'+slug+'/jobs/';setTimeout(()=>location.assign(url),0);return {jobs_tab_url:url,slug:slug};",
+          "args": [
+            "{company}"
+          ]
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Resolve the company slug or URL and open that company's Jobs tab",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the company Jobs tab to hydrate",
+      "timeout_ms": 6000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "smooth": true,
+          "y": 700
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll to the recent job openings module"
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the jobs module settle",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const N=(s)=>String(s==null?'':s).replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const html=document.documentElement.innerHTML;let cid='';const cm=html.match(/f_C=(\\d+)/)||html.match(/urn:li:fsd_company:(\\d+)/)||html.match(/urn:li:organization:(\\d+)/);if(cm)cid=cm[1];try{sessionStorage.setItem('__rzn_cj_cid',JSON.stringify(cid));}catch(e){}const target=cid?('https://www.linkedin.com/jobs/search/?f_C='+cid):'';if(target){setTimeout(()=>location.assign(target),0);return {company_id:cid,via:'url'};}return {company_id:'',via:'none'};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Read the company id from the page's own Show all jobs link and open the company-filtered jobs search",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the company-filtered jobs search to load",
+      "timeout_ms": 9000
+    },
+    {
+      "id": "s10",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s11",
+      "action": {
+        "kind": "click_element",
+        "inputs": {
+          "wait_after_ms": 700
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[id^=\"jobs-search-box-location-id\"]"
+        }
+      },
+      "name": "Focus the location box on the jobs search bar",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s12",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const i=document.querySelector('input[id^=\"jobs-search-box-location-id\"]');if(i){const set=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;set.call(i,'');i.dispatchEvent(new Event('input',{bubbles:true}));i.focus();}return {cleared:!!i};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Clear whatever location LinkedIn pre-filled from the session region",
+      "timeout_ms": 12000
+    },
+    {
+      "id": "s13",
+      "action": {
+        "kind": "type_text",
+        "inputs": {
+          "use_native_input": false,
+          "delay_ms": 45,
+          "typing_speed": "medium"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[id^=\"jobs-search-box-location-id\"]",
+          "text": "{location}"
+        }
+      },
+      "name": "Type the requested location into the box",
+      "timeout_ms": 45000
+    },
+    {
+      "id": "s14",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the location typeahead settle",
+      "timeout_ms": 1800
+    },
+    {
+      "id": "s15",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[id^=\"jobs-search-box-location-id\"]",
+          "text": "{location}"
+        }
+      },
+      "name": "Press Enter to apply the location filter",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s16",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the filtered results to load",
+      "timeout_ms": 6000
+    },
+    {
+      "id": "s17",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s18",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the first page of results render before harvesting",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s19",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const c=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};let max=parseInt(c(arg0),10);if(!Number.isFinite(max)||max<1)max=25;if(max>50)max=50;const N=(v)=>String(v==null?'':v).replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const txt=(el)=>el?N(el.innerText||el.textContent||''):'';const firstLine=(el)=>el?N(String(el.innerText||el.textContent||'').split('\\n')[0]):'';const cleanUrl=(a)=>{if(!a)return '';try{const u=new URL(a.getAttribute('href'),location.origin);return u.origin+u.pathname;}catch(e){return a.getAttribute('href')||'';}};const sleep=(ms)=>new Promise((r)=>setTimeout(r,ms));const store={};const order=[];const harvest=()=>{for(const li of document.querySelectorAll('li[data-occludable-job-id]')){const id=li.getAttribute('data-occludable-job-id')||'';if(!id)continue;const titleEl=li.querySelector('a.job-card-container__link')||li.querySelector('a.job-card-list__title')||li.querySelector('.artdeco-entity-lockup__title');const title=firstLine(titleEl);if(!title)continue;if(store[id]&&store[id].title)continue;const rawLoc=txt(li.querySelector('.artdeco-entity-lockup__caption'));const wm=rawLoc.match(/\\((Remote|Hybrid|On-site)\\)/i);const body=N(li.innerText||'');const pm=body.match(/(Just now|\\d+\\s*(?:minute|hour|day|week|month)s?\\s*ago)/i);const footer=li.querySelector('.job-card-container__footer-wrapper');if(!store[id])order.push(id);store[id]={job_id:id,title:title,company:txt(li.querySelector('.artdeco-entity-lockup__subtitle')),location:N(rawLoc.replace(/\\s*\\((Remote|Hybrid|On-site)\\)\\s*/i,'')),workplace:wm?wm[1]:'',posted:pm?N(pm[1]):'',job_url:cleanUrl(li.querySelector('a[href*=\"/jobs/view/\"]')),flags:footer?N(String(footer.innerText||footer.textContent||'').replace(/\\s*\\n+\\s*/g,' / ')):''};}};const findScroller=()=>{let el=document.querySelector('li[data-occludable-job-id]');while(el&&el!==document.body){const st=getComputedStyle(el);if((st.overflowY==='auto'||st.overflowY==='scroll')&&el.scrollHeight>el.clientHeight+60)return el;el=el.parentElement;}return null;};for(let page=0;page<3&&order.length<max;page++){const sc=findScroller();for(let i=0;i<30&&order.length<max;i++){harvest();if(sc){const before=sc.scrollTop;sc.scrollTop=Math.min(sc.scrollTop+Math.round(sc.clientHeight*0.8),sc.scrollHeight);await sleep(700);harvest();if(sc.scrollTop<=before+2)break;}else{const before=window.scrollY;window.scrollBy(0,Math.round(window.innerHeight*0.8));await sleep(700);harvest();if(window.scrollY<=before+2)break;}}if(order.length>=max)break;const next=document.querySelector('button[aria-label=\"View next page\"]');if(!next||next.disabled)break;next.click();await sleep(3500);if(sc)sc.scrollTop=0;else window.scrollTo(0,0);await sleep(1200);}harvest();const out=order.slice(0,max).map((id)=>store[id]);const T=N(document.body&&document.body.innerText||'');let total='';const tm=T.match(/([\\d,]+\\+?)\\s+results?\\b/);if(tm)total=tm[1];let loc_filter='';const li0=document.querySelector('input[id^=\"jobs-search-box-location-id\"]');if(li0)loc_filter=N(li0.value);const tally={};out.forEach((j)=>{if(j.location)tally[j.location]=(tally[j.location]||0)+1;});const hiring=Object.keys(tally).sort((a,b)=>tally[b]-tally[a]).slice(0,20).map((k)=>k+' — '+tally[k]+' of '+out.length);let slug='';try{slug=JSON.parse(sessionStorage.getItem('__rzn_cj_slug')||'\"\"');}catch(e){}let cid='';try{cid=JSON.parse(sessionStorage.getItem('__rzn_cj_cid')||'\"\"');}catch(e){}return {slug:slug,company_id:cid,search_url:location.href,location_filter:loc_filter,total_results:total,jobs_returned:out.length,hiring_locations:hiring,jobs:out};",
+          "args": [
+            "{max_jobs}"
+          ]
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Extract job cards and aggregate the hiring locations",
+      "timeout_ms": 120000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "slug": {
+          "type": "string"
+        },
+        "company_id": {
+          "type": "string"
+        },
+        "search_url": {
+          "type": "string"
+        },
+        "location_filter": {
+          "type": "string"
+        },
+        "total_results": {
+          "type": "string"
+        },
+        "jobs_returned": {
+          "type": "integer"
+        },
+        "hiring_locations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "jobs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "job_id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "company": {
+                "type": "string"
+              },
+              "location": {
+                "type": "string"
+              },
+              "workplace": {
+                "type": "string"
+              },
+              "posted": {
+                "type": "string"
+              },
+              "job_url": {
+                "type": "string"
+              },
+              "flags": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s19",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Return a company's open LinkedIn roles plus a tally of where it is hiring.",
+    "parameters": {
+      "company": "A LinkedIn company slug (e.g. stripe) OR a full /company/<slug>/ URL.",
+      "location": "Location typed into the jobs search box. Defaults to Worldwide.",
+      "max_jobs": "Maximum job cards to return (default 25, cap 50)."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run linkedin company-jobs --param company=\"stripe\"",
+        "description": "Return Stripe's open roles worldwide with a hiring-location tally."
+      },
+      {
+        "command": "rzn-browser run linkedin company-jobs --param company=\"stripe\" --param location=\"Bengaluru\" --param max_jobs=50",
+        "description": "Same, narrowed to Bengaluru, returning up to 50 roles."
+      }
+    ],
+    "returns": [
+      "{ slug, company_id, search_url, location_filter, total_results, jobs_returned, hiring_locations[], jobs[] }",
+      "hiring_locations entries are formatted \"<location> — <n> of <jobs_returned>\", so they describe the returned sample, not LinkedIn's full index."
+    ],
+    "notes": [
+      "Read-only. Never clicks Apply, Easy Apply, Save, or Set alert.",
+      "The company id is read from the company page's own Show all jobs link, then the run opens /jobs/search/?f_C=<id>. That link's native target is /jobs/search-results/, which renders without a search box, and clicking it is intercepted by LinkedIn's own router, so the workflow navigates to the equivalent /jobs/search/ page instead. That is one page load per run, not a reload loop.",
+      "The location filter is typed into LinkedIn's real search box rather than pushed through a query string, because LinkedIn pre-fills the box from your session region and a bare f_C URL silently keeps that region.",
+      "total_results is LinkedIn's own count and saturates at \"1,000+\". jobs_returned is what was actually scraped.",
+      "The jobs search list is the classic UI, so li[data-occludable-job-id] and the artdeco lockup selectors are stable, unlike the hashed SDUI class names elsewhere on LinkedIn.",
+      "Job cards are virtualised: an off-screen card keeps its id but loses its title and location. The extractor therefore scrolls the results pane itself and harvests on every tick, and pages forward with the View next page button, rather than scrolling first and reading once.",
+      "Every execute_javascript step sets use_cdp_eval because LinkedIn's CSP blocks script-tag injection on all pages.",
+      "Use linkedin_job_detail with a returned job_id for the full description of one role."
+    ]
+  }
+}

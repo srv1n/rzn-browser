@@ -86,15 +86,13 @@ else
   echo "[INFO] RELEASE_SKIP_CHECKS=1, skipping local smoke checks"
 fi
 
-echo "[INFO] Rebuilding tracked extension bundles for $TAG"
-(
-  cd extension
-  if [[ ! -d node_modules ]]; then
-    bun install
-  fi
-  export RZN_BUILD_SIGNATURE="$TAG"
-  bun run build
-)
+echo "[INFO] Building and validating the release extension bundle for $TAG"
+python3 "$ROOT_DIR/scripts/release/build_release_artifacts.py" \
+  --version "$VERSION" \
+  --extension-only
+
+echo "[INFO] Verifying release installer upgrade and legacy-path behavior"
+bash "$ROOT_DIR/scripts/release/test_install_verification.sh"
 
 mapfile -t WORKTREE_LINES < <(git status --porcelain)
 for line in "${WORKTREE_LINES[@]}"; do

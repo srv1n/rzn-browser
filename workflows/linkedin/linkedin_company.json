@@ -1,0 +1,589 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "linkedin/company",
+  "name": "LinkedIn: Company",
+  "version": "1.0.0",
+  "system": "linkedin",
+  "capability": "linkedin.company",
+  "summary": "Open a LinkedIn company page read-only and return one merged record: About fields, employee breakdown charts, employee growth, and recent posts.",
+  "description": "Open a LinkedIn company page once, then click through its own About / People / Posts tabs the way a person would, and return a single merged company record. Covers the About panel (overview text, website, industry, company size, headquarters, founded, specialties, associated members, location count), the People tab breakdown charts (what they do, where they live, where they studied, with each bucket's share of associated members), the employee growth percentage from the home tab, exact follower count, related company pages, and the most recent posts with permalinks and engagement counts. Read-only: never follows, likes, comments, or applies. Use linkedin_company_jobs for the full job listing and hiring-location picture.",
+  "params": {
+    "properties": {
+      "company": {
+        "kind": "string",
+        "required": true,
+        "description": "A LinkedIn company slug (e.g. stripe) OR a full https://www.linkedin.com/company/<slug>/ URL."
+      },
+      "max_posts": {
+        "kind": "integer",
+        "required": false,
+        "description": "Maximum number of recent posts to return. Defaults to 10. Hard cap 50.",
+        "default": 10,
+        "min": 1,
+        "max": 50
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": true,
+    "timeout_ms": 300000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.linkedin.com/feed/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the LinkedIn feed so the company page is entered from a logged-in same-origin tab",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Dwell on the feed like a human before moving on",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const clean=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};let raw=clean(arg0);let slug=raw;if(raw.indexOf('/company/')!==-1){slug=(raw.split('/company/')[1]||'').split('?')[0].split('/')[0];}else if(raw.indexOf('/school/')!==-1){slug=(raw.split('/school/')[1]||'').split('?')[0].split('/')[0];}else{slug=raw.replace(/^@+/,'').split('?')[0].split('/')[0];}if(!slug)slug=raw;try{sessionStorage.setItem('__rzn_co_slug',JSON.stringify(slug));}catch(e){}const url='https://www.linkedin.com/company/'+slug+'/';setTimeout(()=>location.assign(url),0);return {company_url:url,slug:slug};",
+          "args": [
+            "{company}"
+          ]
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Resolve the company slug or URL to a canonical /company/<slug>/ URL and open it once",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the company home tab to hydrate",
+      "timeout_ms": 6000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "smooth": true,
+          "y": 900
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll down the home tab to load the growth and insights modules"
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the lazy-loaded home modules settle",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const N=(s)=>String(s==null?'':s).replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const LINES=String(document.body&&document.body.innerText||'').split('\\n').map(N).filter(Boolean);const T=LINES.join('\\n');const num=(s)=>{const m=String(s||'').replace(/,/g,'').match(/\\d+/);return m?parseInt(m[0],10):0;};const put=(k,v)=>{try{sessionStorage.setItem('__rzn_co_'+k,JSON.stringify(v));}catch(e){}};const get=(k)=>{try{return JSON.parse(sessionStorage.getItem('__rzn_co_'+k)||'null');}catch(e){return null;}};const html=document.documentElement.innerHTML;let cid='';const cm=html.match(/f_C=(\\d+)/)||html.match(/urn:li:fsd_company:(\\d+)/)||html.match(/urn:li:organization:(\\d+)/);if(cm)cid=cm[1];let growth='';const gm=T.match(/(-?\\d+)%[\\s\\S]{0,20}?Employee growth/i);if(gm)growth=gm[1]+'%';const self=(get('slug')||'').toLowerCase();const rel=[];const seen={};[...document.querySelectorAll('a[href*=\"/company/\"]')].forEach((a)=>{const h=a.getAttribute('href')||'';const s=(h.split('/company/')[1]||'').split('?')[0].split('/')[0];if(!s||s.toLowerCase()===self||seen[s])return;let t=N(String(a.innerText||'').split('\\n')[0]);t=t.replace(/\\s*[\\d,]+\\s+followers.*$/i,'').trim();if(!t||t.length>60||/^(Follow|Following|Show all|See all|Showcase page)$/i.test(t))return;seen[s]=1;rel.push(t+' — https://www.linkedin.com/company/'+s+'/');});const home={company_id:cid,employee_growth:growth,related_companies:rel.slice(0,15)};put('home',home);return home;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract company id, exact follower count, employee growth, tagline, and related pages",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s9",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "smooth": true,
+          "y": 0
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll back to the page navigation before clicking About"
+    },
+    {
+      "id": "s10",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Pause before the next tab click",
+      "timeout_ms": 1200
+    },
+    {
+      "id": "s11",
+      "action": {
+        "kind": "click_element",
+        "inputs": {
+          "wait_after_ms": 900
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "a[href*=\"/company/\"][href$=\"/about/\"]"
+        }
+      },
+      "name": "Click the About tab in the company page navigation",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s12",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the About tab to render",
+      "timeout_ms": 5000
+    },
+    {
+      "id": "s13",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const N=(s)=>String(s==null?'':s).replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const LINES=String(document.body&&document.body.innerText||'').split('\\n').map(N).filter(Boolean);const T=LINES.join('\\n');const num=(s)=>{const m=String(s||'').replace(/,/g,'').match(/\\d+/);return m?parseInt(m[0],10):0;};const put=(k,v)=>{try{sessionStorage.setItem('__rzn_co_'+k,JSON.stringify(v));}catch(e){}};const get=(k)=>{try{return JSON.parse(sessionStorage.getItem('__rzn_co_'+k)||'null');}catch(e){return null;}};const h1=document.querySelector('h1');const name=N(h1&&h1.innerText);let tagline='';const ni=LINES.indexOf(name);if(ni>=0){for(let i=ni+1;i<Math.min(ni+5,LINES.length);i++){const l=LINES[i];if(l&&l!==name&&!/^(Home|About|Posts|Products|Jobs|Life|People|Follow|Following|Learn more|Visit website|More)$/i.test(l)&&!/followers|employees|alumni work here/i.test(l)){tagline=l;break;}}}let followers=0;const fm=T.slice(0,1200).match(/([\\d][\\d,]{3,})\\s+followers/);if(fm)followers=num(fm[1]);const map={};[...document.querySelectorAll('dt')].forEach((d)=>{const k=N(d.innerText).toLowerCase().replace(/[^a-z ]/g,'').trim();const v=N(d.nextElementSibling&&d.nextElementSibling.innerText);if(k&&v&&!map[k])map[k]=v;});let about='';const ov=[...document.querySelectorAll('h2,h3')].find((h)=>/^overview$/i.test(N(h.innerText)));if(ov){let el=ov;for(let i=0;i<7;i++){if(!el.parentElement)break;el=el.parentElement;if(N(el.innerText).length>N(ov.innerText).length+80)break;}about=N(el.innerText).replace(/^Overview\\s*/i,'');const cut=about.search(/\\bWebsite\\b/);if(cut>60)about=about.slice(0,cut).trim();if(about.length>4000)about=about.slice(0,4000);}let assoc=0;const am=T.match(/([\\d][\\d,]*)\\s+associated members/);if(am)assoc=num(am[1]);let locs=0;const lm=T.match(/Locations\\s*\\((\\d+)\\)/);if(lm)locs=num(lm[1]);const about_obj={name:name,tagline:tagline,followers:followers,about:about,website:map['website']||'',industry:map['industry']||'',company_size:map['company size']||'',headquarters:map['headquarters']||'',founded:map['founded']||'',specialties:map['specialties']||'',company_type:map['company type']||map['type']||'',phone:map['phone']||'',verified_page:map['verified page']||'',associated_members:assoc,locations_count:locs,about_url:location.href};put('about',about_obj);return about_obj;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract the About overview and the Website / Industry / Size / HQ / Founded / Specialties fields",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s14",
+      "action": {
+        "kind": "click_element",
+        "inputs": {
+          "wait_after_ms": 900
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "a[href*=\"/company/\"][href$=\"/people/\"]"
+        }
+      },
+      "name": "Click the People tab in the company page navigation",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s15",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the People tab to render",
+      "timeout_ms": 5500
+    },
+    {
+      "id": "s16",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "smooth": true,
+          "y": 800
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll to the employee breakdown charts"
+    },
+    {
+      "id": "s17",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the breakdown charts settle",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s18",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const N=(s)=>String(s==null?'':s).replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const LINES=String(document.body&&document.body.innerText||'').split('\\n').map(N).filter(Boolean);const T=LINES.join('\\n');const num=(s)=>{const m=String(s||'').replace(/,/g,'').match(/\\d+/);return m?parseInt(m[0],10):0;};const put=(k,v)=>{try{sessionStorage.setItem('__rzn_co_'+k,JSON.stringify(v));}catch(e){}};const get=(k)=>{try{return JSON.parse(sessionStorage.getItem('__rzn_co_'+k)||'null');}catch(e){return null;}};const HEADS=['Where they live','Where they studied','What they do','What they studied','What they are skilled at','Where they work','How you can reach them'];const STOP=HEADS.concat(['People you may know','Affiliated pages','Products people also use','Pages people also viewed','People also follow','Ex-coworkers that work here','Show more results']);let assoc=0;const am=T.match(/([\\d][\\d,]*)\\s+associated members/);if(am)assoc=num(am[1]);const grab=(head)=>{const i=LINES.indexOf(head);if(i<0)return [];const out=[];for(let j=i+1;j<LINES.length&&out.length<12;j++){const l=LINES[j];if(STOP.indexOf(l)>=0)break;if(/^(Add|toggle o(n|ff)|Show more|Show all|Search employees)/i.test(l))continue;const m=l.match(/^([\\d][\\d,]*)\\s+(.{2,80})$/);if(!m)continue;const c=num(m[1]);const pct=assoc>0?Math.round(c*1000/assoc)/10:0;out.push(N(m[2])+' — '+c+(assoc>0?' ('+pct+'%)':''));}return out;};const people={associated_members:assoc,what_they_do:grab('What they do'),where_they_live:grab('Where they live'),where_they_studied:grab('Where they studied'),what_they_studied:grab('What they studied'),skills:grab('What they are skilled at'),people_url:location.href};put('people',people);return people;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract the employee breakdowns (what they do, where they live, where they studied)",
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s19",
+      "action": {
+        "kind": "click_element",
+        "inputs": {
+          "wait_after_ms": 900
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "a[href*=\"/company/\"][href$=\"/posts/\"]"
+        }
+      },
+      "name": "Click the Posts tab in the company page navigation",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s20",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the Posts tab to render",
+      "timeout_ms": 5500
+    },
+    {
+      "id": "s21",
+      "action": {
+        "kind": "infinite_scroll",
+        "inputs": {
+          "max_scrolls": 6,
+          "scroll_delay": 1800,
+          "target_selector": "[data-urn^=\"urn:li:activity:\"]",
+          "target_count": 20
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Scroll the posts list until enough posts are loaded",
+      "timeout_ms": 40000
+    },
+    {
+      "id": "s22",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const N=(s)=>String(s==null?'':s).replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const LINES=String(document.body&&document.body.innerText||'').split('\\n').map(N).filter(Boolean);const T=LINES.join('\\n');const num=(s)=>{const m=String(s||'').replace(/,/g,'').match(/\\d+/);return m?parseInt(m[0],10):0;};const put=(k,v)=>{try{sessionStorage.setItem('__rzn_co_'+k,JSON.stringify(v));}catch(e){}};const get=(k)=>{try{return JSON.parse(sessionStorage.getItem('__rzn_co_'+k)||'null');}catch(e){return null;}};const CAP=Math.max(1,Math.min(50,parseInt(String(arg0).replace(/[^0-9]/g,''),10)||10));const nodes=[...document.querySelectorAll('[data-urn],[data-id]')].filter((e)=>{const u=e.getAttribute('data-urn')||e.getAttribute('data-id')||'';return u.indexOf('urn:li:activity:')===0;});const seen={};const posts=[];const now=Date.now();let recent30=0;const ageDays=(s)=>{const m=String(s||'').match(/(\\d+)\\s*(minute|hour|day|week|month|year)/i);if(!m)return -1;const n=parseInt(m[1],10);const u=m[2].toLowerCase();const f={minute:1/1440,hour:1/24,day:1,week:7,month:30,year:365}[u];return Math.round(n*f*10)/10;};for(const el of nodes){const urn=el.getAttribute('data-urn')||el.getAttribute('data-id');if(seen[urn])continue;seen[urn]=1;const txt=String(el.innerText||'');const flat=N(txt);const lab=(re)=>{const a=[...el.querySelectorAll('[aria-label]')].map((x)=>x.getAttribute('aria-label')||'');for(const s of a){const m=s.match(re);if(m)return num(m[1]);}return 0;};const reactions=lab(/^([\\d][\\d,]*)\\s+reaction/i);const comments=lab(/^([\\d][\\d,]*)\\s+comment/i);const reposts=lab(/^([\\d][\\d,]*)\\s+repost/i);const agem=flat.match(/\\u2022\\s*(\\d+\\s*(?:minute|hour|day|week|month|year)s?\\s*ago)/i);const posted=agem?N(agem[1]):'';const days=ageDays(posted);if(days>=0&&days<=30)recent30++;let body=txt.split('\\n').map(N).filter(Boolean);const vi=body.findIndex((l)=>/Visible to anyone/i.test(l));if(vi>=0)body=body.slice(vi+1);const NOISE=/^(Follow|Following|Like|Comment|Repost|Send|\\u2026more|see more|Feed post number|[\\d,]+ (reactions?|comments?|reposts?)|[\\d,]+ followers|Premium|Play|Pause|Loaded:|Remaining time|Current time|Playback speed|[\\d.]+x$|Turn (closed captions|fullscreen)|Unmute|Mute|Video Player|Activate to view larger image|Show more|Show less|\\u00b7)/i;body=body.filter((l)=>!NOISE.test(l)&&!/^[\\d,.%\\u00b7\\s]+$/.test(l));let text=body.join(' ');if(text.length>1200)text=text.slice(0,1200);posts.push({post_url:'https://www.linkedin.com/feed/update/'+urn+'/',urn:urn,is_repost:/reposted this/i.test(flat.slice(0,200)),posted:posted,age_days:days,text:text,reactions:reactions,comments:comments,reposts:reposts});if(posts.length>=CAP)break;}let followers=0;const nm=((get('about')||{}).name)||'';if(nm){const re=new RegExp(nm.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')+'\\\\s+([\\\\d][\\\\d,]{3,})\\\\s+followers');const fm2=T.match(re);if(fm2)followers=num(fm2[1]);}const out={posts:posts,posts_fetched:posts.length,posts_last_30_days:recent30,followers:followers,posts_url:location.href};put('posts',out);return out;",
+          "args": [
+            "{max_posts}"
+          ]
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract recent posts with permalinks, engagement counts, and posting recency",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s23",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const N=(s)=>String(s==null?'':s).replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const LINES=String(document.body&&document.body.innerText||'').split('\\n').map(N).filter(Boolean);const T=LINES.join('\\n');const num=(s)=>{const m=String(s||'').replace(/,/g,'').match(/\\d+/);return m?parseInt(m[0],10):0;};const put=(k,v)=>{try{sessionStorage.setItem('__rzn_co_'+k,JSON.stringify(v));}catch(e){}};const get=(k)=>{try{return JSON.parse(sessionStorage.getItem('__rzn_co_'+k)||'null');}catch(e){return null;}};const h=get('home')||{};const a=get('about')||{};const p=get('people')||{};const po=get('posts')||{};const slug=get('slug')||'';return {company_url:'https://www.linkedin.com/company/'+slug+'/',slug:slug,company_id:h.company_id||'',name:a.name||'',tagline:a.tagline||'',followers:po.followers||a.followers||0,employee_growth:h.employee_growth||'',about:a.about||'',website:a.website||'',industry:a.industry||'',company_size:a.company_size||'',headquarters:a.headquarters||'',founded:a.founded||'',specialties:a.specialties||'',company_type:a.company_type||'',phone:a.phone||'',verified_page:a.verified_page||'',locations_count:a.locations_count||0,associated_members:p.associated_members||a.associated_members||0,what_they_do:p.what_they_do||[],where_they_live:p.where_they_live||[],where_they_studied:p.where_they_studied||[],what_they_studied:p.what_they_studied||[],skills:p.skills||[],posts_fetched:po.posts_fetched||0,posts_last_30_days:po.posts_last_30_days||0,posts:po.posts||[],related_companies:h.related_companies||[],jobs_search_url:h.company_id?('https://www.linkedin.com/jobs/search/?f_C='+h.company_id+'&geoId=92000000&location=Worldwide'):''};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Merge the home, About, People, and Posts data into one company record",
+      "timeout_ms": 15000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "company_url": {
+          "type": "string"
+        },
+        "slug": {
+          "type": "string"
+        },
+        "company_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "tagline": {
+          "type": "string"
+        },
+        "followers": {
+          "type": "integer"
+        },
+        "employee_growth": {
+          "type": "string"
+        },
+        "about": {
+          "type": "string"
+        },
+        "website": {
+          "type": "string"
+        },
+        "industry": {
+          "type": "string"
+        },
+        "company_size": {
+          "type": "string"
+        },
+        "headquarters": {
+          "type": "string"
+        },
+        "founded": {
+          "type": "string"
+        },
+        "specialties": {
+          "type": "string"
+        },
+        "company_type": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "verified_page": {
+          "type": "string"
+        },
+        "locations_count": {
+          "type": "integer"
+        },
+        "associated_members": {
+          "type": "integer"
+        },
+        "what_they_do": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where_they_live": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "where_they_studied": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "what_they_studied": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "posts_fetched": {
+          "type": "integer"
+        },
+        "posts_last_30_days": {
+          "type": "integer"
+        },
+        "posts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "post_url": {
+                "type": "string"
+              },
+              "urn": {
+                "type": "string"
+              },
+              "is_repost": {
+                "type": "boolean"
+              },
+              "posted": {
+                "type": "string"
+              },
+              "age_days": {
+                "type": "number"
+              },
+              "text": {
+                "type": "string"
+              },
+              "reactions": {
+                "type": "integer"
+              },
+              "comments": {
+                "type": "integer"
+              },
+              "reposts": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "related_companies": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "jobs_search_url": {
+          "type": "string"
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s23",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open a LinkedIn company page and return About fields, employee breakdown charts, growth percentage, and recent posts as one record.",
+    "parameters": {
+      "company": "A LinkedIn company slug (e.g. stripe) OR a full /company/<slug>/ URL.",
+      "max_posts": "Maximum recent posts to return (default 10, cap 50)."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run linkedin company --param company=\"stripe\"",
+        "description": "Return the full company record for Stripe with the 10 most recent posts."
+      },
+      {
+        "command": "rzn-browser run linkedin company --param company=\"https://www.linkedin.com/company/stripe/\" --param max_posts=25",
+        "description": "Same, passing a full company URL and asking for 25 posts."
+      }
+    ],
+    "returns": [
+      "{ company_url, slug, company_id, name, tagline, followers, employee_growth, about, website, industry, company_size, headquarters, founded, specialties, company_type, phone, verified_page, locations_count, associated_members, what_they_do[], where_they_live[], where_they_studied[], what_they_studied[], skills[], posts_fetched, posts_last_30_days, posts[], related_companies[], jobs_search_url }",
+      "Breakdown arrays are formatted \"<label> — <count> (<share>%)\" where the share is that bucket's percentage of associated_members."
+    ],
+    "notes": [
+      "Read-only. Never follows, likes, comments, reposts, or applies.",
+      "Loads the company page once, then clicks its own About / People / Posts tabs instead of re-navigating, so the traffic pattern looks like a person browsing.",
+      "company_id is the numeric LinkedIn organisation id, scraped from the page's own f_C jobs link. Feed it to linkedin_company_jobs, or use jobs_search_url directly.",
+      "employee_growth is the free 'Growth trends' percentage on the company home tab. The deeper hiring-trend chart is LinkedIn Premium only and is not scraped.",
+      "LinkedIn does not publish a lifetime post count. posts_fetched is how many were loaded and posts_last_30_days is how many of those were posted within 30 days, which is the usable posting-cadence signal.",
+      "The company About tab is the classic UI with real dt/dd pairs, so those fields are stable. Missing fields degrade to empty string, empty array, or 0.",
+      "Every execute_javascript step sets use_cdp_eval because LinkedIn's CSP blocks script-tag injection on all pages.",
+      "Intermediate tab data is stashed in sessionStorage under __rzn_co_* keys so it survives the tab-to-tab navigations, then merged in the final step."
+    ]
+  }
+}

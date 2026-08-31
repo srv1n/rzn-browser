@@ -57,54 +57,43 @@ def copy_catalog_payload(root: Path, stage: Path) -> None:
 def build_extension(root: Path, version: str) -> None:
     extension_dir = root / "extension"
     build_env = {"RZN_BUILD_SIGNATURE": f"v{version}"}
+    run(["bun", "install", "--frozen-lockfile"], cwd=extension_dir)
+    run(["bun", "run", "build:chrome"], cwd=extension_dir, env=build_env)
+    validate_extension_bundle(extension_dir / "dist" / "chrome", version)
 
-    run(["bun", "install", "--frozen-lockfile"], cwd=root / "extension")
-    run(
-        ["bun", "run", "scripts/generate-types.ts"],
-        cwd=extension_dir,
-        env=build_env,
-    )
-    print(f"[INFO] Using RZN_BUILD_SIGNATURE=v{version}")
 
-    rm_rf(extension_dir / "dist")
-    (extension_dir / "dist").mkdir(parents=True, exist_ok=True)
-
-    vite_configs = [
-        "vite.config.background.ts",
-        "vite.config.content.ts",
-        "vite.config.shadow-dom.ts",
-        "vite.config.pagebridge.ts",
-        "vite.config.popup.ts",
+def validate_extension_bundle(bundle: Path, version: str) -> None:
+    required = [
+        "manifest.json",
+        "rzn-build.json",
+        "background.js",
+        "contentScript.js",
+        "pageBridge.js",
+        "popup.html",
+        "dashboard.html",
     ]
-    for config in vite_configs:
-        run(["bun", "x", "vite", "build", "--config", config], cwd=extension_dir, env=build_env)
+    missing = [name for name in required if not (bundle / name).is_file()]
+    if missing:
+        raise SystemExit(
+            f"[ERROR] Extension bundle {bundle} is incomplete; missing: {', '.join(missing)}"
+        )
 
-    for source, dest in {
-        "background.iife.js": "background.js",
-        "contentScript.iife.js": "contentScript.js",
-        "shadow-dom-instrumentation.iife.js": "shadow-dom-instrumentation.js",
-        "pageBridge.iife.js": "pageBridge.js",
-    }.items():
-        source_path = extension_dir / "dist" / source
-        if source_path.exists():
-            source_path.replace(extension_dir / "dist" / dest)
+    manifest = json.loads((bundle / "manifest.json").read_text())
+    metadata = json.loads((bundle / "rzn-build.json").read_text())
+    expected_signature = f"v{version}"
+    if manifest.get("version") != version:
+        raise SystemExit(
+            f"[ERROR] Extension manifest version is {manifest.get('version')!r}, expected {version!r}."
+        )
+    if metadata.get("build_signature") != expected_signature:
+        raise SystemExit(
+            "[ERROR] Extension build signature is "
+            f"{metadata.get('build_signature')!r}, expected {expected_signature!r}."
+        )
+    if metadata.get("extension_target") != "chrome":
+        raise SystemExit("[ERROR] Release extension bundle is not a Chrome build.")
 
-    run(
-        [
-            "bun",
-            "scripts/build-ext.ts",
-            "--target",
-            "chrome",
-            "--source-dir",
-            str(extension_dir / "dist"),
-            "--dist-root",
-            str(extension_dir),
-            "--build-signature",
-            f"v{version}",
-        ],
-        cwd=root,
-        env=build_env,
-    )
+    print(f"[OK] Verified Chrome extension bundle v{version}: {bundle}")
 
 
 def build_runtime(root: Path, version: str, platform_slug: str) -> Path:
@@ -207,11 +196,20 @@ def main() -> None:
     parser.add_argument("--platform", choices=sorted(RUNTIME_PLATFORMS))
     parser.add_argument("--no-workflows", action="store_true")
     parser.add_argument("--workflows-only", action="store_true")
+    parser.add_argument("--extension-only", action="store_true")
     args = parser.parse_args()
 
     validate_version(args.version)
     root = repo_root()
     (root / "dist" / "release").mkdir(parents=True, exist_ok=True)
+
+    if args.extension_only:
+        if args.workflows_only or args.platform:
+            raise SystemExit(
+                "[ERROR] --extension-only cannot be combined with --workflows-only or --platform."
+            )
+        build_extension(root, args.version)
+        return
 
     if args.workflows_only:
         stage = build_workflows(root, args.version)

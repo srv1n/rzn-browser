@@ -29,8 +29,12 @@ const fetch = async (url) => {
   assert.equal(url, `/backend-api/conversation/${chatId}`);
   return { ok: true, json: async () => ({ mapping, current_node: conversationNodes.shift() }) };
 };
+let routeReadyAt = null;
 const document = { body: { innerText: '' }, title: 'test' };
-const location = { href: `https://chatgpt.com/c/${chatId}`, pathname: `/c/${chatId}` };
+const location = {
+  get href() { return routeReadyAt !== null && clock < routeReadyAt ? 'https://chatgpt.com/' : `https://chatgpt.com/c/${chatId}`; },
+  get pathname() { return routeReadyAt !== null && clock < routeReadyAt ? '/' : `/c/${chatId}`; },
+};
 const window = {
   __rzn_chatgpt_picker: { desiredModel: 'GPT-5.6 Sol', desiredEffort: 'Pro' },
   __rzn_chatgpt_send_marker: { pre_user_id: 'old-user-id', message_text: 'target prompt', clicked_at: 1000 },
@@ -76,6 +80,19 @@ assert.equal(result.chat_url, location.href);
 assert.equal(result.submitted_message_id, 'submitted-user-id');
 assert.deepEqual(calls, ['/api/auth/session', `/backend-api/conversation/${chatId}`, `/backend-api/conversation/${chatId}`]);
 
+// A new-chat route can appear after s16's six-second wait; s17 must keep
+// waiting for it, then apply the same exact active-chain/message boundary.
+calls.length = 0;
+conversationNodes = ['active-assistant'];
+const routeRaceStartedAt = clock;
+routeReadyAt = routeRaceStartedAt + 7_000;
+const routeRace = await call();
+routeReadyAt = null;
+assert.ok(clock - routeRaceStartedAt > 6_000, 'route race must cross the old s16 boundary');
+assert.equal(routeRace.chat_id, chatId);
+assert.equal(routeRace.submitted_message_id, 'submitted-user-id');
+assert.deepEqual(calls, ['/api/auth/session', `/backend-api/conversation/${chatId}`]);
+
 // The turn never lands: the loop must give up on its own deadline, not run forever,
 // and must back off rather than hammering the conversation API.
 calls.length = 0;
@@ -110,12 +127,14 @@ mapping['active-user'].message.content.parts = ['target prompt'];
 // fit inside the step budget, or the harness kills it mid-poll instead of
 // letting it return a readable MESSAGE_BOUNDARY_UNAVAILABLE.
 const bind = wf.steps.find((step) => step.id === 's17');
+const routeWaitMs = Number(/const routeDeadline=Date\.now\(\)\+(\d+)/.exec(script)?.[1]);
 const deadlineMs = Number(/const deadline=Date\.now\(\)\+(\d+)/.exec(script)?.[1]);
+assert.ok(Number.isFinite(routeWaitMs), 's17 must bound its route wait with an explicit deadline');
 assert.ok(Number.isFinite(deadlineMs), 's17 must bound its poll loop with an explicit deadline');
 const slowestFetchMs = Math.max(...[...script.matchAll(/tfetch\([^;]*?,\s*(\d+)\)/g)].map((m) => Number(m[1])));
 assert.ok(
-  deadlineMs + slowestFetchMs <= bind.timeout_ms,
-  `s17 can run ${deadlineMs + slowestFetchMs}ms but the step allows ${bind.timeout_ms}ms`,
+  routeWaitMs + deadlineMs + slowestFetchMs <= bind.timeout_ms,
+  `s17 can run ${routeWaitMs + deadlineMs + slowestFetchMs}ms but the step allows ${bind.timeout_ms}ms`,
 );
 
 const submit = wf.steps.find((step) => step.id === 's15');

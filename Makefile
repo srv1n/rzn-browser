@@ -2,6 +2,7 @@
 
 .PHONY: help build build-release build-rust build-rust-release build-ext build-ext-release clean codebasezip logs-clear logs-follow logs-show test test-dom test-dom-units ads-smoke dev setup install reload-ext rust \
 	test-ext-unit test-setup-ext-sync test-ext-e2e-install test-ext-e2e-run test-ext-e2e \
+	test-release-extension test-release-install \
 	index sg-find-stream sg-guards context-snippets agent-run agent-validate scope scope-q reducers-index invariants schema-check \
 	plugins-keygen plugins-build-rzn-browser-macos plugins-verify bundle-macos-share \
 	release x-export-threads
@@ -49,6 +50,8 @@ help:
 	@echo "  make schema-check  - Verify actions schema ↔ generated types"
 	@echo "  make test-ext-unit [ARGS='path'] - Run extension Vitest tests"
 	@echo "  make test-setup-ext-sync - Verify canonical runtime extension sync"
+	@echo "  make test-release-extension VERSION=1.2.3 - Build and validate the exact release extension path"
+	@echo "  make test-release-install - Verify release installer upgrades and legacy-path refresh"
 	@echo "  make test-ext-e2e  - Build + run extension Playwright e2e"
 	@echo ""
 	@echo "DOM Testing Commands:"
@@ -127,6 +130,18 @@ test-ext-unit:
 test-setup-ext-sync:
 	@echo "🧪 Verifying runtime extension install sync..."
 	bash scripts/test_install_extension_runtime.sh
+
+test-release-extension:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Usage: make test-release-extension VERSION=1.2.3"; \
+		exit 2; \
+	fi
+	@echo "🧪 Building and validating release extension v$(VERSION)..."
+	python3 scripts/release/build_release_artifacts.py --version "$(VERSION)" --extension-only
+
+test-release-install:
+	@echo "🧪 Verifying release installer upgrades..."
+	bash scripts/release/test_install_verification.sh
 
 # Install Playwright browsers for extension e2e
 test-ext-e2e-install:

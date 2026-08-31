@@ -1,5 +1,5 @@
 // Runnable check for the chatgpt/send model-picker steps (s6/s9/s12).
-// Simulates ChatGPT's current composer picker: pill -> Advanced -> Model/Effort -> option submenu.
+// Simulates ChatGPT's legacy and compact composer pickers.
 // Run: node workflows/chatgpt/chatgpt_send_picker.test.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
@@ -31,11 +31,12 @@ class El {
   append(...kids) { for (const k of kids) { k.parent = this; this.children.push(k); } return this; }
   clear() { this.children = []; }
   scrollIntoView() {}
+  focus() {}
   getBoundingClientRect() { return { width: 100, height: 20 }; }
   closest(sel) { let n = this; while (n) { if (matches(n, sel)) return n; n = n.parent; } return null; }
   dispatchEvent(ev) {
     if (ev.type === 'click' && this.onclick) this.onclick(this);
-    if (ev.type === 'keydown' && this.onkeydown) this.onkeydown(this);
+    if (ev.type === 'keydown' && this.onkeydown) this.onkeydown(ev);
     return true;
   }
   querySelectorAll(sel) { return descendants(this).filter((n) => matches(n, sel)); }
@@ -69,13 +70,14 @@ function matches(node, sel) {
 }
 
 // ---- the simulated picker ---------------------------------------------------
-// shape: how the Advanced panel renders its two rows.
+// shape: how the picker renders its rows.
 //   'menuitem'    ground truth, captured 2026-08-07 from the live page:
 //                 <div role=menuitem aria-haspopup=menu> whose label and value sit
 //                 in separate child divs, so textContent is "ModelGPT-5.6 Sol" with
 //                 NO separating space. A /^Model\b/ match fails on that string.
 //   'button-aria' plain <button aria-label="Model"> whose text is only the value
 //   'wrapped'     role=menuitem rows nested inside a plain container div
+//   'compact'     <div role=menuitem aria-label="Select model">Medium</div>
 function buildPage({ models, efforts, model, effort, commit = true, shape = 'menuitem' }) {
   const state = { model, effort };
   const doc = new El('body');
@@ -104,6 +106,21 @@ function buildPage({ models, efforts, model, effort, commit = true, shape = 'men
     };
     return r;
   };
+  const compact = () => {
+    const r = new El('div', { role: 'menuitem', 'aria-label': 'Select model' }, state.effort);
+    const power = new El('div', { role: 'menuitem', 'aria-label': 'Power' });
+    const slider = new El('span', { role: 'slider', 'aria-valuemin': '0', 'aria-valuemax': String(efforts.length - 1), 'aria-valuenow': String(efforts.indexOf(state.effort)) });
+    power.append(slider);
+    power.onkeydown = (ev) => {
+      const current = Number(slider.getAttribute('aria-valuenow'));
+      const next = Math.max(0, Math.min(efforts.length - 1, current + (ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowLeft' ? -1 : 0)));
+      slider.setAttribute('aria-valuenow', String(next));
+      if (commit) { state.effort = efforts[next]; r.text = state.effort; }
+    };
+    r.onclick = () => {};
+    menu.append(power, ...models.map((o) => new El('div', { role: 'menuitemradio', 'aria-checked': String(o === 'GPT-5.6 Sol') }, o)));
+    return r;
+  };
   const openAdvanced = () => {
     menu.clear();
     // the live picker keeps an inert copy of the collapsed view mounted alongside
@@ -121,7 +138,8 @@ function buildPage({ models, efforts, model, effort, commit = true, shape = 'men
   pill.onclick = () => {
     menu.clear();
     menu.attrs['data-state'] = 'open';
-    menu.append(advanced);
+    if (shape === 'compact') menu.append(compact());
+    else menu.append(advanced);
     if (!doc.children.includes(menu)) doc.append(menu);
   };
   doc.body = doc;
@@ -133,7 +151,7 @@ async function run(stepId, page, args = []) {
   const body = scriptOf(stepId);
   const fn = new Function('document', 'window', 'location', 'URLSearchParams', 'getComputedStyle', 'Element', 'PointerEvent', 'MouseEvent', 'KeyboardEvent', 'arg0', 'arg1', 'arg2',
     `return (async()=>{${body}})()`);
-  class Ev { constructor(type) { this.type = type; } }
+  class Ev { constructor(type, init = {}) { this.type = type; Object.assign(this, init); } }
   return fn(page.doc, page.win, page.win.location, URLSearchParams, () => ({ visibility: 'visible', display: 'block' }), El, Ev, Ev, Ev, ...args);
 }
 
@@ -163,6 +181,32 @@ for (const shape of ['menuitem', 'button-aria', 'wrapped']) {
   assert.equal(s12.model_selection.applied, true, `${shape}: verification reads both rows back`);
 }
 
+{ // compact Thinking effort picker: Select model row exposes effort directly
+  const page = newPage({ shape: 'compact', effort: 'Medium' });
+  const s6 = await run('s6', page, ['GPT-5.6 Sol', 'Pro', 'true']);
+  assert.equal(s6.picker_mode, 'compact');
+  assert.equal(s6.target_text, 'Medium', 'compact row reproduces aria-label Select model with Medium text');
+  assert.deepEqual(s6.available_models, ['GPT-5.6 Sol'], 'compact picker does not search effort options for a model');
+  commitStamped(page, 'rzn-target-model');
+  const s9 = await run('s9', page);
+  assert.equal(s9.picker_mode, 'compact');
+  assert.deepEqual(s9.available_efforts, EFFORTS);
+  commitStamped(page, 'rzn-target-effort');
+  assert.equal(page.state.effort, 'Pro');
+  const s12 = await run('s12', page, ['none']);
+  assert.equal(s12.model_selection.applied, true, 'compact picker verifies fixed model and exact Pro effort');
+  assert.equal(s12.model_selection.model_selected, 'GPT-5.6 Sol');
+  assert.equal(s12.model_selection.effort_selected, 'Pro');
+}
+
+{ // compact picker cannot satisfy a different exact model
+  const page = newPage({ shape: 'compact', effort: 'Medium' });
+  await assert.rejects(
+    () => run('s6', page, ['GPT-5.5', 'Pro', 'true']),
+    /compact Thinking effort picker is fixed to GPT-5\.6 Sol/,
+  );
+}
+
 { // happy path: model + effort selected, then verified
   const page = newPage();
   const s6 = await run('s6', page, ['GPT-5.6 Sol', 'High', 'true']);
@@ -181,11 +225,24 @@ for (const shape of ['menuitem', 'button-aria', 'wrapped']) {
   assert.equal(s12.upload_input_selector, '#rzn-chatgpt-upload-input');
 }
 
-{ // defaults are GPT-5.6 Sol / Pro
+{ // defaults are GPT-5.6 Sol / Medium
   const page = newPage();
   const s6 = await run('s6', page, ['', '', '']);
   assert.equal(s6.desiredModel, 'GPT-5.6 Sol');
-  assert.equal(s6.desiredEffort, 'Pro');
+  assert.equal(s6.desiredEffort, 'Medium');
+}
+
+{ // every supported effort tier selects and verifies through the same picker path
+  for (const effort of EFFORTS) {
+    const page = newPage();
+    await run('s6', page, ['GPT-5.6 Sol', effort, 'true']);
+    commitStamped(page, 'rzn-target-model');
+    await run('s9', page);
+    commitStamped(page, 'rzn-target-effort');
+    const s12 = await run('s12', page, ['none']);
+    assert.equal(s12.model_selection.applied, true, `${effort}: selection verifies`);
+    assert.equal(s12.model_observed, `GPT-5.6 Sol / ${effort}`, `${effort}: observed effort matches`);
+  }
 }
 
 { // a plan without Pro fails with the list of what IS available, not a blank throw

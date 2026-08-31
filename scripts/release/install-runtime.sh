@@ -114,6 +114,59 @@ install_file_atomic() {
   mv -f "$tmp" "$dest"
 }
 
+validate_extension_tree() {
+  tree=$1
+  for required in manifest.json rzn-build.json background.js contentScript.js pageBridge.js popup.html dashboard.html; do
+    if [ ! -f "$tree/$required" ]; then
+      echo "[ERROR] Incomplete extension bundle; missing $tree/$required" >&2
+      return 1
+    fi
+  done
+}
+
+install_extension_tree() {
+  source_tree=$1
+  dest_tree=$2
+  expected_root=$3
+  label=$4
+  parent=$(dirname "$dest_tree")
+
+  validate_extension_tree "$source_tree"
+  mkdir -p "$parent"
+  staged=$(mktemp -d "$parent/.rzn-extension.new.XXXXXX")
+  backup=$(mktemp -d "$parent/.rzn-extension.old.XXXXXX")
+  rmdir "$backup"
+
+  if ! cp -R "$source_tree/." "$staged/" || ! validate_extension_tree "$staged"; then
+    guarded_rm_rf "$staged" "$expected_root" "$label staging directory"
+    return 1
+  fi
+
+  had_previous=0
+  if [ -e "$dest_tree" ]; then
+    mv "$dest_tree" "$backup"
+    had_previous=1
+  fi
+
+  if mv "$staged" "$dest_tree" \
+    && cmp -s "$source_tree/manifest.json" "$dest_tree/manifest.json" \
+    && cmp -s "$source_tree/rzn-build.json" "$dest_tree/rzn-build.json"; then
+    if [ "$had_previous" = "1" ]; then
+      guarded_rm_rf "$backup" "$expected_root" "$label previous directory"
+    fi
+    return 0
+  fi
+
+  if [ -e "$dest_tree" ]; then
+    guarded_rm_rf "$dest_tree" "$expected_root" "$label failed directory"
+  fi
+  if [ "$had_previous" = "1" ]; then
+    mv "$backup" "$dest_tree"
+  fi
+  echo "[ERROR] Failed to install verified $label; previous copy restored." >&2
+  return 1
+}
+
 case "$(uname -s)" in
   Darwin)
     INSTALL_ROOT=${RZN_RUNTIME_DIR:-"$HOME/Library/Application Support/RZN"}
@@ -134,12 +187,19 @@ EXT_DIR="$INSTALL_ROOT/extension/dist/chrome"
 MANIFEST_PATH="$CHROME_HOST_DIR/$HOST_NAME.json"
 GLOBAL_BIN_DIR=$(default_global_bin_dir)
 
-for required in "$SCRIPT_DIR/bin/rzn-browser" "$SCRIPT_DIR/bin/rzn-native-host" "$SCRIPT_DIR/extension/dist/chrome/manifest.json"; do
+for required in \
+  "$SCRIPT_DIR/bin/rzn-browser" \
+  "$SCRIPT_DIR/bin/rzn-native-host" \
+  "$SCRIPT_DIR/extension/dist/chrome/manifest.json" \
+  "$SCRIPT_DIR/extension/dist/chrome/rzn-build.json" \
+  "$SCRIPT_DIR/extension/dist/chrome/dashboard.html"
+do
   if [ ! -e "$required" ]; then
     echo "[ERROR] Missing packaged file: $required" >&2
     exit 1
   fi
 done
+validate_extension_tree "$SCRIPT_DIR/extension/dist/chrome"
 
 mkdir -p "$BIN_DIR" "$CHROME_HOST_DIR" "$GLOBAL_BIN_DIR"
 
@@ -148,9 +208,24 @@ install_file_atomic "$SCRIPT_DIR/bin/rzn-browser" "$BIN_DIR/rzn-browser"
 install_file_atomic "$SCRIPT_DIR/bin/rzn-native-host" "$BIN_DIR/rzn-native-host"
 
 echo "[INFO] Installing stable extension copy into: $EXT_DIR"
-guarded_rm_rf "$EXT_DIR" "$INSTALL_ROOT" "runtime extension"
-mkdir -p "$(dirname "$EXT_DIR")"
-cp -R "$SCRIPT_DIR/extension/dist/chrome" "$EXT_DIR"
+install_extension_tree \
+  "$SCRIPT_DIR/extension/dist/chrome" \
+  "$EXT_DIR" \
+  "$INSTALL_ROOT" \
+  "runtime extension"
+
+if [ "$(uname -s)" = "Darwin" ] && [ "$(basename "$INSTALL_ROOT")" = "RZN" ]; then
+  LEGACY_ROOT="$(dirname "$INSTALL_ROOT")/rzn"
+  LEGACY_EXT_DIR="$LEGACY_ROOT/extension/dist-chrome"
+  if [ -f "$LEGACY_EXT_DIR/manifest.json" ] && ! [ "$LEGACY_EXT_DIR" -ef "$EXT_DIR" ]; then
+    echo "[INFO] Refreshing legacy Chrome extension path still used by existing installations: $LEGACY_EXT_DIR"
+    install_extension_tree \
+      "$SCRIPT_DIR/extension/dist/chrome" \
+      "$LEGACY_EXT_DIR" \
+      "$LEGACY_ROOT" \
+      "legacy runtime extension"
+  fi
+fi
 
 if [ -d "$SCRIPT_DIR/skills" ]; then
   echo "[INFO] Installing bundled skills into: $INSTALL_ROOT/skills/builtin"
@@ -192,7 +267,6 @@ if ! path_contains_dir "$GLOBAL_BIN_DIR"; then
 fi
 echo "Next:"
 echo "1. Open chrome://extensions"
-echo "2. Enable Developer mode"
-echo "3. Load unpacked from: $EXT_DIR"
-echo "4. Restart Chrome once"
-echo "5. Run: rzn-browser workflow list google"
+echo "2. Click Reload on RZN Browser Automation"
+echo "3. If this is the first install, load unpacked from: $EXT_DIR"
+echo "4. Run: rzn-browser supervisor ensure-ready"
