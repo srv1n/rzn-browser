@@ -176,10 +176,10 @@ describe('manifest generation', () => {
   it('exposes CI-friendly build and package commands', async () => {
     const packageJson = await readJson(path.join(repoRoot, 'extension', 'package.json'));
 
-    expect(packageJson.scripts['build']).toContain('./build.sh all');
-    expect(packageJson.scripts['build:chrome']).toContain('./build.sh chrome');
-    expect(packageJson.scripts['build:edge']).toContain('./build.sh edge');
-    expect(packageJson.scripts['build:chromium']).toContain('./build.sh chromium');
+    expect(packageJson.scripts['build']).toContain('bash build.sh all');
+    expect(packageJson.scripts['build:chrome']).toContain('bash build.sh chrome');
+    expect(packageJson.scripts['build:edge']).toContain('bash build.sh edge');
+    expect(packageJson.scripts['build:chromium']).toContain('bash build.sh chromium');
     expect(packageJson.scripts['package:chrome']).toContain('tar -czf');
     expect(packageJson.scripts['package:edge']).toContain('tar -czf');
     expect(packageJson.scripts['package:chromium']).toContain('tar -czf');
