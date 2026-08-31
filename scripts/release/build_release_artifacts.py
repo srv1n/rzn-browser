@@ -181,6 +181,11 @@ def package_stage(root: Path, stage: Path, *, version: str, kind: str, platform_
     if kind == "workflow-catalog":
         asset = release_dir / "rzn-browser-workflows.tar.gz"
         tar_directory(stage, asset)
+        # The channel release keeps one canonical bundle plus a retired copy per
+        # version, so an older catalog stays fetchable by an explicit version.
+        retired = release_dir / f"rzn-browser-workflows-{version}.tar.gz"
+        copy_file(asset, retired)
+        write_sidecars(retired, version=version, kind=kind, platform_slug=platform_slug)
     elif platform_slug == "windows-x64":
         asset = release_dir / f"rzn-browser-{platform_slug}.zip"
         zip_directory(stage, asset)

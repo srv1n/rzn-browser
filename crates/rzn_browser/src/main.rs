@@ -176,6 +176,11 @@ enum Commands {
 
 const DEFAULT_SNAPSHOT_MODE: &str = "on-error";
 
+/// Rolling GitHub release that carries the workflow catalog. The catalog ships on
+/// its own cadence from `workflows-v*` tags, so it is deliberately not the tagged
+/// runtime release: a selector fix must not require a CLI or extension rebuild.
+const WORKFLOW_CATALOG_CHANNEL_TAG: &str = "workflows-latest";
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
 enum WorkflowSourceArg {
     User,
@@ -650,9 +655,13 @@ struct WorkflowPullArgs {
     #[arg(long, default_value = "srv1n/rzn-browser")]
     repo: String,
 
-    /// Pull directly from a GitHub source archive ref instead of the latest release workflows asset
+    /// Pull directly from a GitHub source archive ref instead of the workflow catalog channel
     #[arg(long = "ref")]
     git_ref: Option<String>,
+
+    /// Pull a retired catalog version from the channel instead of the canonical bundle
+    #[arg(long = "catalog-version")]
+    catalog_version: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -6532,7 +6541,55 @@ async fn handle_workflow_pull(args: WorkflowPullArgs) -> Result<(), Box<dyn std:
     println!("Updated bundled workflow catalog:");
     println!("  builtin: {}", summary.builtin_dir);
     println!("  workflows: {}", summary.workflow_files);
+    print_user_shadow_warning();
     Ok(())
+}
+
+/// A user fork keeps winning resolution over the builtin catalog, so the copy this
+/// pull just installed never runs. Say so loudly; a silently shadowed workflow is the
+/// failure mode that makes a catalog update look like it did nothing.
+///
+/// The check is deliberately independent of the current directory: a repo checkout
+/// outranks both sources, so running the pull from inside the repo would otherwise
+/// hide a fork that still wins everywhere else.
+fn print_user_shadow_warning() {
+    let entries = match list_named_workflows_with_query(&WorkflowCatalogQuery {
+        system_filter: None,
+        source_filter: None,
+        include_all_sources: true,
+    }) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+
+    let mut by_workflow: BTreeMap<(String, String), Vec<&NamedWorkflowEntry>> = BTreeMap::new();
+    for entry in &entries {
+        by_workflow
+            .entry((entry.system.clone(), entry.workflow.clone()))
+            .or_default()
+            .push(entry);
+    }
+
+    let shadowing: Vec<&NamedWorkflowEntry> = by_workflow
+        .values()
+        .filter(|group| group.iter().any(|entry| entry.source == "builtin"))
+        .filter_map(|group| group.iter().find(|entry| entry.source == "user").copied())
+        .collect();
+
+    if shadowing.is_empty() {
+        return;
+    }
+
+    println!();
+    println!(
+        "[WARN] {} user workflow(s) shadow a builtin copy you just installed:",
+        shadowing.len()
+    );
+    for entry in &shadowing {
+        println!("  {} -> {}", entry.id, entry.path);
+    }
+    println!("  A user fork outranks builtin, so the updated builtin workflow will not run.");
+    println!("  Delete or re-sync those files, then confirm with: rzn-browser workflow list --all-sources");
 }
 
 fn workflow_ref_value(args: &WorkflowRefArgs) -> anyhow::Result<String> {
@@ -6813,9 +6870,15 @@ fn workflow_pull_url(args: &WorkflowPullArgs) -> String {
         );
     }
     let repo = std::env::var("RZN_INSTALL_REPO").unwrap_or_else(|_| args.repo.clone());
+    let asset = match args.catalog_version.as_ref() {
+        Some(version) => format!("rzn-browser-workflows-{}.tar.gz", version.trim()),
+        None => "rzn-browser-workflows.tar.gz".to_string(),
+    };
     format!(
-        "https://github.com/{}/releases/latest/download/rzn-browser-workflows.tar.gz",
-        repo.trim()
+        "https://github.com/{}/releases/download/{}/{}",
+        repo.trim(),
+        WORKFLOW_CATALOG_CHANNEL_TAG,
+        asset
     )
 }
 
@@ -7372,6 +7435,51 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("{}_{}", prefix, uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    #[test]
+    fn workflow_pull_defaults_to_the_catalog_channel_not_the_runtime_release() {
+        let args = WorkflowPullArgs {
+            repo_root: None,
+            url: None,
+            repo: "srv1n/rzn-browser".to_string(),
+            git_ref: None,
+            catalog_version: None,
+        };
+        assert_eq!(
+            workflow_pull_url(&args),
+            "https://github.com/srv1n/rzn-browser/releases/download/workflows-latest/rzn-browser-workflows.tar.gz"
+        );
+    }
+
+    #[test]
+    fn workflow_pull_can_fetch_a_retired_catalog_version() {
+        let args = WorkflowPullArgs {
+            repo_root: None,
+            url: None,
+            repo: "srv1n/rzn-browser".to_string(),
+            git_ref: None,
+            catalog_version: Some("0.1.4".to_string()),
+        };
+        assert_eq!(
+            workflow_pull_url(&args),
+            "https://github.com/srv1n/rzn-browser/releases/download/workflows-latest/rzn-browser-workflows-0.1.4.tar.gz"
+        );
+    }
+
+    #[test]
+    fn workflow_pull_ref_wins_over_the_channel() {
+        let args = WorkflowPullArgs {
+            repo_root: None,
+            url: None,
+            repo: "srv1n/rzn-browser".to_string(),
+            git_ref: Some("main".to_string()),
+            catalog_version: None,
+        };
+        assert_eq!(
+            workflow_pull_url(&args),
+            "https://github.com/srv1n/rzn-browser/archive/main.tar.gz"
+        );
     }
 
     #[test]

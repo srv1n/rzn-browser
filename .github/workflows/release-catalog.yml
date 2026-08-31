@@ -1,0 +1,125 @@
+name: Release Workflow Catalog
+
+# The workflow catalog ships on its own cadence. A selector fix is JSON only, so it
+# must not need a CLI or extension rebuild: tag `workflows-vX.Y.Z` and this job
+# republishes the rolling `workflows-latest` release. Runtime tags (`vX.Y.Z`) keep
+# shipping the CLI and the extension together in release.yml.
+
+on:
+  push:
+    tags:
+      - "workflows-v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing catalog tag to publish, e.g. workflows-v0.1.4"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CHANNEL_TAG: workflows-latest
+
+jobs:
+  publish_catalog:
+    name: Publish Workflow Catalog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: vars
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ ! "$TAG" =~ ^workflows-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "[ERROR] Catalog tags must look like workflows-v1.2.3" >&2
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#workflows-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.vars.outputs.tag }}
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Check catalog manifests
+        shell: bash
+        run: python scripts/release/check_workflow_catalog.py
+
+      - name: Run workflow tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          for test in workflows/**/*.test.mjs; do
+            echo "[TEST] $test"
+            node "$test"
+          done
+
+      - name: Build workflow catalog bundle
+        shell: bash
+        run: |
+          python scripts/release/build_release_artifacts.py \
+            --version "${{ steps.vars.outputs.version }}" \
+            --workflows-only
+
+      - name: Publish to the catalog channel
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.vars.outputs.tag }}
+          VERSION: ${{ steps.vars.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NOTES="Rolling workflow catalog channel.
+
+          The canonical bundle is always \`rzn-browser-workflows.tar.gz\`, currently catalog v${VERSION} (tag \`${TAG}\`).
+          Retired catalogs stay attached here as \`rzn-browser-workflows-<version>.tar.gz\`.
+
+          Install the canonical bundle:
+
+              rzn-browser workflow pull
+
+          Install a retired catalog:
+
+              rzn-browser workflow pull --catalog-version <version>
+          "
+
+          if gh release view "$CHANNEL_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release edit "$CHANNEL_TAG" --repo "$GH_REPO" \
+              --title "Workflow Catalog (canonical: v${VERSION})" \
+              --notes "$NOTES" --prerelease --latest=false
+          else
+            gh release create "$CHANNEL_TAG" --repo "$GH_REPO" \
+              --title "Workflow Catalog (canonical: v${VERSION})" \
+              --notes "$NOTES" --prerelease --latest=false
+          fi
+
+          gh release upload "$CHANNEL_TAG" --repo "$GH_REPO" --clobber \
+            dist/release/rzn-browser-workflows.tar.gz \
+            dist/release/rzn-browser-workflows.tar.gz.sha256 \
+            dist/release/rzn-browser-workflows.tar.gz.manifest.json \
+            "dist/release/rzn-browser-workflows-${VERSION}.tar.gz" \
+            "dist/release/rzn-browser-workflows-${VERSION}.tar.gz.sha256" \
+            "dist/release/rzn-browser-workflows-${VERSION}.tar.gz.manifest.json"

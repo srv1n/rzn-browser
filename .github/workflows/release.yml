@@ -133,6 +133,9 @@ jobs:
           path: |
             dist/release/rzn-browser-${{ matrix.slug }}*
 
+  # The catalog also ships on its own cadence from `workflows-v*` tags, through
+  # release-catalog.yml. This job stays so every runtime release keeps a matching
+  # catalog snapshot, and so CLIs older than the channel can still pull.
   build_workflows:
     name: Build Workflow Catalog Bundle
     needs: release_meta

@@ -40,6 +40,45 @@ rzn-browser workflow dirs
 rzn-browser workflow list --all-sources
 ```
 
+## Shipping a catalog update
+
+The catalog ships on its own cadence, separate from the CLI and the extension.
+A selector fix is JSON only, so it never needs a runtime rebuild.
+
+```sh
+rzn-browser workflow pull                          # canonical catalog from the channel
+rzn-browser workflow pull --catalog-version 0.1.4  # a retired catalog version
+rzn-browser workflow pull --ref main               # a branch, before it is published
+rzn-browser workflow pull --repo-root .            # a local checkout
+```
+
+The channel is the rolling `workflows-latest` GitHub release. It always holds one
+canonical `rzn-browser-workflows.tar.gz`, plus every retired catalog kept under its
+version number as `rzn-browser-workflows-<version>.tar.gz`.
+
+To publish, tag the catalog and push the tag:
+
+```sh
+git tag workflows-v0.1.5
+git push origin workflows-v0.1.5
+```
+
+`.github/workflows/release-catalog.yml` then validates the manifests, runs every
+`workflows/**/*.test.mjs`, builds the bundle, and republishes the channel. Runtime
+tags (`vX.Y.Z`) stay in `release.yml` and keep shipping the CLI and the extension
+together.
+
+Run the same gate locally before tagging:
+
+```sh
+python scripts/release/check_workflow_catalog.py
+node workflows/chatgpt/chatgpt_send_picker.test.mjs
+```
+
+`pull` warns when a `user/` fork shadows a builtin workflow it just installed. Do
+not ignore that warning: a fork outranks builtin everywhere outside a repo
+checkout, so the update you just installed will not run.
+
 ## Parameters
 
 Use the narrowest honest type:
