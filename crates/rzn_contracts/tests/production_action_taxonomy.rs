@@ -58,7 +58,8 @@ fn production_manifest_actions_are_first_class_contract_kinds() {
                 continue;
             }
 
-            let decoded = serde_json::from_value::<WorkflowActionKind>(Value::String(kind.to_string()));
+            let decoded =
+                serde_json::from_value::<WorkflowActionKind>(Value::String(kind.to_string()));
             match decoded {
                 Ok(decoded) if decoded.engine_step_type() == Some(kind) => {}
                 Ok(decoded) => unknown_actions.push(format!(

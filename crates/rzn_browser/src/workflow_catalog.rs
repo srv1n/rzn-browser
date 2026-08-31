@@ -242,8 +242,7 @@ pub fn install_builtin_catalog_to_root(
     fs::create_dir_all(&staging_dir)
         .with_context(|| format!("create staging workflow dir {}", staging_dir.display()))?;
 
-    let install_result =
-        (|| -> Result<usize> { copy_workflow_catalog(&workflows_src, &staging_dir) })();
+    let install_result = copy_workflow_catalog(&workflows_src, &staging_dir);
 
     let workflow_files = match install_result {
         Ok(count) => count,

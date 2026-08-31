@@ -414,11 +414,7 @@ impl ParamDef {
         }
     }
 
-    fn validate_value(
-        &self,
-        field: &str,
-        value: &Value,
-    ) -> Result<(), Vec<ParamValidationIssue>> {
+    fn validate_value(&self, field: &str, value: &Value) -> Result<(), Vec<ParamValidationIssue>> {
         let mut issues = Vec::new();
 
         if !self.enum_values.is_empty() && !self.enum_values.iter().any(|item| item == value) {
@@ -1270,8 +1266,7 @@ mod tests {
             fingerprint: "abc".into(),
             message: "timed out".into(),
         });
-        let round: RunResult =
-            serde_json::from_value(serde_json::to_value(with).unwrap()).unwrap();
+        let round: RunResult = serde_json::from_value(serde_json::to_value(with).unwrap()).unwrap();
         assert_eq!(round.failure_summary.unwrap().error_class, "timeout");
     }
 }

@@ -1064,13 +1064,11 @@ impl LLMClient {
 
         // Create appropriate provider
         let provider: Arc<dyn LLMProvider> = match provider_type {
-            ProviderType::OpenAI => {
-                Arc::new(OpenAIClient::new(
-                    config.llm_api_key.clone(),
-                    config.model.clone(),
-                    config.llm_timeout,
-                )?)
-            }
+            ProviderType::OpenAI => Arc::new(OpenAIClient::new(
+                config.llm_api_key.clone(),
+                config.model.clone(),
+                config.llm_timeout,
+            )?),
             ProviderType::Gemini => Arc::new(GeminiClient::new(
                 config.llm_api_key.clone(),
                 config.model.clone(),

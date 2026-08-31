@@ -471,14 +471,14 @@ impl BrokerClient {
                         Err(err) => failures.push(format!("spawn browser supervisor ({})", err)),
                     }
                 }
-                return Err(PlanError::BrokerError(format!(
+                Err(PlanError::BrokerError(format!(
                     "Failed to connect to browser supervisor endpoint. Checked: {}",
                     if failures.is_empty() {
                         "<no supervisor socket/token found>".to_string()
                     } else {
                         failures.join("; ")
                     }
-                )));
+                )))
             }
         }
     }

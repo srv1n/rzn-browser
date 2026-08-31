@@ -1,9 +1,9 @@
 use crate::host::RuntimeTransport;
 use crate::Result;
 use rzn_contracts::browser::{
-    BrowserActionResult, BrowserAction, Capabilities, DebugMode, BrowserElement, SnapshotMetadata,
-    BrowserSnapshot, SpatialInfo, BrowserTarget, TranscriptEntry, BrowserTranscript, Viewport,
-    BROWSER_CONTRACT,
+    BrowserAction, BrowserActionResult, BrowserElement, BrowserSnapshot, BrowserTarget,
+    BrowserTranscript, Capabilities, DebugMode, SnapshotMetadata, SpatialInfo, TranscriptEntry,
+    Viewport, BROWSER_CONTRACT,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -345,7 +345,10 @@ impl Session {
         }
     }
 
-    fn resolve_target_selector(&self, target: &BrowserTarget) -> std::result::Result<String, Error> {
+    fn resolve_target_selector(
+        &self,
+        target: &BrowserTarget,
+    ) -> std::result::Result<String, Error> {
         if let Some(selector) = target.selector.as_ref() {
             if !selector.trim().is_empty() {
                 return Ok(selector.clone());

@@ -1286,7 +1286,7 @@ async fn endpoint_manager_loop(
 
         if may_spawn_supervisor
             && active_bridges.lock().await.is_empty()
-            && last_supervisor_spawn_attempt.map_or(true, |attempt| {
+            && last_supervisor_spawn_attempt.is_none_or(|attempt| {
                 attempt.elapsed() >= Duration::from_millis(SUPERVISOR_RESPAWN_COOLDOWN_MS)
             })
         {

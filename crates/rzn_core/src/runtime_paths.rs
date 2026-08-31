@@ -82,7 +82,11 @@ pub fn platform_app_base_candidates() -> Vec<PathBuf> {
         if let Some(home) = dirs::home_dir() {
             push_unique(
                 &mut bases,
-                home.join(if cfg!(target_os = "linux") { "rzn" } else { "RZN" }),
+                home.join(if cfg!(target_os = "linux") {
+                    "rzn"
+                } else {
+                    "RZN"
+                }),
             );
         }
     }
@@ -115,16 +119,13 @@ pub fn candidate_app_bases() -> Vec<PathBuf> {
 }
 
 pub fn default_app_base_dir() -> PathBuf {
-    candidate_app_bases()
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| {
-            PathBuf::from(if cfg!(target_os = "linux") {
-                "rzn"
-            } else {
-                "RZN"
-            })
+    candidate_app_bases().into_iter().next().unwrap_or_else(|| {
+        PathBuf::from(if cfg!(target_os = "linux") {
+            "rzn"
+        } else {
+            "RZN"
         })
+    })
 }
 
 fn push_unique(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
@@ -188,10 +189,7 @@ mod tests {
     fn builds_supervisor_paths_under_run_and_secure_dirs() {
         let (socket, token) = supervisor_paths_for_app_base(Path::new("/tmp/RZN"));
         assert_eq!(socket, PathBuf::from("/tmp/RZN/run/rzn-supervisor.sock"));
-        assert_eq!(
-            token,
-            PathBuf::from("/tmp/RZN/secure/rzn-supervisor-token")
-        );
+        assert_eq!(token, PathBuf::from("/tmp/RZN/secure/rzn-supervisor-token"));
     }
 
     #[test]
