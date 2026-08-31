@@ -1,0 +1,15 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-08-31T03:36:48Z",
+  "event_kind": "status_changed",
+  "id": "01M1AY87W57FC667SGXQJKYGG6",
+  "object": "RZN-T-0011",
+  "object_kind": "task",
+  "payload": {
+    "from": "backlog",
+    "reason": "Installer contract is concrete and the focused test is defined.",
+    "to": "ready"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

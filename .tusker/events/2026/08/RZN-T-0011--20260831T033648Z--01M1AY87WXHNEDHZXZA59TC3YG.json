@@ -1,0 +1,19 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-08-31T03:36:48Z",
+  "event_kind": "updated",
+  "id": "01M1AY87WXHNEDHZXZA59TC3YG",
+  "object": "RZN-T-0011",
+  "object_kind": "task",
+  "payload": {
+    "changes": {
+      "readiness": {
+        "from": "held",
+        "to": "ready"
+      }
+    },
+    "source": "task:RZN-T-0011"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

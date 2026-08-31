@@ -114,6 +114,45 @@ install_file_atomic() {
   mv -f "$tmp" "$dest"
 }
 
+SUPERVISOR_WAS_RUNNING=0
+PREVIOUS_SUPERVISOR_CLI=""
+cleanup_previous_supervisor_cli() {
+  [ -z "$PREVIOUS_SUPERVISOR_CLI" ] || rm -f "$PREVIOUS_SUPERVISOR_CLI"
+}
+trap cleanup_previous_supervisor_cli EXIT HUP INT TERM
+
+prepare_supervisor_upgrade() {
+  old_cli="$BIN_DIR/rzn-browser"
+  [ -x "$old_cli" ] || return 0
+
+  if "$old_cli" supervisor status --json >/dev/null 2>&1; then
+    PREVIOUS_SUPERVISOR_CLI=$(mktemp "$BIN_DIR/.rzn-browser.previous.XXXXXX")
+    cp -p "$old_cli" "$PREVIOUS_SUPERVISOR_CLI"
+    SUPERVISOR_WAS_RUNNING=1
+    return 0
+  fi
+
+  lock_path="$INSTALL_ROOT/run/rzn-supervisor.lock"
+  [ -f "$lock_path" ] || return 0
+  lock_pid=$(sed -n 's/.*"pid":\([0-9][0-9]*\).*/\1/p' "$lock_path")
+  if [ -n "$lock_pid" ] && kill -0 "$lock_pid" 2>/dev/null; then
+    echo "[ERROR] A running supervisor could not authenticate with the installed CLI (pid $lock_pid)." >&2
+    echo "        Stop that process before retrying the upgrade; no binaries were replaced." >&2
+    exit 1
+  fi
+}
+
+stop_previous_supervisor() {
+  [ "$SUPERVISOR_WAS_RUNNING" = "1" ] || return 0
+  echo "[INFO] Stopping the previous supervisor after replacing its binary"
+  if ! "$PREVIOUS_SUPERVISOR_CLI" supervisor shutdown >/dev/null; then
+    echo "[ERROR] The previous supervisor could not be stopped after installing the new runtime." >&2
+    exit 1
+  fi
+  cleanup_previous_supervisor_cli
+  PREVIOUS_SUPERVISOR_CLI=""
+}
+
 validate_extension_tree() {
   tree=$1
   for required in manifest.json rzn-build.json background.js contentScript.js pageBridge.js popup.html dashboard.html; do
@@ -203,9 +242,12 @@ validate_extension_tree "$SCRIPT_DIR/extension/dist/chrome"
 
 mkdir -p "$BIN_DIR" "$CHROME_HOST_DIR" "$GLOBAL_BIN_DIR"
 
+prepare_supervisor_upgrade
+
 echo "[INFO] Installing binaries into: $BIN_DIR"
 install_file_atomic "$SCRIPT_DIR/bin/rzn-browser" "$BIN_DIR/rzn-browser"
 install_file_atomic "$SCRIPT_DIR/bin/rzn-native-host" "$BIN_DIR/rzn-native-host"
+stop_previous_supervisor
 
 echo "[INFO] Installing stable extension copy into: $EXT_DIR"
 install_extension_tree \
@@ -252,6 +294,13 @@ cat > "$MANIFEST_PATH" <<EOF
   ]
 }
 EOF
+
+if [ "$SUPERVISOR_WAS_RUNNING" = "1" ]; then
+  echo "[INFO] Restarting the supervisor with the installed binary"
+  if ! "$BIN_DIR/rzn-browser" supervisor ensure-ready >/dev/null 2>&1; then
+    echo "[WARN] Supervisor restarted, but the browser bridge is not ready yet." >&2
+  fi
+fi
 
 echo ""
 echo "[OK] Installed RZN Browser"

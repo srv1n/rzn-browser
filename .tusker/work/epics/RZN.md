@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-08-23T12:27:24Z"
-updated_at: "2026-08-23T15:28:32Z"
-state_rev: "sha256:6866b36e56efd6b837a34cb01d8ead57ebd9f29852ef07f45b8920fab9118a5e"
+updated_at: "2026-08-31T03:36:48Z"
+state_rev: "sha256:58344481eca8d5e8d6882c3bb1fdded44903393431a949952960aea36ccd77b5"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -57,6 +57,8 @@ TBD.
 | [[RZN-T-0007]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[RZN-T-0008]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[RZN-T-0009]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[RZN-T-0010]] | backlog | agent | Execute the task contract and satisfy proof mode. |
+| [[RZN-T-0011]] | ready | agent | Execute the task contract and satisfy proof mode. |
 
 ## Recently completed
 

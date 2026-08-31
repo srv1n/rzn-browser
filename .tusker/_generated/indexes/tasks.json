@@ -342,5 +342,80 @@
     "title": "Generate workflow reference pages from manifest IDs",
     "updated_at": "2026-08-23T15:26:57Z",
     "updated_by": "tusker:reconcile"
+  },
+  {
+    "created_at": "2026-08-26T16:00:46Z",
+    "created_by": "agent:sarav",
+    "dependencies": [],
+    "domains": [],
+    "epic": "RZN",
+    "evidence_budget": 1,
+    "evidence_required": [
+      "automated_test"
+    ],
+    "gates": [],
+    "id": "RZN-T-0010",
+    "kind": "task",
+    "next_action": "Execute the task contract and satisfy proof mode.",
+    "next_owner": "agent",
+    "next_ref": "RZN-T-0010",
+    "next_source": "task",
+    "path": "work/tasks/RZN-T-0010.md",
+    "priority": "p1",
+    "project": "rzn-browser",
+    "proof_mode": "card",
+    "proof_required": [
+      "focused_test",
+      "broad_test"
+    ],
+    "proof_status": "pending",
+    "raw_artifacts_allowed": false,
+    "readiness": "held",
+    "risk": "medium",
+    "schema": "tusker.task/v7",
+    "size": "s",
+    "state_rev": "sha256:0c23da1b4cc8ee82cce576fb09dbe46da2daaefec72f31899db5e0197323a567",
+    "status": "backlog",
+    "title": "Self-heal the browser supervisor from the native host",
+    "updated_at": "2026-08-26T16:00:46Z",
+    "updated_by": "agent:sarav"
+  },
+  {
+    "created_at": "2026-08-31T03:31:54Z",
+    "created_by": "agent:sarav",
+    "dependencies": [],
+    "domains": [],
+    "epic": "RZN",
+    "evidence_budget": 0,
+    "evidence_required": [],
+    "gates": [],
+    "id": "RZN-T-0011",
+    "kind": "task",
+    "next_action": "Execute the task contract and satisfy proof mode.",
+    "next_owner": "agent",
+    "next_ref": "RZN-T-0011",
+    "next_source": "task",
+    "path": "work/tasks/RZN-T-0011.md",
+    "priority": "p1",
+    "project": "rzn-browser",
+    "proof_mode": "inline",
+    "proof_required": [
+      "focused_test",
+      "broad_test"
+    ],
+    "proof_status": "pending",
+    "raw_artifacts_allowed": false,
+    "readiness": "ready",
+    "risk": "medium",
+    "schema": "tusker.task/v7",
+    "size": "s",
+    "spec_refs": [
+      "docs/system/installation-operations.md"
+    ],
+    "state_rev": "sha256:70a97dea4acc5ca3e8083b5183a62b2c8a24fdd166dc794bb83543a796dfaad9",
+    "status": "ready",
+    "title": "Restart the supervisor during runtime upgrades",
+    "updated_at": "2026-08-31T03:36:48Z",
+    "updated_by": "agent:sarav"
   }
 ]

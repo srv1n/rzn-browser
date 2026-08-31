@@ -9,14 +9,14 @@
     "humanWait": 0,
     "inReview": 1,
     "openGates": 0,
-    "openWork": 9,
-    "ready": 0,
+    "openWork": 11,
+    "ready": 1,
     "running": 0,
     "staleLeases": 0,
     "superseded": 0,
-    "tasks": 9
+    "tasks": 11
   },
-  "generatedAt": "2026-08-23T15:28:32Z",
+  "generatedAt": "2026-08-31T03:36:48Z",
   "schema": "tusker.summary/v7",
   "source": "v7"
 }

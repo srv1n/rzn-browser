@@ -77,6 +77,12 @@ write_fake_runtime_bundle() {
   cat > "$bundle_root/bin/rzn-browser" <<'BROWSER'
 #!/bin/sh
 set -eu
+if [ -n "${RZN_TEST_BROWSER_LOG:-}" ]; then
+  printf '%s\n' "$*" >> "$RZN_TEST_BROWSER_LOG"
+fi
+if [ "${RZN_TEST_SUPERVISOR_STATUS_FAIL:-0}" = "1" ] && [ "${1:-}" = "supervisor" ] && [ "${2:-}" = "status" ]; then
+  exit 1
+fi
 if [ "${1:-}" = "workflow" ] && [ "${2:-}" = "pull" ]; then
   exit 0
 fi
@@ -149,6 +155,7 @@ CODESIGN
       RZN_CODESIGN_LOG="$codesign_log" \
       RZN_RUNTIME_DIR="$install_root" \
       RZN_SETUP_GLOBAL_BIN_DIR="$global_bin" \
+      RZN_TEST_BROWSER_LOG="$install_root/browser.log" \
       HOME="$(dirname "$install_root")/home" \
       PATH="$fakebin:$PATH" \
       sh "$bundle_root/install.sh" >/dev/null
@@ -157,6 +164,7 @@ CODESIGN
       RZN_CODESIGN_LOG="$codesign_log" \
       RZN_RUNTIME_DIR="$install_root" \
       RZN_SETUP_GLOBAL_BIN_DIR="$global_bin" \
+      RZN_TEST_BROWSER_LOG="$install_root/browser.log" \
       HOME="$(dirname "$install_root")/home" \
       PATH="$fakebin:$PATH" \
       sh "$bundle_root/install.sh" >/dev/null
@@ -267,10 +275,23 @@ grep -q -- "--force" "$verified_codesign_log" || fail "codesign repair was not c
 [[ -f "$tmp_dir/runtime-verified/extension/dist/chrome/dashboard.html" ]] || fail "runtime install omitted dashboard.html"
 
 printf 'stale\n' > "$tmp_dir/runtime-verified/extension/dist/chrome/stale.js"
+: > "$tmp_dir/runtime-verified/browser.log"
 write_fake_runtime_bundle "$bundle_root" "0.1.2"
 run_runtime_install "$bundle_root" "$tmp_dir/runtime-verified" "$tmp_dir/global-verified" "$verified_xattr_log" "$verified_codesign_log" 1
 grep -q '"version":"0.1.2"' "$tmp_dir/runtime-verified/extension/dist/chrome/manifest.json" || fail "runtime extension did not update in place"
 [[ ! -e "$tmp_dir/runtime-verified/extension/dist/chrome/stale.js" ]] || fail "runtime extension update retained stale files"
+grep -q '^supervisor shutdown$' "$tmp_dir/runtime-verified/browser.log" || fail "runtime upgrade did not stop the old supervisor"
+grep -q '^supervisor ensure-ready$' "$tmp_dir/runtime-verified/browser.log" || fail "runtime upgrade did not restart the installed supervisor"
+
+blocked_root="$tmp_dir/runtime-blocked"
+run_runtime_install "$bundle_root" "$blocked_root" "$tmp_dir/global-blocked" "$tmp_dir/blocked-xattr.log" "$tmp_dir/blocked-codesign.log" 1
+printf '\n# old-runtime-marker\n' >> "$blocked_root/bin/rzn-browser"
+mkdir -p "$blocked_root/run"
+printf '{"pid":%s}\n' "$$" > "$blocked_root/run/rzn-supervisor.lock"
+if RZN_TEST_SUPERVISOR_STATUS_FAIL=1 run_runtime_install "$bundle_root" "$blocked_root" "$tmp_dir/global-blocked" "$tmp_dir/blocked-xattr.log" "$tmp_dir/blocked-codesign.log" 1 2>/dev/null; then
+  fail "runtime upgrade replaced binaries while a live supervisor could not authenticate"
+fi
+grep -q '^# old-runtime-marker$' "$blocked_root/bin/rzn-browser" || fail "blocked runtime upgrade replaced the old binary"
 
 case_install_root="$tmp_dir/case-runtime/RZN"
 case_legacy_root="$tmp_dir/case-runtime/rzn"
