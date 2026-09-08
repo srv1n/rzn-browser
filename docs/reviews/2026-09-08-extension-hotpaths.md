@@ -159,11 +159,22 @@ duplicate domains, and repeated bookkeeping cleanup.
 Rust workspace tests, real Chrome/Edge/Chromium automation, native-host integration,
 and browser RSS/CPU profiling. Direct checkout and dependency downloads were
 blocked in the review environment; Bun, Rust, sccache, and the Tusker CLI were not
-available. No tracker proof, CI success, or browser compatibility result is claimed
-or fabricated. No existing tests or CI gates were removed or weakened.
+available. Those unavailable local commands are not reported as passed. No tracker
+proof was fabricated, and no existing tests or CI gates were removed or weakened.
 
-Before merging, require the existing PR CI checks and run the focused tests with
-the normal repository toolchain:
+**Observed GitHub CI after opening PR #1:** the Extension Build and Unit Tests
+job passed for code commit `57757f5abb7178ea3714722ef69a99fec921d603` (GitHub
+PR merge ref `9ded528125db681a4e15b02bb0b305d57243c380`). Actual Vitest 4.1.6
+reported **30 test files and 141 tests passed**, including all 38 new cases.
+Chrome, Edge, and Chromium bundles built successfully, and both ChatGPT workflow
+contract checks passed. This is additional validation beyond the local adapter.
+At the time that job was inspected, the separate Playwright workflow and remaining
+Rust/security jobs were still running; their success is not implied.
+
+Evidence: [extension build/unit job](https://github.com/srv1n/rzn-browser/actions/runs/34265784021/job/102194667971).
+
+Before merging, require the remaining PR CI checks and browser smoke coverage.
+The focused tests can also be reproduced with the normal repository toolchain:
 
 ```sh
 make test-ext-unit ARGS='src/content/dom-capture.test.ts src/cdp/cdpClient.test.ts'
@@ -191,10 +202,12 @@ assertions. Until those gates are observed, this is a draft PR.
    Apply an explicit sensitive-data policy consistently across DOM, AX/CDP,
    screenshots, artifacts, and logs. Do not assume password-attribute filtering is
    a complete privacy boundary.
-3. **Make performance and browser behavior observable in CI.** The inspected CI
-   builds benchmark targets with `cargo bench --no-run`; it does not establish a
-   measured performance budget. The extension job builds bundles and runs unit
-   tests, but does not invoke the existing Playwright e2e target. Add reproducible
+3. **Add measured performance budgets and assess browser-test coverage.** The
+   main CI builds benchmark targets with `cargo bench --no-run`; it does not
+   establish a measured performance budget. A separate `extension-e2e.yml`
+   workflow already runs Playwright with Chromium and the extension on PRs; keep
+   it, rather than adding a duplicate lane. Extend that existing coverage where
+   needed for child-frame and detach/reconnect behavior. Add reproducible
    workflow/page fixtures and track p50/p95 capture/command latency, idle CPU,
    renderer/native-host memory, round trips, and leaked lease counts.
 4. **Profile before splitting or replacing architecture.** The background and
@@ -211,3 +224,4 @@ assertions. Until those gates are observed, this is a draft PR.
 - [CDP client implementation](../../extension/src/cdp/cdpClient.ts)
 - [CDP client regression tests](../../extension/src/cdp/cdpClient.test.ts)
 - [Existing CI](../../.github/workflows/ci.yml)
+- [Existing Playwright CI](../../.github/workflows/extension-e2e.yml)
