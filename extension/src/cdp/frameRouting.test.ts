@@ -50,15 +50,20 @@ describe('frame routing', () => {
     const emit = (source: any, method: string, params: any) => listeners.forEach(listener => listener(source, method, params));
     emit({ tabId }, 'Page.frameNavigated', { frame: { id: 'main' } });
     emit({ tabId }, 'Target.attachedToTarget', {
-      sessionId: 'chrome-child', targetInfo: { targetId: 'child-target', type: 'iframe' },
+      sessionId: 'chrome-child', targetInfo: { targetId: 'oopif-target', type: 'iframe' },
+    });
+    emit({ sessionId: 'chrome-child' }, 'Runtime.executionContextCreated', {
+      context: { id: 1, origin: 'https://child.example.test', name: '', uniqueId: 'child-context', auxData: {
+        frameId: 'child-frame', targetId: 'oopif-target',
+      } },
     });
 
     commands = [];
     const client = new CDPClient();
     await client.sendCommand({ tabId }, 'DOM.getDocument', {}, { frameId: 'main' });
     await client.sendCommand({ tabId }, 'DOM.getDocument', {}, { frameId: 'unknown' });
-    await client.sendCommand({ tabId }, 'DOM.getDocument', {}, { frameId: 'child-target' });
-    await client.sendCommand({ tabId }, 'DOM.getDocument', {}, { frameId: 'child-target', sessionId: 'explicit-child' });
+    await client.sendCommand({ tabId }, 'DOM.getDocument', {}, { frameId: 'child-frame' });
+    await client.sendCommand({ tabId }, 'DOM.getDocument', {}, { frameId: 'child-frame', sessionId: 'explicit-child' });
     assert.deepEqual(commands.map(command => command.target), [
       { tabId }, { tabId }, { tabId, sessionId: 'chrome-child' }, { tabId, sessionId: 'explicit-child' },
     ]);
@@ -66,10 +71,10 @@ describe('frame routing', () => {
     commands = [];
     await client.enableDomains({ tabId }, ['DOM'], 'main');
     await client.enableDomains({ tabId }, ['DOM'], 'unknown');
-    await client.enableDomains({ tabId }, ['DOM'], 'child-target');
+    await client.enableDomains({ tabId }, ['DOM'], 'child-frame');
     await client.disableDomains({ tabId }, ['DOM'], 'main');
     await client.disableDomains({ tabId }, ['DOM'], 'unknown');
-    await client.disableDomains({ tabId }, ['DOM'], 'child-target');
+    await client.disableDomains({ tabId }, ['DOM'], 'child-frame');
     assert.deepEqual(commands.map(command => [command.method, command.target]), [
       ['DOM.enable', { tabId }], ['DOM.enable', { tabId, sessionId: 'chrome-child' }],
       ['DOM.disable', { tabId }], ['DOM.disable', { tabId, sessionId: 'chrome-child' }],

@@ -121,7 +121,8 @@ export class FrameRouter {
       await this.sendCommand(tabId, 'Target.setAutoAttach', {
         autoAttach: true,
         waitForDebuggerOnStart: false,
-        flatten: true // This is the key for cross-origin iframe support
+        flatten: true,
+        filter: [{ type: 'iframe', exclude: false }],
       });
       
       // Enable required domains (Target.enable is optional in some protocol versions)
@@ -342,12 +343,10 @@ export class FrameRouter {
     sessionId?: string
   ): Promise<T> {
     return new Promise((resolve, reject) => {
-      const commandParams = sessionId ? { ...params, sessionId } : params;
-      
       chrome.debugger.sendCommand(
-        { tabId },
+        { tabId, ...(sessionId ? { sessionId } : {}) },
         method,
-        commandParams,
+        params,
         (result) => {
           const error = chrome.runtime.lastError;
           if (error) {
@@ -426,12 +425,19 @@ export class FrameRouter {
     // Map targetId to sessionId
     this.targetSessions.set(targetInfo.targetId, sessionId);
     
-    // If this is a frame target, we need to map it to frameId when we get frame info
-    if (targetInfo.type === 'page' || targetInfo.type === 'iframe') {
-      console.log(`[FrameRouter] Frame target detected: ${targetInfo.url}`);
-      if (targetInfo.type === 'iframe') {
-        this.mapFrameToSession(targetInfo.targetId, tabId, sessionId, targetInfo);
-      }
+    if (targetInfo.type === 'iframe') {
+      // targetId is not a Page.FrameId. The child Runtime event supplies the
+      // actual frameId in auxData, and nested OOPIFs need recursive auto-attach.
+      void Promise.all([
+        this.sendCommand(tabId, 'Target.setAutoAttach', {
+          autoAttach: true,
+          waitForDebuggerOnStart: false,
+          flatten: true,
+          filter: [{ type: 'iframe', exclude: false }],
+        }, sessionId),
+        this.sendCommand(tabId, 'Runtime.enable', {}, sessionId),
+        this.sendCommand(tabId, 'Page.enable', {}, sessionId),
+      ]).catch(error => console.warn(`[FrameRouter] Failed to initialize child session ${sessionId}:`, error));
     }
   }
   
