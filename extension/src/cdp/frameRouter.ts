@@ -429,6 +429,9 @@ export class FrameRouter {
     // If this is a frame target, we need to map it to frameId when we get frame info
     if (targetInfo.type === 'page' || targetInfo.type === 'iframe') {
       console.log(`[FrameRouter] Frame target detected: ${targetInfo.url}`);
+      if (targetInfo.type === 'iframe') {
+        this.mapFrameToSession(targetInfo.targetId, tabId, sessionId, targetInfo);
+      }
     }
   }
   
