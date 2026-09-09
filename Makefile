@@ -151,9 +151,10 @@ test-ext-e2e-install:
 # Run Playwright e2e against built extension
 test-ext-e2e-run:
 	@echo "🧪 Running extension e2e (Playwright)..."
-	cd extension && bun x playwright test --project=chromium-extension --reporter=line
+	cd extension && bun x playwright test --project=chromium-extension --reporter=line $(ARGS)
 
 # Convenience target: build extension and run e2e
+test-ext-e2e: RZN_PAGE_TEST_BRIDGE_ENABLED=1
 test-ext-e2e: build-ext test-ext-e2e-install test-ext-e2e-run
 	@echo "✅ Extension e2e complete"
 

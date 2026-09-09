@@ -30,42 +30,45 @@ export const INTERACTIVE_SELECTOR = [
  * Check if element is visible using getBoundingClientRect
  */
 export function visible(element: Element): boolean {
-  if (!(element instanceof HTMLElement)) return false;
-  
+  return visibleRect(element) !== null;
+}
+
+// Keep the rectangle used for visibility so a retained element is measured once.
+function visibleRect(element: Element): DOMRect | null {
+  if (!(element instanceof HTMLElement)) return null;
+
   const rect = element.getBoundingClientRect();
+  if (!(rect.width > 0 && rect.height > 0 &&
+        rect.top < window.innerHeight && rect.bottom > 0 &&
+        rect.left < window.innerWidth && rect.right > 0)) return null;
+
   const style = window.getComputedStyle(element);
-  
-  return rect.width > 0 && 
-         rect.height > 0 && 
-         style.visibility !== 'hidden' && 
-         style.display !== 'none' &&
-         rect.top < window.innerHeight &&
-         rect.bottom > 0 &&
-         rect.left < window.innerWidth &&
-         rect.right > 0;
+  return style.visibility !== 'hidden' && style.display !== 'none' ? rect : null;
 }
 
 /**
  * Breadth-first DOM traversal generator
  */
-export function* breadthFirst(root: Element = document.body): Generator<Element> {
-  const queue: Element[] = [root];
-  const visited = new Set<Element>();
-  
-  while (queue.length > 0) {
-    const element = queue.shift()!;
-    
-    if (visited.has(element)) continue;
-    visited.add(element);
-    
-    yield element;
-    
-    // Add children to queue
-    for (const child of element.children) {
-      if (!visited.has(child)) {
-        queue.push(child);
+export function* breadthFirst(root: Element | null = document.body): Generator<Element> {
+  if (!root) return;
+  let level: Element[] = [root];
+  const visited = new WeakSet<Element>();
+
+  // Frontier arrays avoid repeatedly shifting a wide queue. Only the current and
+  // next levels retain nodes; already visited, detached nodes are not kept alive.
+  while (level.length > 0) {
+    const next: Element[] = [];
+    for (const element of level) {
+      if (visited.has(element)) continue;
+      visited.add(element);
+      yield element;
+
+      // Read children after yielding, preserving traversal of a live DOM.
+      for (const child of element.children) {
+        if (!visited.has(child)) next.push(child);
       }
     }
+    level = next;
   }
 }
 
@@ -168,6 +171,20 @@ export function bestSelector(element: Element): string {
   return tagName;
 }
 
+// Password fields remain addressable, but passive snapshots must not echo their
+// value attribute into JSON, logs, or model context. Other form values are kept.
+function snapshotAttributes(element: Element): Record<string, string> {
+  const attributes: Record<string, string> = {};
+  const password = element.tagName.toLowerCase() === 'input' &&
+    element.getAttribute('type')?.toLowerCase() === 'password';
+  for (const attr of WHITELIST_ATTRS) {
+    if (password && attr === 'value') continue;
+    const value = element.getAttribute(attr);
+    if (value !== null) attributes[attr] = value;
+  }
+  return attributes;
+}
+
 /**
  * Build DOM snapshot with performance optimizations
  */
@@ -185,10 +202,11 @@ export function buildSnapshot(maxElements: number = 120): ElementStub[] {
   // Process interactive elements with priority
   for (const element of interactiveElements) {
     if (elements.length >= maxElements) break;
-    if (!visible(element) || processedElements.has(element)) continue;
-    
+    if (processedElements.has(element)) continue;
+    const rect = visibleRect(element);
+    if (!rect) continue;
+
     processedElements.add(element);
-    const rect = element.getBoundingClientRect();
     
     // Determine viewport position for spatial grouping
     let viewportPosition: 'top' | 'middle' | 'bottom';
@@ -204,14 +222,7 @@ export function buildSnapshot(maxElements: number = 120): ElementStub[] {
     // Extract text content (first 100 chars)
     const textContent = element.textContent?.trim().slice(0, 100) || '';
     
-    // Build attributes object
-    const attributes: Record<string, string> = {};
-    for (const attr of WHITELIST_ATTRS) {
-      const value = element.getAttribute(attr);
-      if (value !== null) {
-        attributes[attr] = value;
-      }
-    }
+    const attributes = snapshotAttributes(element);
     
     const stub: ElementStub = {
       id: getStableElementId(element),
@@ -236,7 +247,7 @@ export function buildSnapshot(maxElements: number = 120): ElementStub[] {
   if (elements.length < maxElements) {
     for (const element of breadthFirst()) {
       if (elements.length >= maxElements) break;
-      if (processedElements.has(element) || !visible(element)) continue;
+      if (processedElements.has(element)) continue;
       
       // Skip if already processed or not interesting
       const tagName = element.tagName.toLowerCase();
@@ -244,8 +255,9 @@ export function buildSnapshot(maxElements: number = 120): ElementStub[] {
         continue;
       }
       
+      const rect = visibleRect(element);
+      if (!rect) continue;
       processedElements.add(element);
-      const rect = element.getBoundingClientRect();
       
       // Determine viewport position
       let viewportPosition: 'top' | 'middle' | 'bottom';
@@ -260,14 +272,7 @@ export function buildSnapshot(maxElements: number = 120): ElementStub[] {
       
       const textContent = element.textContent?.trim().slice(0, 100) || '';
       
-      // Build attributes object
-      const attributes: Record<string, string> = {};
-      for (const attr of WHITELIST_ATTRS) {
-        const value = element.getAttribute(attr);
-        if (value !== null) {
-          attributes[attr] = value;
-        }
-      }
+      const attributes = snapshotAttributes(element);
       
       const stub: ElementStub = {
         id: getStableElementId(element),
@@ -355,8 +360,11 @@ export function toPrompt(elements: ElementStub[]): string {
  * Generate hash of DOM state for loop detection
  */
 export function domHash(): string {
-  const snapshot = buildSnapshot(50); // Smaller snapshot for hashing
-  const simplified = snapshot.map(el => ({
+  return snapshotHash(buildSnapshot(50));
+}
+
+function snapshotHash(elements: ElementStub[]): string {
+  const simplified = elements.slice(0, 50).map(el => ({
     tag: el.tag,
     selector: el.selector,
     text: el.text?.slice(0, 50) || '',
@@ -450,7 +458,9 @@ export function captureCurrentDOM(maxElements: number = 120): {
   };
 } {
   const elements = buildSnapshot(maxElements);
-  const hash = domHash();
+  // A capture of at least 50 elements already contains the hash snapshot. Keep
+  // the separate 50-element capture for smaller limits to preserve loop detection.
+  const hash = maxElements >= 50 ? snapshotHash(elements) : domHash();
   const prompt = toPrompt(elements);
   
   return {

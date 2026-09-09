@@ -1254,7 +1254,10 @@ const enhancedActionHandlers = {
     const action: EnhancedAction = {
       type: 'extract_structured_data',
       target_spec: targetSpec,
-      fields: step.fields || [],
+      fields: (step.fields || []).map((field: any) => ({
+        ...field,
+        target_spec: field.target_spec || (field.selector ? { css: field.selector } : undefined),
+      })),
       // Keep the caller's extraction label. It is data, not a site-specific fast path.
       extraction_type: step.extraction_type,
       timeout: step.timeoutMs || 10000
@@ -1296,10 +1299,9 @@ const enhancedActionHandlers = {
 };
 
 function requireTargetSpec(step: any): TargetSpec {
-  if (!step?.target_spec) {
-    throw new Error('Enhanced actions require target_spec');
-  }
-  return step.target_spec as TargetSpec;
+  if (step?.target_spec) return step.target_spec as TargetSpec;
+  if (typeof step?.selector === 'string' && step.selector) return { css: step.selector };
+  throw new Error('Enhanced actions require target_spec or selector');
 }
 
 const REDACTED_STEP_KEYS = ['value', 'text', 'password', 'passcode', 'otp', 'token', 'secret'];
@@ -5138,6 +5140,17 @@ const actionHandlers = {
   }
 };
 
+function resolveActionHandler(step: any): any {
+  const stepType = String(step?.type || '');
+  const enhancedType = `${stepType}_enhanced`;
+  const wantEnhanced = step?.use_enhanced === true || stepType.endsWith('_enhanced') || !!step?.target_spec;
+  if (wantEnhanced) {
+    const handler = (enhancedActionHandlers as any)[enhancedType] || (enhancedActionHandlers as any)[stepType];
+    if (handler) return handler;
+  }
+  return (actionHandlers as any)[stepType] || (enhancedActionHandlers as any)[stepType];
+}
+
 // Expose enhanced DOM capture functions to the page context
 // This allows the autonomous planner to call them via ExecuteJavascript
 (window as any).captureEnhancedDOMSnapshot = captureEnhancedDOMSnapshot;
@@ -5867,25 +5880,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             __rzn_lease_id: contentLeaseId(message),
           };
           const stepType = stepObj.type;
-          const enhancedType = stepType + '_enhanced';
-          const wantEnhanced = !!(stepObj.use_enhanced === true || stepType.endsWith('_enhanced') || stepObj.target_spec);
-
-          let handler;
-
-          if (wantEnhanced) {
-            if (enhancedActionHandlers[enhancedType as keyof typeof enhancedActionHandlers]) {
-              handler = enhancedActionHandlers[enhancedType as keyof typeof enhancedActionHandlers];
-              console.log(`[RZN] Using enhanced handler for ${stepType}`);
-            } else if (enhancedActionHandlers[stepType as keyof typeof enhancedActionHandlers]) {
-              handler = enhancedActionHandlers[stepType as keyof typeof enhancedActionHandlers];
-              console.log(`[RZN] Using enhanced handler for ${stepType}`);
-            }
-          }
-
-          if (!handler && (actionHandlers as any)[stepType]) {
-            handler = (actionHandlers as any)[stepType];
-            console.log(`[RZN] Using standard handler for ${stepType}`);
-          }
+          const handler = resolveActionHandler(stepObj);
 
           if (!handler) {
             throw new Error(`Unknown action type: ${stepType}`);
@@ -6412,16 +6407,7 @@ async function handleDomBridgeRequest(node: HTMLElement) {
         async () => {
           const step = payload?.step || {};
           const stepType: string = step.type;
-          const enhancedType = `${stepType}_enhanced`;
-
-          let handler: any = undefined;
-          if ((enhancedActionHandlers as any)[enhancedType]) {
-            handler = (enhancedActionHandlers as any)[enhancedType];
-          } else if ((enhancedActionHandlers as any)[stepType]) {
-            handler = (enhancedActionHandlers as any)[stepType];
-          } else if ((actionHandlers as any)[stepType]) {
-            handler = (actionHandlers as any)[stepType];
-          }
+          const handler = resolveActionHandler(step);
 
           if (!handler) {
             throw new Error(`Unknown action type: ${stepType}`);

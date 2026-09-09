@@ -28,7 +28,30 @@ export interface CDPTarget {
  * Type-safe CDP client with automatic frame routing
  */
 export class CDPClient {
-  private domainRefs = new Map<string, Map<string, number>>(); // sessionId -> domain -> refcount
+  private domainRefs = new Map<string, Map<string, number>>(); // target/session -> domain -> refcount
+  private domainOperations = new Map<string, Promise<void>>();
+
+  private routeTarget(target: CDPTarget, frameId?: string, explicitSessionId?: string): CDPTarget {
+    const sessionId = explicitSessionId || target.sessionId ||
+      (frameId ? frameRouter.routeForFrame(frameId).sessionId : undefined);
+    return { ...target, sessionId };
+  }
+
+  private domainKey(target: CDPTarget): string {
+    return JSON.stringify([target.tabId ?? chrome.runtime.id, target.sessionId ?? null]);
+  }
+
+  // Serialize lease changes for one resolved session, not ordinary CDP commands
+  // or other tabs. A failed operation must not poison the queue for later calls.
+  private withDomainLock(key: string, run: () => Promise<void>): Promise<void> {
+    const operation = (this.domainOperations.get(key) ?? Promise.resolve()).then(run);
+    const tail = operation.then(() => {}, () => {});
+    this.domainOperations.set(key, tail);
+    void tail.then(() => {
+      if (this.domainOperations.get(key) === tail) this.domainOperations.delete(key);
+    });
+    return operation;
+  }
 
   private formatCommandError(error: unknown): string {
     return cdpErrorText(error);
@@ -47,37 +70,33 @@ export class CDPClient {
       timeout?: number;
     }
   ): Promise<T> {
-    const { tabId, sessionId: targetSessionId } = target;
     const { frameId, sessionId: explicitSessionId, timeout = 30000 } = options || {};
-    
-    // Determine session routing
-    let sessionId = explicitSessionId || targetSessionId;
-    if (!sessionId && frameId) {
-      const route = frameRouter.routeForFrame(frameId);
-      sessionId = route.sessionId;
-    }
-    
+    const { tabId, sessionId } = this.routeTarget(target, frameId, explicitSessionId);
+
     console.log(`[CDPClient] Sending ${method}${sessionId ? ` (session: ${sessionId})` : ''}`);
-    
+
     return new Promise<T>((resolve, reject) => {
+      let settled = false;
       const timeoutId = setTimeout(() => {
+        settled = true;
         reject(new Error(`CDP command timeout: ${method}`));
       }, timeout);
-      
-      // Prepare command parameters
-      const commandParams = sessionId ? { ...params, sessionId } : params;
-      
-      // Determine which debugger target to use
-      const debuggerTarget = tabId ? { tabId } : { extensionId: chrome.runtime.id };
-      
-      chrome.debugger.sendCommand(
-        debuggerTarget,
-        method,
-        commandParams || {},
-        (result) => {
-          clearTimeout(timeoutId);
-          
+
+      // Flat-session routing belongs on DebuggerSession, not in CDP params.
+      const debuggerTarget = {
+        ...(tabId !== undefined ? { tabId } : { extensionId: chrome.runtime.id }),
+        ...(sessionId ? { sessionId } : {}),
+      };
+
+      try {
+        chrome.debugger.sendCommand(debuggerTarget, method, params || {}, (result) => {
+          // Always consume lastError, even for late callbacks, to avoid Chrome's
+          // unchecked-error warning. Late results must not invalidate a new lease.
           const error = chrome.runtime.lastError;
+          if (settled) return;
+          settled = true;
+          clearTimeout(timeoutId);
+
           if (error) {
             const formatted = this.formatCommandError(error);
             const lifecycleError = isExpectedCdpLifecycleError(formatted);
@@ -99,8 +118,12 @@ export class CDPClient {
             console.log(`[CDPClient] Command succeeded: ${method}`);
             resolve(result as T);
           }
-        }
-      );
+        });
+      } catch (error) {
+        settled = true;
+        clearTimeout(timeoutId);
+        reject(error);
+      }
     });
   }
 
@@ -108,49 +131,69 @@ export class CDPClient {
    * Enable CDP domains with ref-counting
    */
   async enableDomains(target: CDPTarget, domains: string[], frameId?: string): Promise<void> {
-    const sessionId = target.sessionId ?? `tab:${target.tabId}`;
-    console.log(`[CDPClient] Enabling domains: ${domains.join(', ')} for session ${sessionId}`);
-    
-    if (!this.domainRefs.has(sessionId)) {
-      this.domainRefs.set(sessionId, new Map());
-    }
-    const refs = this.domainRefs.get(sessionId)!;
-    
-    // Never enable Console domain for stealth
+    // Never enable Console domain for stealth. Copy before entering the queue.
     const filteredDomains = domains.filter(d => d !== 'Console');
-    
-    for (const domain of filteredDomains) {
-      const count = (refs.get(domain) ?? 0) + 1;
-      refs.set(domain, count);
-      
-      if (count === 1) {
-        await this.sendCommand(target, `${domain}.enable`, {}, { frameId });
+    if (!filteredDomains.length) return;
+    // Resolve once: the accounting key and commands must address the same frame.
+    const routed = this.routeTarget(target, frameId);
+    const key = this.domainKey(routed);
+
+    return this.withDomainLock(key, async () => {
+      const refs = this.domainRefs.get(key) ?? new Map<string, number>();
+      this.domainRefs.set(key, refs);
+      const acquired: string[] = [];
+      try {
+        for (const domain of filteredDomains) {
+          const count = refs.get(domain) ?? 0;
+          if (count === 0) await this.sendCommand(routed, `${domain}.enable`, {});
+          // Commit the reference only after Chrome confirms the enable.
+          refs.set(domain, count + 1);
+          acquired.push(domain);
+        }
+      } catch (error) {
+        // A failed batch must release only the references it acquired, including
+        // increments of domains that were already held by another caller.
+        await this.releaseDomains(routed, refs, acquired.reverse());
+        throw error;
+      } finally {
+        if (!refs.size) this.domainRefs.delete(key);
       }
-    }
+    });
   }
 
   /**
    * Disable CDP domains with ref-counting
    */
   async disableDomains(target: CDPTarget, domains: string[], frameId?: string): Promise<void> {
-    const sessionId = target.sessionId ?? `tab:${target.tabId}`;
-    console.log(`[CDPClient] Disabling domains: ${domains.join(', ')} for session ${sessionId}`);
-    
-    const refs = this.domainRefs.get(sessionId);
-    if (!refs) return;
-    
+    if (!domains.length) return;
+    const routed = this.routeTarget(target, frameId);
+    const key = this.domainKey(routed);
+    const requested = domains.slice();
+    return this.withDomainLock(key, async () => {
+      const refs = this.domainRefs.get(key);
+      if (!refs) return;
+      await this.releaseDomains(routed, refs, requested);
+      if (!refs.size) this.domainRefs.delete(key);
+    });
+  }
+
+  private async releaseDomains(
+    target: CDPTarget,
+    refs: Map<string, number>,
+    domains: string[],
+  ): Promise<void> {
     for (const domain of domains) {
-      const count = (refs.get(domain) ?? 0) - 1;
-      
-      if (count <= 0) {
+      const count = refs.get(domain);
+      if (count === undefined) continue;
+      if (count > 1) {
+        refs.set(domain, count - 1);
+      } else {
         refs.delete(domain);
         try {
-          await this.sendCommand(target, `${domain}.disable`, {}, { frameId });
+          await this.sendCommand(target, `${domain}.disable`, {});
         } catch (error) {
           console.warn(`[CDPClient] Failed to disable ${domain}:`, error);
         }
-      } else {
-        refs.set(domain, count);
       }
     }
   }
@@ -346,18 +389,19 @@ export class CDPClient {
     uniqueContextId?: string;
     frameId?: string;
   }): Promise<any> {
-    const params: any = { 
+    const { frameId, ...evaluateOptions } = options || {};
+    const params: any = {
       expression,
       returnByValue: true,
       awaitPromise: true,
-      ...options 
+      ...evaluateOptions
     };
     
     return this.sendCommand(
       target,
       'Runtime.evaluate',
       params,
-      { frameId: options?.frameId, timeout: options?.timeout }
+      { frameId, timeout: options?.timeout }
     );
   }
 

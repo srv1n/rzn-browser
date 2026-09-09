@@ -87,7 +87,7 @@ test.describe('Observe → Extract → Act → Extract (local fixtures)', () => 
       type: 'click_element_enhanced',
       selector: '#results .result:nth-child(1) a.link',
     }));
-    expect(clickResp.success).toBeTruthy();
+    expect(clickResp.success, JSON.stringify(clickResp)).toBeTruthy();
 
     const waitDetail = await page.evaluate(async () => (window as any).__rznExecuteStep({
       type: 'wait_for_element',
