@@ -1681,13 +1681,13 @@ async function getAxTreeForSession(
           nodeName?: string;
         }> = [];
 
-        for (const { sessionId, frameId } of frames) {
+        for (const { target, frameId } of frames) {
           try {
             if (!includeFrames && frameId !== frames[0].frameId) continue;
             const { cdpClient } = await import('./cdp/cdpClient');
-            await cdpClient.enableDomains({ sessionId }, ['Accessibility', 'DOM']);
+            await cdpClient.enableDomains(target, ['Accessibility', 'DOM']);
             const axResult = await cdpClient.sendCommand<any>(
-              { sessionId },
+              target,
               'Accessibility.getFullAXTree',
               {}
             );
@@ -1718,7 +1718,7 @@ async function getAxTreeForSession(
               let nodeId: number | undefined;
               try {
                 const push = await cdpClient.sendCommand<any>(
-                  { sessionId },
+                  target,
                   'DOM.pushNodesByBackendIdsToFrontend',
                   { backendNodeIds: [backendNodeId] }
                 );
@@ -1730,7 +1730,7 @@ async function getAxTreeForSession(
               if (nodeId) {
                 try {
                   const desc = await cdpClient.sendCommand<any>(
-                    { sessionId },
+                    target,
                     'DOM.describeNode',
                     { nodeId }
                   );
@@ -1738,7 +1738,7 @@ async function getAxTreeForSession(
                 } catch {}
                 try {
                   const attrs = await cdpClient.sendCommand<any>(
-                    { sessionId },
+                    target,
                     'DOM.getAttributes',
                     { nodeId }
                   );
@@ -3240,8 +3240,8 @@ async function runCdpEval(
 
   const { cdpClient } = await import('./cdp/cdpClient');
   const sessions = frameRouter.getFrameSessionsForTab(tabId);
-  const sessionId = sessions[0]?.sessionId;
-  if (!sessionId) {
+  const target = sessions[0]?.target;
+  if (!target) {
     throw new Error(`No CDP session available for tab ${tabId}`);
   }
 
@@ -3350,7 +3350,7 @@ async function runCdpEval(
         ? Math.max(30000, Math.min(stepTimeoutMs + 5000, 600000))
         : 30000;
       return await cdpClient.evaluate(
-        { tabId, sessionId },
+        target,
         expression,
         {
           awaitPromise: true,
@@ -6412,6 +6412,15 @@ if (RZN_PAGE_TEST_BRIDGE_ENABLED) {
     await executeWorkflow(message, requestId, true);
     return true;
   };
+  (globalThis as any).__rznTestFrameRoutes = async (tabId: number) => {
+    await frameRouter.attachToTab(tabId);
+    const { cdpClient } = await import('./cdp/cdpClient');
+    return await Promise.all(frameRouter.getFrameSessionsForTab(tabId).map(async ({ frameId, target }) => {
+      const result = await cdpClient.evaluate(target, 'location.href', { returnByValue: true });
+      return { frameId, target, url: result?.result?.value };
+    }));
+  };
+  (globalThis as any).__rznTestFrameRouterAttached = (tabId: number) => frameRouter.isAttachedToTab(tabId);
 }
 
 function normalizeTestBrokerMessage(message: any): { normalizedMessage: any; correlationId: string } {
@@ -8385,16 +8394,16 @@ async function fetchAXSlice(maxNodes = 150, viewportOnly = true): Promise<any[]>
 
     console.log(`[AXSlice] Processing ${frames.length} frame sessions for tab ${tabId}`);
 
-    for (const { sessionId, frameId } of frames) {
+    for (const { target, frameId } of frames) {
       try {
-        console.log(`[AXSlice] Processing frame ${frameId} with session ${sessionId}`);
+        console.log(`[AXSlice] Processing frame ${frameId}${target.sessionId ? ` with session ${target.sessionId}` : ''}`);
 
       // Enable domains for this session
       const { cdpClient } = await import('./cdp/cdpClient');
-      await cdpClient.enableDomains({ sessionId }, ['Accessibility', 'DOM']);
+      await cdpClient.enableDomains(target, ['Accessibility', 'DOM']);
 
       // Get accessibility tree for this frame
-      const axResult = await cdpClient.sendCommand<any>({ sessionId }, 'Accessibility.getFullAXTree', {});
+      const axResult = await cdpClient.sendCommand<any>(target, 'Accessibility.getFullAXTree', {});
       if (!axResult?.nodes) {
         console.warn(`[AXSlice] No AX nodes found for frame ${frameId}`);
         continue;
@@ -8432,7 +8441,7 @@ async function fetchAXSlice(maxNodes = 150, viewportOnly = true): Promise<any[]>
         try {
           // Push backend node to frontend to get nodeId
           const pushResult = await cdpClient.sendCommand<any>(
-            { sessionId }, 
+            target,
             'DOM.pushNodesByBackendIdsToFrontend', 
             { backendNodeIds: [candidate.backendNodeId] }
           );
@@ -8442,7 +8451,7 @@ async function fetchAXSlice(maxNodes = 150, viewportOnly = true): Promise<any[]>
 
           // Get box model for bounds
           const boxModel = await cdpClient.sendCommand<any>(
-            { sessionId }, 
+            target,
             'DOM.getBoxModel', 
             { nodeId }
           );

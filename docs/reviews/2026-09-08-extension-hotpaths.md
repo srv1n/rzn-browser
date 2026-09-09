@@ -100,6 +100,23 @@ This reduces accidental disclosure through this snapshot JSON path. It is not a
 claim that screenshots, explicit extraction, CDP/AX snapshots, or all logging
 surfaces have a complete sensitive-data policy.
 
+### 7. Follow-up: root bookkeeping was still being sent as a Chrome session
+
+`FrameRouter` used `root:<tabId>` and `root:unknown` internally, then exposed
+them as if they were child session IDs. The Chrome debugger API accepts only
+Chrome-issued child IDs on `DebuggerSession`; root commands must address the
+tab target with no `sessionId`. The event listener also discarded
+`source.sessionId`, which is where Chrome identifies the child session that
+emitted a frame or execution-context event.
+
+The router now uses `source.sessionId` for child mappings and keeps tab ownership
+with every child session. Its frame-session iterator returns a command target:
+the root is `{ tabId }`, while a child is `{ tabId, sessionId }`. AX collection
+and CDP evaluation consume that target directly, so protocol routing and domain
+lease keys agree. A focused real-router/mock-transport test failed on the old
+head with `root:7`/`root:unknown`, then passed with root, unknown, child,
+explicit-session, and lease-accounting coverage.
+
 ## Measured evidence
 
 The baseline copies of both modified modules were verified against their GitHub
@@ -141,12 +158,11 @@ memory have not been measured here.
 
 ## Validation and merge gates
 
-**Completed locally:** 38 newly added regression cases passed using an isolated
-Node test adapter that executed the test bodies against the changed TypeScript
-sources with controlled Chrome/DOM mocks. The adapter used `node:test`, not the
-Vitest runner, and substituted the declared frame-router mock. The DOM module also
-passed a standalone TypeScript no-emit check. Local checks were invoked through a
-separate validation Makefile; no Rust cache policy was disabled.
+**Completed locally after the follow-up:** `make test-ext-unit` passed **31 test
+files / 142 tests**, including the real-frame-router transport regression;
+`make build-ext` and `make build-ext-release` built the Chrome, Edge, and Chromium
+bundles. The targeted test was first run against the original PR head and failed
+with root bookkeeping IDs on the debugger target, then passed after the repair.
 
 Coverage includes capture/hash compatibility at small and large limits, stable
 IDs, traversal order and mutation handling, absent body, visibility, password
@@ -155,12 +171,16 @@ callbacks, error codes, concurrent acquisitions, failed enable/retry, partial
 rollback, rollback failure, release ordering, frame/tab isolation, unheld releases,
 duplicate domains, and repeated bookkeeping cleanup.
 
-**Not completed locally:** the repository's actual Vitest run, extension bundles,
-Rust workspace tests, real Chrome/Edge/Chromium automation, native-host integration,
-and browser RSS/CPU profiling. Direct checkout and dependency downloads were
-blocked in the review environment; Bun, Rust, sccache, and the Tusker CLI were not
-available. Those unavailable local commands are not reported as passed. No tracker
-proof was fabricated, and no existing tests or CI gates were removed or weakened.
+**Browser proof remains blocked locally:** after installing Playwright Chromium,
+`make test-ext-e2e` reached Playwright's runner but did not launch Chromium or
+report a test; it was stopped rather than waiting out the CI budget. The workflow
+had a separate baseline defect: it built with the test bridge disabled although
+all Playwright tests wait for bridge-only APIs. The workflow and Make E2E target
+now set `RZN_PAGE_TEST_BRIDGE_ENABLED=1`; this is a test-build-only setting, not
+a production behavior change. New browser coverage exercises main and OOPIF child
+targets through real Chrome, navigation and tab closure, ordinary typing/clicking
+(existing action coverage), and snapshots at 20 and 80 elements. CI must execute
+that coverage before merge.
 
 **Observed GitHub CI after opening PR #1:** the Extension Build and Unit Tests
 job passed for code commit `57757f5abb7178ea3714722ef69a99fec921d603` (GitHub

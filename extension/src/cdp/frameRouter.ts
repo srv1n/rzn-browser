@@ -42,8 +42,14 @@ interface ExecutionContext {
 interface SessionInfo { 
   sessionId: string; 
   targetId: string; 
+  tabId: number;
   parentSessionId?: string; 
   type?: string; 
+}
+
+export interface FrameCommandTarget {
+  tabId: number;
+  sessionId?: string;
 }
 
 export class FrameRouter {
@@ -102,7 +108,8 @@ export class FrameRouter {
       this.tabSessions.set(tabId, rootSessionId);
       this.sessions.set(rootSessionId, { 
         sessionId: rootSessionId, 
-        targetId: `tab:${tabId}` 
+        targetId: `tab:${tabId}`,
+        tabId,
       });
       
       // Set up event listener for this tab
@@ -228,12 +235,8 @@ export class FrameRouter {
    * Get sessionId for routing commands to specific frame
    * This is the core routing functionality
    */
-  routeForFrame(frameId?: string): { sessionId: string } {
-    if (!frameId) {
-      // Return root session for main frame
-      // This is a synchronous fallback - in practice, ensureAttachedForFrame should be called first
-      return { sessionId: 'root:unknown' };
-    }
+  routeForFrame(frameId?: string): { sessionId?: string } {
+    if (!frameId) return {};
     
     const sessionId = this.frameToSession.get(frameId);
     if (sessionId) {
@@ -241,9 +244,9 @@ export class FrameRouter {
       return { sessionId };
     }
     
-    // Fallback to root session if frame not mapped yet
-    console.warn(`[FrameRouter] No route found for frameId: ${frameId}, using root session`);
-    return { sessionId: 'root:unknown' };
+    // Root and unknown frames are sent to the tab target without a session ID.
+    console.warn(`[FrameRouter] No child route found for frameId: ${frameId}, using tab target`);
+    return {};
   }
 
   /**
@@ -305,35 +308,26 @@ export class FrameRouter {
   /**
    * Get frame sessions for a specific tab (for AX slice iteration)
    */
-  getFrameSessionsForTab(tabId: number): Array<{ frameId: string; sessionId: string }> {
-    const result: Array<{ frameId: string; sessionId: string }> = [];
+  getFrameSessionsForTab(tabId: number): Array<{ frameId: string; target: FrameCommandTarget }> {
+    const result: Array<{ frameId: string; target: FrameCommandTarget }> = [{ frameId: 'main', target: { tabId } }];
     
     // Add root session first
-    const rootSession = this.tabSessions.get(tabId);
-    if (rootSession) {
-      result.push({ frameId: 'main', sessionId: rootSession });
-    }
-    
     // Add frame-specific sessions
     for (const [frameId, sessionId] of this.frameToSession.entries()) {
-      // Filter to sessions belonging to this tab (rough heuristic)
       const sessionInfo = this.sessions.get(sessionId);
-      if (sessionInfo && (
-        sessionInfo.targetId.includes(`tab:${tabId}`) || 
-        sessionId === rootSession ||
-        sessionInfo.parentSessionId === rootSession
-      )) {
-        result.push({ frameId, sessionId });
+      if (sessionInfo?.tabId === tabId) {
+        result.push({ frameId, target: { tabId, sessionId } });
       }
     }
     
-    // Remove duplicates based on sessionId
+    // One child session can own several frames; the root has no session ID.
     const seen = new Set<string>();
     return result.filter(item => {
-      if (seen.has(item.sessionId)) {
+      const key = item.target.sessionId ?? 'root';
+      if (seen.has(key)) {
         return false;
       }
-      seen.add(item.sessionId);
+      seen.add(key);
       return true;
     });
   }
@@ -374,19 +368,19 @@ export class FrameRouter {
       // Only handle events from our attached tab
       if (source.tabId !== tabId) return;
       
-      this.handleCDPEvent(tabId, method, params);
+      this.handleCDPEvent(tabId, source, method, params);
     };
   }
 
   /**
    * Handle CDP events to maintain frame routing
    */
-  private handleCDPEvent(tabId: number, method: string, params: any): void {
+  private handleCDPEvent(tabId: number, source: chrome.debugger.Debuggee, method: string, params: any): void {
     console.log(`[FrameRouter] Event: ${method}`, params);
     
     switch (method) {
       case 'Target.attachedToTarget':
-        this.handleTargetAttached(params, tabId);
+        this.handleTargetAttached(params, tabId, source.sessionId);
         break;
         
       case 'Target.detachedFromTarget':
@@ -394,7 +388,7 @@ export class FrameRouter {
         break;
         
       case 'Runtime.executionContextCreated':
-        this.handleExecutionContextCreated(params);
+        this.handleExecutionContextCreated(params, tabId, source.sessionId);
         break;
         
       case 'Runtime.executionContextDestroyed':
@@ -403,7 +397,7 @@ export class FrameRouter {
         
       case 'Page.frameAttached':
       case 'Page.frameNavigated':
-        this.handleFrameEvent(params, tabId);
+        this.handleFrameEvent(params, tabId, source.sessionId);
         break;
         
       case 'Page.frameDetached':
@@ -415,7 +409,7 @@ export class FrameRouter {
   /**
    * Handle Target.attachedToTarget - critical for OOPIF routing
    */
-  private handleTargetAttached(params: any, tabId: number): void {
+  private handleTargetAttached(params: any, tabId: number, parentSessionId?: string): void {
     const { sessionId, targetInfo } = params;
     
     console.log(`[FrameRouter] Target attached: ${targetInfo.targetId} -> session ${sessionId}`);
@@ -424,7 +418,8 @@ export class FrameRouter {
     this.sessions.set(sessionId, {
       sessionId,
       targetId: targetInfo.targetId,
-      parentSessionId: params.sessionId,
+      tabId,
+      parentSessionId,
       type: targetInfo.type
     });
     
@@ -440,26 +435,10 @@ export class FrameRouter {
   /**
    * Handle Page.frameAttached and Page.frameNavigated
    */
-  private handleFrameEvent(params: any, tabId: number): void {
+  private handleFrameEvent(params: any, tabId: number, sessionId?: string): void {
     const frameId = params.frame?.id ?? params.frameId;
     if (!frameId) return;
-    
-    // Map frame to session (use root session for main frame, or specific session for OOPIF)
-    const sessionId = params.sessionId || this.tabSessions.get(tabId) || `root:${tabId}`;
-    
-    console.log(`[FrameRouter] Mapping frame ${frameId} -> session ${sessionId}`);
-    this.frameToSession.set(frameId, sessionId);
-    
-    // Update routes map as well for compatibility
-    this.routes.set(frameId, {
-      sessionId,
-      targetId: `frame:${frameId}`,
-      frameInfo: {
-        frameId,
-        url: params.frame?.url,
-        securityOrigin: params.frame?.securityOrigin
-      }
-    });
+    this.mapFrameToSession(frameId, tabId, sessionId, params.frame);
   }
 
   /**
@@ -474,6 +453,7 @@ export class FrameRouter {
     if (targetId) {
       this.targetSessions.delete(targetId);
     }
+    this.sessions.delete(sessionId);
     
     // Find and remove routes using this sessionId
     for (const [frameId, route] of this.routes.entries()) {
@@ -488,7 +468,7 @@ export class FrameRouter {
   /**
    * Handle Runtime.executionContextCreated - maps contexts to frames
    */
-  private handleExecutionContextCreated(params: any): void {
+  private handleExecutionContextCreated(params: any, tabId: number, sessionId?: string): void {
     const { context } = params;
     
     // Store execution context
@@ -497,21 +477,11 @@ export class FrameRouter {
     // If this context has auxData with frameId, create the route
     if (context.auxData && context.auxData.frameId) {
       const frameId = context.auxData.frameId;
-      const sessionId = params.sessionId; // This comes from the session that created the context
-      
-      if (sessionId) {
-        console.log(`[FrameRouter] Mapping frame ${frameId} -> session ${sessionId}`);
-        
-        this.routes.set(frameId, {
-          sessionId,
-          targetId: context.auxData.targetId || 'unknown',
-          frameInfo: {
-            frameId,
-            url: context.origin,
-            securityOrigin: context.origin
-          }
-        });
-      }
+      this.mapFrameToSession(frameId, tabId, sessionId, {
+        url: context.origin,
+        securityOrigin: context.origin,
+        targetId: context.auxData.targetId,
+      });
     }
   }
 
@@ -549,6 +519,24 @@ export class FrameRouter {
     this.frameToSession.delete(frameId);
   }
 
+  private mapFrameToSession(frameId: string, tabId: number, sessionId?: string, frame: any = {}): void {
+    if (!sessionId) {
+      this.routes.delete(frameId);
+      this.frameToSession.delete(frameId);
+      return;
+    }
+    if (!this.sessions.has(sessionId)) {
+      this.sessions.set(sessionId, { sessionId, targetId: frame.targetId || `frame:${frameId}`, tabId });
+    }
+    console.log(`[FrameRouter] Mapping frame ${frameId} -> session ${sessionId}`);
+    this.frameToSession.set(frameId, sessionId);
+    this.routes.set(frameId, {
+      sessionId,
+      targetId: frame.targetId || `frame:${frameId}`,
+      frameInfo: { frameId, url: frame.url, securityOrigin: frame.securityOrigin },
+    });
+  }
+
   /**
    * Clear all routes for a tab (cleanup helper)
    */
@@ -562,7 +550,7 @@ export class FrameRouter {
     // Remove frame mappings that belong to this tab's sessions
     const tabSessions = new Set([rootSession]);
     for (const [sessionId, info] of this.sessions.entries()) {
-      if (info.targetId.startsWith(`tab:${tabId}`) || tabSessions.has(info.parentSessionId)) {
+      if (info.tabId === tabId) {
         tabSessions.add(sessionId);
         this.sessions.delete(sessionId);
       }
