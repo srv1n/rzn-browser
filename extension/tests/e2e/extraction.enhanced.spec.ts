@@ -74,7 +74,7 @@ test.describe('Enhanced extraction (single object)', () => {
       ],
     }));
 
-    expect(resp.success).toBeTruthy();
+    expect(resp.success, JSON.stringify(resp)).toBeTruthy();
     const obj = resp.result as { title: string; price: string; currency: string };
     expect(typeof obj).toBe('object');
     expect(obj.title).toBe('Widget Ultra');
@@ -85,4 +85,3 @@ test.describe('Enhanced extraction (single object)', () => {
     await srv.close();
   });
 });
-

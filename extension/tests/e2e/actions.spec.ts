@@ -276,7 +276,7 @@ test.describe('Enhanced actions e2e', () => {
       delay_ms: 0,
     }));
 
-    expect(fillResp.success).toBeTruthy();
+    expect(fillResp.success, JSON.stringify(fillResp)).toBeTruthy();
     await expect(page.locator('#name')).toHaveValue('SeedXYZ');
 
     const stats = await page.evaluate(() => (window as any).__rznTypingStats);
@@ -322,7 +322,7 @@ test.describe('Enhanced actions e2e', () => {
       value: "O'Reilly",
       pierce_shadow: true,
     }));
-    expect(fillResp.success).toBeTruthy();
+    expect(fillResp.success, JSON.stringify(fillResp)).toBeTruthy();
 
     const values = await page.evaluate(() => {
       const decoy = document.querySelector('#decoy') as HTMLTextAreaElement | null;
@@ -426,7 +426,7 @@ test.describe('Enhanced actions e2e', () => {
       type: 'press_key',
       key: 'Enter',
     }));
-    expect(pressResp.success).toBeTruthy();
+    expect(pressResp.success, JSON.stringify(pressResp)).toBeTruthy();
 
     const keyed = await page.getAttribute('#keytarget', 'data-keyed');
     expect(keyed).toBe('yes');
@@ -533,7 +533,7 @@ test.describe('Enhanced actions e2e', () => {
     }));
     expect(directExecute.success).toBeTruthy();
     expect(directExecute.result?.world).toBe('main');
-    expect(['page_bridge_main_world_compat', 'chrome_scripting_main_world']).toContain(
+    expect(['page_bridge_main_world', 'chrome_scripting_main_world']).toContain(
       directExecute.result?.execution_backend
     );
     expect(directExecute.result?.result).toBe('Hello from isolated');
@@ -1121,8 +1121,8 @@ test.describe('Enhanced actions e2e', () => {
     expect(resp.cdpType?.result?.action).toBe('type_text');
     expect(resp.upload?.success).toBeTruthy();
     expect(resp.upload?.result?.action).toBe('upload_file_cdp');
-    expect(resp.upload?.result?.file_count).toBe(1);
-    expect(resp.upload?.result?.files).toContain('upload_test.txt');
+    expect(resp.upload?.result?.result?.file_count).toBe(1);
+    expect(resp.upload?.result?.result?.files).toContain('upload_test.txt');
 
     const pageState = await page.evaluate(() => ({
       clickLog: (window as any).clickLog,
