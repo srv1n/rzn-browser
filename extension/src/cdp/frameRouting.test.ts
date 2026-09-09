@@ -52,7 +52,7 @@ describe('frame routing', () => {
     emit({ tabId }, 'Target.attachedToTarget', {
       sessionId: 'chrome-child', targetInfo: { targetId: 'child-target', type: 'iframe' },
     });
-    emit({ tabId, sessionId: 'chrome-child' }, 'Page.frameNavigated', { frame: { id: 'child' } });
+    emit({ sessionId: 'chrome-child' }, 'Page.frameNavigated', { frame: { id: 'child' } });
 
     commands = [];
     const client = new CDPClient();

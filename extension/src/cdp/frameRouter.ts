@@ -365,8 +365,8 @@ export class FrameRouter {
    */
   private createEventListener(tabId: number) {
     return (source: any, method: string, params: any) => {
-      // Only handle events from our attached tab
-      if (source.tabId !== tabId) return;
+      // Child debugger events identify their owner by sessionId, not necessarily tabId.
+      if (source.tabId !== tabId && this.sessions.get(source.sessionId || '')?.tabId !== tabId) return;
       
       this.handleCDPEvent(tabId, source, method, params);
     };
