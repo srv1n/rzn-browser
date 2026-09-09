@@ -30,7 +30,7 @@ async function background(context: BrowserContext): Promise<Worker> {
 }
 
 test('routes main and cross-origin frames through Chrome targets across navigation and close', async () => {
-  const child = await startServer('127.0.0.2', '<button>Child frame</button>');
+  const child = await startServer('localhost', '<button>Child frame</button>');
   const parent = await startServer('127.0.0.1', `<button>Main frame</button><iframe src="${child.url}"></iframe>`);
   const extensionPath = path.resolve(__dirname, '../../dist/chrome');
   const userDataDir = path.resolve(__dirname, '../../.pw-user-data-frame-routing');
@@ -43,6 +43,7 @@ test('routes main and cross-origin frames through Chrome targets across navigati
   try {
     const page = await context.newPage();
     await page.goto(parent.url);
+    await expect.poll(() => page.frames().some(frame => frame.url() === child.url), { timeout: 10_000 }).toBe(true);
     const worker = await background(context);
     const tabId = await worker.evaluate(async prefix => {
       const tabs = await chrome.tabs.query({ url: `${prefix}*` });
