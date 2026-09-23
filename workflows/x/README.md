@@ -8,6 +8,7 @@ Canonical pack for automating `x.com` via the authenticated Chrome session. Work
 | --- | --- | --- |
 | `x_home_timeline_digest` | Scroll the home timeline and return a bounded digest. | — |
 | `x_open` | Open any X URL (post / longform article / same-author thread) and return a unified markdown rendering plus image, video, and linked-page URLs. Auto-detects kind. | `url` (+ optional `mode`) |
+| `x_screenshot` | Capture one post, reply, or longform article as a tightly cropped PNG. | `url` (+ optional `mode`) |
 | `x_open_inbox` | Open the DM inbox read-only. | — |
 | `x_open_dm_thread` | Open one DM thread URL read-only. | `thread_url` |
 | `x_like_post` | Like one post after a review gate. | `post_url` |
@@ -17,6 +18,7 @@ Canonical pack for automating `x.com` via the authenticated Chrome session. Work
 | `x_reply_dm_thread` | Reply inside an existing DM thread after a review gate. | `thread_url`, `message_text` |
 | `x_search_posts` | Search posts from a handle, optionally within a date window (top/latest/live). | `handle` (+ optional `since_date`, `until_date`, `timeline_mode`) |
 | `x_profile_posts` | Return up to 20 recent posts from one profile. | `handle` |
+| `x_export_account` | Export one account over a date range in one tab, including full text, media URLs, articles when exposed by X, and detected threads. | `handle`, `since_date`, `until_date` |
 
 All mutating flows (`x_like_post`, `x_reply_post`, `x_create_post`, `x_send_dm`, `x_reply_dm_thread`) pause at an in-page review gate (`approval_mode: "ask_user"`, `continue_on_timeout: false`) and only send on explicit continue.
 
@@ -31,7 +33,9 @@ rzn-browser run x home-timeline-digest
 rzn-browser run x open --param url="https://x.com/elonmusk/status/2046981493197586714"
 rzn-browser run x open --param url="https://x.com/addyosmani/status/2053231239721885918" --output-file ./article.md --download-dir ./assets/
 rzn-browser run x open --param url="https://x.com/felixrieseberg/status/123" --param mode="thread"
+rzn-browser run x screenshot --param url="https://x.com/felixrieseberg/status/123"
 rzn-browser run x search-posts --param handle="felixrieseberg" --param since_date="2026-03-10" --param until_date="2026-03-18" --param timeline_mode="live"
+rzn-browser run x export-account --param handle="heyblake" --param since_date="2026-08-21" --param until_date="2026-09-22" --output-file ./heyblake.md --download-dir ./heyblake-assets
 rzn-browser run x create-post --param post_text="Today's a great day"
 rzn-browser run x reply-post --param post_url="https://x.com/elonmusk/status/2046981493197586714" --param reply_text="I love your content, cheers"
 rzn-browser run x like-post --param post_url="https://x.com/elonmusk/status/2046981493197586714"

@@ -1,18 +1,19 @@
 ---
-name: "goodreads-book"
-description: "Run the Goodreads book details + reviews workflow through the local CLI route."
+name: goodreads-book
+description: Look up one Goodreads book's metadata, rating histogram, and initial reviews using RZN Browser.
 ---
 
-# Goodreads Book Skill
+# Goodreads Book
 
-Fetch one book's metadata, rating histogram, genres, first page of reviews, and
-similar-book URLs:
+Requires the installed `rzn-browser` CLI and connected Chrome extension/native
+host. Use the user's existing browser profile.
 
 ```bash
-./skills/goodreads-book/scripts/run.sh --book-url "https://www.goodreads.com/book/show/29993569-raising-a-secure-child"
+rzn-browser run goodreads/book --param book_url="<book-url>"
 ```
 
-Output is a normalized JSON envelope with `success`, `row_count`, and `data`.
-`data` holds `{ book{...}, rating_breakdown[], genres[], reviews[], similar_urls[] }`.
-For the full critical-vs-positive review spread use goodreads-reviews; for a titled
-recommendation list use goodreads-similar.
+Returns `book`, `rating_breakdown`, `genres`, initial `reviews`, and `similar_urls`. Use `goodreads/reviews` with `coverage=by_rating` for a spread of opinions; the initial page is not representative of all readers.
+
+Check the actual output and source URLs before summarizing. If extraction fails
+or returns incomplete data, report the limitation. Use `rzn-browser workflow list goodreads book`
+for the installed workflow's parameters and result contract.

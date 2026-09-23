@@ -3699,6 +3699,11 @@ impl Orchestrator {
                 }
             }
             "take_screenshot" => {
+                let selector = validated_action
+                    .get("parameters")
+                    .and_then(|p| p.get("selector"))
+                    .and_then(|v| v.as_str())
+                    .map(|v| v.to_string());
                 let full_page = validated_action
                     .get("parameters")
                     .and_then(|p| p.get("full_page"))
@@ -3729,6 +3734,7 @@ impl Orchestrator {
                     .map(|v| v.to_string());
 
                 StepKind::TakeScreenshot {
+                    selector,
                     full_page,
                     annotate,
                     annotate_max_labels,

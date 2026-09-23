@@ -1,6 +1,6 @@
 // Auto-generated from schema/actions.json
 // schema-version: rzn.actions
-// schema-sha256: d397ca91da91bac5224118c5631e9a270c704da4724c38a826c88c46d76fb57b
+// schema-sha256: 2353a3c2651e62fecf5ee6f56df4f3323dd6e40d05da7a6474ca6966e31390f3
 // DO NOT EDIT MANUALLY
 
 export interface RobustSelectors {
@@ -285,6 +285,7 @@ export interface GetElementAttribute {
 
 export interface TakeScreenshot {
   type: 'take_screenshot';
+  selector?: string;
   full_page?: boolean;
   annotate?: boolean;
   annotate_max_labels?: number;
@@ -1119,6 +1120,7 @@ export const GetElementAttributeSchema = z.object({
 
 export const TakeScreenshotSchema = z.object({
   type: z.literal('take_screenshot'),
+  selector: z.string().optional(),
   full_page: z.boolean().optional(),
   annotate: z.boolean().optional(),
   annotate_max_labels: z.number().int().min(1).max(200).optional(),

@@ -1,15 +1,19 @@
 ---
-name: "etsy-listing-details-reviews"
-description: "Run Etsy listing details + reviews extraction through the local CLI route."
+name: etsy-listing-details-reviews
+description: Extract reviews for a specific Etsy listing using RZN Browser.
 ---
 
-# Etsy Listing Details Reviews Skill
+# Etsy Listing Reviews
 
-Run Etsy listing details and reviews with no environment setup:
+Requires the installed `rzn-browser` CLI and connected Chrome extension/native
+host. Use the user's existing browser profile.
 
 ```bash
-./skills/etsy-listing-details-reviews/scripts/run.sh --listing-url "https://www.etsy.com/listing/123456789/example-listing"
+rzn-browser run etsy/listing_details_reviews --param listing_url="<listing-url>"
 ```
 
-Output is a normalized JSON envelope with `success`, `row_count`, and `data`.
+Use a listing URL supplied by the user or returned by Etsy search. The declared final result is review rows with body, author, date, and rating; it is not a combined listing-details object.
 
+Check the actual output and source URLs before summarizing. If extraction fails
+or returns incomplete data, report the limitation. Use `rzn-browser workflow list etsy listing_details_reviews`
+for the installed workflow's parameters and result contract.

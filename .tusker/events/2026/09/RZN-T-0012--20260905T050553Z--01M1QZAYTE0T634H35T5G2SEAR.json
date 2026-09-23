@@ -1,0 +1,15 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-09-05T05:05:53Z",
+  "event_kind": "status_changed",
+  "id": "01M1QZAYTE0T634H35T5G2SEAR",
+  "object": "RZN-T-0012",
+  "object_kind": "task",
+  "payload": {
+    "from": "backlog",
+    "reason": "Implementation and live picker readback complete; all focused checks pass. Initial ready transition refused missing spec_refs; tracker contract setup remains separate from code proof.",
+    "to": "review"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

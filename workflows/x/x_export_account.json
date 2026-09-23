@@ -1,0 +1,94 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "x/export_account",
+  "name": "X: Export Account",
+  "version": "1.0.0",
+  "system": "x",
+  "capability": "x.account.export",
+  "summary": "Export one account's posts in a date range as Markdown with media URLs, using one tab and a bounded internal scroll loop.",
+  "description": "Open X search once, harvest every visible post from one handle while scrolling, expand truncated cards, enrich each post through X's authenticated read API, group same-conversation posts as threads, and return one Markdown archive plus downloadable media URLs.",
+  "params": {
+    "properties": {
+      "handle": { "kind": "string", "required": true, "description": "X handle without @." },
+      "since_date": { "kind": "string", "required": true, "description": "Inclusive YYYY-MM-DD lower bound." },
+      "until_date": { "kind": "string", "required": true, "description": "Exclusive YYYY-MM-DD upper bound." },
+      "max_posts": { "kind": "integer", "required": false, "default": 250, "min": 1, "max": 1000, "description": "Safety cap. Defaults to 250." },
+      "scroll_delay_ms": { "kind": "integer", "required": false, "default": 1200, "min": 800, "max": 5000, "description": "Delay between scrolls. Defaults to 1200ms." }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    { "class": "auth", "idempotency": "safe_retry", "confirmation_required": false, "scopes": ["x.com"] },
+    { "class": "browser_state", "idempotency": "safe_retry", "confirmation_required": false, "scopes": ["x.com"] },
+    { "class": "read_only", "idempotency": "safe_retry", "confirmation_required": false, "scopes": ["x.com"] },
+    { "class": "external_read", "idempotency": "safe_retry", "confirmation_required": false, "scopes": ["x.com", "api.x.com", "pbs.twimg.com", "video.twimg.com"] },
+    { "class": "network_access", "idempotency": "safe_retry", "confirmation_required": false, "scopes": ["x.com", "api.x.com", "pbs.twimg.com", "video.twimg.com"] },
+    { "class": "download", "idempotency": "safe_retry", "confirmation_required": false, "scopes": ["pbs.twimg.com", "video.twimg.com"] },
+    { "class": "file_write", "idempotency": "safe_retry", "confirmation_required": false, "scopes": [] }
+  ],
+  "runtime": { "actor": "supervisor", "requires_cdp": false, "requires_existing_session": true, "timeout_ms": 360000 },
+  "steps": [
+    {
+      "id": "s0",
+      "name": "Open X in the authenticated tab",
+      "action": { "kind": "navigate_to_url", "inputs": { "url": "https://x.com/home" }, "side_effects": ["browser_state"] },
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "name": "Open the account's date-window search",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": ["{handle}", "{since_date}", "{until_date}"],
+          "script": "const c=v=>String(v==null?'':v).trim();const handle=c(arg0).replace(/^@+/,'');const since=c(arg1),until=c(arg2);if(!/^[A-Za-z0-9_]{1,15}$/.test(handle))throw new Error('invalid X handle');if(!/^\\d{4}-\\d{2}-\\d{2}$/.test(since)||!/^\\d{4}-\\d{2}-\\d{2}$/.test(until))throw new Error('dates must be YYYY-MM-DD');const q='from:'+handle+' since:'+since+' until:'+until;const url='https://x.com/search?q='+encodeURIComponent(q)+'&src=typed_query&f=live';setTimeout(()=>location.assign(url),0);return {handle,since,until,url};"
+        },
+        "side_effects": ["browser_state"]
+      },
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s2",
+      "name": "Wait for search results",
+      "action": { "kind": "wait_for_element", "inputs": {}, "target": { "selector": "main article[data-testid='tweet'], main article" }, "side_effects": ["read_only"] },
+      "timeout_ms": 25000
+    },
+    {
+      "id": "s3",
+      "name": "Harvest, enrich, and render the archive",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": ["{handle}", "{since_date}", "{until_date}", "{max_posts}", "{scroll_delay_ms}"],
+          "script": "const clean=v=>String(v==null?'':v).trim();const handle=clean(arg0).replace(/^@+/,'');const since=clean(arg1),until=clean(arg2);const cap=Math.max(1,Math.min(1000,parseInt(clean(arg3),10)||250));const delay=Math.max(800,Math.min(5000,parseInt(clean(arg4),10)||1200));const sleep=ms=>new Promise(r=>setTimeout(r,ms));const uniq=a=>[...new Set(a.filter(Boolean))];const norm=s=>String(s||'').replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const found=new Map();const harvest=()=>{for(const a of document.querySelectorAll(\"main article[data-testid='tweet'],main article\")){const link=a.querySelector(\"a[href*='/status/'] time\")?.closest('a')||a.querySelector(\"a[href*='/status/']\");const m=(link?.getAttribute('href')||'').match(/^\\/([^/]+)\\/status\\/(\\d+)/);if(!m||m[1].toLowerCase()!==handle.toLowerCase())continue;const time=a.querySelector('time')?.getAttribute('datetime')||null;if(time){const day=time.slice(0,10);if(day<since||day>=until)continue;}found.set(m[2],{id:m[2],post_url:'https://x.com/'+m[1]+'/status/'+m[2],posted_at:time,dom_text:norm(a.querySelector(\"[data-testid='tweetText']\")?.innerText||'')});if(found.size>=cap)break;}};window.scrollTo(0,0);let stale=0,last=0;for(let i=0;i<200&&found.size<cap&&stale<8;i++){document.querySelectorAll(\"[data-testid='tweet-text-show-more-link']\").forEach(b=>{try{b.click()}catch{}});harvest();stale=found.size===last?stale+1:0;last=found.size;window.scrollBy(0,Math.max(700,Math.round(innerHeight*.85)));await sleep(delay);}harvest();const cookie=n=>document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith(n+'='))?.slice(n.length+1)||'';const BEARER=decodeURIComponent('AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA');const features={creator_subscriptions_tweet_preview_api_enabled:true,premium_content_api_read_enabled:false,communities_web_enable_tweet_community_results_fetch:true,c9s_tweet_anatomy_moderator_badge_enabled:true,responsive_web_edit_tweet_api_enabled:true,graphql_is_translatable_rweb_tweet_is_translatable_enabled:true,view_counts_everywhere_api_enabled:true,longform_notetweets_consumption_enabled:true,responsive_web_twitter_article_tweet_consumption_enabled:true,longform_notetweets_rich_text_read_enabled:true,longform_notetweets_inline_media_enabled:false,responsive_web_graphql_skip_user_profile_image_extensions_enabled:false,responsive_web_graphql_timeline_navigation_enabled:true,responsive_web_enhance_cards_enabled:false};const fieldToggles={withArticleRichContentState:true,withArticlePlainText:true,withArticleSummaryText:true,withArticleVoiceOver:false,withGrokAnalyze:false,withDisallowedReplyControls:false,withPayments:false,withAuxiliaryUserLabels:false};const locate=(root,id)=>{const stack=[root],seen=new Set();while(stack.length){const x=stack.pop();if(!x||typeof x!=='object'||seen.has(x))continue;seen.add(x);const l=x.legacy;if(l&&String(x.rest_id||l.id_str||'')===id)return x;if(Array.isArray(x))stack.push(...x);else stack.push(...Object.values(x).filter(v=>v&&typeof v==='object'));}return null};const variant=v=>{const xs=(v||[]).filter(x=>/^video\\//.test(x.content_type||'')&&x.url).sort((a,b)=>(b.bitrate||0)-(a.bitrate||0));return xs[0]?.url||''};const fetchOne=async base=>{const variables={tweetId:base.id,withCommunity:false,includePromotedContent:false,withVoice:true};const p=new URLSearchParams({variables:JSON.stringify(variables),features:JSON.stringify(features),fieldToggles:JSON.stringify(fieldToggles)});const headers={accept:'application/json','authorization':'Bearer '+BEARER,'x-twitter-active-user':'yes','x-twitter-client-language':document.documentElement.lang||'en'};const ct0=cookie('ct0');if(ct0){headers['x-csrf-token']=ct0;headers['x-twitter-auth-type']='OAuth2Session'};try{const r=await fetch('https://api.x.com/graphql/zy39CwTyYhU-_0LP7dljjg/TweetResultByRestId?'+p,{credentials:'include',headers});if(!r.ok)throw new Error('HTTP '+r.status);const t=locate(await r.json(),base.id);const l=t?.legacy||{};const media=l.extended_entities?.media||l.entities?.media||[];const images=uniq(media.filter(x=>x.type==='photo').map(x=>x.media_url_https));const videos=uniq(media.filter(x=>x.type==='video'||x.type==='animated_gif').map(x=>variant(x.video_info?.variants)));const article=t?.article?.article_results?.result||t?.article_results?.result||null;const articleText=norm(article?.plain_text||article?.content_state?.plain_text||article?.preview_text||'');return {...base,text:norm(t?.note_tweet?.note_tweet_results?.result?.text||l.full_text||base.dom_text),posted_at:l.created_at?new Date(l.created_at).toISOString():base.posted_at,conversation_id:String(l.conversation_id_str||base.id),image_urls:images,video_urls:videos,article:article?{title:norm(article.title||''),text:articleText}:null,status:'ok'};}catch(e){return {...base,text:base.dom_text,conversation_id:base.id,image_urls:[],video_urls:[],article:null,status:'partial',error:String(e&&e.message||e)}}};const bases=[...found.values()];const posts=[];for(let i=0;i<bases.length;i+=4)posts.push(...await Promise.all(bases.slice(i,i+4).map(fetchOne)));posts.sort((a,b)=>String(a.posted_at||'').localeCompare(String(b.posted_at||'')));const groups=new Map();for(const p of posts){const k=p.conversation_id||p.id;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(p)}const threads=[...groups.values()].filter(g=>g.length>1).map(g=>({conversation_id:g[0].conversation_id,posts:g}));const md='# @'+handle+' · '+since+' to '+until+'\\n\\n'+posts.map((p,i)=>'## '+(i+1)+'. '+(p.posted_at||'')+'\\n\\n'+(p.article?.title?'### '+p.article.title+'\\n\\n'+p.article.text+'\\n\\n':p.text+'\\n\\n')+'[View on X]('+p.post_url+')'+(p.image_urls.length?'\\n\\n'+p.image_urls.map(u=>'![]('+u+')').join('\\n\\n'):'')+(p.video_urls.length?'\\n\\nVideos:\\n'+p.video_urls.map(u=>'- '+u).join('\\n'):'')).join('\\n\\n---\\n\\n');const images=uniq(posts.flatMap(p=>p.image_urls)),videos=uniq(posts.flatMap(p=>p.video_urls));return {handle,since_date:since,until_date:until,posts_found:posts.length,partial_posts:posts.filter(p=>p.status!=='ok').length,posts,threads,markdown:md,image_urls:images,video_urls:videos,asset_urls:[...images,...videos],search_url:location.href};"
+        },
+        "side_effects": ["browser_state", "read_only", "external_read", "network_access"]
+      },
+      "timeout_ms": 300000
+    }
+  ],
+  "result": {
+    "artifact_policy": { "prefer_downloads": false },
+    "include_debug": false,
+    "output_selector": { "step_id": "s3", "path": "$" },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "handle": { "type": "string" }, "since_date": { "type": "string" }, "until_date": { "type": "string" },
+        "posts_found": { "type": "integer" }, "partial_posts": { "type": "integer" }, "markdown": { "type": "string" },
+        "posts": { "type": "array", "items": { "type": "object" } }, "threads": { "type": "array", "items": { "type": "object" } },
+        "image_urls": { "type": "array", "items": { "type": "string" } }, "video_urls": { "type": "array", "items": { "type": "string" } },
+        "asset_urls": { "type": "array", "items": { "type": "string" } }, "search_url": { "type": "string" }
+      }
+    }
+  },
+  "help": {
+    "summary": "Export one X account over a date range in one workflow run and one tab.",
+    "parameters": { "handle": "Handle without @.", "since_date": "Inclusive YYYY-MM-DD.", "until_date": "Exclusive YYYY-MM-DD.", "max_posts": "Safety cap; default 250.", "scroll_delay_ms": "Scroll pacing; default 1200ms, minimum 800ms." },
+    "examples": [{ "command": "rzn-browser run x export-account --param handle=heyblake --param since_date=2026-08-21 --param until_date=2026-09-22 --output-file ./heyblake.md --download-dir ./heyblake-assets", "description": "Export a month of posts and media." }],
+    "returns": ["One object containing posts, detected same-conversation threads, combined Markdown, and media URLs."],
+    "notes": ["Read-only and single-tab.", "until_date is exclusive.", "Stops after eight scrolls with no new matching posts or max_posts.", "X search can omit deleted, withheld, or non-indexed posts; this exports everything the authenticated search surface returns."]
+  }
+}

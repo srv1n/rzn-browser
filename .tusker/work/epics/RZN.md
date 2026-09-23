@@ -12,8 +12,8 @@ next_task_number: 1
 next_gate_number: 1
 next_decision_number: 1
 created_at: "2026-08-23T12:27:24Z"
-updated_at: "2026-08-31T03:36:48Z"
-state_rev: "sha256:58344481eca8d5e8d6882c3bb1fdded44903393431a949952960aea36ccd77b5"
+updated_at: "2026-09-09T06:17:43Z"
+state_rev: "sha256:f0f8c0636d25beee5b7a223977c44ec3f42fcdc9f261af915b98b8c6be381d09"
 capsule:
   skip_when: "Skip when you need a specific task contract, proof row, gate, or attempt."
   use_when: "Use to triage this workstream's scope, active tasks, and durable direction."
@@ -59,6 +59,7 @@ TBD.
 | [[RZN-T-0009]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[RZN-T-0010]] | backlog | agent | Execute the task contract and satisfy proof mode. |
 | [[RZN-T-0011]] | ready | agent | Execute the task contract and satisfy proof mode. |
+| [[RZN-T-0013]] | review | reviewer | Review evidence and close or return to rework. |
 
 ## Recently completed
 
@@ -66,4 +67,4 @@ TBD.
 
 | Task | Accepted by | Closed at |
 |---|---|---|
-| _None._ |  | |
+| [[RZN-T-0012]] | reviewer:agent | 2026-09-05T05:09:37Z |

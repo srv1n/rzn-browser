@@ -1,0 +1,169 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "x/screenshot",
+  "name": "X: Screenshot",
+  "version": "1.0.0",
+  "system": "x",
+  "capability": "x.screenshot",
+  "summary": "Capture one X post, reply, or longform article as a tightly cropped PNG.",
+  "description": "Open a public or authenticated X URL, find the requested post/reply or longform article, and save a PNG clipped to that content element. The image is intentionally unstyled for downstream processing.",
+  "params": {
+    "properties": {
+      "url": {
+        "kind": "string",
+        "required": true,
+        "description": "Full x.com or twitter.com status/article URL."
+      },
+      "mode": {
+        "kind": "string",
+        "required": false,
+        "default": "auto",
+        "enum_values": ["auto", "post", "article"],
+        "description": "Force post/reply or longform article targeting. Auto uses the URL and rendered DOM."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["x.com", "twitter.com"]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["x.com", "twitter.com"]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["x.com", "twitter.com"]
+    },
+    {
+      "class": "file_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": []
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": true,
+    "requires_existing_session": true,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s0",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": { "url": "{url}" },
+        "side_effects": ["browser_state"]
+      },
+      "name": "Open the X content",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s1",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": ["read_only"]
+      },
+      "name": "Allow the content to settle",
+      "timeout_ms": 2000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": ["browser_state"]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": ["read_only"],
+        "target": {
+          "selector": "main article, main section[role='region'], main"
+        }
+      },
+      "name": "Wait for rendered X content",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": ["{url}", "{mode}"],
+          "script": "const inputUrl=String(arg0||location.href);const forced=String(arg1||'auto').toLowerCase();const inputPath=(()=>{try{return new URL(inputUrl).pathname}catch{return location.pathname}})();const id=(inputPath.match(/\\/(?:status|article)\\/(\\d+)/i)||[])[1]||'';const articleMode=forced==='article'||(forced==='auto'&&/\\/article\\//i.test(inputPath));const visible=(el)=>{if(!el)return false;const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'};let target=null;if(!articleMode){const posts=[...document.querySelectorAll(\"main article[data-testid='tweet'], main article[role='article'], main article\")].filter(visible);target=posts.find((post)=>[...post.querySelectorAll(\"a[href*='/status/']\")].some((a)=>new RegExp('/status/'+id+'(?:$|[/?#])').test(a.getAttribute('href')||'')))||posts[0]||null;document.querySelectorAll(\"button[data-testid='tweet-text-show-more-link'], [role='button'][data-testid='tweet-text-show-more-link']\").forEach((button)=>{if(target?.contains(button))button.click()});}else{const roots=[document.querySelector('main article'),document.querySelector('main section[role=region]'),document.querySelector('main')].filter(visible);target=roots.sort((a,b)=>(b.querySelectorAll('p').length*100+(b.textContent||'').length)-(a.querySelectorAll('p').length*100+(a.textContent||'').length))[0]||null;}if(!target)throw new Error('Could not find the requested X '+(articleMode?'article':'post/reply'));document.querySelectorAll('[data-rzn-screenshot-target]').forEach((el)=>el.removeAttribute('data-rzn-screenshot-target'));target.setAttribute('data-rzn-screenshot-target','true');target.scrollIntoView({block:'start'});if(!articleMode)window.scrollBy(0,-64);await new Promise((resolve)=>setTimeout(resolve,500));if(document.fonts?.ready)await document.fonts.ready;await Promise.all([...target.querySelectorAll('img')].map((img)=>img.complete?null:img.decode().catch(()=>null)));const rect=target.getBoundingClientRect();return{kind:articleMode?'article':'post',url:location.href,requested_url:inputUrl,x:Math.round(rect.x),y:Math.round(rect.y),width:Math.round(rect.width),height:Math.round(rect.height)};"
+        },
+        "side_effects": ["browser_state", "read_only"]
+      },
+      "name": "Identify the exact post, reply, or article"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "take_screenshot",
+        "inputs": {
+          "selector": "[data-rzn-screenshot-target='true']",
+          "format": "png"
+        },
+        "side_effects": ["read_only", "file_write"]
+      },
+      "name": "Capture a tightly cropped PNG"
+    }
+  ],
+  "result": {
+    "artifact_policy": { "prefer_downloads": false },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["post", "article"] },
+        "url": { "type": "string" },
+        "requested_url": { "type": "string" },
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "artifacts": { "type": "object" }
+      }
+    },
+    "output_selector": { "step_id": "s4", "path": "$" }
+  },
+  "help": {
+    "summary": "Capture one X post, reply, or longform article as a tightly cropped PNG.",
+    "parameters": {
+      "url": "Full x.com or twitter.com status/article URL.",
+      "mode": "auto | post | article. Replies use post mode."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run x screenshot --param url=\"https://x.com/user/status/123\"",
+        "description": "Capture the requested post or reply."
+      },
+      {
+        "command": "rzn-browser run x screenshot --param url=\"https://x.com/user/article/123\" --param mode=article",
+        "description": "Capture the entire rendered longform article."
+      }
+    ],
+    "returns": [
+      "Content metadata plus artifacts.screenshots[0].path for the PNG."
+    ],
+    "notes": [
+      "Read-only. Uses the connected Chrome profile, so authenticated and public posts both work.",
+      "The PNG is clipped to the rendered content element; no rounded corners, padding, shadows, or other downstream styling is applied.",
+      "Replies are captured through the same post path by matching the requested status id."
+    ]
+  }
+}

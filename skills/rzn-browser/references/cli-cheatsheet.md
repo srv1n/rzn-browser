@@ -1,108 +1,53 @@
-# CLI Cheatsheet
+# CLI reference
 
-Use this when you need exact RZN Browser command forms.
+Use installed `--help` when a release differs from these examples.
 
-## Catalog
-
-```bash
-rzn-browser list
-rzn-browser list <system>
-rzn-browser list <system> <workflow>
-rzn-browser list --source builtin
-rzn-browser list --source user -v
-rzn-browser list <system> --all-sources
-rzn-browser list <system> --json
-```
-
-`rzn-browser list <system> <workflow>` is the fastest way to get params, examples, returns, notes, and the source workflow file.
-
-## Run Deterministic Workflows
+## Find and inspect
 
 ```bash
-rzn-browser run <system> <workflow> --param key="value"
-rzn-browser run <system>/<workflow> --param key="value"
-rzn-browser run /absolute/path/to/workflow.json --param key="value"
-```
-
-Examples:
-
-```bash
-rzn-browser run google search --param search_query="browser automation"
-rzn-browser run google search --param query="AI regulation" --param vertical=news
-rzn-browser run chatgpt recent-chats-v1 --param limit="10" --param days="7"
-rzn-browser run claude recent-chats --param limit="5"
-rzn-browser run x search-posts --param handle="openai"
-```
-
-Runtime flags:
-
-```bash
-rzn-browser run <system> <workflow> --snapshot on-error
-```
-
-`rzn-browser run` uses the local supervisor. The old native/desktop worker backends have been removed.
-
-## Show And Validate Workflows
-
-```bash
-rzn-browser workflow show <system> <workflow>
-rzn-browser workflow show <system> <workflow> --json
-rzn-browser workflow validate <system> <workflow>
-rzn-browser workflow validate /path/to/workflow.json --write-help
+rzn-browser workflow list google
+rzn-browser workflow list google search
+rzn-browser workflow inspect google/search --json
 rzn-browser workflow dirs
-rzn-browser workflow pull
 ```
 
-`--write-help` is for authoring. Review its output before treating the workflow as done.
+Detailed help supplies parameters, output fields, examples, and the source file.
+Use explicit file paths when checking an edited workflow rather than an installed copy.
 
-## User Catalog
-
-Import a local workflow:
+## Run and save results
 
 ```bash
-rzn-browser workflow add ~/Downloads/my-flow.json --system custom --name my-flow
-rzn-browser run custom my-flow
+rzn-browser run google/search --param search_query="browser automation"
+rzn-browser run /absolute/path/to/workflow.json --param key="value"
+rzn-browser run google/search --param search_query="browser automation" --output-file /path/to/results.json
 ```
 
-Overwrite intentionally:
+`--output-file` writes the final result (Markdown if present, otherwise JSON).
+`--download-dir` downloads returned asset URLs and external links; use it only
+when acquiring those files is part of the request.
+
+Runs normally use dedicated tabs. `--keep-tab-open` retains one for inspection;
+`--tab-ref <observed-tab-ref>` reuses an exact existing tab. `--snapshot on-error`
+controls diagnostic snapshots, not proof that a requested screenshot was produced.
+
+## Autonomous mode
 
 ```bash
-rzn-browser workflow add ~/Downloads/my-flow.json --system custom --name my-flow --force
+rzn-browser llm-auto "Inspect the pricing page and report plans; do not submit forms" --url "https://example.com" --max-steps 12 --json
 ```
 
-## llm-auto
+Real exploration requires a configured provider. Put task constraints in the
+instruction. Supported flags include `--url`, `--max-steps`, `--json`, and
+`--pure-llm` (disables deterministic fast paths). The current CLI has no
+`--save-workflow`, `--context`, `--constraint`, or `--prefer-cached` flags.
+Translate observations into workflow JSON when reuse is requested.
+
+## Import a finished workflow
 
 ```bash
-rzn-browser llm-auto "Natural language browser task"
-rzn-browser llm-auto "Natural language browser task" --json
-rzn-browser llm-auto "Natural language browser task" --url "https://example.com" --max-steps 12
-rzn-browser llm-auto "Natural language browser task" --context "Use the signed-in account already open in Chrome"
-rzn-browser llm-auto "Natural language browser task" --constraint "Do not submit forms or send messages"
-rzn-browser llm-auto "Natural language browser task" --save-workflow true --name "system-task-name"
+rzn-browser workflow validate /path/to/workflow.json --strict --json
+rzn-browser workflow add /path/to/workflow.json --system custom --name my-flow
 ```
 
-Use `--prefer-cached false` when testing raw autonomous behavior:
-
-```bash
-rzn-browser llm-auto "Find the first visible pricing plan" --prefer-cached false
-```
-
-Use dummy mode only for smoke checks that should avoid provider calls:
-
-```bash
-LLM_PROVIDER=dummy rzn-browser llm-auto "Search Google for OpenAI" --max-steps 10
-```
-
-## Logs
-
-```bash
-make logs-show
-make logs-follow
-make logs-clear
-```
-
-Direct log file:
-
-```bash
-tail -n 200 ~/rzn_build.log
-```
+Import changes the user catalog. Use `--force` only for an intended replacement.
+Catalog refresh and runtime installation are separate operations.

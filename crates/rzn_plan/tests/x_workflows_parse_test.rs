@@ -15,6 +15,7 @@ fn x_workflows_parse_as_workflow() {
     let workflows = [
         "workflows/x/x_home_timeline_digest.json",
         "workflows/x/x_open.json",
+        "workflows/x/x_screenshot.json",
         "workflows/x/x_like_post.json",
         "workflows/x/x_reply_post.json",
         "workflows/x/x_create_post.json",

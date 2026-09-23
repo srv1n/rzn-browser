@@ -1,15 +1,19 @@
 ---
-name: "capterra-search"
-description: "Run Capterra search extraction workflow through the local CLI route."
+name: capterra-search
+description: Find Capterra software products by keyword or name using RZN Browser.
 ---
 
-# Capterra Search Skill
+# Capterra Search
 
-Run Capterra search with no environment setup:
+Requires the installed `rzn-browser` CLI and connected Chrome extension/native
+host. Use the user's existing browser profile.
 
 ```bash
-./skills/capterra-search/scripts/run.sh --query "crm"
+rzn-browser run capterra/search --param search_query="crm"
 ```
 
-Output is a normalized JSON envelope with `success`, `row_count`, and `data`.
+Returns `query`, `count`, and `results` with product IDs, names, canonical review URLs, ratings, and review counts. Carry the returned URL into the product-details workflow.
 
+Check the actual output and source URLs before summarizing. If extraction fails
+or returns incomplete data, report the limitation. Use `rzn-browser workflow list capterra search`
+for the installed workflow's parameters and result contract.

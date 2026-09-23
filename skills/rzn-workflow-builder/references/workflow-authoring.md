@@ -1,181 +1,71 @@
-# Workflow Authoring
+# Workflow authoring
 
-Use this reference when creating, editing, or validating workflow JSONs.
+## Contract
 
-## Start Here
-
-1. Run `./skills/rzn-workflow-builder/scripts/ensure-runtime.sh`.
-2. Inspect the closest shipped workflow under `workflows/<system>/`.
-3. Choose deterministic editing or `llm-auto` discovery.
-
-Production workflows use one file: the normal workflow JSON path under
-`workflows/<system>/`. The JSON body must declare
-`"schema_version": "rzn.workflow_manifest"`. Do not create manifest sidecars.
-Keep one canonical JSON file per workflow.
-
-Treat `rzn-browser workflow inspect <system> <workflow> --json` as the
-handoff contract. If another agent cannot discover the params, types,
-side-effects, runtime, and output shape from inspect output, the workflow is
-not ready.
-
-## Most Useful Commands
+Production workflows live in `workflows/<system>/<workflow>.json`. Keep one file
+per capability and declare `schema_version: "rzn.workflow_manifest"` in its body.
+Use the closest maintained workflow as the starting point, not a copied schema
+skeleton or a new sidecar.
 
 ```bash
-# inspect shipped packs
-rzn-browser workflow list
 rzn-browser workflow list google
-
-# inspect the manifest contract agents will call
-rzn-browser workflow inspect google search
-rzn-browser workflow inspect google search --json
-
-# validate one workflow and the production catalog
-rzn-browser workflow validate workflows/google/google-search.json --strict --json
-rzn-browser workflow validate-catalog --strict --json
-
-# run a built-in workflow
-rzn-browser run google search --param search_query="browser automation"
-
-# run a workflow by file path while iterating
-rzn-browser run workflows/google/google-search.json --param search_query="browser automation"
-
-# import a finished local JSON into the user catalog
-rzn-browser workflow add /abs/path/to/workflow.json --system custom --name my-flow
-
-# rerun an imported workflow by id
-rzn-browser run custom my-flow
+rzn-browser workflow inspect google/search --json
 ```
 
-## Discovery Loop With `llm-auto`
+The inspected contract must describe inputs, output, effects, and runtime without
+requiring callers to read step internals.
 
-Use this when the flow is not yet deterministic.
+| Field | Requirement |
+| --- | --- |
+| `id`, `system`, `capability` | Identify the intended catalog route. |
+| `params.properties` | Declare required/optional inputs, types, defaults, enums, and sensitivity as applicable. |
+| `side_effects` | Declare actual browser, network, auth, file, and external write behavior. |
+| `steps` | Executable actions with site-specific logic kept here. |
+| `result` | Select the actual output step/path and declare its schema. |
+| `help` | Accurate parameters, runnable examples, returns, and limitations. |
+
+Use strings for IDs, integers for counts, booleans for toggles, and objects/arrays
+for structured values. The CLI normalizes array params from JSON, comma-separated
+text, or a single value.
+
+## Browser state and writes
+
+Prefer a dedicated tab in the existing profile. Use
+`runtime.requires_existing_session: true` only when the flow needs exact existing
+page state. Do not add legacy active-tab fields to production JSON.
+
+For a real write, make the draft and final action distinguishable, verify the
+target/control before acting, and preserve required `request_user_intervention`
+gates. Exercise the final action only when the user has authorized it. If the
+outcome is ambiguous, inspect state before retrying.
+
+## Discovery when needed
 
 ```bash
-./skills/rzn-workflow-builder/scripts/discover-workflow.sh "Search Google for browser automation and extract the top results"
+rzn-browser llm-auto "Inspect the target page and describe the extraction path; do not submit forms" --url "https://example.com" --max-steps 12 --json
 ```
 
-Notes:
+Use a configured provider within the task's scope. The current CLI does not
+support `--save-workflow`; observations must be translated into deterministic
+JSON. Dummy mode is for local smoke checks, not real site discovery.
 
-- The helper defaults to `LLM_PROVIDER=dummy` unless the environment already sets a provider.
-- Saved flows land in `workflows/generated/` by default.
-- Treat saved workflows as drafts. Clean them before promoting them into a real pack.
+## Validation and completion
 
-## Pattern Selection
+```bash
+rzn-browser workflow validate /path/to/workflow.json --strict --json
+rzn-browser workflow inspect /path/to/workflow.json --json
+rzn-browser run /path/to/workflow.json --param key="value"
+```
 
-### Read-only extractors
+Validate and inspect before a browser run. A source-only change can proceed
+without installation or provider calls. Compare actual output to the declared
+schema and requested outcome; strict validation alone does not establish it.
 
-Use this shape for search, extraction, research, and catalog flows:
+Fix failures caused by the change and rerun the affected checks. Run
+`rzn-browser workflow validate-catalog --strict --json` when catalog routing or
+shared contract behavior changes. Use focused tests for changed parsing or
+control flow; do not rerun unrelated suites for a documentation edit.
 
-- navigate
-- wait for surface
-- extract structured data
-- return compact JSON
-
-Good examples:
-
-- `workflows/google/google-search.json`
-- `workflows/amazon/amazon-search.json`
-- `workflows/pubmed/pubmed-search.json`
-
-### Authenticated dedicated-tab flows
-
-Most authenticated workflows should still open a dedicated workflow tab while
-reusing the operator's Chrome profile. That keeps runs parallel-safe without
-asking the agent to steal the active tab.
-
-Good examples:
-
-- `workflows/chatgpt/chatgpt_send.json`
-- `workflows/x/x_open_inbox.json`
-- `workflows/instagram/instagram-profile-recent-posts.json`
-
-Use `runtime.requires_existing_session: true` only when the workflow genuinely
-continues an already-open browser state. Do not add active-tab fields to
-production workflow JSON.
-
-### Real write flows
-
-For send/post/reply/submit actions:
-
-- make the draft state explicit
-- assert the control is actionable before the final click
-- add `request_user_intervention`
-- mention clearly that the workflow performs a real write
-
-Good examples:
-
-- `workflows/x/x_reply_post.json`
-- `workflows/hn/hn-submit-link-post.json`
-
-## Dedicated Tab vs Existing Session
-
-Prefer dedicated tabs when:
-
-- the workflow is batch-oriented
-- it should not steal the operator's active tab
-- it can run safely in isolation
-
-Set `runtime.requires_existing_session: true` only when:
-
-- the site only behaves correctly in the already-open browser session
-- the workflow is review-style
-- the user is already on the target surface and wants the agent to continue there
-
-Do not add `use_current_tab`, `use_active_tab`, or `current_tab_id` to
-production workflow JSON. Use a dedicated tab unless the workflow genuinely
-requires an existing session.
-
-## Validation Loop
-
-Use the smallest loop possible while preserving the manifest gate:
-
-1. validate the file with `rzn-browser workflow validate <path> --strict --json`
-2. inspect the contract with `rzn-browser workflow inspect <system> <workflow> --json`
-3. run a safe smoke through the normal route
-4. inspect the failure
-5. patch one thing
-6. rerun validation, inspect, and smoke
-
-Useful runtime notes:
-
-- `rzn-browser workflow list google` checks that the CLI is installed and the catalog resolves.
-- `make doctor` checks native-host wiring and manifest state.
-- `~/rzn_build.log` is the main unified log file.
-
-## Manifest Handoff Gate
-
-Before handing a workflow to another agent or team, verify:
-
-| Check | Required result |
-|---|---|
-| Canonical file | The production path is still `workflows/<system>/<workflow>.json`; there is no production sidecar. |
-| Schema | The file body has `schema_version: "rzn.workflow_manifest"`. |
-| Inputs | `workflow inspect` shows complete required/optional params, types, defaults, enums, and sensitivity. |
-| Outputs | `workflow inspect` shows the output selector and schema. |
-| Effects | Read, external read, network access, browser state, download, file write, auth, external write, and destructive effects are declared honestly. |
-| Validation | Per-file strict validation and `workflow validate-catalog --strict --json` pass. |
-| Smoke | A safe normal-route smoke has evidence. Mutating flows stop before final submit/send/post unless explicitly approved. |
-
-Param type sanity:
-
-- scalar choices and ids are `string`
-- counters are `integer`
-- toggles are `boolean`
-- structured bags are `object`
-- true lists are `array`
-
-The CLI accepts array params as JSON arrays, comma-separated strings, or a
-single value, but the manifest type should still reflect the real data model.
-
-## Promotion Rule
-
-Do not promote a generated workflow just because it ran once.
-
-Promote it only when:
-
-- the outcome is clear
-- params are named cleanly
-- steps are deterministic enough to rerun
-- the workflow belongs to a stable pack
-- inspect output is enough for an agent to call the workflow without reading the file
-- strict validation and safe smoke have both passed
+Promote a draft when its inputs and effects are explicit, its steps are reusable,
+and its changed behavior has an authorized runtime check. If access or approval
+is missing, finish the offline work and report the precise unverified path.

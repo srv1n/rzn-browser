@@ -1,45 +1,14 @@
-# Contribution Shape
+# Contribution shape
 
-Use this reference when preparing a workflow or pack for the repo.
+A reviewer should be able to identify the capability, required inputs, returned
+data, side effects, and a runnable example from the workflow's inspected contract.
 
-## Required Shape
+- Put production JSON in `workflows/<system>/`; keep selectors and DOM logic there.
+- Update the pack's existing documentation when usage changes. Add a separate
+  workflow document only when it explains something the manifest help cannot.
+- Include focused validation and evidence for changed runtime behavior, with
+  any missing live check stated explicitly.
+- Keep generated probes out of production packs until they have a stable contract.
 
-Put files here:
-
-- workflow JSON: `workflows/<system>/`
-- pack notes: `workflows/<system>/README.md`
-
-Keep the contribution small and obvious:
-
-- one system
-- one concrete user outcome
-- deterministic steps
-- explicit params
-
-## What To Include
-
-Good workflow submissions usually include:
-
-- one canonical workflow JSON filename
-- a system `README.md` under `workflows/<system>/` when the pack needs one
-- one markdown file per workflow
-- a runnable example command
-- parameter notes
-- whether the flow is read-only, draft-only, or a real write
-
-## What Not To Do
-
-- Do not add site-specific hacks to shared engine code.
-- Do not hide real write behavior.
-- Do not submit generated debug probes as product workflows.
-- Do not mix multiple unrelated user outcomes into one giant workflow.
-
-## Submission Heuristic
-
-A workflow pack is ready when a reviewer can answer these questions quickly:
-
-1. What does it do?
-2. What params does it need?
-3. Does it write or only read?
-4. How do I run it?
-5. Why does this belong in this pack?
+Contributing a workflow does not require installing the runtime globally,
+publishing a release, or creating a document for every file.

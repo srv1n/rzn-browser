@@ -84,7 +84,7 @@ function matches(node, sel) {
 //
 // commitModel=false simulates the page dropping a model click on the floor.
 // sliderDead=true simulates a slider that ignores arrow keys.
-function buildPage({ models, efforts, model, effort, commitModel = true, sliderDead = false, modelsHidden = false }) {
+function buildPage({ models, efforts, model, effort, commitModel = true, sliderDead = false, modelsHidden = false, collapseModelsOnCommit = false }) {
   const state = { model, effort };
   const doc = new El('body');
   const form = new El('form');
@@ -142,7 +142,7 @@ function buildPage({ models, efforts, model, effort, commitModel = true, sliderD
       advanced.clear();
       advanced.append(...models.map((o) => {
         const el = new El('div', { role: 'menuitemradio', 'aria-checked': String(o === state.model) }, o);
-        el.onclick = () => { if (commitModel) state.model = o; paintModels(); };
+        el.onclick = () => { if (commitModel) state.model = o; paintModels(); if (collapseModelsOnCommit) advanced.attrs.inert = ''; };
         return el;
       }));
     };
@@ -150,10 +150,10 @@ function buildPage({ models, efforts, model, effort, commitModel = true, sliderD
 
     // some renders collapse the model list until the header is clicked
     if (modelsHidden) {
-      advanced.clear();
-      header.onclick = () => paintModels();
+      advanced.attrs.inert = '';
+      header.onclick = () => { delete advanced.attrs.inert; paintModels(); };
     } else {
-      header.onclick = () => {};
+      header.onclick = () => { delete advanced.attrs.inert; paintModels(); };
     }
 
     panel.append(header, simple, advanced);
@@ -180,7 +180,7 @@ async function run(stepId, page, args = []) {
 }
 
 // ---- checks -----------------------------------------------------------------
-const MODELS = ['GPT-5.6 Sol', 'GPT-5.5'];
+const MODELS = ['Latest', 'GPT-5.6 Sol', 'GPT-5.5'];
 const EFFORTS = ['Instant', 'Medium', 'High', 'Extra High', 'Pro'];
 const newPage = (over = {}) => {
   const p = buildPage({ models: MODELS, efforts: EFFORTS, model: 'GPT-5.5', effort: 'Instant', ...over });
@@ -248,10 +248,10 @@ const newPage = (over = {}) => {
   assert.deepEqual(s6.available_models, MODELS, 's6 clicks Select model to reveal the radios');
 }
 
-{ // defaults are GPT-5.6 Sol / Medium
+{ // defaults follow Latest / Medium
   const page = newPage();
   const s6 = await run('s6', page, ['', '', '']);
-  assert.equal(s6.desiredModel, 'GPT-5.6 Sol');
+  assert.equal(s6.desiredModel, 'Latest');
   assert.equal(s6.desiredEffort, 'Medium');
 }
 
@@ -287,7 +287,7 @@ const newPage = (over = {}) => {
   await run('s9', page);
   page.state.model = 'GPT-5.5'; // the page silently reverts behind our back
   await assert.rejects(() => run('s12', page, ['none']),
-    /model_selection_verify_failed.*model_row="GPT-5\.6 Sol \| GPT-5\.5"/s);
+    /model_selection_verify_failed.*model_row="Latest \| GPT-5\.6 Sol \| GPT-5\.5"/s);
 }
 
 { // menu labels are free-form: a row that drops the "GPT-" prefix is the same model
@@ -327,4 +327,16 @@ const newPage = (over = {}) => {
   );
 }
 
+for (const effort of EFFORTS) {
+  const page = newPage({ modelsHidden: true, collapseModelsOnCommit: true });
+  await run('s6', page, ['Latest', effort, 'true']);
+  await run('s9', page);
+  const result = await run('s12', page, ['none']);
+  assert.equal(result.model_observed, `Latest / ${effort}`);
+  assert.equal(result.model_selection.applied, true);
+}
+{ // Latest is an exact alias, never the first row or an older model fallback.
+  const page = newPage({ models: ['Latest Preview', 'GPT-5.6 Sol'] });
+  await assert.rejects(() => run('s6', page, ['Latest', 'Pro', 'true']), /model_not_found/);
+}
 console.log('chatgpt_send picker steps: all checks passed');

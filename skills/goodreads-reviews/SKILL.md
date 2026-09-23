@@ -1,32 +1,24 @@
 ---
-name: "goodreads-reviews"
-description: "Run the Goodreads review-collection workflow (by-rating coverage) through the local CLI route."
+name: goodreads-reviews
+description: Collect a Goodreads book's reader reviews, including samples across star ratings, using RZN Browser.
 ---
 
-# Goodreads Reviews Skill
+# Goodreads Reviews
 
-Collect a book's community reviews. `--coverage by_rating` walks every star bucket
-(1-5) and dedupes, capturing both praise and criticism — the recommended mode for
-opinion synthesis:
+Requires `rzn-browser` and its connected Chrome extension/native host.
 
 ```bash
-# First page only (~30 reviews)
-./skills/goodreads-reviews/scripts/run.sh --book-url "https://www.goodreads.com/book/show/29993569-raising-a-secure-child"
-
-# Full opinion spectrum incl. critical reviews (login-free)
-./skills/goodreads-reviews/scripts/run.sh --book-url "<url>" --coverage "by_rating"
-
-# Signed in to Goodreads: walk deeper within each bucket
-./skills/goodreads-reviews/scripts/run.sh --book-url "<url>" --coverage "by_rating" --max-clicks "10"
+rzn-browser run goodreads/reviews --param book_url="<book-url>" --param coverage=by_rating
 ```
 
-Output is a normalized JSON envelope with `success`, `row_count`, and `data`.
-`data.reviews` holds `{ author, rating, date, likes, body, review_url }`.
+Use `coverage=page` for only the initial review page. `by_rating` visits each
+star bucket and deduplicates; it supports public pages without signing in.
+Add `--param max_clicks=10` only for deeper loading in a signed-in session.
 
-Notes:
-- `by_rating` works logged out (clicks histogram star buckets; no sign-up wall).
-- The result bridge caps a returned array at ~50, so `by_rating` returns a balanced
-  sample of up to 10 reviews per star (critical first). `data.reviews_loaded` reports
-  the true count seen; `data.reviews_returned` the count in the array.
-- `--max-clicks` ("Show more reviews") only loads more when the operator's Chrome is
-  signed in to Goodreads; it is a no-op logged out.
+The result includes `reviews`, `facets`, `reviews_loaded`, and
+`reviews_returned`. The workflow bounds its returned sample to about ten reviews
+per star to fit the bridge's array limit. Report actual bucket counts and missing
+coverage; loaded reviews and returned reviews are different measures.
+
+Keep review URLs when attributing praise or criticism. This balanced sample is
+not a population distribution; use the book's rating histogram for percentages.

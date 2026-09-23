@@ -1,0 +1,15 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-09-09T06:12:05Z",
+  "event_kind": "status_changed",
+  "id": "01M22CQ12D553MN605NVBC67CM",
+  "object": "RZN-T-0013",
+  "object_kind": "task",
+  "payload": {
+    "from": "review",
+    "reason": "Fix the verified page-bridge routing and E2E contract failures.",
+    "to": "rework"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

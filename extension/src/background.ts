@@ -3561,8 +3561,56 @@ async function annotateScreenshotDataUrl(
 
 async function captureScreenshotForTab(
   tabId: number,
-  opts?: { format?: any; quality?: any }
+  opts?: { format?: any; quality?: any; selector?: any; fullPage?: any }
 ): Promise<string> {
+  const selector = typeof opts?.selector === 'string' && opts.selector.trim()
+    ? opts.selector.trim()
+    : undefined;
+  if (selector || opts?.fullPage === true) {
+    const sessionId = `screenshot-${tabId}-${Date.now()}`;
+    const handle = await cdpSessionManager.acquire(sessionId, tabId);
+    try {
+      let clip: { x: number; y: number; width: number; height: number; scale: number } | undefined;
+      if (selector) {
+        const expression = `(() => {
+          const element = document.querySelector(${JSON.stringify(selector)});
+          if (!element) throw new Error('Screenshot selector not found: ' + ${JSON.stringify(selector)});
+          const rect = element.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) throw new Error('Screenshot target has no visible area: ' + ${JSON.stringify(selector)});
+          return { x: rect.left + scrollX, y: rect.top + scrollY, width: rect.width, height: rect.height };
+        })()`;
+        const evaluated: any = await handle.sendCommand('Runtime.evaluate', {
+          expression,
+          returnByValue: true,
+          awaitPromise: false,
+        });
+        if (evaluated?.exceptionDetails) {
+          throw new Error(evaluated.exceptionDetails.exception?.description || evaluated.exceptionDetails.text || 'Failed to resolve screenshot selector');
+        }
+        clip = { ...evaluated.result.value, scale: 1 };
+      } else {
+        const metrics: any = await handle.sendCommand('Page.getLayoutMetrics');
+        const size = metrics?.cssContentSize || metrics?.contentSize;
+        if (!size?.width || !size?.height) throw new Error('Chrome returned empty page dimensions');
+        clip = { x: 0, y: 0, width: size.width, height: size.height, scale: 1 };
+      }
+
+      const format = normalizeScreenshotFormat(opts?.format);
+      const quality = format === 'jpeg' ? clampScreenshotQuality(opts?.quality) : undefined;
+      const result: any = await handle.sendCommand('Page.captureScreenshot', {
+        format,
+        ...(quality === undefined ? {} : { quality }),
+        ...(clip ? { clip } : {}),
+        captureBeyondViewport: true,
+        fromSurface: true,
+      });
+      if (!result?.data) throw new Error('Chrome returned an empty screenshot');
+      return `data:image/${format};base64,${result.data}`;
+    } finally {
+      await cdpSessionManager.releaseSession(sessionId);
+    }
+  }
+
   const tab = await chrome.tabs.get(tabId);
   if (tab.windowId === undefined || tab.windowId === chrome.windows.WINDOW_ID_NONE) {
     throw new Error(`No browser window available for tab ${tabId}`);
@@ -5153,7 +5201,9 @@ async function handleBrokerMessage(
             'captureScreenshotForTab',
             () => captureScreenshotForTab(tabId, {
               format: (step as any).format,
-              quality: (step as any).quality
+              quality: (step as any).quality,
+              selector: (step as any).selector,
+              fullPage: (step as any).full_page,
             })
           );
 
@@ -7415,7 +7465,9 @@ async function executeWorkflow(
             'captureScreenshotForTab workflow',
             () => captureScreenshotForTab(workflowTabId!, {
               format: (step as any).format,
-              quality: (step as any).quality
+              quality: (step as any).quality,
+              selector: (step as any).selector,
+              fullPage: (step as any).full_page,
             })
           );
 
@@ -8073,7 +8125,9 @@ if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
 
         let dataUrl = await captureScreenshotForTab(tabId, {
           format: (message as any).format,
-          quality: (message as any).quality
+          quality: (message as any).quality,
+          selector: (message as any).selector,
+          fullPage: (message as any).full_page,
         });
 
         const wantAnnotate = (message as any).annotate === true;

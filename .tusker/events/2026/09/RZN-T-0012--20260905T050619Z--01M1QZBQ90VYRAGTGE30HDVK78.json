@@ -1,0 +1,15 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-09-05T05:06:19Z",
+  "event_kind": "status_changed",
+  "id": "01M1QZBQ90VYRAGTGE30HDVK78",
+  "object": "RZN-T-0012",
+  "object_kind": "task",
+  "payload": {
+    "from": "done",
+    "reason": "Additional live model-switch canary failed when selecting older radio before returning to Latest; investigating model commit behavior.",
+    "to": "rework"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}
