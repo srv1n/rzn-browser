@@ -1,21 +1,21 @@
 ---
-name: "goodreads-shelf"
-description: "Run the Goodreads shelf/genre top-books workflow through the local CLI route."
+name: goodreads-shelf
+description: Discover popularity-ranked books on a Goodreads shelf or genre using RZN Browser.
 ---
 
-# Goodreads Shelf Skill
+# Goodreads Shelf
 
-List the popularity-ranked top books on a Goodreads shelf/genre:
+Requires `rzn-browser` and its connected Chrome extension/native host.
 
 ```bash
-./skills/goodreads-shelf/scripts/run.sh --shelf "parenting"
-./skills/goodreads-shelf/scripts/run.sh --shelf "self-help" --max-pages "3"
+rzn-browser run goodreads/shelf --param shelf="parenting" --param max_pages=1 --param start_page=1
 ```
 
-`--shelf` is the slug from `/shelf/show/<slug>` (e.g. parenting, self-help,
-philosophy, psychology). `--max-pages` (1-5, default 1) collects 50 books/page.
+Use the slug from `/shelf/show/<slug>`. The result includes `books`,
+`count`, and `pages_walked`; each book has title, author, URL, rating, ratings
+count, and publication information. Shelf popularity is not a quality ranking.
 
-Output is a normalized JSON envelope with `success`, `row_count`, and `data`.
-`data.books` holds `{ title, author, book_url, avg_rating, ratings_count, published }`,
-ordered by shelf popularity. This is the discovery entry point for "top books in a
-field"; feed `book_url` into goodreads-book / goodreads-reviews / goodreads-similar.
+For more than fifty books, request one page per call with `max_pages=1` and
+increment `start_page` (1–25). A single multi-page run may lose rows to the
+bridge's roughly fifty-item array cap. Deduplicate by book URL and report the
+pages and rows actually returned.

@@ -272,6 +272,8 @@ fn main() {
             "take_screenshot" => {
                 rust_code.push_str(&format!("    {} {{\n", variant_name));
                 rust_code.push_str("        #[serde(default)]\n");
+                rust_code.push_str("        selector: Option<String>,\n");
+                rust_code.push_str("        #[serde(default)]\n");
                 rust_code.push_str("        full_page: Option<bool>,\n");
                 rust_code.push_str("        #[serde(default)]\n");
                 rust_code.push_str("        annotate: Option<bool>,\n");

@@ -1,16 +1,19 @@
 ---
-name: "goodreads-search"
-description: "Run the Goodreads book-search workflow through the local CLI route."
+name: goodreads-search
+description: Find Goodreads books by title, author, ISBN, or keyword using RZN Browser.
 ---
 
-# Goodreads Search Skill
+# Goodreads Search
 
-Search Goodreads by title/author/keyword with no environment setup:
+Requires the installed `rzn-browser` CLI and connected Chrome extension/native
+host. Use the user's existing browser profile.
 
 ```bash
-./skills/goodreads-search/scripts/run.sh --query "raising a secure child"
+rzn-browser run goodreads/search --param search_query="raising a secure child"
 ```
 
-Output is a normalized JSON envelope with `success`, `row_count`, and `data`.
-`data.results` holds `{ title, book_url, author, avg_rating, ratings_count }`.
-Feed `book_url` into goodreads-book, goodreads-reviews, or goodreads-similar.
+Returns `results` with title, author, book URL, rating, and ratings count. Verify the intended title/author/edition before using a returned URL for book details, reviews, or similar books.
+
+Check the actual output and source URLs before summarizing. If extraction fails
+or returns incomplete data, report the limitation. Use `rzn-browser workflow list goodreads search`
+for the installed workflow's parameters and result contract.

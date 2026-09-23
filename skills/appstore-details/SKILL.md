@@ -1,15 +1,19 @@
 ---
-name: "appstore-details"
-description: "Run App Store app details extraction (ratings, screenshots, reviews) through the local CLI route."
+name: appstore-details
+description: Extract App Store reviews for an app ID or storefront URL using RZN Browser.
 ---
 
-# App Store Details Skill
+# App Store Details
 
-Run App Store app details with no environment setup:
+Requires the installed `rzn-browser` CLI and connected Chrome extension/native
+host. Use the user's existing browser profile.
 
 ```bash
-./skills/appstore-details/scripts/run.sh --app-id "1232780281"
+rzn-browser run appstore/app_details --param app_id="1232780281"
 ```
 
-Output is a normalized JSON envelope with `success`, `row_count`, and `data`.
+Pass either `app_id` (US storefront) or a full `app_url` for another storefront. The declared final result is review rows; ratings and screenshots observed in other steps are not guaranteed fields in that result.
 
+Check the actual output and source URLs before summarizing. If extraction fails
+or returns incomplete data, report the limitation. Use `rzn-browser workflow list appstore app_details`
+for the installed workflow's parameters and result contract.

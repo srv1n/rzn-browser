@@ -3240,6 +3240,7 @@ const actionHandlers = {
     const annotate = step.annotate === true;
     const annotateMaxLabels = step.annotate_max_labels;
     const annotateMaxElements = step.annotate_max_elements;
+    const selector = typeof step.selector === 'string' ? step.selector : undefined;
 
     const response: any = await new Promise((resolve, reject) => {
       try {
@@ -3248,6 +3249,8 @@ const actionHandlers = {
             cmd: 'take_screenshot',
             format: formatRaw,
             quality: qualityRaw,
+            selector,
+            full_page: step.full_page === true,
             annotate,
             annotate_max_labels: annotateMaxLabels,
             annotate_max_elements: annotateMaxElements,

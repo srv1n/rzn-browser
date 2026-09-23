@@ -1,0 +1,14 @@
+{
+  "actor": "reviewer:agent",
+  "at": "2026-09-05T05:06:12Z",
+  "event_kind": "closed",
+  "id": "01M1QZBH79KD4W4A0QEJGSJGKC",
+  "object": "RZN-T-0012",
+  "object_kind": "task",
+  "payload": {
+    "from": "review",
+    "reason": ""
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

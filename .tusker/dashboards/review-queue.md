@@ -7,5 +7,6 @@
 | Task | Wave | Risk | Next action |
 |---|---|---|---|
 | [[RZN-T-0001]] |  | medium | Review evidence and close or return to rework. |
+| [[RZN-T-0013]] |  | medium | Review evidence and close or return to rework. |
 
 <!-- tusker:generated:end -->

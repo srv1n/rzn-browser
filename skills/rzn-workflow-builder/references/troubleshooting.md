@@ -1,77 +1,35 @@
 # Troubleshooting
 
-Use this reference when the runtime is not ready or workflow validation is failing.
-
-## Runtime Not Installed
-
-Run:
+Use this only after a runtime or validation failure. An edit does not need a
+healthy live browser until its runtime check.
 
 ```bash
-./skills/rzn-workflow-builder/scripts/ensure-runtime.sh
+rzn-browser workflow dirs
+rzn-browser workflow list google search
+rzn-browser browser targets --json
+rzn-browser supervisor status --json
 ```
 
-That script:
+Catalog success verifies discovery; target/supervisor output establishes bridge
+state. In a source checkout, `make doctor` checks local wiring. Installation via
+`make install` is appropriate when setup or repair is part of the request, not
+as a reflex after any failed command.
 
-- probes `rzn-browser workflow list google`
-- runs `make install` if the probe fails
-- runs `make doctor`
+For an extension connection failure, keep Chrome open and reload RZN from
+`chrome://extensions`. Default unpacked paths are:
 
-## Native Host Or Extension Not Connected
+- macOS: `~/Library/Application Support/RZN/extension/dist/chrome`
+- Linux: `~/.local/share/RZN/extension/dist/chrome`
+- Windows: `%LOCALAPPDATA%\RZN\extension\dist\chrome`
 
-Typical symptoms:
+Verify custom install paths before asking for a reload. Preserve the user's
+profile; a new profile does not test the requested session.
 
-- `No native host connected`
-- `Timed out waiting for native host connection`
-- `Timed out waiting for native host/extension connection`
+For a provider failure, check the selected provider and presence of its required
+configuration without printing secrets. Dummy mode cannot prove live discovery.
+If a command rejects an option, consult its `--help`; older discovery helpers
+may assume options that the current CLI no longer supports.
 
-Fixes:
-
-1. Open `chrome://extensions`
-2. Enable Developer mode
-3. Load unpacked from the stable extension copy:
-   - macOS: `~/Library/Application Support/RZN/extension/dist/chrome`
-   - Linux: `~/.local/share/rzn/extension/dist/chrome`
-4. Reload the extension if it is already installed
-5. Keep a Chrome window open
-6. Rerun `make doctor`
-
-## Avoid Real Provider Billing During Discovery
-
-Use dummy mode for workflow discovery:
-
-```bash
-LLM_PROVIDER=dummy ./skills/rzn-workflow-builder/scripts/discover-workflow.sh "Search Google for rust lang and extract the top results"
-```
-
-## Dedicated Tab vs Existing Session Bugs
-
-If a site behaves badly in a new tab but works in the live signed-in tab:
-
-- set `runtime.requires_existing_session: true`
-- keep the flow review-style
-
-If the workflow steals the operator's current tab and should not:
-
-- remove active-tab fields
-- run in a dedicated tab instead
-
-## Logs
-
-Useful places to inspect:
-
-- unified log: `~/rzn_build.log`
-- wiring check: `make doctor`
-- developer setup: `docs/system/developer-guide.md`
-
-## Last Resort
-
-If the runtime still smells broken after install + doctor:
-
-1. rerun `make install`
-2. reload the extension
-3. rerun `make doctor`
-4. retry with a tiny known-good flow:
-
-```bash
-rzn-browser run google search --param search_query="browser automation"
-```
+For a workflow error, inspect the exact file and failing step, correct the
+parameter/selector/state issue, and rerun the affected check. Inspect page state
+before repeating an ambiguous write. Report offline and live evidence separately.

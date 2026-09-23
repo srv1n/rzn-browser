@@ -1,15 +1,19 @@
 ---
-name: "etsy-search"
-description: "Run Etsy listing search extraction workflow through the local CLI route."
+name: etsy-search
+description: Search Etsy listings by keyword using RZN Browser.
 ---
 
-# Etsy Search Skill
+# Etsy Search
 
-Run Etsy listing search with no environment setup:
+Requires the installed `rzn-browser` CLI and connected Chrome extension/native
+host. Use the user's existing browser profile.
 
 ```bash
-./skills/etsy-search/scripts/run.sh --query "leather wallet"
+rzn-browser run etsy/search --param search_query="leather wallet"
 ```
 
-Output is a normalized JSON envelope with `success`, `row_count`, and `data`.
+Returns listing title, URL, displayed price, shop name, and rating summary. Use the returned listing URL for reviews. Search extraction does not purchase or contact sellers.
 
+Check the actual output and source URLs before summarizing. If extraction fails
+or returns incomplete data, report the limitation. Use `rzn-browser workflow list etsy search`
+for the installed workflow's parameters and result contract.

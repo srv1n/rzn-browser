@@ -3006,6 +3006,7 @@ impl LLMClient {
                 }
             }
             (ActionGroup::Data, "take_screenshot") => StepKind::TakeScreenshot {
+                selector: args["selector"].as_str().map(|s| s.to_string()),
                 full_page: args["full_page"].as_bool(),
                 annotate: args["annotate"].as_bool(),
                 annotate_max_labels: args["annotate_max_labels"].as_u64().map(|n| n as u32),

@@ -1,0 +1,35 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-09-05T05:05:54Z",
+  "event_kind": "updated",
+  "id": "01M1QZAYV0CXNPSDZKFRGTRKTB",
+  "object": "RZN-T-0012",
+  "object_kind": "task",
+  "payload": {
+    "changes": {
+      "next_action": {
+        "from": "Execute the task contract and satisfy proof mode.",
+        "to": "Review evidence and close or return to rework."
+      },
+      "next_owner": {
+        "from": "agent",
+        "to": "reviewer"
+      },
+      "next_ref": {
+        "from": "RZN-T-0012",
+        "to": ""
+      },
+      "next_source": {
+        "from": "task",
+        "to": "review_policy"
+      },
+      "readiness": {
+        "from": "held",
+        "to": "waiting_on_review"
+      }
+    },
+    "source": "task:RZN-T-0012"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

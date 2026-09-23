@@ -10,7 +10,7 @@ const script = workflow.steps.find((step) => step.id === 's2').action.inputs.scr
 const chatId = 'chat-response-contract';
 const msg = (id, role, extra = {}) => ({ id, author: { role }, recipient: 'all', ...extra });
 const node = (parent, children, message) => ({ parent, children, message });
-const assistant = (id, extra = {}) => msg(id, 'assistant', { status: 'finished_successfully', end_turn: true, content: { content_type: 'text', parts: ['answer'] }, ...extra });
+const assistant = (id, extra = {}) => msg(id, 'assistant', { channel: 'final', status: 'finished_successfully', end_turn: true, content: { content_type: 'text', parts: ['answer'] }, ...extra });
 
 function fixture(kind) {
   const mapping = { root: node(null, ['boundary'], undefined), boundary: node('root', [], msg('boundary-message', 'user', { content: { content_type: 'text', parts: ['prompt'] } })) };
@@ -31,7 +31,7 @@ function fixture(kind) {
   return { title: 'Fixture', mapping, current_node };
 }
 
-async function run(kind, after = 'boundary-message') {
+async function run(kind, after = 'boundary-message', mode = 'latest') {
   const conversation = fixture(kind);
   const calls = [];
   const location = { href: `https://chatgpt.com/c/${chatId}` };
@@ -47,7 +47,7 @@ async function run(kind, after = 'boundary-message') {
     if (kind === 'fetch-failure') throw new Error('network down');
     return { ok: true, json: async () => conversation };
   };
-  const result = await new Function('window', 'fetch', 'arg0', 'arg1', `return (async()=>{${script}})()`)(window, fetch, chatId, 'latest');
+  const result = await new Function('window', 'fetch', 'arg0', 'arg1', `return (async()=>{${script}})()`)(window, fetch, chatId, mode);
   assert.deepEqual(calls, kind === 'no-token' ? ['/api/auth/session'] : ['/api/auth/session', `/backend-api/conversation/${chatId}`], `${kind}: no attachment fetch/download`);
   return result;
 }
@@ -57,11 +57,28 @@ assert.equal(completed.response_state, 'completed');
 assert.equal(completed.selected_message_id, 'answer-message');
 assert.deepEqual(completed.messages.map((item) => item.id), ['boundary-message', 'preamble-message', 'answer-message']);
 assert.equal(completed.messages.find((item) => item.id === completed.selected_message_id).text, 'final\n\nanswer');
+const completedAnswer = completed.messages.find((item) => item.id === completed.selected_message_id);
+assert.equal(completedAnswer.channel, 'final');
+assert.equal(completedAnswer.status, 'finished_successfully');
+assert.equal(completedAnswer.end_turn, true);
+assert.equal(completedAnswer.recipient, 'all');
 assert.deepEqual(completed.attachments_downloaded, []);
 const latest = await run('completed', null);
 assert.equal('response_state' in latest, false);
 assert.equal(latest.mode, 'latest');
 assert.ok(Array.isArray(latest.messages));
+const transcript = await run('completed', null, 'transcript');
+const transcriptAnswer = transcript.messages.find((item) => item.id === 'answer-message');
+assert.equal(transcriptAnswer.channel, 'final');
+assert.equal(transcriptAnswer.status, 'finished_successfully');
+assert.equal(transcriptAnswer.end_turn, true);
+assert.equal(transcriptAnswer.recipient, 'all');
+const full = await run('completed', null, 'full');
+const fullAnswer = full.messages.find((item) => item.id === 'answer-message');
+assert.equal(fullAnswer.channel, 'final');
+assert.equal(fullAnswer.status, 'finished_successfully');
+assert.equal(fullAnswer.end_turn, true);
+assert.equal(fullAnswer.recipient, 'all');
 for (const kind of ['not-started', 'streaming', 'ack-then-streaming']) {
   const result = await run(kind);
   assert.equal(result.response_state, kind === 'not-started' ? 'not_started' : 'streaming');

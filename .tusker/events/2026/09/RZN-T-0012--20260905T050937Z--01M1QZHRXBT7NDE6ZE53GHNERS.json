@@ -1,0 +1,15 @@
+{
+  "actor": "agent:sarav",
+  "at": "2026-09-05T05:09:37Z",
+  "event_kind": "status_changed",
+  "id": "01M1QZHRXBT7NDE6ZE53GHNERS",
+  "object": "RZN-T-0012",
+  "object_kind": "task",
+  "payload": {
+    "from": "rework",
+    "reason": "Live switch regression repaired and tested; final checks pass and installed catalogs refreshed.",
+    "to": "review"
+  },
+  "project": "rzn-browser",
+  "schema": "tusker.event/v1"
+}

@@ -1,15 +1,19 @@
 ---
-name: "g2-product-details-reviews"
-description: "Run G2 product details + reviews extraction through the local CLI route."
+name: g2-product-details-reviews
+description: Extract a G2 product profile and a bounded sample of reviews using RZN Browser.
 ---
 
-# G2 Product Details Reviews Skill
+# G2 Product and Reviews
 
-Run G2 product details and reviews with no environment setup:
+Requires the installed `rzn-browser` CLI and connected Chrome extension/native
+host. Use the user's existing browser profile.
 
 ```bash
-./skills/g2-product-details-reviews/scripts/run.sh --product-url "https://www.g2.com/products/notion/reviews"
+rzn-browser run g2/product_details_reviews --param product_url="https://www.g2.com/products/notion/reviews" --param max_pages=1
 ```
 
-Output is a normalized JSON envelope with `success`, `row_count`, and `data`.
+Returns `product`, `reviews`, and `pages_walked`. `max_pages` accepts 1–5; report pages actually walked and reviews returned. Use the canonical product URL from G2 search.
 
+Check the actual output and source URLs before summarizing. If extraction fails
+or returns incomplete data, report the limitation. Use `rzn-browser workflow list g2/product_details_reviews`
+for the installed workflow's parameters and result contract.
