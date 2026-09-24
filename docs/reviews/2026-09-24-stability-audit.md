@@ -497,14 +497,18 @@ Landed:
   force-restart a supervisor that holds its lock but does not answer (`--restart` forces it), heal
   the bridge (retrying once after a supervisor restart), then rerun the doctor and exit non-zero
   with the failing checks if anything still needs a human.
-- **STAB-21 chaos cases written:** native-host SIGKILL, `chrome.runtime.reload()` mid-run, and a
-  navigating click that must run exactly once.
+- **STAB-21 chaos cases pass live (Edge):** native-host SIGKILL and `chrome.runtime.reload()`
+  mid-run both fail with a named error and the next run succeeds; a navigating click runs exactly
+  once and the next step on the tab works.
+- **`browser.targets` identity:** ping success now updates the bridge map (it only updated the
+  health entry), so `browser`/`extension_target` are populated and the doctor no longer reports a
+  healthy browser as missing.
 
 Still open:
 
-- The native-host smoke/chaos lane does not run on branded Chrome ≥137 (it ignores
-  `--load-extension`); the harness is being moved to Chrome for Testing. Until then the chaos cases
-  are unverified live.
+- The Chrome smoke lane cannot pass locally: branded Chrome ≥137 ignores `--load-extension`, and
+  Chrome for Testing does not find native messaging hosts. The chaos lanes run on Edge by default
+  (`RZN_E2E_CHAOS_BROWSER` overrides) and all three pass live there.
 - MCP request cancellation (the MCP loop is serial).
 - `download_catalog_source` has no timeout.
 - Supervisor bridge writer channels are unbounded (the 10s write timeout bounds a stuck bridge).
