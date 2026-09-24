@@ -427,3 +427,33 @@ batch.** Not started. Build STAB-21 before or alongside items 3-7 so each gets a
 5. Run a CDP-eval workflow that navigates (e.g. ChatGPT send). Expect exactly one send and the
    next CDP step on that tab to work.
 6. Check `<app_base>/logs/native-host.log` and `<app_base>/run/supervisor.log` explain 3 and 4.
+
+### Tranche 2 status (supersedes the matching items above)
+
+Landed: STAB-08 (bridge restarts only after 2 consecutive failed health pings), STAB-09 (stdout
+heartbeat no longer resets backoff; control RPCs use the active bridge endpoint), STAB-12
+(`supervisor shutdown --force`, SIGTERM handling, locked-but-unresponsive detection that waits
+out a starting supervisor), STAB-16 (all wake paths go through `scheduleReconnect`; terminal state
+on host-not-found; alarms get-before-create), STAB-06/04 polish (screenshots take the per-tab
+lock; `pageBridge.js` injected only when the flag is absent), STAB-17 (`tracing-log` enabled).
+
+Still open from those tickets:
+
+- **STAB-14 is supervisor-side only.** Cancel now interrupts `wait_for_timeout` and the in-flight
+  `browser.execute_step` await. Not done: removing the dropped call's `native_bridge_pending`
+  entry, telling the extension, forwarding `RZN_CANCEL_REQUEST` to the content script (the page
+  keeps typing after a cancel), CLI Ctrl-C → cancel + `session_close`, aborting a request when
+  its client disconnects.
+- **STAB-10 is the EOF part only.** Session tasks still hold `upstream_tx` clones with no
+  per-connection cancel token; no `select!` on `endpoint_manager` / writer handles; no Drop guard
+  for `active_bridges`; forced shutdown does not drain pending or `process::exit`; channels are
+  still unbounded; no stdout write timeout.
+- **STAB-11 unchanged.** With no periodic supervisor→bridge ping, a half-dead bridge is only
+  detected when a readiness probe pings it. STAB-08's two-strike rule depends on those pings.
+- **STAB-16 edge:** `nativeReconnectTerminal` clears only on a successful pong, so after the user
+  fixes a missing host manifest, nothing reconnects until the service worker restarts. Clear the
+  flag on an explicit user action (popup Retry / `RZN_WAKE_NATIVE`).
+- **STAB-12:** token caching and NH-10 (spawn only when the socket is absent, backoff, reap the
+  child) not done.
+- Not started: STAB-15, STAB-19, STAB-20, STAB-21, STAB-22, and the regression tests listed
+  under "Missing regression tests".
