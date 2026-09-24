@@ -20,6 +20,7 @@ declare global {
     __rznVerifyUiChange?: (payload?: any) => Promise<any>;
     __rznReadFieldValue?: (payload: any) => Promise<any>;
     __rznBuildInfo?: any;
+    __rznPageBridgeInstalled?: boolean;
   }
 }
 
@@ -696,8 +697,15 @@ function handlePageRequestNode(node: HTMLElement) {
   });
 }
 
+let pageBridgeContainerObserver: MutationObserver | null = null;
+let observedPageBridgeContainer: HTMLElement | null = null;
+
 function attachPageBridgeObserver() {
   const container = ensureBridgeContainer();
+  container.setAttribute('data-rzn-page-installed', 'true');
+  if (container === observedPageBridgeContainer && container.isConnected) return;
+  pageBridgeContainerObserver?.disconnect();
+  observedPageBridgeContainer = container;
   const observer = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       for (const added of Array.from(mutation.addedNodes)) {
@@ -707,6 +715,7 @@ function attachPageBridgeObserver() {
       }
     }
   });
+  pageBridgeContainerObserver = observer;
   observer.observe(container, { childList: true });
 
   for (const child of Array.from(container.children)) {
@@ -717,7 +726,12 @@ function attachPageBridgeObserver() {
 }
 
 try {
+  if (window.__rznPageBridgeInstalled) throw new Error('RZN page bridge already installed');
+  Object.defineProperty(window, '__rznPageBridgeInstalled', { value: true, configurable: false });
   attachPageBridgeObserver();
+  new MutationObserver(() => {
+    if (!observedPageBridgeContainer?.isConnected) attachPageBridgeObserver();
+  }).observe(document, { childList: true, subtree: true });
 
   window.__rznBuildInfo = {
     ...(window.__rznBuildInfo || {}),

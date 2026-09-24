@@ -1,7 +1,7 @@
 import { DashboardRoute, esc, RpcClient } from '../shared';
 
 export async function mountLogs(root: HTMLElement, call: RpcClient, route: DashboardRoute): Promise<() => void> {
-  let level = ''; let component = ''; let runId = route.query.get('run') || ''; let auto = false; let pausedForScroll = false; let timer: ReturnType<typeof setInterval> | undefined;
+  let level = ''; let component = ''; let runId = route.query.get('run') || ''; let auto = false; let pausedForScroll = false; let timer: ReturnType<typeof setTimeout> | undefined;
   const load = async (): Promise<void> => {
     const response = await call<any>('logs.tail', { limit: 500, ...(level && { level }), ...(component && { component }), ...(runId && { run_id: runId }) });
     const target = root.querySelector<HTMLElement>('[data-log-lines]');
@@ -14,10 +14,11 @@ export async function mountLogs(root: HTMLElement, call: RpcClient, route: Dashb
     root.querySelector<HTMLInputElement>('[data-level]')!.addEventListener('change', event => { level = (event.target as HTMLInputElement).value; void load(); });
     root.querySelector<HTMLInputElement>('[data-component]')!.addEventListener('change', event => { component = (event.target as HTMLInputElement).value; void load(); });
     root.querySelector<HTMLInputElement>('[data-run-id]')!.addEventListener('change', event => { runId = (event.target as HTMLInputElement).value; void load(); });
-    root.querySelector<HTMLInputElement>('[data-auto]')!.addEventListener('change', event => { auto = (event.target as HTMLInputElement).checked; if (timer) clearInterval(timer); timer = auto ? setInterval(() => { if (!pausedForScroll) void load(); }, 2_000) : undefined; });
+    const poll = async () => { if (!pausedForScroll) await load(); if (auto) timer = setTimeout(poll, 2_000); };
+    root.querySelector<HTMLInputElement>('[data-auto]')!.addEventListener('change', event => { auto = (event.target as HTMLInputElement).checked; if (timer) clearTimeout(timer); timer = auto ? setTimeout(poll, 2_000) : undefined; });
     root.querySelector<HTMLElement>('[data-log-lines]')!.addEventListener('scroll', event => { const element = event.currentTarget as HTMLElement; pausedForScroll = element.scrollTop + element.clientHeight < element.scrollHeight; });
     root.querySelector('[data-export]')!.addEventListener('click', async () => { const result = root.querySelector<HTMLElement>('[data-export-result]')!; try { const response: any = await call('diagnostics.export', {}); result.innerHTML = `Saved to <code>${esc(response.path)}</code> <button data-copy-path>Copy</button>`; result.querySelector('[data-copy-path]')?.addEventListener('click', () => { void navigator.clipboard?.writeText(response.path); }); } catch (cause) { result.textContent = cause instanceof Error ? cause.message : String(cause); } });
   };
   await render();
-  return () => { if (timer) clearInterval(timer); };
+  return () => { auto = false; if (timer) clearTimeout(timer); };
 }

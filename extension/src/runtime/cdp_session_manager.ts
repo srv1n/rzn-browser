@@ -24,11 +24,6 @@ function normalizeSessionId(raw: unknown): string {
   return 'default';
 }
 
-function formatChromeDebuggerError(error: chrome.runtime.LastError | undefined): string {
-  const message = error?.message;
-  return message && message.trim() ? message.trim() : 'unknown chrome.debugger error';
-}
-
 export class CdpSessionManager {
   private records = new Map<SessionKey, CdpSessionRecord>();
   private tabOwners = new Map<number, Set<string>>();
@@ -125,24 +120,16 @@ export class CdpSessionManager {
   }
 
   private async sendCommand<T = any>(tabId: number, method: string, params?: any): Promise<T> {
-    return await new Promise<T>((resolve, reject) => {
-      chrome.debugger.sendCommand({ tabId }, method, params || {}, (result) => {
-        const error = chrome.runtime.lastError;
-        if (error) {
-          const formatted = formatChromeDebuggerError(error);
-          const commandError = new Error(`CDP command failed: ${formatted}`);
-          if (isExpectedCdpLifecycleError(formatted)) {
-            frameRouter.markTabDetached(tabId, formatted);
-            (commandError as any).code = 'CDP_TARGET_DETACHED';
-          } else {
-            (commandError as any).code = 'CDP_COMMAND_FAILED';
-          }
-          reject(commandError);
-          return;
-        }
-        resolve(result as T);
-      });
-    });
+    try {
+      return await frameRouter.sendCommand<T>(tabId, method, params || {});
+    } catch (error: any) {
+      const formatted = error?.message || String(error);
+      const commandError = new Error(`CDP command failed: ${formatted}`);
+      (commandError as any).code = isExpectedCdpLifecycleError(formatted)
+        ? 'CDP_TARGET_DETACHED'
+        : 'CDP_COMMAND_FAILED';
+      throw commandError;
+    }
   }
 }
 

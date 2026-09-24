@@ -170,7 +170,7 @@ async function reconcilePersistedCdpLeases(): Promise<void> {
   });
 
   for (const tabId of cdpTargetTabIdsToDetachOnStartup(targets, leases, now)) {
-    await frameRouter.detachFromTab(tabId).catch(() => {
+    await chrome.debugger.detach({ tabId }).catch(() => {
       console.warn(`[CDPLease] Failed to detach orphaned CDP target for tab ${tabId}`);
     });
   }
@@ -200,7 +200,7 @@ async function maybeExpireCdpLease(tabId: TabId, intervalId: number): Promise<vo
   clearInterval(intervalId);
   leaseTimers.delete(tabId);
 
-  await withCdpLock(async () => {
+  await withCdpLock(tabId, async () => {
     const currentExp = leaseExpirations.get(tabId) ?? 0;
     if (Date.now() <= currentExp) {
       ensureLeaseTimer(tabId);
@@ -539,6 +539,7 @@ type CloudActorStatus = {
   last_error?: string;
 };
 const nativeControlCallbacks = new Map<string, NativeControlCallback>();
+const timedOutNativeControlRequests = new Set<string>();
 
 function initializeBrowserInstanceId(): void {
   void ensureBrowserInstanceId().catch((error: any) => {
@@ -567,7 +568,13 @@ function maybeResolveNativeControlCallback(message: BrokerMessage): boolean {
   const reqId = message.req_id || message.task_id;
   if (!reqId) return false;
   const callback = nativeControlCallbacks.get(reqId);
-  if (!callback) return false;
+  if (!callback) {
+    if (timedOutNativeControlRequests.delete(reqId)) {
+      console.warn('[NativeControl] Dropping late response', { req_id: reqId, cmd: message.cmd });
+      return true;
+    }
+    return false;
+  }
   if (callback.nativePortEpoch !== nativePortEpoch) {
     clearNativeControlCallback(reqId);
     callback.reject(new Error('native control callback resolved on stale native port epoch'));
@@ -610,7 +617,9 @@ async function callNativeHostControl(
   return await new Promise<BrokerMessage>((resolve, reject) => {
     const timeoutId = setTimeout(() => {
       nativeControlCallbacks.delete(reqId);
-      reject(new Error(`Native host timeout for ${cmd}`));
+      timedOutNativeControlRequests.add(reqId);
+      setTimeout(() => timedOutNativeControlRequests.delete(reqId), WATCHDOG_STALE_RESPONSE_TTL_MS);
+      reject(new Error(`Native host timeout for ${cmd}; retry or run \`rzn-browser runtime doctor\``));
     }, timeoutMs) as unknown as number;
 
     nativeControlCallbacks.set(reqId, {
@@ -663,6 +672,8 @@ const BROKER_WATCHDOG_DEFAULT_MS = 30_000;
 const BROKER_WATCHDOG_GRACE_MS = 1_000;
 const BROKER_WATCHDOG_DISCONNECT_GRACE_MS = 1000;
 const NATIVE_HOST_STDOUT_HEARTBEAT_CMD = 'native_host_heartbeat';
+// Mirrors STDOUT_HEARTBEAT_INTERVAL_MS in crates/rzn_native_host/src/main.rs.
+const STDOUT_HEARTBEAT_INTERVAL_MS = 20_000;
 let lastNativeHostStdoutHeartbeatMs: number | null = null;
 let lastNativeHostStdoutHeartbeatSeq: number | null = null;
 let lastNativeHostBootId: string | null = null;
@@ -711,14 +722,25 @@ function startHeartbeat() {
     void (async () => {
       try {
         if (!nativePort) return;
-        await callNativeHostControl(
+        const pong = await callNativeHostControl(
           'ping',
           { source: 'extension_keepalive' },
           { timeoutMs: HEARTBEAT_TIMEOUT_MS, responseCmd: 'ping_response' }
         );
+        if (pong.result?.bridge_connected === false) {
+          throw new Error('supervisor bridge disconnected');
+        }
         lastNativeRoundtripPingMs = Date.now();
         missedNativeHeartbeats = 0;
+        reconnectAttempts = 0;
       } catch (e) {
+        const stdoutFresh =
+          lastNativeHostStdoutHeartbeatMs !== null &&
+          Date.now() - lastNativeHostStdoutHeartbeatMs < 2 * STDOUT_HEARTBEAT_INTERVAL_MS;
+        if (stdoutFresh && !(e instanceof Error && e.message.includes('supervisor bridge disconnected'))) {
+          console.warn('[Heartbeat] ping missed while native-host stdout heartbeat remains fresh', e);
+          return;
+        }
         missedNativeHeartbeats += 1;
         console.warn(
           `[Heartbeat] native host ping missed (${missedNativeHeartbeats}/${HEARTBEAT_MISSES_BEFORE_RECONNECT})`,
@@ -793,10 +815,11 @@ function scheduleReconnect() {
   // Avoid duplicate timers
   if (reconnectTimer !== null) return;
   // Compute exponential backoff with cap
-  const delay = Math.min(
+  const baseDelay = Math.min(
     RECONNECT_MAX_DELAY_MS,
     RECONNECT_BASE_DELAY_MS * Math.pow(2, Math.max(0, reconnectAttempts))
   );
+  const delay = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
   console.log(`[NativeReconnect] Scheduling reconnect in ${delay}ms (attempt ${reconnectAttempts + 1})`);
   scheduleReconnectAlarm(delay);
   reconnectTimer = setTimeout(() => {
@@ -830,7 +853,9 @@ function disconnectNativePort(reason: string): void {
 }
 
 function disconnectNativePortAfterResponseFlush(reason: string): void {
+  const scheduledEpoch = nativePortEpoch;
   setTimeout(() => {
+    if (nativePortEpoch !== scheduledEpoch) return;
     disconnectNativePort(reason);
     scheduleReconnect();
   }, BROKER_WATCHDOG_DISCONNECT_GRACE_MS);
@@ -841,6 +866,7 @@ function isNativeHostStdoutHeartbeat(message: BrokerMessage): boolean {
 }
 
 function handleNativeHostStdoutHeartbeat(message: BrokerMessage): void {
+  reconnectAttempts = 0;
   lastNativeHostStdoutHeartbeatMs = Date.now();
   lastNativeHostStdoutHeartbeatSeq =
     typeof message.payload?.seq === 'number' ? message.payload.seq : lastNativeHostStdoutHeartbeatSeq;
@@ -891,7 +917,7 @@ interface StoredWorkflowSessionState {
 }
 
 const workflowSessions = new Map<string, WorkflowSessionState>();
-let cdpLockQueue: Promise<void> = Promise.resolve();
+const cdpLockQueues = new Map<number, Promise<void>>();
 let workflowSessionsLoaded = false;
 let workflowSessionsLoadPromise: Promise<void> | null = null;
 let workflowSessionsPersistChain: Promise<void> = Promise.resolve();
@@ -1664,7 +1690,7 @@ async function getAxTreeForSession(
       };
     }
 
-    const nodesOut = await guardedBrokerSideEffect(brokerLease, 'CDP get_ax_tree', () => withCdpLock(async () => {
+    const nodesOut = await guardedBrokerSideEffect(brokerLease, 'CDP get_ax_tree', () => withCdpLock(tabId, async () => {
       await frameRouter.attachToTab(tabId);
       await extendCDPLease(tabId);
       const cleanupAbort = onBrokerLeaseAbort(brokerLease, () => forceDetachCDP(tabId));
@@ -1885,18 +1911,33 @@ async function disposeWorkflowSession(
   }
 }
 
-async function withCdpLock<T>(run: () => Promise<T>): Promise<T> {
+async function withCdpLock<T>(tabId: number, run: () => Promise<T>, acquireTimeoutMs = 10_000): Promise<T> {
   let release!: () => void;
-  const waitForTurn = cdpLockQueue;
-  cdpLockQueue = new Promise<void>((resolve) => {
+  const waitForTurn = cdpLockQueues.get(tabId) ?? Promise.resolve();
+  const queued = new Promise<void>((resolve) => {
     release = resolve;
   });
+  cdpLockQueues.set(tabId, queued);
 
-  await waitForTurn;
+  try {
+    await Promise.race([
+      waitForTurn,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`CDP lock timeout for tab ${tabId}`)), acquireTimeoutMs)),
+    ]);
+  } catch (error) {
+    // Free our slot only after the holder ahead of us finishes, or the next waiter would run
+    // concurrently with it.
+    void waitForTurn.then(() => {
+      release();
+      if (cdpLockQueues.get(tabId) === queued) cdpLockQueues.delete(tabId);
+    });
+    throw error;
+  }
   try {
     return await run();
   } finally {
     release();
+    if (cdpLockQueues.get(tabId) === queued) cdpLockQueues.delete(tabId);
   }
 }
 
@@ -2334,6 +2375,7 @@ async function ensureContentReady(tabId: number, injectPath = 'contentScript.js'
   // 3) Fallback: inject content script
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: [injectPath] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: ['pageBridge.js'], world: 'MAIN' });
   } catch (e) {
     console.warn('[ensureContentReady] executeScript returned:', e);
   }
@@ -2346,7 +2388,7 @@ async function ensureContentReady(tabId: number, injectPath = 'contentScript.js'
       if (resp?.success && resp?.protocol_version === CONTENT_SCRIPT_PROTOCOL_VERSION) {
         try {
           const leaseActive = (leaseExpirations.get(tabId) ?? 0) > Date.now();
-          await withCdpLock(async () => {
+          await withCdpLock(tabId, async () => {
             if (leaseActive) {
               if (!frameRouter.isAttachedToTab(tabId)) {
                 await frameRouter.attachToTab(tabId);
@@ -2409,7 +2451,17 @@ async function sendMessageTopFrame<T = any>(tabId: number, message: any): Promis
   try {
     // Preferred: explicitly target top frame (frameId 0)
     return await chrome.tabs.sendMessage(tabId, normalizedMessage, { frameId: 0 as number } as any) as T;
-  } catch (primaryErr) {
+  } catch (primaryErr: any) {
+    const messageText = primaryErr?.message || String(primaryErr);
+    // Chrome: "...the message channel closed before a response was received" or
+    // "The message port closed before a response was received."
+    if (/message (channel|port) closed/i.test(messageText)) {
+      const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+      throw new Error(`NAVIGATED_DURING_STEP: message channel closed at ${tab?.url || tab?.pendingUrl || 'unknown URL'}`);
+    }
+    if (!messageText.includes('Receiving end does not exist') && !messageText.includes('Could not establish connection')) {
+      throw primaryErr;
+    }
     try {
       // Robust fallback: find the top-level frame using webNavigation
       const frames = await chrome.webNavigation.getAllFrames({ tabId });
@@ -2421,8 +2473,7 @@ async function sendMessageTopFrame<T = any>(tabId: number, message: any): Promis
       // Swallow and fallback to default routing below
       console.warn('[sendMessageTopFrame] getAllFrames failed; falling back to default routing', enumErr);
     }
-    // Last resort: send without frame hint (may hit an iframe)
-    return await chrome.tabs.sendMessage(tabId, normalizedMessage) as T;
+    throw primaryErr;
   }
 }
 
@@ -2550,7 +2601,7 @@ async function ensureEvalBridgeReady(tabId: number, timeoutMs = 8000): Promise<v
     const [result] = await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
-      func: () => typeof (window as any).__rznExecuteStep === 'function',
+      func: () => (window as any).__rznPageBridgeInstalled === true,
     });
     if (result?.result === true) {
       return;
@@ -2680,7 +2731,7 @@ async function ensureAttachedCdpTab(tabId: number): Promise<void> {
 }
 
 async function runWithAttachedCdpTab<T>(tabId: number, run: () => Promise<T>): Promise<T> {
-  return await withCdpLock(async () => {
+  return await withCdpLock(tabId, async () => {
     await ensureAttachedCdpTab(tabId);
     try {
       return await run();
@@ -3233,7 +3284,7 @@ async function runCdpEval(
 
   await ensureEvalBridgeReady(tabId);
 
-  await withCdpLock(async () => {
+  await withCdpLock(tabId, async () => {
     await frameRouter.attachToTab(tabId);
     setCdpLeaseExpiration(tabId, Date.now() + 15_000);
   });
@@ -3344,7 +3395,7 @@ async function runCdpEval(
 
   let evalResult: any;
   try {
-    evalResult = await withCdpLock(async () => {
+    evalResult = await withCdpLock(tabId, async () => {
       const stepTimeoutMs = Number(message?.timeout_ms);
       const cdpTimeout = Number.isFinite(stepTimeoutMs) && stepTimeoutMs > 0
         ? Math.max(30000, Math.min(stepTimeoutMs + 5000, 600000))
@@ -3972,6 +4023,10 @@ function connectToNative(): void {
           connectToNative();
           return;
         }
+        if (err && (err.toLowerCase().includes('host not found') || err.toLowerCase().includes('forbidden'))) {
+          logError('Native host unavailable; run `rzn-browser native-host doctor`', { error: err });
+          return;
+        }
         // Attempt reconnection with backoff
         scheduleReconnect();
       });
@@ -3979,8 +4034,7 @@ function connectToNative(): void {
 
     console.log('Connected to native host successfully');
     logInfo('Connected to native host successfully');
-    // Reset backoff and start heartbeat on successful connect
-    reconnectAttempts = 0;
+    // A connection is not healthy until the first pong or stdout heartbeat.
     clearReconnectTimer();
     nativeConnectInFlight = false;
     startHeartbeat();
@@ -4311,7 +4365,7 @@ async function handleBrokerMessage(
       await guardedBrokerSideEffect(
         brokerLease,
         'CDP attach enable_debug',
-        () => withCdpLock(async () => {
+        () => withCdpLock(tabId, async () => {
           await frameRouter.attachToTab(tabId);
           setCdpLeaseExpiration(tabId, Date.now() + ttlMs);
         })
@@ -4365,7 +4419,7 @@ async function handleBrokerMessage(
       await guardedBrokerSideEffect(
         brokerLease,
         'CDP detach disable_debug',
-        () => withCdpLock(async () => {
+        () => withCdpLock(tabId, async () => {
           await forceDetachCDP(tabId);
         })
       );
@@ -5161,7 +5215,7 @@ async function handleBrokerMessage(
           const result = await guardedBrokerSideEffect(
             brokerLease,
             'upload_file CDP action',
-            () => withCdpLock(async () =>
+            () => withCdpLock(tabId, async () =>
               handleUploadFile({ ...(step as any), tabId })
             )
           );
@@ -5298,7 +5352,7 @@ async function handleBrokerMessage(
           const result = await guardedBrokerSideEffect(
             brokerLease,
             'click_element CDP action',
-            () => withCdpLock(async () =>
+            () => withCdpLock(tabId, async () =>
               handleClickElement({ ...(step as any), tabId })
             )
           );
@@ -5792,7 +5846,7 @@ async function handleBrokerMessage(
       }
 
       // Use CDP integration with lease-managed sessions
-      const result = await guardedBrokerSideEffect(brokerLease, 'CDP cdp_action', () => withCdpLock(async () => {
+      const result = await guardedBrokerSideEffect(brokerLease, 'CDP cdp_action', () => withCdpLock(tabId, async () => {
         await frameRouter.attachToTab(tabId);
         await extendCDPLease(tabId);
         const cleanupAbort = onBrokerLeaseAbort(brokerLease, () => forceDetachCDP(tabId));
@@ -5881,7 +5935,7 @@ async function handleBrokerMessage(
         return;
       }
 
-      const context = await guardedBrokerSideEffect(brokerLease, 'CDP get_cdp_context', () => withCdpLock(async () => {
+      const context = await guardedBrokerSideEffect(brokerLease, 'CDP get_cdp_context', () => withCdpLock(tabId, async () => {
         await frameRouter.attachToTab(tabId);
         await extendCDPLease(tabId);
         const cleanupAbort = onBrokerLeaseAbort(brokerLease, () => forceDetachCDP(tabId));
@@ -5963,7 +6017,7 @@ async function handleBrokerMessage(
         return;
       }
 
-      const list = await guardedBrokerSideEffect(brokerLease, 'CDP get_interactive_elements', () => withCdpLock(async () => {
+      const list = await guardedBrokerSideEffect(brokerLease, 'CDP get_interactive_elements', () => withCdpLock(tabId, async () => {
         await frameRouter.attachToTab(tabId);
         await extendCDPLease(tabId);
         try {
@@ -7211,7 +7265,7 @@ async function executeWorkflow(
           const result = await guardedBrokerSideEffect(
             brokerLease,
             'upload_file workflow CDP action',
-            () => withCdpLock(async () =>
+            () => withCdpLock(tabId, async () =>
               handleUploadFile({ ...(step as any), tabId })
             )
           );
@@ -8004,7 +8058,9 @@ if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.cmd === 'supervisor_rpc') {
     if (!requirePopupSender(message.cmd, sender, sendResponse)) return false;
-    (async()=>{try{const response:any=await callNativeHostControl('supervisor_rpc',message.payload||{}, {timeoutMs:10000});if(message.payload?.method==='status.snapshot')void updateAutomationBadge(response.result);sendResponse(response);}catch(error:any){void updateAutomationBadge(null);sendResponse({success:false,error:error?.message||String(error)});}})();
+    const method = message.payload?.method || '<missing>';
+    const timeoutMs = method === 'diagnostics.export' ? 65_000 : method === 'logs.tail' ? 35_000 : 12_000;
+    (async()=>{try{const response:any=await callNativeHostControl('supervisor_rpc',message.payload||{}, {timeoutMs});if(method==='status.snapshot')void updateAutomationBadge(response.result);sendResponse(response);}catch(error:any){void updateAutomationBadge(null);sendResponse({success:false,error_code:'SUPERVISOR_UNREACHABLE',transport_error:true,error:`${method}: ${error?.message||String(error)}`});}})();
     return true;
   }
   // Forward content logs into native logger and console
@@ -8379,7 +8435,7 @@ if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
 
     (async () => {
       try {
-        const nodes = await withCdpLock(async () =>
+        const nodes = await withCdpLock(sender.tab?.id ?? 0, async () =>
           fetchAXSlice(message.maxNodes ?? 150, !!message.viewportOnly)
         );
         sendResponse({ ok: true, nodes });

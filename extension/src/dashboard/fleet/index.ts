@@ -2,14 +2,22 @@ import { DashboardRoute, dot, esc, relativeTime, RpcClient } from '../shared';
 
 const recovery = 'Ask an operator to reactivate this device, or re-enroll with a new code.';
 export async function mountFleet(root: HTMLElement, call: RpcClient, _route: DashboardRoute, options: { navigate: (hash: string) => void }): Promise<() => void> {
-  let timer: ReturnType<typeof setInterval> | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined; let disposed = false;
   let lastServer = '';
   let enrollment: any;
   const render = async (): Promise<void> => {
     root.innerHTML = '<p>Loading fleet status…</p>';
-    const [status, snapshot, runs] = await Promise.all([
-      call<any>('fleet.status', {}).catch(() => ({ state: 'disabled' })), call<any>('status.snapshot', {}).catch(() => ({})), call<any>('runs.list', { limit: 200, origin: 'fleet' }).catch(() => ({ runs: [] })),
+    const [statusResult, snapshotResult, runsResult] = await Promise.allSettled([
+      call<any>('fleet.status', {}), call<any>('status.snapshot', {}), call<any>('runs.list', { limit: 200, origin: 'fleet' }),
     ]);
+    if (statusResult.status === 'rejected' && snapshotResult.status === 'rejected') {
+      root.innerHTML = '<section class="banner warning"><b>Supervisor unreachable</b><p>Check the local runtime, then retry.</p><button data-retry>Retry</button></section>';
+      root.querySelector('[data-retry]')?.addEventListener('click', () => { void render(); });
+      return;
+    }
+    const status: any = statusResult.status === 'fulfilled' ? statusResult.value : {};
+    const snapshot: any = snapshotResult.status === 'fulfilled' ? snapshotResult.value : {};
+    const runs: any = runsResult.status === 'fulfilled' ? runsResult.value : { runs: [] };
     const fleet = snapshot.fleet || status.fleet || enrollment || status;
     const state = fleet.status || fleet.state || status.state || 'disabled';
     const enrolled = !['disabled', 'unenrolled', 'not_enrolled'].includes(state) || Boolean(fleet.device_id || fleet.tenant_id);
@@ -26,6 +34,7 @@ export async function mountFleet(root: HTMLElement, call: RpcClient, _route: Das
     root.querySelector('[data-unenroll]')?.addEventListener('click', async () => { if (!confirm('Unenroll this device? This stops cloud dispatch and deletes its token.')) return; enrollment = undefined; await call('fleet.unenroll', {}); await render(); });
   };
   await render();
-  timer = setInterval(() => { if (document.visibilityState !== 'hidden') void render(); }, 5_000);
-  return () => { if (timer) clearInterval(timer); };
+  const poll = async () => { if (document.visibilityState !== 'hidden') await render(); if (!disposed) timer = setTimeout(poll, 5_000); };
+  timer = setTimeout(poll, 5_000);
+  return () => { disposed = true; if (timer) clearTimeout(timer); };
 }

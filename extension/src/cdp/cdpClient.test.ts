@@ -123,15 +123,15 @@ describe('CDP client transport and domain lifecycle', () => {
     assert.equal(timers.size, 0);
   });
 
-  for (const [message, code, detaches] of [
-    ['invalid parameters', 'CDP_COMMAND_FAILED', false],
-    ['Debugger is not attached', 'CDP_TARGET_DETACHED', true],
+  for (const [message, code] of [
+    ['invalid parameters', 'CDP_COMMAND_FAILED'],
+    ['Debugger is not attached', 'CDP_TARGET_DETACHED'],
   ] as const) {
     test(`preserves error classification: ${code}`, async () => {
       onSend = command => reply(command, undefined, message);
       await assert.rejects(client.sendCommand({ tabId: 1 }, 'DOM.enable'),
         (error: any) => error.code === code && error.message.includes(message));
-      assert.deepEqual(detached, detaches ? [1] : []);
+      assert.deepEqual(detached, []);
     });
   }
 

@@ -31,6 +31,16 @@ export class CDPClient {
   private domainRefs = new Map<string, Map<string, number>>(); // target/session -> domain -> refcount
   private domainOperations = new Map<string, Promise<void>>();
 
+  constructor() {
+    if (typeof chrome === 'undefined') return;
+    chrome.debugger?.onDetach?.addListener((source) => {
+      if (source.tabId === undefined) return;
+      const prefix = `[${source.tabId},`;
+      for (const key of this.domainRefs.keys()) if (key.startsWith(prefix)) this.domainRefs.delete(key);
+      for (const key of this.domainOperations.keys()) if (key.startsWith(prefix)) this.domainOperations.delete(key);
+    });
+  }
+
   private routeTarget(target: CDPTarget, frameId?: string, explicitSessionId?: string): CDPTarget {
     const sessionId = explicitSessionId || target.sessionId ||
       (frameId ? frameRouter.routeForFrame(frameId).sessionId : undefined);
@@ -103,9 +113,6 @@ export class CDPClient {
             const message = `[CDPClient] Command failed: ${method}: ${formatted}`;
             if (lifecycleError) {
               console.warn(message);
-              if (tabId !== undefined) {
-                frameRouter.markTabDetached(tabId, formatted);
-              }
             } else {
               console.error(message);
             }

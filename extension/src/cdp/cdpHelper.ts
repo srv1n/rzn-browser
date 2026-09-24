@@ -1,5 +1,6 @@
 // CDP Helper for RZN - Minimal CDP access via chrome.debugger
 // Inspired by the iframe handling found in public reference projects
+import { frameRouter } from './frameRouter';
 
 type CDPEvent = { method: string; params: any; sessionId?: string };
 
@@ -19,36 +20,8 @@ export class CDP {
     if (this.sessions.get(tabId)?.attached) return;
     
     console.log(`[CDP] Attaching to tab ${tabId}`);
-    await chrome.debugger.attach({ tabId }, '1.3');
+    await frameRouter.attachToTab(tabId);
     this.sessions.set(tabId, { attached: true, domains: new Set() });
-
-    // Listen to events for OOPIF routing
-    const onEvent = (_src: any, method: string, params: any) => {
-      // Maintain Target auto-attach routing for cross-origin iframes
-      if (method === 'Target.attachedToTarget') {
-        const { sessionId, targetInfo } = params;
-        this.frameRoutes.set(targetInfo.targetId, {
-          sessionId,
-          targetId: targetInfo.targetId,
-        });
-      }
-      if (method === 'Target.detachedFromTarget') {
-        const { sessionId } = params;
-        for (const [k, v] of this.frameRoutes) {
-          if (v.sessionId === sessionId) this.frameRoutes.delete(k);
-        }
-      }
-    };
-
-    chrome.debugger.onEvent.addListener(onEvent);
-    this.tabListeners.set(tabId, onEvent as any);
-
-    // Enable flattened auto-attach for OOPIF sessions
-    await this.send(tabId, 'Target.setAutoAttach', {
-      autoAttach: true,
-      waitForDebuggerOnStart: false,
-      flatten: true, // Critical for iframe handling
-    });
 
     // Minimal defaults - only what we need
     await this.enable(tabId, ['Page', 'DOM', 'Accessibility']);
@@ -65,7 +38,7 @@ export class CDP {
     } catch {}
     
     try { 
-      await chrome.debugger.detach({ tabId }); 
+      await frameRouter.detachFromTab(tabId);
     } catch {}
     
     this.sessions.delete(tabId);
@@ -125,19 +98,7 @@ export class CDP {
     params?: Record<string, any>,
     paramsEnvelope?: { sessionId?: string }
   ): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const commandParams = Object.assign({}, paramsEnvelope || {}, params || {});
-      chrome.debugger.sendCommand(
-        { tabId },
-        method,
-        commandParams,
-        (result) => {
-          const err = chrome.runtime.lastError;
-          if (err) return reject(new Error(err.message));
-          resolve(result as T);
-        }
-      );
-    });
+    return await frameRouter.sendCommand<T>(tabId, method, params || {}, paramsEnvelope?.sessionId);
   }
 
   // Resolve session route for a frame

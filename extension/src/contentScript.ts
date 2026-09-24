@@ -1392,7 +1392,9 @@ async function sendPageBridgeRequest(type: string, payload: any, timeoutMs = 100
 }
 
 async function tryEvalViaPageBridge(step: any, executionBackend: string): Promise<any | null> {
-  try {
+  const container = document.getElementById(PAGE_BRIDGE_CONTAINER_ID);
+  if (container?.getAttribute('data-rzn-page-installed') !== 'true') return null;
+  {
     const timeoutMs = Number(step?.timeout_ms ?? step?.timeoutMs ?? 10000);
     const timeout = Number.isFinite(timeoutMs) ? Math.max(0, Math.round(timeoutMs)) : 10000;
     const resp = await sendPageBridgeRequest(
@@ -1410,15 +1412,13 @@ async function tryEvalViaPageBridge(step: any, executionBackend: string): Promis
       },
       timeout
     );
-    if (!resp?.success) return null;
+    if (!resp?.success) throw new Error(resp?.error_msg || resp?.error || 'Main-world evaluation failed');
     return evalResponse({
       success: true,
       world: 'main',
       execution_backend: executionBackend,
       result: resp.result,
     });
-  } catch {
-    return null;
   }
 }
 
@@ -6452,7 +6452,12 @@ async function handleDomBridgeRequest(node: HTMLElement) {
   }
 }
 
+let domBridgeObserver: MutationObserver | null = null;
+let observedDomBridgeContainer: HTMLElement | null = null;
 function attachDomBridgeObserver(container: HTMLElement) {
+  if (container === observedDomBridgeContainer && container.isConnected) return;
+  domBridgeObserver?.disconnect();
+  observedDomBridgeContainer = container;
   const obs = new MutationObserver((mutations) => {
     for (const m of mutations) {
       for (const n of Array.from(m.addedNodes)) {
@@ -6463,6 +6468,7 @@ function attachDomBridgeObserver(container: HTMLElement) {
     }
   });
   obs.observe(container, { childList: true });
+  domBridgeObserver = obs;
 
   // Process anything already queued.
   for (const child of Array.from(container.children)) {
@@ -6473,25 +6479,15 @@ function attachDomBridgeObserver(container: HTMLElement) {
 }
 
 (() => {
-  const existing = document.getElementById(RZN_DOM_BRIDGE_CONTAINER_ID);
-  if (existing) {
-    installContentBridgeMetadata(existing as HTMLElement);
-    attachDomBridgeObserver(existing as HTMLElement);
-    return;
-  }
-
-  const root = document.documentElement;
-  if (!root) return;
-
-  const obs = new MutationObserver(() => {
+  const bind = () => {
     const el = document.getElementById(RZN_DOM_BRIDGE_CONTAINER_ID);
-    if (el) {
-      obs.disconnect();
+    if (el && (!el.isSameNode(observedDomBridgeContainer) || !observedDomBridgeContainer?.isConnected)) {
       installContentBridgeMetadata(el as HTMLElement);
       attachDomBridgeObserver(el as HTMLElement);
     }
-  });
-  obs.observe(root, { childList: true, subtree: true });
+  };
+  bind();
+  new MutationObserver(bind).observe(document, { childList: true, subtree: true });
 })();
 
 let lastNativeWakeMs = 0;

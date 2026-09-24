@@ -86,8 +86,8 @@ const schemas: Record<string, z.ZodTypeAny> = {
   'logs.tail': z.object({ entries: z.array(z.record(z.unknown())) }).passthrough(),
 };
 
-// The native host owns a 10s control deadline. The UI must wait longer so the
-// host's real error wins instead of inventing an earlier unreachable state.
+// The background worker owns method-specific transport deadlines. This is only
+// a final guard for a worker that stops responding entirely.
 export const DEFAULT_RPC_TIMEOUT_MS = 12_000;
 
 export async function rpc<T = unknown>(
@@ -110,6 +110,9 @@ export async function rpc<T = unknown>(
     if (timer !== undefined) clearTimeout(timer);
   }
   if (!response?.success) {
+    if (response?.transport_error || response?.error_code === 'SUPERVISOR_UNREACHABLE') {
+      throw new SupervisorUnreachable(response?.error || `${method}: supervisor unreachable`);
+    }
     if (typeof response?.error === 'string' && response.error) {
       throw new SupervisorApplicationError(response.error);
     }

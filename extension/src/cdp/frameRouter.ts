@@ -60,6 +60,7 @@ export class FrameRouter {
   private tabSessions = new Map<number, string>(); // tabId -> root sessionId
   private sessions = new Map<string, SessionInfo>(); // sessionId -> info
   private frameToSession = new Map<string, string>(); // frameId -> sessionId
+  private attachPromises = new Map<number, Promise<void>>();
   
   // Event listeners for cleanup
   private eventListeners = new Map<number, (source: any, method: string, params: any) => void>();
@@ -84,6 +85,14 @@ export class FrameRouter {
       return;
     }
 
+    const pending = this.attachPromises.get(tabId);
+    if (pending) return await pending;
+    const attach = this.attachToTabOnce(tabId).finally(() => this.attachPromises.delete(tabId));
+    this.attachPromises.set(tabId, attach);
+    return await attach;
+  }
+
+  private async attachToTabOnce(tabId: number): Promise<void> {
     console.log(`[FrameRouter] Attaching to tab ${tabId}`);
     
     try {
@@ -136,31 +145,46 @@ export class FrameRouter {
       const msg = (error && error.message) ? String(error.message) : String(error);
       // If another debugger is attached, do not loop/throw; mark as not attached and return
       if (msg.includes('Another debugger')) {
-        console.warn(`[FrameRouter] CDP attach unavailable for tab ${tabId}: ${msg}`);
-        this.markTabDetached(tabId, msg);
-        return;
+        await chrome.debugger.detach({ tabId }).catch(() => {});
+        try {
+          await chrome.debugger.attach({ tabId }, '1.3');
+        } catch (retryError: any) {
+          const conflict = new Error(`CDP_ATTACH_CONFLICT: ${retryError?.message || retryError}`);
+          (conflict as any).code = 'CDP_ATTACH_CONFLICT';
+          throw conflict;
+        }
+        return await this.finishAttach(tabId);
       }
       // Common non-fatal case: trying to attach to internal pages (chrome://, etc.)
       if (msg.includes('chrome://') || msg.includes('Cannot access a chrome://')) {
         console.warn(`[FrameRouter] CDP attach skipped for tab ${tabId}: ${msg}`);
-        this.markTabDetached(tabId, msg);
         return;
       }
       // If protocol method not found (e.g., Target.enable), we already skipped it above
       if (msg.includes("wasn't found") || msg.includes('not found')) {
         console.warn(`[FrameRouter] CDP attach skipped for tab ${tabId}: ${msg}`);
-        this.markTabDetached(tabId, msg);
         return;
       }
       if (isExpectedCdpLifecycleError(msg)) {
         console.warn(`[FrameRouter] CDP attach lost target for tab ${tabId}: ${msg}`);
-        this.markTabDetached(tabId, msg);
         return;
       }
       console.error(`[FrameRouter] Failed to attach to tab ${tabId}:`, msg);
-      this.markTabDetached(tabId, msg);
       throw error;
     }
+  }
+
+  private async finishAttach(tabId: number): Promise<void> {
+    const rootSessionId = `root:${tabId}`;
+    this.tabSessions.set(tabId, rootSessionId);
+    this.sessions.set(rootSessionId, { sessionId: rootSessionId, targetId: `tab:${tabId}`, tabId });
+    const eventListener = this.createEventListener(tabId);
+    chrome.debugger.onEvent.addListener(eventListener);
+    this.eventListeners.set(tabId, eventListener);
+    await this.sendCommand(tabId, 'Target.setAutoAttach', { autoAttach: true, waitForDebuggerOnStart: false, flatten: true, filter: [{ type: 'iframe', exclude: false }] });
+    try { await this.sendCommand(tabId, 'Page.enable', {}); } catch {}
+    try { await this.sendCommand(tabId, 'Runtime.enable', {}); } catch {}
+    this.attachedTabs.add(tabId);
   }
 
   /**
@@ -181,10 +205,6 @@ export class FrameRouter {
    * Detach CDP from tab and clean up resources
    */
   async detachFromTab(tabId: number): Promise<void> {
-    if (!this.attachedTabs.has(tabId)) {
-      return;
-    }
-
     console.log(`[FrameRouter] Detaching from tab ${tabId}`);
 
     try {
@@ -336,19 +356,25 @@ export class FrameRouter {
   /**
    * Send CDP command with optional session routing
    */
-  private async sendCommand<T = any>(
+  async sendCommand<T = any>(
     tabId: number,
     method: string,
     params: any = {},
-    sessionId?: string
+    sessionId?: string,
+    timeoutMs = 30_000,
   ): Promise<T> {
     return new Promise((resolve, reject) => {
+      let settled = false;
+      const timer = setTimeout(() => { settled = true; reject(new Error(`CDP command timeout: ${method}`)); }, timeoutMs);
       chrome.debugger.sendCommand(
         { tabId, ...(sessionId ? { sessionId } : {}) },
         method,
         params,
         (result) => {
           const error = chrome.runtime.lastError;
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
           if (error) {
             reject(new Error(`CDP command failed: ${error.message}`));
           } else {
