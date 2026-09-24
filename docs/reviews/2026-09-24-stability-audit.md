@@ -469,3 +469,42 @@ Still open from those tickets:
   cloud pairing/command fetches have a 10s abort deadline; Linux app-base casing already matched the
   installer. The remaining fleet/cloud, MCP concurrency/session, and extension lifecycle findings
   still need separate changes and live coverage.
+
+### Tranche 5 status (final sweep)
+
+Landed:
+
+- **Native host (NH-10):** only NotFound/ConnectionRefused on the supervisor socket allows a spawn;
+  any other connect error means a supervisor exists and the host waits. Spawn cooldown 5s→60s with
+  ±20% jitter; the spawned child is reaped on a thread.
+- **Supervisor:** a supervisor is only ever spawned when its lock is free; a locked-but-silent one
+  gets a 5s grace, then a `shutdown --force` hint. The process lock is taken before the token is
+  read (no concurrent-start token race). A CLI run slot records its owner pid and is reclaimed when
+  that process is dead. Bridge writes have a 10s timeout that clears the bridge (SUP-13); cloud
+  dispatch runs each request concurrently (SUP-12); paused/claim conflicts name the command that
+  fixes them (SUP-17). New `fleet.start` RPC; `rzn fleet enroll` calls it, so no supervisor restart.
+  `status.snapshot` now carries the real fleet status (was always null).
+- **Fleet/cloud:** the fleet loop is restartable, a panicking job reports `job_crashed`, a
+  panicking loop reports `crashed`. The cloud websocket pings every 20s and reconnects after 60s
+  of silence; commands run on their own ordered task.
+- **Extension lifecycle:** `session_close` is control-plane and cancels its leases; boot-id tagged
+  sessions; orphaned content scripts stop and a new instance tears down the old one; per-tab
+  frame-router state; failed step responses are not cached; `RESTRICTED_URL` is a typed,
+  non-retryable error; `native_input` path removed.
+- **MCP/CLI:** MCP closes the sessions it opened on EOF; `cloud run-workflow` has a per-request
+  deadline; curl calls have `--max-time`; doctor self-test has a 10s deadline.
+- **`rzn-browser heal`** is now a repair ladder: re-register a broken native-host manifest,
+  force-restart a supervisor that holds its lock but does not answer (`--restart` forces it), heal
+  the bridge (retrying once after a supervisor restart), then rerun the doctor and exit non-zero
+  with the failing checks if anything still needs a human.
+- **STAB-21 chaos cases written:** native-host SIGKILL, `chrome.runtime.reload()` mid-run, and a
+  navigating click that must run exactly once.
+
+Still open:
+
+- The native-host smoke/chaos lane does not run on branded Chrome ≥137 (it ignores
+  `--load-extension`); the harness is being moved to Chrome for Testing. Until then the chaos cases
+  are unverified live.
+- MCP request cancellation (the MCP loop is serial).
+- `download_catalog_source` has no timeout.
+- Supervisor bridge writer channels are unbounded (the 10s write timeout bounds a stuck bridge).
