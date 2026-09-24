@@ -41,7 +41,14 @@ pub fn infer_app_base_from_executable(exe: &Path) -> Option<PathBuf> {
 
     if let Some(parent) = resolved.parent() {
         if parent.file_name().and_then(|value| value.to_str()) == Some("bin") {
-            return parent.parent().map(Path::to_path_buf);
+            return parent
+                .parent()
+                .filter(|base| {
+                    ["run", "secure", "extension"]
+                        .iter()
+                        .any(|name| base.join(name).is_dir())
+                })
+                .map(Path::to_path_buf);
         }
     }
 
@@ -167,10 +174,24 @@ mod tests {
 
     #[test]
     fn infers_app_base_from_installed_bin_layout() {
-        let exe = PathBuf::from("/tmp/RZN/bin/rzn-native-host");
+        let root = std::env::temp_dir().join(format!(
+            "rzn-runtime-paths-bin-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("run")).unwrap();
+        let exe = root.join("bin/rzn-native-host");
+        assert_eq!(infer_app_base_from_executable(&exe), Some(root.clone()));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn does_not_infer_unrelated_bin_parent_as_app_base() {
         assert_eq!(
-            infer_app_base_from_executable(&exe),
-            Some(PathBuf::from("/tmp/RZN"))
+            infer_app_base_from_executable(Path::new("/tmp/not-rzn/bin/tool")),
+            None
         );
     }
 

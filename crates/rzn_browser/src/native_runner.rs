@@ -23,6 +23,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::Duration;
 use uuid::Uuid;
@@ -62,12 +63,26 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
     )
     .await?;
 
+    let run_id = format!("local-{}", Uuid::new_v4());
+    supervisor::call(
+        supervisor_config.clone(),
+        "runs.claim",
+        json!({
+            "run_id": run_id,
+            "workflow_id": workflow_id,
+            "origin": "cli",
+            "step_total": workflow.steps.len(),
+            "pid": std::process::id()
+        }),
+    )
+    .await?;
     let transport = CliStepTransport {
-        config: supervisor_config,
+        config: supervisor_config.clone(),
+        session_id: Arc::new(Mutex::new(None)),
     };
     let sink = CliEventSink;
     let opts = RunOptions {
-        run_id: format!("local-{}", Uuid::new_v4()),
+        run_id: run_id.clone(),
         workflow_hash: workflow_hash(&config.workflow_path).ok(),
         params: config.params.clone(),
         deadline: None,
@@ -82,7 +97,28 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
     };
 
     let started = epoch_ms();
-    let outcome = run_workflow(&transport, &sink, &workflow, &opts).await;
+    let run = run_workflow(&transport, &sink, &workflow, &opts);
+    tokio::pin!(run);
+    let outcome = tokio::select! {
+        outcome = &mut run => outcome,
+        _ = tokio::signal::ctrl_c() => {
+            let _ = supervisor::call(supervisor_config.clone(), "browser.cancel_pending", json!({})).await;
+            if let Some(session_id) = transport.session_id.lock().unwrap().clone() {
+                let _ = supervisor::call(
+                    supervisor_config.clone(),
+                    "browser.session_close",
+                    json!({"session_id": session_id}),
+                ).await;
+            }
+            Err(anyhow!("workflow cancelled by Ctrl-C"))
+        }
+    };
+    let _ = supervisor::call(
+        supervisor_config.clone(),
+        "runs.release",
+        json!({"run_id": run_id}),
+    )
+    .await;
     let mut result = match &outcome {
         Ok(Some(v)) => crate::workflow_runner::run_result_from_output_value(
             v.clone(),
@@ -168,6 +204,7 @@ fn epoch_ms() -> i64 {
 /// by `tokio::time::timeout`, and elapsing surfaces as [`TransportError::Timeout`].
 struct CliStepTransport {
     config: supervisor::SupervisorConfig,
+    session_id: Arc<Mutex<Option<String>>>,
 }
 
 #[async_trait]
@@ -179,13 +216,26 @@ impl StepTransport for CliStepTransport {
         timeout_ms: u64,
     ) -> Result<Value, TransportError> {
         let call = supervisor::call(self.config.clone(), method, params);
-        if timeout_ms == 0 {
-            return call.await.map_err(TransportError::Call);
+        let result = if timeout_ms == 0 {
+            call.await.map_err(TransportError::Call)
+        } else {
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), call).await {
+                Ok(result) => result.map_err(TransportError::Call),
+                Err(_) => Err(TransportError::Timeout),
+            }
+        };
+        if let Ok(value) = &result {
+            if method == "browser.session_open" {
+                *self.session_id.lock().unwrap() = value
+                    .get("session_id")
+                    .or_else(|| value.pointer("/result/session_id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+            } else if method == "browser.session_close" {
+                *self.session_id.lock().unwrap() = None;
+            }
         }
-        match tokio::time::timeout(Duration::from_millis(timeout_ms), call).await {
-            Ok(result) => result.map_err(TransportError::Call),
-            Err(_) => Err(TransportError::Timeout),
-        }
+        result
     }
 }
 
@@ -215,6 +265,10 @@ impl RunEventSink for CliEventSink {
         } else {
             println!("[SNAPSHOT] ok");
         }
+    }
+
+    fn on_session_close(&self) {
+        println!("[CLOSE] Closing browser session");
     }
 
     fn on_stop(&self, step_id: &str, step_type: &str, reason: &str) {
@@ -248,6 +302,7 @@ where
     }
 
     if should_auto_heal_run_readiness(&readiness) {
+        println!("[HEAL] Repairing browser runtime readiness");
         let healed = supervisor_call("runtime.heal", params).await?;
         if readiness_ok(&healed) {
             return Ok(healed);

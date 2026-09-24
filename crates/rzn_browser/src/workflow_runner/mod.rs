@@ -101,6 +101,8 @@ pub trait RunEventSink: Send + Sync {
     fn on_step_response(&self, _step_id: &str, _step_type: &str, _response: &Value) {}
     /// A best-effort snapshot completed; `dom_hash` is `None` when unavailable.
     fn on_snapshot(&self, _dom_hash: Option<&str>) {}
+    /// Best-effort browser session cleanup is about to run.
+    fn on_session_close(&self) {}
     /// A step requested the workflow halt early.
     fn on_stop(&self, _step_id: &str, _step_type: &str, _reason: &str) {}
     /// The assembled run result value (what the CLI pretty-prints).
@@ -482,6 +484,7 @@ pub(crate) async fn run_workflow(
     .await;
 
     if session_id.is_some() {
+        sink.on_session_close();
         let mut close_payload = with_tab_ref(
             with_session(session_id.as_deref(), json!({})),
             opts.session.tab_ref.as_deref(),
@@ -500,7 +503,7 @@ pub(crate) async fn run_workflow(
             close_payload["keep_tab"] = Value::Bool(true);
         }
         let _ = transport
-            .call("browser.session_close", close_payload, 0)
+            .call("browser.session_close", close_payload, 5_000)
             .await;
     }
     result.map(|_| final_payload)
@@ -539,7 +542,7 @@ async fn take_snapshot(
         .call(
             "browser.snapshot",
             with_tab_ref(with_session(session_id, json!({})), tab_ref),
-            0,
+            5_000,
         )
         .await
         .map_err(TransportError::into_anyhow)?;

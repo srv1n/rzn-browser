@@ -26,7 +26,7 @@ use std::fs::OpenOptions;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::{timeout, Duration};
@@ -169,18 +169,20 @@ pub(crate) struct SupervisorState {
     cloud_actor: Option<SupervisorCloudActor>,
     sessions: Mutex<HashMap<String, BrowserSessionRecord>>,
     run_store: RunStore,
-    control: SupervisorControl,
+    pub(crate) control: SupervisorControl,
     settings: SettingsStore,
+    token: OnceLock<String>,
     shutdown: AtomicBool,
 }
 
 struct LocalRunGuard {
     state: Arc<SupervisorState>,
+    run_id: String,
 }
 
 impl Drop for LocalRunGuard {
     fn drop(&mut self) {
-        self.state.control.end_run();
+        self.state.control.end_run_if(Some(&self.run_id));
     }
 }
 
@@ -432,6 +434,7 @@ struct PendingNativeCall {
     bridge_id: String,
     bridge_epoch: u64,
     method: String,
+    extension_request_id: String,
     deadline_at_ms: u64,
     responder: oneshot::Sender<Value>,
 }
@@ -1290,6 +1293,7 @@ impl SupervisorState {
             run_store,
             control,
             settings,
+            token: OnceLock::new(),
             shutdown: AtomicBool::new(false),
         }
     }
@@ -1427,6 +1431,7 @@ impl SupervisorState {
         }
         let guard = LocalRunGuard {
             state: self.clone(),
+            run_id: run_id.clone(),
         };
         let response_run_id = run_id.clone();
         tokio::spawn(async move {
@@ -1974,6 +1979,53 @@ impl SupervisorState {
         match method {
             "runtime.hello" | "runtime.status" => Ok(self.runtime_status().await),
             "browser.targets" => Ok(self.browser_targets().await),
+            "browser.cancel_pending" => {
+                self.cancel_pending_extension_steps().await;
+                Ok(json!({"ok": true}))
+            }
+            "runs.claim" => {
+                let run_id = params
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("runs.claim missing params.run_id"))?;
+                let workflow_id = params
+                    .get("workflow_id")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown");
+                let origin = params
+                    .get("origin")
+                    .and_then(Value::as_str)
+                    .unwrap_or("cli");
+                let total = params
+                    .get("step_total")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default() as usize;
+                let owner_pid = params
+                    .get("pid")
+                    .and_then(Value::as_u64)
+                    .map(|pid| pid as u32);
+                self.control
+                    .try_begin_run_owned(
+                        run_id.into(),
+                        workflow_id.into(),
+                        origin.into(),
+                        total,
+                        owner_pid,
+                    )
+                    .map_err(|current| {
+                        anyhow!(
+                            "a run is already in progress: {} ({})",
+                            current.run_id,
+                            current.origin
+                        )
+                    })?;
+                Ok(json!({"ok": true, "run_id": run_id}))
+            }
+            "runs.release" => {
+                self.control
+                    .end_run_if(params.get("run_id").and_then(Value::as_str));
+                Ok(json!({"ok": true}))
+            }
             "runtime.ensure_ready" => self.ensure_ready(params).await,
             "runtime.heal" => self.runtime_heal(params).await,
             "cloud.status" => Ok(self.cloud_status().await),
@@ -2029,9 +2081,15 @@ impl SupervisorState {
                     .unwrap_or(false),
             ),
             "automation.resume" => self.control.resume(),
-            "runs.cancel" => Ok(self
-                .control
-                .cancel(params.get("run_id").and_then(Value::as_str))),
+            "runs.cancel" => {
+                let result = self
+                    .control
+                    .cancel(params.get("run_id").and_then(Value::as_str));
+                if result.get("ok").and_then(Value::as_bool) == Some(true) {
+                    self.cancel_pending_extension_steps().await;
+                }
+                Ok(result)
+            }
             "runs.start" | "runs.replay" if self.control.paused() => {
                 Err(anyhow!("automation is paused"))
             }
@@ -3251,6 +3309,7 @@ impl SupervisorState {
                 bridge_id: bridge.id.clone(),
                 bridge_epoch: bridge.epoch,
                 method: cmd.to_string(),
+                extension_request_id: req_id.clone(),
                 deadline_at_ms: 0,
                 responder: tx,
             },
@@ -3315,6 +3374,7 @@ impl SupervisorState {
                         bridge_id: reconnected_bridge.id.clone(),
                         bridge_epoch: reconnected_bridge.epoch,
                         method: pending_call.method,
+                        extension_request_id: pending_call.extension_request_id,
                         deadline_at_ms: 0,
                         responder: pending_call.responder,
                     },
@@ -3538,7 +3598,7 @@ impl SupervisorState {
 
         self.drain_native_bridge_pending(id).await;
         self.mark_sessions_for_disconnected_bridge(id).await;
-        if let Some(health) = self.native_bridge_health.lock().await.get_mut(id) {
+        if let Some(mut health) = self.native_bridge_health.lock().await.remove(id) {
             health.bridge_unregistration_count =
                 health.bridge_unregistration_count.saturating_add(1);
         }
@@ -3825,6 +3885,49 @@ impl SupervisorState {
     async fn set_native_bridge_pending_deadline(&self, request_id: &str, deadline_at_ms: u64) {
         if let Some(pending) = self.native_bridge_pending.lock().await.get_mut(request_id) {
             pending.deadline_at_ms = deadline_at_ms;
+        }
+    }
+
+    async fn cancel_pending_extension_steps(&self) {
+        let pending = self
+            .native_bridge_pending
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, pending)| pending.method == "browser.execute_step")
+            .map(|(_, pending)| {
+                (
+                    pending.bridge_id.clone(),
+                    pending.bridge_epoch,
+                    pending.extension_request_id.clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let bridges = self.native_bridges.lock().await;
+        for (bridge_id, bridge_epoch, request_id) in pending {
+            let Some(bridge) = bridges
+                .get(&bridge_id)
+                .filter(|bridge| bridge.epoch == bridge_epoch)
+            else {
+                continue;
+            };
+            let message = json!({
+                "jsonrpc": "2.0",
+                "id": format!("cancel-{}", Uuid::new_v4()),
+                "method": "native_host.extension_call",
+                "params": {
+                    "cmd": "RZN_CANCEL_REQUEST",
+                    "req_id": format!("cancel-{}", Uuid::new_v4()),
+                    "timeout_ms": 2_000,
+                    "payload": { "request_id": request_id, "reason": "run cancelled" },
+                    "supervisor_bridge_id": bridge.id.clone(),
+                    "supervisor_bridge_epoch": bridge.epoch,
+                    "supervisor_boot_id": self.supervisor_boot_id.clone()
+                }
+            });
+            let _ = bridge
+                .tx
+                .send(serde_json::to_vec(&message).unwrap_or_default());
         }
     }
 
@@ -5050,6 +5153,13 @@ pub(crate) async fn serve(config: SupervisorConfig) -> Result<SupervisorServeRep
     let (cloud_dispatch_tx, cloud_dispatch_rx) = mpsc::unbounded_channel::<CloudDispatchRequest>();
     let cloud_actor = supervisor_cloud::spawn_cloud_actor(cloud_dispatch_tx);
     let state = Arc::new(SupervisorState::with_cloud_actor(config, cloud_actor));
+    // Take the process lock before touching the token: two supervisors racing on a fresh install
+    // must not each create a token, or the survivor caches one that no longer matches the file.
+    std::fs::create_dir_all(&state.paths.run_dir)?;
+    let _process_lock = acquire_supervisor_process_lock(&state.paths)?;
+    prepare_paths(&state.paths)?;
+    let token = read_token(&state.paths.token_path)?;
+    let _ = state.token.set(token);
     {
         use tracing_subscriber::prelude::*;
         let _ = tracing_subscriber::registry()
@@ -5061,8 +5171,41 @@ pub(crate) async fn serve(config: SupervisorConfig) -> Result<SupervisorServeRep
         state.clone(),
         cloud_dispatch_rx,
     ));
-    prepare_paths(&state.paths)?;
-    let _process_lock = acquire_supervisor_process_lock(&state.paths)?;
+    {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(10));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                let bridge_ids = state
+                    .native_bridges
+                    .lock()
+                    .await
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                for bridge_id in bridge_ids {
+                    let _ = state
+                        .try_call_native_bridge_raw_inner(
+                            "ping",
+                            json!({}),
+                            None,
+                            Some(2_000),
+                            None,
+                            false,
+                            BridgeTarget::BridgeId(bridge_id),
+                        )
+                        .await;
+                }
+                let cutoff = now_ms().saturating_sub(60 * 60 * 1_000);
+                state.sessions.lock().await.retain(|_, session| {
+                    session.disconnected_at_ms.is_none() || session.last_activity_at_ms >= cutoff
+                });
+            }
+        });
+    }
     let retention = state.settings.get();
     let _ = state.run_store.gc(crate::run_store::GcPolicy {
         max_count: retention.run_retention_count,
@@ -5302,7 +5445,14 @@ async fn handle_connection(
     mut stream: LocalSocketStream,
     state: Arc<SupervisorState>,
 ) -> Result<()> {
-    let token = read_token(&state.paths.token_path)?;
+    let token = if let Some(token) = state.token.get() {
+        if !state.paths.token_path.exists() {
+            write_secret_file(&state.paths.token_path, format!("{}\n", token))?;
+        }
+        token.clone()
+    } else {
+        read_token(&state.paths.token_path)?
+    };
     let handshake = timeout(
         Duration::from_millis(HANDSHAKE_TIMEOUT_MS),
         read_required_frame(&mut stream),
@@ -5332,13 +5482,32 @@ async fn handle_connection(
     });
     write_frame(&mut stream, &serde_json::to_vec(&response)?).await?;
 
+    let (mut reader, mut writer) = stream.split();
+    let mut queued_frame = None;
     loop {
-        let frame = match read_frame(&mut stream).await {
-            Ok(Some(frame)) => frame,
-            Ok(None) => break,
-            Err(_) => break,
+        let frame = match queued_frame.take() {
+            Some(frame) => frame,
+            None => match read_frame(&mut reader).await {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break,
+                Err(error) => {
+                    log::warn!("supervisor client frame read failed: {error:#}");
+                    break;
+                }
+            },
         };
-        let request: Value = serde_json::from_slice(&frame)?;
+        let request: Value = match serde_json::from_slice(&frame) {
+            Ok(request) => request,
+            Err(error) => {
+                let response = json!({
+                    "jsonrpc": "2.0",
+                    "id": Value::Null,
+                    "error": { "code": -32700, "message": format!("invalid JSON frame: {error}") }
+                });
+                write_frame(&mut writer, &serde_json::to_vec(&response)?).await?;
+                continue;
+            }
+        };
         let id = request.get("id").cloned().unwrap_or(Value::Null);
         let method = request
             .get("method")
@@ -5346,7 +5515,23 @@ async fn handle_connection(
             .unwrap_or("");
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
 
-        let response = match state.dispatch_shared(method, params).await {
+        let dispatch = state.dispatch_shared(method, params);
+        tokio::pin!(dispatch);
+        let result = tokio::select! {
+            result = &mut dispatch => result,
+            next = read_frame(&mut reader) => match next {
+                Ok(Some(frame)) => {
+                    queued_frame = Some(frame);
+                    dispatch.await
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    log::warn!("supervisor client disconnected during {method}: {error:#}");
+                    break;
+                }
+            }
+        };
+        let response = match result {
             Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
             Err(err) => json!({
                 "jsonrpc": "2.0",
@@ -5354,7 +5539,7 @@ async fn handle_connection(
                 "error": { "code": -32000, "message": err.to_string() }
             }),
         };
-        write_frame(&mut stream, &serde_json::to_vec(&response)?).await?;
+        write_frame(&mut writer, &serde_json::to_vec(&response)?).await?;
     }
 
     Ok(())
@@ -7672,6 +7857,7 @@ mod tests {
                     bridge_id: "retired-bridge".to_string(),
                     bridge_epoch: retired_epoch,
                     method: "execute_step".to_string(),
+                    extension_request_id: "retired-call".to_string(),
                     deadline_at_ms: now_ms() + 1_000,
                     responder: retired_pending_tx,
                 },
@@ -7682,6 +7868,7 @@ mod tests {
                     bridge_id: "fresh-bridge".to_string(),
                     bridge_epoch: fresh_epoch,
                     method: "execute_step".to_string(),
+                    extension_request_id: "fresh-call".to_string(),
                     deadline_at_ms: now_ms() + 1_000,
                     responder: fresh_pending_tx,
                 },
@@ -10724,6 +10911,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelling_run_forwards_cancel_to_extension_request() {
+        let state = SupervisorState::new(test_config());
+        let (bridge_tx, mut bridge_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let epoch = state
+            .register_native_bridge("cancel-bridge".to_string(), bridge_tx)
+            .await;
+        let (response_tx, _response_rx) = oneshot::channel();
+        state.native_bridge_pending.lock().await.insert(
+            "pending-step".to_string(),
+            PendingNativeCall {
+                bridge_id: "cancel-bridge".to_string(),
+                bridge_epoch: epoch,
+                method: "browser.execute_step".to_string(),
+                extension_request_id: "extension-step".to_string(),
+                deadline_at_ms: now_ms() + 1_000,
+                responder: response_tx,
+            },
+        );
+
+        state.cancel_pending_extension_steps().await;
+
+        let message: Value = serde_json::from_slice(
+            &bridge_rx
+                .recv()
+                .await
+                .expect("cancel reaches native bridge"),
+        )
+        .expect("cancel frame json");
+        assert_eq!(
+            message.pointer("/params/cmd").and_then(Value::as_str),
+            Some("RZN_CANCEL_REQUEST")
+        );
+        assert_eq!(
+            message
+                .pointer("/params/payload/request_id")
+                .and_then(Value::as_str),
+            Some("extension-step")
+        );
+    }
+
+    #[tokio::test]
     async fn native_bridge_pending_deadline_starts_after_reconnect_retry() {
         let state = Arc::new(SupervisorState::new(test_config()));
         let (closed_tx, closed_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -10828,6 +11056,7 @@ mod tests {
                     bridge_id: "chrome-bridge".to_string(),
                     bridge_epoch: chrome_epoch,
                     method: "ping".to_string(),
+                    extension_request_id: "chrome-call".to_string(),
                     deadline_at_ms: now_ms() + 1_000,
                     responder: chrome_pending_tx,
                 },
@@ -10838,6 +11067,7 @@ mod tests {
                     bridge_id: "edge-bridge".to_string(),
                     bridge_epoch: edge_epoch,
                     method: "ping".to_string(),
+                    extension_request_id: "edge-call".to_string(),
                     deadline_at_ms: now_ms() + 1_000,
                     responder: edge_pending_tx,
                 },
@@ -10908,23 +11138,7 @@ mod tests {
         drop(pending);
 
         let health_by_bridge = state.native_bridge_health.lock().await;
-        let edge_health = health_by_bridge
-            .get("edge-bridge")
-            .expect("edge bridge health remains for diagnostics");
-        assert_eq!(
-            edge_health.current_bridge_id.as_deref(),
-            Some("edge-bridge")
-        );
-        assert_eq!(edge_health.native_host_restart_count, 1);
-        assert_eq!(edge_health.timeout_count, 1);
-        assert_eq!(
-            edge_health.last_failure_cause.as_deref(),
-            Some(READINESS_CAUSE_ZOMBIE_NATIVE_HOST)
-        );
-        assert_eq!(
-            edge_health.last_restart_reason.as_deref(),
-            Some("edge timed out")
-        );
+        assert!(!health_by_bridge.contains_key("edge-bridge"));
         let chrome_health = health_by_bridge
             .get("chrome-bridge")
             .expect("chrome bridge health");

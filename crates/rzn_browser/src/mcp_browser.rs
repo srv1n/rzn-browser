@@ -55,7 +55,6 @@ trait BrowserRuntimeMcpBackend {
 struct SupervisorBackend {
     config: SupervisorConfig,
     request_timeout_ms: u64,
-    ready_checked: bool,
 }
 
 impl SupervisorBackend {
@@ -63,15 +62,11 @@ impl SupervisorBackend {
         Self {
             config,
             request_timeout_ms,
-            ready_checked: false,
         }
     }
 
     async fn ensure_ready(&mut self) -> Result<()> {
-        if !self.ready_checked {
-            supervisor::ensure_running(self.config.clone()).await?;
-            self.ready_checked = true;
-        }
+        supervisor::ensure_running(self.config.clone()).await?;
         Ok(())
     }
 }

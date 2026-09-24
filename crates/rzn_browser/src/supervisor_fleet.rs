@@ -752,6 +752,26 @@ impl FleetJobExecutor for InProcessJobExecutor {
         };
         let deadline = Duration::from_secs(deadline_secs);
 
+        if let Err(current) = self.state.control.try_begin_run(
+            run_id.clone(),
+            assignment.workflow_id.clone(),
+            "fleet".into(),
+            workflow.steps.len(),
+        ) {
+            return failed_result(
+                &run_id,
+                &assignment.workflow_id,
+                format!(
+                    "another run is in progress: {} ({})",
+                    current.run_id, current.origin
+                ),
+            );
+        }
+        let _run_guard = FleetRunGuard {
+            state: self.state.clone(),
+            run_id: run_id.clone(),
+        };
+
         let transport = InProcessTransport {
             state: self.state.clone(),
             cancel: cancel.clone(),
@@ -795,7 +815,7 @@ struct InProcessTransport {
 #[async_trait]
 impl StepTransport for InProcessTransport {
     fn cancelled(&self) -> bool {
-        self.cancel.load(Ordering::SeqCst)
+        self.cancel.load(Ordering::SeqCst) || self.state.control.cancel_requested()
     }
 
     async fn call(
@@ -804,7 +824,7 @@ impl StepTransport for InProcessTransport {
         params: Value,
         timeout_ms: u64,
     ) -> Result<Value, TransportError> {
-        if method == "browser.execute_step" && self.cancel.load(Ordering::SeqCst) {
+        if method == "browser.execute_step" && self.cancelled() {
             return Err(TransportError::Call(anyhow!(
                 "fleet job cancelled before step"
             )));
@@ -819,6 +839,17 @@ impl StepTransport for InProcessTransport {
                 Err(_) => Err(TransportError::Timeout),
             }
         }
+    }
+}
+
+struct FleetRunGuard {
+    state: Arc<SupervisorState>,
+    run_id: String,
+}
+
+impl Drop for FleetRunGuard {
+    fn drop(&mut self) {
+        self.state.control.end_run_if(Some(&self.run_id));
     }
 }
 

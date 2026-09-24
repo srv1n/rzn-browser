@@ -105,6 +105,10 @@ enum Commands {
     /// Re-check the local browser supervisor and native-host bridge
     Heal(HealArgs),
 
+    /// Diagnose the installed runtime chain
+    #[command(subcommand)]
+    Runtime(RuntimeCommands),
+
     /// Run or inspect the durable local browser supervisor
     #[command(subcommand)]
     Supervisor(SupervisorCommands),
@@ -263,6 +267,12 @@ struct HealArgs {
 enum McpCommands {
     /// Expose browser automation worker tools over MCP stdio
     Browser(BrowserMcpArgs),
+}
+
+#[derive(Subcommand, Debug)]
+enum RuntimeCommands {
+    /// Check supervisor, native host, bridge, and extension connectivity
+    Doctor(NativeHostDoctorArgs),
 }
 
 #[derive(Subcommand, Debug)]
@@ -1152,6 +1162,12 @@ async fn main() {
         Commands::Heal(args) => {
             if let Err(err) = handle_heal(args).await {
                 eprintln!("❌ heal failed: {}", err);
+                process::exit(1);
+            }
+        }
+        Commands::Runtime(RuntimeCommands::Doctor(args)) => {
+            if let Err(err) = handle_native_host_doctor(args).await {
+                eprintln!("❌ runtime doctor failed: {}", err);
                 process::exit(1);
             }
         }

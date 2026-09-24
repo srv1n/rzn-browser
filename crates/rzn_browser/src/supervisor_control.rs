@@ -17,8 +17,25 @@ pub struct RunningRun {
     pub origin: String,
     pub step_index: usize,
     pub step_total: usize,
+    /// Set for runs claimed by an out-of-process client (CLI). A dead owner frees the slot.
+    #[serde(skip)]
+    pub(crate) owner_pid: Option<u32>,
     #[serde(skip)]
     pub(crate) started: Instant,
+}
+
+fn owner_is_live(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        // EPERM means the pid exists but belongs to someone else: treat as live.
+        let alive = unsafe { libc::kill(pid as libc::pid_t, 0) } == 0;
+        alive || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
 }
 #[derive(Serialize, Deserialize, Default)]
 struct Persisted {
@@ -85,9 +102,26 @@ impl SupervisorControl {
         origin: String,
         total: usize,
     ) -> std::result::Result<(), RunningRun> {
+        self.try_begin_run_owned(run_id, workflow_id, origin, total, None)
+    }
+    pub fn try_begin_run_owned(
+        &self,
+        run_id: String,
+        workflow_id: String,
+        origin: String,
+        total: usize,
+        owner_pid: Option<u32>,
+    ) -> std::result::Result<(), RunningRun> {
         let mut running = self.running.lock().unwrap();
         if let Some(current) = running.as_ref() {
-            return Err(current.clone());
+            if !current.owner_pid.is_some_and(|pid| !owner_is_live(pid)) {
+                return Err(current.clone());
+            }
+            log::warn!(
+                "reclaiming run slot {} from exited client pid {:?}",
+                current.run_id,
+                current.owner_pid
+            );
         }
         self.cancel.store(false, Ordering::SeqCst);
         *running = Some(RunningRun {
@@ -96,6 +130,7 @@ impl SupervisorControl {
             origin,
             step_index: 0,
             step_total: total,
+            owner_pid,
             started: Instant::now(),
         });
         Ok(())
@@ -110,8 +145,14 @@ impl SupervisorControl {
         }
     }
     pub fn end_run(&self) {
-        *self.running.lock().unwrap() = None;
-        self.cancel.store(false, Ordering::SeqCst);
+        self.end_run_if(None);
+    }
+    pub fn end_run_if(&self, run_id: Option<&str>) {
+        let mut running = self.running.lock().unwrap();
+        if run_id.is_none_or(|id| running.as_ref().is_some_and(|run| run.run_id == id)) {
+            *running = None;
+            self.cancel.store(false, Ordering::SeqCst);
+        }
     }
     pub fn now_running(&self) -> Value {
         self.running
@@ -279,6 +320,49 @@ mod tests {
         assert!(control
             .try_begin_run("run-2".into(), "wf".into(), "local_cli".into(), 1)
             .is_ok());
+    }
+
+    #[test]
+    fn slot_claimed_by_exited_client_is_reclaimed() {
+        let control = SupervisorControl::open(&temp());
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        let dead_pid = child.id();
+        child.wait().unwrap();
+        control
+            .try_begin_run_owned(
+                "cli-run".into(),
+                "wf".into(),
+                "cli".into(),
+                1,
+                Some(dead_pid),
+            )
+            .unwrap();
+        control
+            .try_begin_run("next-run".into(), "wf".into(), "dashboard".into(), 1)
+            .expect("slot held by an exited client is reclaimed");
+        assert_eq!(control.now_running()["run_id"], "next-run");
+
+        control
+            .try_begin_run_owned(
+                "live-cli".into(),
+                "wf".into(),
+                "cli".into(),
+                1,
+                Some(std::process::id()),
+            )
+            .expect_err("slot is still held by next-run");
+    }
+
+    #[test]
+    fn releasing_stale_run_does_not_free_current_slot() {
+        let control = SupervisorControl::open(&temp());
+        control
+            .try_begin_run("run-1".into(), "wf".into(), "cli".into(), 1)
+            .unwrap();
+        control.end_run_if(Some("stale-run"));
+        assert_eq!(control.now_running()["run_id"], "run-1");
+        control.end_run_if(Some("run-1"));
+        assert!(control.now_running().is_null());
     }
 
     #[test]

@@ -31,9 +31,11 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::task::JoinSet;
 use tokio::time::{timeout, Duration, Instant};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -55,6 +57,14 @@ const SUPERVISOR_RPC_DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const OVERSIZE_ARTIFACT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const OVERSIZE_ARTIFACT_MAX_FILES: usize = 50;
 static NATIVE_HOST_BOOT_ID: OnceLock<String> = OnceLock::new();
+static LOST_UPSTREAM_RESPONSES: AtomicU64 = AtomicU64::new(0);
+static LATE_EXTENSION_RESPONSES: AtomicU64 = AtomicU64::new(0);
+
+async fn send_upstream(tx: &mpsc::Sender<Vec<u8>>, bytes: Vec<u8>) {
+    if tx.send(bytes).await.is_err() {
+        LOST_UPSTREAM_RESPONSES.fetch_add(1, Ordering::Relaxed);
+    }
+}
 
 fn init_logging() {
     let log_dir = candidate_app_bases()
@@ -1036,7 +1046,9 @@ fn handle_native_control_command(value: &Value, bridge_connected: bool) -> Optio
                     "source": source,
                     "native_host_pid": std::process::id(),
                     "native_host_boot_id": native_host_boot_id(),
-                    "bridge_connected": bridge_connected
+                    "bridge_connected": bridge_connected,
+                    "lost_upstream_responses": LOST_UPSTREAM_RESPONSES.load(Ordering::Relaxed),
+                    "late_extension_responses": LATE_EXTENSION_RESPONSES.load(Ordering::Relaxed)
                 }
             }))
         }
@@ -1068,14 +1080,14 @@ fn handle_native_control_command(value: &Value, bridge_connected: bool) -> Optio
 async fn run_upstream_connection(
     endpoint: UpstreamEndpoint,
     stream: LocalSocketStream,
-    native_tx: mpsc::UnboundedSender<Vec<u8>>,
+    native_tx: mpsc::Sender<Vec<u8>>,
     native_pending: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
     active_bridges: Arc<Mutex<HashSet<UpstreamKey>>>,
     shutdown_tx: mpsc::UnboundedSender<String>,
 ) {
     let key = UpstreamKey::from(&endpoint);
     let (mut upstream_reader, upstream_writer) = stream.split();
-    let (upstream_tx, mut upstream_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (upstream_tx, mut upstream_rx) = mpsc::channel::<Vec<u8>>(64);
     active_bridges.lock().await.insert(key.clone());
 
     let writer_task = tokio::spawn(async move {
@@ -1088,6 +1100,7 @@ async fn run_upstream_connection(
     });
 
     let mut shutdown_reason: Option<String> = None;
+    let mut session_tasks = JoinSet::new();
     loop {
         let frame = match read_frame(&mut upstream_reader).await {
             Ok(Some(frame)) => frame,
@@ -1124,7 +1137,7 @@ async fn run_upstream_connection(
                 }),
             );
             if let Ok(bytes) = serde_json::to_vec(&response) {
-                let _ = upstream_tx.send(bytes);
+                send_upstream(&upstream_tx, bytes).await;
             }
             shutdown_reason = Some(reason);
             break;
@@ -1137,7 +1150,7 @@ async fn run_upstream_connection(
             Ok(extension_call) => extension_call,
             Err(resp) => {
                 if let Ok(bytes) = serde_json::to_vec(&resp) {
-                    let _ = upstream_tx.send(bytes);
+                    send_upstream(&upstream_tx, bytes).await;
                 }
                 continue;
             }
@@ -1154,7 +1167,7 @@ async fn run_upstream_connection(
         let upstream_tx_session = upstream_tx.clone();
         let pending_session = native_pending.clone();
         let shutdown_tx_session = shutdown_tx.clone();
-        tokio::spawn(async move {
+        session_tasks.spawn(async move {
             let ExtensionCallRequest {
                 upstream_request_id,
                 cmd,
@@ -1191,7 +1204,7 @@ async fn run_upstream_connection(
                         format!("serialize error: {}", e),
                     );
                     if let Ok(bytes) = serde_json::to_vec(&resp) {
-                        let _ = upstream_tx_session.send(bytes);
+                        send_upstream(&upstream_tx_session, bytes).await;
                     }
                     return;
                 }
@@ -1208,17 +1221,17 @@ async fn run_upstream_connection(
                     ),
                 );
                 if let Ok(bytes) = serde_json::to_vec(&resp) {
-                    let _ = upstream_tx_session.send(bytes);
+                    send_upstream(&upstream_tx_session, bytes).await;
                 }
                 return;
             }
 
-            if native_tx_session.send(bytes).is_err() {
+            if native_tx_session.send(bytes).await.is_err() {
                 let mut guard = pending_session.lock().await;
                 guard.remove(&wire_req_id);
                 let resp = jsonrpc_error(upstream_request_id, -32000, "extension disconnected");
                 if let Ok(bytes) = serde_json::to_vec(&resp) {
-                    let _ = upstream_tx_session.send(bytes);
+                    send_upstream(&upstream_tx_session, bytes).await;
                 }
                 let _ = shutdown_tx_session.send(
                     "native-host stdout channel closed before extension call; restarting native-host/native-port epoch"
@@ -1241,7 +1254,7 @@ async fn run_upstream_connection(
                         "extension response channel closed",
                     );
                     if let Ok(bytes) = serde_json::to_vec(&resp) {
-                        let _ = upstream_tx_session.send(bytes);
+                        send_upstream(&upstream_tx_session, bytes).await;
                     }
                     return;
                 }
@@ -1254,7 +1267,7 @@ async fn run_upstream_connection(
                         format!("Extension timeout after {}ms", timeout_ms),
                     );
                     if let Ok(bytes) = serde_json::to_vec(&resp) {
-                        let _ = upstream_tx_session.send(bytes);
+                        send_upstream(&upstream_tx_session, bytes).await;
                     }
                     return;
                 }
@@ -1267,7 +1280,7 @@ async fn run_upstream_connection(
             });
             match serde_json::to_vec(&resp) {
                 Ok(bytes) if bytes.len() <= MAX_FRAME_SIZE => {
-                    let _ = upstream_tx_session.send(bytes);
+                    send_upstream(&upstream_tx_session, bytes).await;
                 }
                 Ok(bytes) => {
                     let artifact = write_oversize_response_artifact(
@@ -1286,7 +1299,7 @@ async fn run_upstream_connection(
                         ),
                     };
                     if let Ok(bytes) = serde_json::to_vec(&fallback) {
-                        let _ = upstream_tx_session.send(bytes);
+                        send_upstream(&upstream_tx_session, bytes).await;
                     }
                 }
                 Err(error) => {
@@ -1296,7 +1309,7 @@ async fn run_upstream_connection(
                         format!("serialize response error: {}", error),
                     );
                     if let Ok(bytes) = serde_json::to_vec(&resp) {
-                        let _ = upstream_tx_session.send(bytes);
+                        send_upstream(&upstream_tx_session, bytes).await;
                     }
                 }
             }
@@ -1304,6 +1317,7 @@ async fn run_upstream_connection(
     }
 
     active_bridges.lock().await.remove(&key);
+    session_tasks.abort_all();
     if let Some(reason) = shutdown_reason {
         let _ = shutdown_tx.send(reason);
     }
@@ -1315,7 +1329,7 @@ async fn endpoint_manager_loop(
     socket_arg: Option<String>,
     token_arg: Option<String>,
     launch_context: NativeHostLaunchContext,
-    native_tx: mpsc::UnboundedSender<Vec<u8>>,
+    native_tx: mpsc::Sender<Vec<u8>>,
     native_pending: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
     active_bridges: Arc<Mutex<HashSet<UpstreamKey>>>,
     shutdown_tx: mpsc::UnboundedSender<String>,
@@ -1452,19 +1466,33 @@ async fn main() -> Result<()> {
         Err(error) => warn!("Native-host artifact directory setup failed: {}", error),
     }
 
-    let (native_tx, mut native_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (native_tx, mut native_rx) = mpsc::channel::<Vec<u8>>(128);
     let native_pending: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>> =
         Arc::new(Mutex::new(HashMap::new()));
     let active_bridges: Arc<Mutex<HashSet<UpstreamKey>>> = Arc::new(Mutex::new(HashSet::new()));
     let (shutdown_tx, mut shutdown_rx) = mpsc::unbounded_channel::<String>();
 
     let shutdown_tx_writer = shutdown_tx.clone();
-    let native_writer_task = tokio::spawn(async move {
+    let mut native_writer_task = tokio::spawn(async move {
         let mut stdout = io::BufWriter::new(io::stdout());
         while let Some(bytes) = native_rx.recv().await {
-            if let Err(error) = write_native_message(&mut stdout, &bytes).await {
-                let _ = shutdown_tx_writer.send(native_stdout_write_failed_shutdown_reason(&error));
-                break;
+            match timeout(
+                Duration::from_secs(5),
+                write_native_message(&mut stdout, &bytes),
+            )
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    let _ =
+                        shutdown_tx_writer.send(native_stdout_write_failed_shutdown_reason(&error));
+                    break;
+                }
+                Err(_) => {
+                    let _ = shutdown_tx_writer
+                        .send("native-host stdout write timed out; restarting native-host/native-port epoch".to_string());
+                    break;
+                }
             }
         }
     });
@@ -1483,13 +1511,13 @@ async fn main() -> Result<()> {
             let Ok(bytes) = serde_json::to_vec(&heartbeat) else {
                 continue;
             };
-            if native_tx_heartbeat.send(bytes).is_err() {
+            if native_tx_heartbeat.send(bytes).await.is_err() {
                 break;
             }
         }
     });
 
-    let endpoint_manager = tokio::spawn(endpoint_manager_loop(
+    let mut endpoint_manager = tokio::spawn(endpoint_manager_loop(
         socket_arg.clone(),
         token_arg.clone(),
         launch_context.clone(),
@@ -1550,7 +1578,7 @@ async fn main() -> Result<()> {
                     match response {
                         Ok(response) => {
                             if let Ok(bytes) = serde_json::to_vec(&response) {
-                                let _ = native_tx_control.send(bytes);
+                                let _ = native_tx_control.send(bytes).await;
                             }
                         }
                         Err(error) => {
@@ -1564,7 +1592,7 @@ async fn main() -> Result<()> {
                                 Some(error.to_string()),
                             );
                             if let Ok(bytes) = serde_json::to_vec(&response) {
-                                let _ = native_tx_control.send(bytes);
+                                let _ = native_tx_control.send(bytes).await;
                             }
                         }
                     }
@@ -1583,12 +1611,13 @@ async fn main() -> Result<()> {
                     let _ = tx.send(response);
                     continue;
                 }
+                LATE_EXTENSION_RESPONSES.fetch_add(1, Ordering::Relaxed);
             }
             if is_cmd_envelope(&v) {
                 let bridge_connected = !active_bridges_native.lock().await.is_empty();
                 if let Some(response) = handle_native_control_command(&v, bridge_connected) {
                     if let Ok(bytes) = serde_json::to_vec(&response) {
-                        let _ = native_tx_native.send(bytes);
+                        let _ = native_tx_native.send(bytes).await;
                     }
                     continue;
                 }
@@ -1613,17 +1642,34 @@ async fn main() -> Result<()> {
             }
         }
         reason = shutdown_rx.recv() => {
+            let reason = reason.unwrap_or_else(|| "supervisor requested native-host restart".to_string());
             info!(
-                reason = reason.unwrap_or_else(|| "supervisor requested native-host restart".to_string()),
+                reason = reason,
                 "Shutting down native host"
             );
             native_reader_task.abort();
+            let drained = drain_native_pending_with_disconnect_error(&native_pending, &reason).await;
+            if drained > 0 {
+                tokio::time::sleep(Duration::from_millis(NATIVE_READER_EXIT_UPSTREAM_FLUSH_GRACE_MS)).await;
+            }
+        }
+        result = &mut endpoint_manager => {
+            let reason = format!("native-host endpoint manager ended: {:?}", result.err());
+            warn!(reason = reason, "Shutting down native host");
+            native_reader_task.abort();
+            drain_native_pending_with_disconnect_error(&native_pending, &reason).await;
+        }
+        result = &mut native_writer_task => {
+            let reason = format!("native-host stdout writer ended: {:?}", result.err());
+            warn!(reason = reason, "Shutting down native host");
+            native_reader_task.abort();
+            drain_native_pending_with_disconnect_error(&native_pending, &reason).await;
         }
     }
     endpoint_manager.abort();
     native_stdout_heartbeat_task.abort();
     native_writer_task.abort();
-    Ok(())
+    std::process::exit(0)
 }
 
 #[cfg(test)]
@@ -1695,17 +1741,18 @@ mod tests {
 
     #[test]
     fn supervisor_launch_uses_the_installed_sibling_and_app_base() {
-        let launch = supervisor_launch_from_executable(Path::new("/tmp/RZN/bin/rzn-native-host"))
+        let base = std::env::temp_dir().join(format!("rzn-native-launch-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(base.join("run")).unwrap();
+        let launch = supervisor_launch_from_executable(&base.join("bin/rzn-native-host"))
             .expect("installed layout");
 
-        assert_eq!(launch.app_base, PathBuf::from("/tmp/RZN"));
+        assert_eq!(launch.app_base, base);
         assert_eq!(
             launch.executable,
-            PathBuf::from(format!(
-                "/tmp/RZN/bin/rzn-browser{}",
-                std::env::consts::EXE_SUFFIX
-            ))
+            base.join("bin")
+                .join(format!("rzn-browser{}", std::env::consts::EXE_SUFFIX))
         );
+        std::fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
