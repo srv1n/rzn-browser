@@ -439,21 +439,33 @@ lock; `pageBridge.js` injected only when the flag is absent), STAB-17 (`tracing-
 
 Still open from those tickets:
 
-- **STAB-14 is supervisor-side only.** Cancel now interrupts `wait_for_timeout` and the in-flight
-  `browser.execute_step` await. Not done: removing the dropped call's `native_bridge_pending`
-  entry, telling the extension, forwarding `RZN_CANCEL_REQUEST` to the content script (the page
-  keeps typing after a cancel), CLI Ctrl-C → cancel + `session_close`, aborting a request when
-  its client disconnects.
-- **STAB-10 is the EOF part only.** Session tasks still hold `upstream_tx` clones with no
-  per-connection cancel token; no `select!` on `endpoint_manager` / writer handles; no Drop guard
-  for `active_bridges`; forced shutdown does not drain pending or `process::exit`; channels are
-  still unbounded; no stdout write timeout.
-- **STAB-11 unchanged.** With no periodic supervisor→bridge ping, a half-dead bridge is only
-  detected when a readiness probe pings it. STAB-08's two-strike rule depends on those pings.
-- **STAB-16 edge:** `nativeReconnectTerminal` clears only on a successful pong, so after the user
-  fixes a missing host manifest, nothing reconnects until the service worker restarts. Clear the
-  flag on an explicit user action (popup Retry / `RZN_WAKE_NATIVE`).
-- **STAB-12:** token caching and NH-10 (spawn only when the socket is absent, backoff, reap the
-  child) not done.
-- Not started: STAB-15, STAB-19, STAB-20, STAB-21, STAB-22, and the regression tests listed
-  under "Missing regression tests".
+- **STAB-14 is now end-to-end for explicit cancel and CLI Ctrl-C.** `runs.cancel` sends an
+  out-of-band `RZN_CANCEL_REQUEST` which bypasses the workflow queue, aborts the matching broker
+  lease, and reaches the content script. CLI Ctrl-C sends the same cancel then closes its tracked
+  session. Client disconnect now drops the in-flight dispatch future. A dropped bridge call is
+  removed on its bounded inner timeout or response; an async Drop hook was deliberately not added.
+- **STAB-10 now has EOF release, bounded native/upstream channels, a 5s stdout-write timeout, and
+  pending-call drain during forced shutdown.** Per-connection calls are supervised by a `JoinSet`
+  and aborted on disconnect; the main task selects endpoint-manager/writer termination and exits
+  explicitly. `active_bridges` is still released explicitly rather than through an async Drop guard.
+- **STAB-11 periodic health detection landed.** The supervisor pings every registered bridge every
+  10s, so the two-strike restart rule no longer depends on readiness traffic. Health entries are
+  pruned at unregister, disconnected sessions expire after one hour, and malformed JSON frames get
+  a JSON-RPC parse error. Supervisor-side bridge writers remain unbounded.
+- **STAB-16 terminal recovery landed.** Popup Retry sends an explicit `RZN_WAKE_NATIVE` that clears
+  terminal state and reconnect backoff before scheduling a new connection attempt.
+- **STAB-12:** the supervisor caches its token in memory and restores a deleted token file on the
+  next connection. NH-10 spawn error classification, jitter, and child reaping remain open.
+- **STAB-15 landed:** dashboard, fleet, and direct CLI runs claim the same supervisor slot; fleet
+  observes the shared cancel flag; stale releases cannot free another run's slot.
+- **STAB-17 counters landed:** native-host pings report lost upstream and late extension responses.
+- **STAB-19/20 landed as the smallest shared implementation:** `runtime doctor` reuses the existing
+  native-host/runtime chain diagnosis, app-base inference rejects unrelated `bin` parents, and CLI
+  emits `[HEAL]`, `[SNAPSHOT]`, and `[CLOSE]` with 5s snapshot/close bounds.
+- **STAB-21 started:** scheduled/manual extension E2E now builds the real binaries, enables the
+  native-host smoke lane, and includes a kill-and-replace supervisor recovery case. Native-host
+  kill, service-worker stop, and mid-step navigation chaos scenarios remain open.
+- **STAB-22 partial:** MCP readiness is no longer cached forever; observe cache is TTL/size bounded;
+  cloud pairing/command fetches have a 10s abort deadline; Linux app-base casing already matched the
+  installer. The remaining fleet/cloud, MCP concurrency/session, and extension lifecycle findings
+  still need separate changes and live coverage.

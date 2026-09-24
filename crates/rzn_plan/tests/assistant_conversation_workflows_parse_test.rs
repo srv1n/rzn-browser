@@ -60,12 +60,18 @@ fn assistant_conversation_workflows_parse_as_workflow() {
                     Some(&Value::Bool(true)),
                     "chatgpt/send must require its direct entry URL"
                 );
+                // chatgpt/send opens ChatGPT home, then routes to entry_url through the sidebar
+                // (real UI, not a direct deep link).
                 assert_eq!(
                     steps[0].pointer("/action/inputs/url"),
-                    Some(&Value::String("{entry_url}".to_string())),
-                    "chatgpt/send must not stage ChatGPT root before continuation"
+                    Some(&Value::String("https://chatgpt.com/".to_string())),
+                    "chatgpt/send must open ChatGPT home before routing"
                 );
                 let workflow_text = serde_json::to_string(&value).expect("serialize send workflow");
+                assert!(
+                    workflow_text.contains("{entry_url}"),
+                    "chatgpt/send must still route to the caller's entry_url"
+                );
                 for intelligence in ["Medium", "High", "Extra High", "Pro"] {
                     assert!(
                         workflow_text.contains(intelligence),
