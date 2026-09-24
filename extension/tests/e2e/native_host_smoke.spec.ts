@@ -194,6 +194,35 @@ test.describe('native-host browser smoke', () => {
     });
   }
 
+  test('Chrome reconnects after the supervisor is replaced', async () => {
+    const target = targets[0];
+    test.skip(!fs.existsSync(binaryPath('rzn-browser')), `missing ${binaryPath('rzn-browser')}`);
+    test.skip(!fs.existsSync(binaryPath('rzn-native-host')), `missing ${binaryPath('rzn-native-host')}`);
+
+    const root = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'rzn-supervisor-chaos-'));
+    const home = path.join(root, 'home');
+    const appBase = path.join(root, 'app-base');
+    const env = envFor(home, appBase);
+    const firstContext = await launchWithExtension(target, path.join(root, 'profile-first'), env);
+    const origin = await extensionOrigin(firstContext);
+    await firstContext.close();
+    await installNativeHost(target, origin, env);
+
+    let supervisor = execFile(binaryPath('rzn-browser'), ['supervisor', 'serve', '--app-base', appBase], { cwd: repoRoot, env });
+    const context = await launchWithExtension(target, path.join(root, 'profile-live'), env);
+    try {
+      await waitForTargets(appBase, env, ['chrome']);
+      supervisor.kill('SIGKILL');
+      await new Promise((resolve) => supervisor.once('exit', resolve));
+      supervisor = execFile(binaryPath('rzn-browser'), ['supervisor', 'serve', '--app-base', appBase], { cwd: repoRoot, env });
+      await waitForTargets(appBase, env, ['chrome']);
+    } finally {
+      await context.close();
+      supervisor.kill();
+      if (supervisor.exitCode === null) await new Promise((resolve) => supervisor.once('exit', resolve));
+    }
+  });
+
   test('Chrome and Edge can connect simultaneously and route separately', async () => {
     const chrome = targets[0];
     const edge = targets[1];
