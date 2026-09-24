@@ -3748,7 +3748,17 @@ impl SupervisorState {
         ping_response: &Value,
         latency_ms: u64,
     ) {
-        let bridge = self.native_bridges.lock().await.get(bridge_id).cloned();
+        // browser.targets reads the bridge map, so the extension's self-reported identity
+        // (target, id, instance) must land there too, not only in the health entry.
+        let bridge = {
+            let mut bridges = self.native_bridges.lock().await;
+            if let Some(bridge) = bridges.get_mut(bridge_id) {
+                bridge
+                    .metadata
+                    .update_extension_reported_metadata(ping_response);
+            }
+            bridges.get(bridge_id).cloned()
+        };
         let mut health_by_bridge = self.native_bridge_health.lock().await;
         let health = health_by_bridge
             .entry(bridge_id.to_string())
@@ -5188,7 +5198,8 @@ pub(crate) async fn serve(config: SupervisorConfig) -> Result<SupervisorServeRep
                     .cloned()
                     .collect::<Vec<_>>();
                 for bridge_id in bridge_ids {
-                    let _ = state
+                    let started_at_ms = now_ms();
+                    let result = state
                         .try_call_native_bridge_raw_inner(
                             "ping",
                             json!({}),
@@ -5196,9 +5207,17 @@ pub(crate) async fn serve(config: SupervisorConfig) -> Result<SupervisorServeRep
                             Some(2_000),
                             None,
                             false,
-                            BridgeTarget::BridgeId(bridge_id),
+                            BridgeTarget::BridgeId(bridge_id.clone()),
                         )
                         .await;
+                    if let Ok(Some(value)) = result {
+                        if bridge_probe_transport_ok(&value) {
+                            let latency_ms = now_ms().saturating_sub(started_at_ms);
+                            state
+                                .record_native_bridge_ping_success(&bridge_id, &value, latency_ms)
+                                .await;
+                        }
+                    }
                 }
                 let cutoff = now_ms().saturating_sub(60 * 60 * 1_000);
                 state.sessions.lock().await.retain(|_, session| {
@@ -6842,6 +6861,41 @@ mod tests {
         let encoded = serde_json::to_string(&status).unwrap();
         assert!(!encoded.contains("supervisor-secret"));
         assert!(!encoded.contains("must-not-be-read"));
+    }
+
+    #[tokio::test]
+    async fn ping_success_populates_browser_targets_identity() {
+        let state = SupervisorState::new(test_config());
+        let (tx, _rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let metadata = NativeHostBridgeMetadata::from_hello_params(
+            &json!({
+                "caller_origin": "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"
+            }),
+            false,
+        )
+        .unwrap();
+        state
+            .register_native_bridge_with_metadata("only-bridge".to_string(), tx, metadata)
+            .await;
+        state
+            .record_native_bridge_ping_success(
+                "only-bridge",
+                &json!({"result": {
+                    "extension_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "extension_target": "chrome",
+                    "bridge_contract_version": EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT
+                }}),
+                5,
+            )
+            .await;
+
+        let targets = state.browser_targets().await;
+        assert_eq!(
+            targets
+                .pointer("/targets/0/browser")
+                .and_then(Value::as_str),
+            Some("chrome")
+        );
     }
 
     #[tokio::test]
