@@ -18,7 +18,7 @@ pub struct RunningRun {
     pub step_index: usize,
     pub step_total: usize,
     #[serde(skip)]
-    started: Instant,
+    pub(crate) started: Instant,
 }
 #[derive(Serialize, Deserialize, Default)]
 struct Persisted {
@@ -61,20 +61,36 @@ impl SupervisorControl {
     }
     pub fn resume(&self) -> Result<Value> {
         self.paused.store(false, Ordering::SeqCst);
-        self.cancel.store(false, Ordering::SeqCst);
         self.persist()?;
         Ok(json!({"ok":true,"paused":false}))
     }
-    pub fn cancel(&self) -> Value {
+    pub fn cancel(&self, requested_run_id: Option<&str>) -> Value {
+        let running = self.running.lock().unwrap();
+        let Some(current) = running.as_ref() else {
+            return json!({"ok":false,"error":"no run is in progress"});
+        };
+        if requested_run_id.is_some_and(|id| id != current.run_id) {
+            return json!({"ok":false,"error":"requested run is not in progress","run_id":current.run_id});
+        }
         self.cancel.store(true, Ordering::SeqCst);
-        json!({"ok":true,"cancel_requested":true})
+        json!({"ok":true,"cancel_requested":true,"run_id":current.run_id})
     }
     pub fn cancel_requested(&self) -> bool {
         self.cancel.load(Ordering::SeqCst)
     }
-    pub fn begin_run(&self, run_id: String, workflow_id: String, origin: String, total: usize) {
+    pub fn try_begin_run(
+        &self,
+        run_id: String,
+        workflow_id: String,
+        origin: String,
+        total: usize,
+    ) -> std::result::Result<(), RunningRun> {
+        let mut running = self.running.lock().unwrap();
+        if let Some(current) = running.as_ref() {
+            return Err(current.clone());
+        }
         self.cancel.store(false, Ordering::SeqCst);
-        *self.running.lock().unwrap() = Some(RunningRun {
+        *running = Some(RunningRun {
             run_id,
             workflow_id,
             origin,
@@ -82,6 +98,10 @@ impl SupervisorControl {
             step_total: total,
             started: Instant::now(),
         });
+        Ok(())
+    }
+    pub fn begin_run(&self, run_id: String, workflow_id: String, origin: String, total: usize) {
+        let _ = self.try_begin_run(run_id, workflow_id, origin, total);
     }
     pub fn step(&self, index: usize, total: usize) {
         if let Some(run) = self.running.lock().unwrap().as_mut() {
@@ -243,6 +263,22 @@ mod tests {
         assert_eq!(value.pointer("/now_running/run_id"), Some(&json!("run-1")));
         assert_eq!(value["native_host_connected"], true);
         assert_eq!(value["extension_connected"], false);
+    }
+
+    #[test]
+    fn supervisor_control_accepts_exactly_one_concurrent_run() {
+        let control = SupervisorControl::open(&temp());
+        assert!(control
+            .try_begin_run("run-1".into(), "wf".into(), "local_cli".into(), 1)
+            .is_ok());
+        let current = control
+            .try_begin_run("run-2".into(), "wf".into(), "local_cli".into(), 1)
+            .expect_err("second run must be rejected atomically");
+        assert_eq!(current.run_id, "run-1");
+        control.end_run();
+        assert!(control
+            .try_begin_run("run-2".into(), "wf".into(), "local_cli".into(), 1)
+            .is_ok());
     }
 
     #[test]

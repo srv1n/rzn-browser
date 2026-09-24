@@ -29,6 +29,7 @@ use rzn_core::secure_files::{cleanup_secure_artifacts, secure_dir, write_secret_
 use serde_json::json;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use tokio::io::{self, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -47,12 +48,40 @@ const SUPERVISOR_EXTENSION_CALL_METHOD: &str = "native_host.extension_call";
 const SUPERVISOR_SHUTDOWN_METHOD: &str = "native_host.shutdown";
 const STDOUT_HEARTBEAT_INTERVAL_MS: u64 = 20_000;
 const STDOUT_HEARTBEAT_CMD: &str = "native_host_heartbeat";
-const EXTENSION_TIMEOUT_SHUTDOWN_GRACE_MS: u64 = 1_000;
 const NATIVE_READER_EXIT_UPSTREAM_FLUSH_GRACE_MS: u64 = 1_000;
 const SUPERVISOR_RESPAWN_COOLDOWN_MS: u64 = 5_000;
+const SUPERVISOR_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const SUPERVISOR_RPC_DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const OVERSIZE_ARTIFACT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const OVERSIZE_ARTIFACT_MAX_FILES: usize = 50;
 static NATIVE_HOST_BOOT_ID: OnceLock<String> = OnceLock::new();
+
+fn init_logging() {
+    let log_dir = candidate_app_bases()
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("logs");
+    let _ = std::fs::create_dir_all(&log_dir);
+    let path = log_dir.join("native-host.log");
+    if path
+        .metadata()
+        .is_ok_and(|metadata| metadata.len() > 10 * 1024 * 1024)
+    {
+        let _ = std::fs::rename(&path, log_dir.join("native-host.log.1"));
+    }
+    let file = OpenOptions::new().create(true).append(true).open(path).ok();
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let builder = tracing_subscriber::fmt().with_env_filter(filter);
+    if let Some(file) = file {
+        builder
+            .with_writer(move || file.try_clone().expect("clone native-host log"))
+            .init();
+    } else {
+        builder.with_writer(std::io::stderr).init();
+    }
+}
 
 fn native_host_boot_id() -> &'static str {
     NATIVE_HOST_BOOT_ID
@@ -339,6 +368,12 @@ fn spawn_local_supervisor() -> Result<()> {
     }
 
     let mut command = std::process::Command::new(&launch.executable);
+    let log_dir = launch.app_base.join("run");
+    std::fs::create_dir_all(&log_dir)?;
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("supervisor.log"))?;
     command
         .arg("supervisor")
         .arg("serve")
@@ -346,7 +381,7 @@ fn spawn_local_supervisor() -> Result<()> {
         .arg(&launch.app_base)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stderr(log);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -369,6 +404,19 @@ async fn connect_upstream_runtime(
 }
 
 async fn connect_supervisor_runtime(
+    socket_path: &Path,
+    token_path: &Path,
+    launch_context: &NativeHostLaunchContext,
+) -> Result<LocalSocketStream> {
+    timeout(
+        SUPERVISOR_CONNECT_TIMEOUT,
+        connect_supervisor_runtime_inner(socket_path, token_path, launch_context),
+    )
+    .await
+    .map_err(|_| anyhow!("Supervisor runtime.hello timed out after 5s"))?
+}
+
+async fn connect_supervisor_runtime_inner(
     socket_path: &Path,
     token_path: &Path,
     launch_context: &NativeHostLaunchContext,
@@ -494,6 +542,36 @@ async fn connect_supervisor_client(
 }
 
 async fn call_supervisor_client(
+    socket_arg: Option<String>,
+    token_arg: Option<String>,
+    method: &str,
+    params: Value,
+    deadline_method: &str,
+) -> Result<Value> {
+    let deadline = supervisor_rpc_timeout(deadline_method);
+    timeout(
+        deadline,
+        call_supervisor_client_inner(socket_arg, token_arg, method, params),
+    )
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "SUPERVISOR_RPC_TIMEOUT: supervisor RPC {} timed out after {}ms",
+            deadline_method,
+            deadline.as_millis()
+        )
+    })?
+}
+
+fn supervisor_rpc_timeout(method: &str) -> Duration {
+    match method {
+        "diagnostics.export" => Duration::from_secs(60),
+        "logs.tail" => Duration::from_secs(30),
+        _ => SUPERVISOR_RPC_DEFAULT_TIMEOUT,
+    }
+}
+
+async fn call_supervisor_client_inner(
     socket_arg: Option<String>,
     token_arg: Option<String>,
     method: &str,
@@ -673,13 +751,6 @@ fn native_host_stdout_heartbeat(seq: u64) -> Value {
     })
 }
 
-fn extension_timeout_shutdown_reason(cmd: &str, timeout_ms: u64) -> String {
-    format!(
-        "extension call '{}' timed out after {}ms; restarting native-host/native-port epoch",
-        cmd, timeout_ms
-    )
-}
-
 async fn write_oversize_response_artifact(
     cmd: &str,
     original_req_id: &str,
@@ -817,7 +888,8 @@ fn parse_extension_call_request(value: &Value) -> Option<Result<ExtensionCallReq
         .get("timeout_ms")
         .and_then(|v| v.as_u64())
         .or_else(|| params.get("timeoutMs").and_then(|v| v.as_u64()))
-        .unwrap_or(EXTENSION_CALL_TIMEOUT_MS);
+        .unwrap_or(EXTENSION_CALL_TIMEOUT_MS)
+        .clamp(1_000, 10 * 60 * 1_000);
     let supervisor_boot_id = params
         .get("supervisor_boot_id")
         .and_then(Value::as_str)
@@ -883,6 +955,14 @@ fn build_native_control_response(
         "result": result
     });
     if let Some(error) = error {
+        if let Some((code, _)) = error.split_once(':') {
+            if code
+                .bytes()
+                .all(|byte| byte.is_ascii_uppercase() || byte == b'_')
+            {
+                response["error_code"] = Value::String(code.to_string());
+            }
+        }
         response["error"] = Value::String(error.clone());
         response["error_msg"] = Value::String(error);
     }
@@ -897,7 +977,18 @@ async fn forward_supervisor_cloud_control_command(
     let cmd = request.get("cmd").and_then(|value| value.as_str())?;
     let payload = request.get("payload").cloned().unwrap_or_else(|| json!({}));
     let method = if cmd == "supervisor_rpc" {
-        payload.get("method").and_then(Value::as_str)?.to_string()
+        match payload.get("method").and_then(Value::as_str) {
+            Some(method) if !method.is_empty() => method.to_string(),
+            _ => {
+                return Some(Ok(build_native_control_response(
+                    request,
+                    cmd,
+                    false,
+                    json!({}),
+                    Some("INVALID_SUPERVISOR_RPC: payload.method is required".to_string()),
+                )))
+            }
+        }
     } else {
         cloud_supervisor_method(cmd)?.to_string()
     };
@@ -906,6 +997,7 @@ async fn forward_supervisor_cloud_control_command(
     } else {
         payload
     };
+    let deadline_method = method.clone();
     let (method, params) = if cmd == "supervisor_rpc" {
         (
             "native_host.rpc".to_string(),
@@ -915,13 +1007,13 @@ async fn forward_supervisor_cloud_control_command(
         (method, params)
     };
     Some(
-        call_supervisor_client(socket_arg, token_arg, &method, params)
+        call_supervisor_client(socket_arg, token_arg, &method, params, &deadline_method)
             .await
             .map(|result| build_native_control_response(request, cmd, true, result, None)),
     )
 }
 
-fn handle_native_control_command(value: &Value) -> Option<Value> {
+fn handle_native_control_command(value: &Value, bridge_connected: bool) -> Option<Value> {
     let cmd = cmd_field(value, "cmd")?;
     let req_id = value
         .get("req_id")
@@ -943,7 +1035,8 @@ fn handle_native_control_command(value: &Value) -> Option<Value> {
                     "pong": true,
                     "source": source,
                     "native_host_pid": std::process::id(),
-                    "native_host_boot_id": native_host_boot_id()
+                    "native_host_boot_id": native_host_boot_id(),
+                    "bridge_connected": bridge_connected
                 }
             }))
         }
@@ -961,8 +1054,9 @@ fn handle_native_control_command(value: &Value) -> Option<Value> {
                     "extension_call_method": SUPERVISOR_EXTENSION_CALL_METHOD,
                     "socket_env": SUPERVISOR_SOCKET_ENV_KEYS,
                     "token_env": SUPERVISOR_TOKEN_ENV_KEYS,
-                    "available": true,
-                    "status": "preferred_when_socket_and_token_exist"
+                    "available": bridge_connected,
+                    "bridge_connected": bridge_connected,
+                    "status": if bridge_connected { "connected" } else { "disconnected" }
                 },
                 "cloud": cloud::native_host_cloud_bridge_status()
             }
@@ -1149,17 +1243,11 @@ async fn run_upstream_connection(
                     if let Ok(bytes) = serde_json::to_vec(&resp) {
                         let _ = upstream_tx_session.send(bytes);
                     }
-                    let reason = "extension response channel closed; restarting native-host/native-port epoch"
-                        .to_string();
-                    tokio::time::sleep(Duration::from_millis(EXTENSION_TIMEOUT_SHUTDOWN_GRACE_MS))
-                        .await;
-                    let _ = shutdown_tx_session.send(reason);
                     return;
                 }
                 Err(_) => {
                     let mut guard = pending_session.lock().await;
                     guard.remove(&wire_req_id);
-                    let reason = extension_timeout_shutdown_reason(&cmd, timeout_ms);
                     let resp = jsonrpc_error(
                         upstream_request_id,
                         -32003,
@@ -1168,9 +1256,6 @@ async fn run_upstream_connection(
                     if let Ok(bytes) = serde_json::to_vec(&resp) {
                         let _ = upstream_tx_session.send(bytes);
                     }
-                    tokio::time::sleep(Duration::from_millis(EXTENSION_TIMEOUT_SHUTDOWN_GRACE_MS))
-                        .await;
-                    let _ = shutdown_tx_session.send(reason);
                     return;
                 }
             };
@@ -1330,10 +1415,12 @@ async fn run_self_test(launch_context: NativeHostLaunchContext) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+    init_logging();
+    info!(
+        pid = std::process::id(),
+        boot_id = native_host_boot_id(),
+        "native host starting"
+    );
 
     let launch_context = NativeHostLaunchContext::from_env_args();
     if launch_context
@@ -1413,6 +1500,7 @@ async fn main() -> Result<()> {
     ));
 
     let native_pending_native = native_pending.clone();
+    let active_bridges_native = active_bridges.clone();
     let native_tx_native = native_tx.clone();
     let socket_arg_for_control = socket_arg.clone();
     let token_arg_for_control = token_arg.clone();
@@ -1438,38 +1526,42 @@ async fn main() -> Result<()> {
                 }
             };
 
-            if let Some(response) = forward_supervisor_cloud_control_command(
-                &v,
-                socket_arg_for_control.clone(),
-                token_arg_for_control.clone(),
-            )
-            .await
-            {
-                match response {
-                    Ok(response) => {
-                        if let Ok(bytes) = serde_json::to_vec(&response) {
-                            let _ = native_tx_native.send(bytes);
+            let control_cmd = cmd_field(&v, "cmd").unwrap_or_default();
+            if control_cmd == "supervisor_rpc" || cloud_supervisor_method(&control_cmd).is_some() {
+                let native_tx_control = native_tx_native.clone();
+                let request = v.clone();
+                let control_socket = socket_arg_for_control.clone();
+                let control_token = token_arg_for_control.clone();
+                tokio::spawn(async move {
+                    let response = forward_supervisor_cloud_control_command(
+                        &request,
+                        control_socket,
+                        control_token,
+                    )
+                    .await
+                    .expect("recognized supervisor control command");
+                    match response {
+                        Ok(response) => {
+                            if let Ok(bytes) = serde_json::to_vec(&response) {
+                                let _ = native_tx_control.send(bytes);
+                            }
                         }
-                        continue;
-                    }
-                    Err(error) => {
-                        let cmd = cmd_field(&v, "cmd").unwrap_or_else(|| "cloud".to_string());
-                        let response = build_native_control_response(
-                            &v,
-                            &cmd,
-                            false,
-                            json!({}),
-                            Some(error.to_string()),
-                        );
-                        if let Ok(bytes) = serde_json::to_vec(&response) {
-                            let _ = native_tx_native.send(bytes);
+                        Err(error) => {
+                            let cmd =
+                                cmd_field(&request, "cmd").unwrap_or_else(|| "cloud".to_string());
+                            let response = build_native_control_response(
+                                &request,
+                                &cmd,
+                                false,
+                                json!({}),
+                                Some(error.to_string()),
+                            );
+                            if let Ok(bytes) = serde_json::to_vec(&response) {
+                                let _ = native_tx_control.send(bytes);
+                            }
                         }
-                        continue;
                     }
-                }
-            }
-
-            if cloud_supervisor_method(&cmd_field(&v, "cmd").unwrap_or_default()).is_some() {
+                });
                 continue;
             }
 
@@ -1486,7 +1578,8 @@ async fn main() -> Result<()> {
                 }
             }
             if is_cmd_envelope(&v) {
-                if let Some(response) = handle_native_control_command(&v) {
+                let bridge_connected = !active_bridges_native.lock().await.is_empty();
+                if let Some(response) = handle_native_control_command(&v, bridge_connected) {
                     if let Ok(bytes) = serde_json::to_vec(&response) {
                         let _ = native_tx_native.send(bytes);
                     }
@@ -1824,11 +1917,14 @@ mod tests {
 
     #[test]
     fn native_control_ping_returns_ping_response() {
-        let response = handle_native_control_command(&json!({
-            "cmd": "ping",
-            "req_id": "heartbeat-1",
-            "payload": { "source": "extension_keepalive" }
-        }))
+        let response = handle_native_control_command(
+            &json!({
+                "cmd": "ping",
+                "req_id": "heartbeat-1",
+                "payload": { "source": "extension_keepalive" }
+            }),
+            true,
+        )
         .expect("ping should be handled locally");
 
         assert_eq!(
@@ -1847,6 +1943,37 @@ mod tests {
             response.pointer("/result/source").and_then(|v| v.as_str()),
             Some("extension_keepalive")
         );
+    }
+
+    #[tokio::test]
+    async fn supervisor_rpc_requires_a_method() {
+        let response = forward_supervisor_cloud_control_command(
+            &json!({"cmd":"supervisor_rpc","req_id":"rpc-1","payload":{}}),
+            None,
+            None,
+        )
+        .await
+        .expect("supervisor_rpc is a control command")
+        .expect("missing method is a protocol response, not a transport error");
+
+        assert_eq!(
+            response.get("success").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            response.get("error_code").and_then(Value::as_str),
+            Some("INVALID_SUPERVISOR_RPC")
+        );
+    }
+
+    #[test]
+    fn supervisor_rpc_deadlines_are_method_specific() {
+        assert_eq!(
+            supervisor_rpc_timeout("runs.get"),
+            SUPERVISOR_RPC_DEFAULT_TIMEOUT
+        );
+        assert!(supervisor_rpc_timeout("diagnostics.export") > supervisor_rpc_timeout("logs.tail"));
+        assert!(supervisor_rpc_timeout("logs.tail") > supervisor_rpc_timeout("runs.get"));
     }
 
     #[test]
@@ -1921,15 +2048,6 @@ mod tests {
             response.get("error_code").and_then(Value::as_str),
             Some("EXTENSION_PROTOCOL_ERROR")
         );
-    }
-
-    #[test]
-    fn extension_timeout_shutdown_reason_names_epoch_restart() {
-        let reason = extension_timeout_shutdown_reason("execute_step", 40_000);
-
-        assert!(reason.contains("execute_step"));
-        assert!(reason.contains("40000ms"));
-        assert!(reason.contains("native-host/native-port epoch"));
     }
 
     #[test]
@@ -2047,19 +2165,25 @@ mod tests {
 
     #[test]
     fn native_control_unknown_command_is_not_handled() {
-        assert!(handle_native_control_command(&json!({
-            "cmd": "unknown",
-            "req_id": "x"
-        }))
+        assert!(handle_native_control_command(
+            &json!({
+                "cmd": "unknown",
+                "req_id": "x"
+            }),
+            false
+        )
         .is_none());
     }
 
     #[test]
     fn native_control_runtime_bridge_status_describes_supervisor_contract() {
-        let response = handle_native_control_command(&json!({
-            "cmd": "runtime_bridge_get_status",
-            "req_id": "status-1"
-        }))
+        let response = handle_native_control_command(
+            &json!({
+                "cmd": "runtime_bridge_get_status",
+                "req_id": "status-1"
+            }),
+            true,
+        )
         .expect("runtime bridge status should be handled locally");
 
         assert_eq!(
@@ -2074,7 +2198,13 @@ mod tests {
             response
                 .pointer("/result/supervisor/status")
                 .and_then(|v| v.as_str()),
-            Some("preferred_when_socket_and_token_exist")
+            Some("connected")
+        );
+        assert_eq!(
+            response
+                .pointer("/result/supervisor/bridge_connected")
+                .and_then(Value::as_bool),
+            Some(true)
         );
         assert_eq!(
             response

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -102,6 +102,7 @@ impl RunStore {
             .lock
             .lock()
             .map_err(|_| anyhow!("run store lock poisoned"))?;
+        let _file_guard = IndexFileGuard::lock(&self.root)?;
         let result_name = format!("{}.json", safe_id(&run.result.run_id));
         let params_name = format!("{}.params.json", safe_id(&run.result.run_id));
         write_json_atomic(&self.root.join(&result_name), run.result)?;
@@ -205,6 +206,7 @@ impl RunStore {
             .lock
             .lock()
             .map_err(|_| anyhow!("run store lock poisoned"))?;
+        let _file_guard = IndexFileGuard::lock(&self.root)?;
         let mut rows = load_index(&self.root.join(INDEX_FILE))?;
         rows.sort_by_key(|row| std::cmp::Reverse(row.started_at));
         let cutoff = policy.now_ms - policy.max_age_days.max(1) * 86_400_000;
@@ -267,22 +269,51 @@ fn find_string_field<'a>(value: &'a Value, name: &str) -> Option<&'a str> {
 }
 
 fn load_index(path: &Path) -> Result<Vec<RunRecord>> {
-    let file = match fs::File::open(path) {
-        Ok(file) => file,
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(err) => return Err(err.into()),
     };
     let mut rows = Vec::new();
-    for line in BufReader::new(file).lines() {
-        let line = line?;
-        if line.trim().is_empty() {
+    for line in bytes.split(|byte| *byte == b'\n') {
+        if line.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        if let Ok(record) = serde_json::from_str(&line) {
+        if let Ok(record) = serde_json::from_slice(line) {
             rows.push(record);
         }
     }
     Ok(rows)
+}
+
+struct IndexFileGuard(fs::File);
+
+impl IndexFileGuard {
+    fn lock(root: &Path) -> Result<Self> {
+        let file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(root.join("index.lock"))?;
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+                return Err(std::io::Error::last_os_error().into());
+            }
+        }
+        Ok(Self(file))
+    }
+}
+
+impl Drop for IndexFileGuard {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+        }
+    }
 }
 
 fn rewrite_index(path: &Path, rows: &[RunRecord]) -> Result<()> {

@@ -37,8 +37,8 @@ use crate::settings::SettingsStore;
 use crate::supervisor_cloud::{self, CloudDispatchRequest, SupervisorCloudActor};
 use crate::supervisor_control::SupervisorControl;
 use crate::workflow_runner::{
-    execute_workflow, load_workflow_for_run, RunEventSink, RunOptions, SessionSpec, SnapshotMode,
-    StepTransport, TransportError,
+    execute_workflow, load_workflow_for_run, LoadedWorkflow, RunEventSink, RunOptions, SessionSpec,
+    SnapshotMode, StepTransport, TransportError,
 };
 
 pub(crate) const RZN_LOCAL_PROTOCOL: &str = "rzn.local";
@@ -58,6 +58,7 @@ const HEAL_BRIDGE_WAIT_MS: u64 = 45_000;
 const HEAL_POST_PROBE_RECONNECT_WAIT_MS: u64 = 10_000;
 const HEAL_READINESS_PROBE_COUNT: u64 = 3;
 const HEAL_STABILITY_DELAY_MS: u64 = 1_500;
+const LOCAL_RUN_DEADLINE: Duration = Duration::from_secs(30 * 60);
 const HEAL_STABILITY_BRIDGE_WAIT_MS: u64 = 2_500;
 const TOOL_DISPATCH_RECOVERY_WAIT_MS: u64 = 2_500;
 const REQUIRED_EXTENSION_KEEPALIVE_CAPABILITY: &str = "content_keepalive_port";
@@ -171,6 +172,16 @@ pub(crate) struct SupervisorState {
     control: SupervisorControl,
     settings: SettingsStore,
     shutdown: AtomicBool,
+}
+
+struct LocalRunGuard {
+    state: Arc<SupervisorState>,
+}
+
+impl Drop for LocalRunGuard {
+    fn drop(&mut self) {
+        self.state.control.end_run();
+    }
 }
 
 #[allow(dead_code)]
@@ -1368,12 +1379,13 @@ impl SupervisorState {
         Err(anyhow!("workflow not found: {workflow_id}"))
     }
 
-    async fn start_local_run(&self, workflow_id: &str, raw_params: Value) -> Result<Value> {
+    async fn start_local_run(
+        self: &Arc<Self>,
+        workflow_id: &str,
+        raw_params: Value,
+    ) -> Result<Value> {
         if self.control.paused() {
             return Err(anyhow!("automation is paused"));
-        }
-        if self.control.now_running() != Value::Null {
-            return Err(anyhow!("a run is already in progress"));
         }
         let path = self.resolve_local_workflow(workflow_id)?;
         let params: HashMap<String, String> = raw_params
@@ -1398,12 +1410,53 @@ impl SupervisorState {
         let total = workflow.steps.len();
         let run_id = format!("local-{}", Uuid::new_v4());
         let started_at = chrono::Utc::now().timestamp_millis();
-        self.control.begin_run(
+        if let Err(current) = self.control.try_begin_run(
             run_id.clone(),
             resolved_id.clone(),
             "local_cli".into(),
             total,
-        );
+        ) {
+            return Err(anyhow!(
+                "a run is already in progress: {} ({}ms elapsed); cancel with `rzn-browser supervisor call runs.cancel --params '{{\"run_id\":\"{}\"}}'`",
+                current.run_id,
+                current.started.elapsed().as_millis(),
+                current.run_id
+            ));
+        }
+        let guard = LocalRunGuard {
+            state: self.clone(),
+        };
+        let response_run_id = run_id.clone();
+        tokio::spawn(async move {
+            if let Err(error) = guard
+                .state
+                .finish_local_run(
+                    path,
+                    raw_params,
+                    params,
+                    workflow,
+                    run_id,
+                    resolved_id,
+                    started_at,
+                )
+                .await
+            {
+                log::warn!("local workflow finalization failed: {error:#}");
+            }
+        });
+        Ok(json!({"run_id":response_run_id}))
+    }
+
+    async fn finish_local_run(
+        &self,
+        path: PathBuf,
+        raw_params: Value,
+        params: HashMap<String, String>,
+        workflow: LoadedWorkflow,
+        run_id: String,
+        resolved_id: String,
+        started_at: i64,
+    ) -> Result<()> {
         let transport = ControlTransport { state: self };
         let sink = ControlSink {
             control: &self.control,
@@ -1412,7 +1465,7 @@ impl SupervisorState {
             run_id: run_id.clone(),
             workflow_hash: workflow_file_hash(&path).ok(),
             params,
-            deadline: None,
+            deadline: Some(LOCAL_RUN_DEADLINE),
             session: SessionSpec::default(),
             snapshot_mode: SnapshotMode::OnError,
             workflow_path: path.to_string_lossy().into_owned(),
@@ -1434,18 +1487,22 @@ impl SupervisorState {
                 error.map_or("workflow failed", |e| e.message.as_str()),
             ));
         }
-        self.control.end_run();
         let hash = workflow_file_hash(&path).ok();
-        self.run_store.append(crate::run_store::AppendRun {
+        if let Err(error) = self.run_store.append(crate::run_store::AppendRun {
             origin: "local_cli",
             workflow_hash: hash.as_deref(),
             started_at,
             ended_at: chrono::Utc::now().timestamp_millis(),
             params: &raw_params,
             result: &result,
-        })?;
-        self.control.refresh_snapshot_cache(&self.run_store)?;
-        Ok(json!({"run_id":run_id}))
+        }) {
+            log::warn!("failed to persist completed local run {run_id}: {error:#}");
+            return Ok(());
+        }
+        if let Err(error) = self.control.refresh_snapshot_cache(&self.run_store) {
+            log::warn!("failed to refresh run snapshot cache for {run_id}: {error:#}");
+        }
+        Ok(())
     }
 
     async fn current_native_bridge(&self) -> Option<NativeHostBridge> {
@@ -1862,55 +1919,8 @@ impl SupervisorState {
         }
     }
 
-    // FLA-T-0003: `pub(crate)` so the fleet loop's in-process transport can call it.
-    pub(crate) async fn dispatch(&self, method: &str, params: Value) -> Result<Value> {
+    async fn dispatch_shared(self: &Arc<Self>, method: &str, params: Value) -> Result<Value> {
         match method {
-            "runtime.hello" | "runtime.status" => Ok(self.runtime_status().await),
-            "browser.targets" => Ok(self.browser_targets().await),
-            "runtime.ensure_ready" => self.ensure_ready(params).await,
-            "runtime.heal" => self.runtime_heal(params).await,
-            "cloud.status" => Ok(self.cloud_status().await),
-            "cloud.set_config" => self.cloud_set_config(params).await,
-            "cloud.clear_config" => self.cloud_clear_config().await,
-            // FLA-T-0003: fleet poll-loop local RPCs (read-only status + disable).
-            "fleet.status" => Ok(crate::supervisor_fleet::fleet_status_rpc()),
-            "fleet.disable" => Ok(crate::supervisor_fleet::fleet_disable_rpc()),
-            "runs.list" => {
-                let filter: RunListFilter =
-                    serde_json::from_value(params).context("invalid runs.list filters")?;
-                let (total, runs) = self.run_store.list(filter)?;
-                Ok(json!({ "ok": true, "total": total, "runs": runs }))
-            }
-            "runs.get" => {
-                let run_id = params
-                    .get("run_id")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow!("runs.get missing params.run_id"))?;
-                match self.run_store.get(run_id)? {
-                    Some((record, result)) => {
-                        Ok(json!({ "ok": true, "record": record, "result": result }))
-                    }
-                    None => Ok(json!({ "ok": false, "error": "run_not_found", "run_id": run_id })),
-                }
-            }
-            "workflows.health" => {
-                let (_, runs) = self.run_store.list(RunListFilter {
-                    limit: 200,
-                    ..Default::default()
-                })?;
-                Ok(json!({ "workflows": crate::workflow_health::snapshots(runs) }))
-            }
-            "automation.pause" => self.control.pause(
-                params
-                    .get("cancel_current")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-            ),
-            "automation.resume" => self.control.resume(),
-            "runs.cancel" => Ok(self.control.cancel()),
-            "runs.start" | "runs.replay" if self.control.paused() => {
-                Err(anyhow!("automation is paused"))
-            }
             "runs.start" => {
                 let id = params
                     .get("workflow_id")
@@ -1939,6 +1949,93 @@ impl SupervisorState {
                 self.start_local_run(&record.workflow_id, replay_params)
                     .await
             }
+            "native_host.rpc" => {
+                let inner = params
+                    .get("method")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("missing native-host RPC method"))?;
+                if !native_host_rpc_allowed(inner) {
+                    return Err(anyhow!("native-host RPC method not allowed: {inner}"));
+                }
+                Box::pin(self.dispatch_shared(
+                    inner,
+                    params.get("params").cloned().unwrap_or_else(|| json!({})),
+                ))
+                .await
+            }
+            _ => self.dispatch(method, params).await,
+        }
+    }
+
+    // FLA-T-0003: `pub(crate)` so the fleet loop's in-process transport can call it.
+    pub(crate) async fn dispatch(&self, method: &str, params: Value) -> Result<Value> {
+        match method {
+            "runtime.hello" | "runtime.status" => Ok(self.runtime_status().await),
+            "browser.targets" => Ok(self.browser_targets().await),
+            "runtime.ensure_ready" => self.ensure_ready(params).await,
+            "runtime.heal" => self.runtime_heal(params).await,
+            "cloud.status" => Ok(self.cloud_status().await),
+            "cloud.set_config" => self.cloud_set_config(params).await,
+            "cloud.clear_config" => self.cloud_clear_config().await,
+            // FLA-T-0003: fleet poll-loop local RPCs (read-only status + disable).
+            "fleet.status" => Ok(crate::supervisor_fleet::fleet_status_rpc()),
+            "fleet.disable" => Ok(crate::supervisor_fleet::fleet_disable_rpc()),
+            "runs.list" => {
+                let filter: RunListFilter =
+                    serde_json::from_value(params).context("invalid runs.list filters")?;
+                let (total, runs) = self.run_store.list(filter)?;
+                Ok(json!({ "ok": true, "total": total, "runs": runs }))
+            }
+            "runs.get" => {
+                let run_id = params
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("runs.get missing params.run_id"))?;
+                match self.run_store.get(run_id)? {
+                    Some((record, result)) => {
+                        Ok(json!({ "ok": true, "record": record, "result": result }))
+                    }
+                    None => {
+                        let running = self.control.now_running();
+                        if running.get("run_id").and_then(Value::as_str) == Some(run_id) {
+                            Ok(json!({"ok":true,"record":{
+                                "run_id":run_id,
+                                "workflow_id":running["workflow_id"],
+                                "origin":running["origin"],
+                                "status":"running",
+                                "elapsed_ms":running["elapsed_ms"],
+                                "step_index":running["step_index"],
+                                "step_total":running["step_total"]
+                            },"result":null}))
+                        } else {
+                            Ok(json!({ "ok": false, "error": "run_not_found", "run_id": run_id }))
+                        }
+                    }
+                }
+            }
+            "workflows.health" => {
+                let (_, runs) = self.run_store.list(RunListFilter {
+                    limit: 200,
+                    ..Default::default()
+                })?;
+                Ok(json!({ "workflows": crate::workflow_health::snapshots(runs) }))
+            }
+            "automation.pause" => self.control.pause(
+                params
+                    .get("cancel_current")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            ),
+            "automation.resume" => self.control.resume(),
+            "runs.cancel" => Ok(self
+                .control
+                .cancel(params.get("run_id").and_then(Value::as_str))),
+            "runs.start" | "runs.replay" if self.control.paused() => {
+                Err(anyhow!("automation is paused"))
+            }
+            "runs.start" | "runs.replay" => Err(anyhow!(
+                "runs.start and runs.replay require a shared supervisor connection"
+            )),
             "native_host.rpc" => {
                 let method = params
                     .get("method")
@@ -2068,6 +2165,8 @@ impl SupervisorState {
         json!({
             "ok": true,
             "protocol": RZN_LOCAL_PROTOCOL,
+            "version": env!("CARGO_PKG_VERSION"),
+            "exe": std::env::current_exe().ok().map(|path| path.to_string_lossy().to_string()),
             "pid": std::process::id(),
             "app_base": self.paths.app_base.to_string_lossy(),
             "socket_path": self.paths.socket_path.to_string_lossy(),
@@ -3336,6 +3435,30 @@ impl SupervisorState {
         tx: mpsc::UnboundedSender<Vec<u8>>,
         metadata: NativeHostBridgeMetadata,
     ) -> u64 {
+        if let Some(instance_id) = metadata.browser_instance_id.as_deref() {
+            let stale = self
+                .native_bridges
+                .lock()
+                .await
+                .values()
+                .filter(|bridge| {
+                    bridge.metadata.browser_instance_id.as_deref() == Some(instance_id)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            for bridge in stale {
+                let _ = bridge.tx.send(
+                    serde_json::to_vec(&json!({
+                        "jsonrpc":"2.0",
+                        "id":format!("replace-{}", bridge.id),
+                        "method":"native_host.shutdown",
+                        "params":{"reason":"newer bridge registered for this browser instance"}
+                    }))
+                    .unwrap_or_default(),
+                );
+                self.clear_native_bridge(&bridge.id).await;
+            }
+        }
         let registered_at_ms = now_ms();
         let epoch = self
             .bridge_epoch_counter
@@ -4730,17 +4853,53 @@ fn now_ms() -> u64 {
 
 #[derive(Debug)]
 struct SupervisorProcessLock {
-    path: PathBuf,
+    file: std::fs::File,
 }
 
 impl Drop for SupervisorProcessLock {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) };
+        }
     }
 }
 
 fn acquire_supervisor_process_lock(paths: &SupervisorPaths) -> Result<SupervisorProcessLock> {
-    for _ in 0..2 {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .open(&paths.lock_path)?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            let pid = read_supervisor_lock_pid(&paths.lock_path)
+                .map_or_else(|| "unknown".to_string(), |pid| pid.to_string());
+            return Err(anyhow!(
+                "Supervisor already running or starting for app base {} (pid {}, lock {})",
+                paths.app_base.display(),
+                pid,
+                paths.lock_path.display()
+            ));
+        }
+        file.set_len(0)?;
+        let payload = json!({
+            "pid": std::process::id(),
+            "started_at_ms": now_ms(),
+            "socket_path": paths.socket_path.to_string_lossy(),
+            "app_base": paths.app_base.to_string_lossy()
+        });
+        file.write_all(serde_json::to_string(&payload)?.as_bytes())?;
+        file.write_all(b"\n")?;
+        let _ = file.sync_all();
+        return Ok(SupervisorProcessLock { file });
+    }
+
+    #[cfg(not(unix))]
+    {
         match OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -4756,9 +4915,7 @@ fn acquire_supervisor_process_lock(paths: &SupervisorPaths) -> Result<Supervisor
                 file.write_all(serde_json::to_string(&payload)?.as_bytes())?;
                 file.write_all(b"\n")?;
                 let _ = file.sync_all();
-                return Ok(SupervisorProcessLock {
-                    path: paths.lock_path.clone(),
-                });
+                Ok(SupervisorProcessLock { file })
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 if let Some(pid) = read_supervisor_lock_pid(&paths.lock_path) {
@@ -4771,23 +4928,19 @@ fn acquire_supervisor_process_lock(paths: &SupervisorPaths) -> Result<Supervisor
                         ));
                     }
                 }
-                let _ = std::fs::remove_file(&paths.lock_path);
+                Err(anyhow!(
+                    "Stale supervisor lock {}; remove it and retry",
+                    paths.lock_path.display()
+                ))
             }
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "Acquire supervisor process lock {}",
-                        paths.lock_path.display()
-                    )
-                });
-            }
+            Err(error) => Err(error).with_context(|| {
+                format!(
+                    "Acquire supervisor process lock {}",
+                    paths.lock_path.display()
+                )
+            }),
         }
     }
-
-    Err(anyhow!(
-        "Could not acquire supervisor process lock {}",
-        paths.lock_path.display()
-    ))
 }
 
 fn read_supervisor_lock_pid(path: &Path) -> Option<u32> {
@@ -4861,7 +5014,9 @@ pub(crate) async fn serve(config: SupervisorConfig) -> Result<SupervisorServeRep
         max_age_days: retention.run_retention_days,
         now_ms: chrono::Utc::now().timestamp_millis(),
     });
-    state.control.refresh_snapshot_cache(&state.run_store)?;
+    if let Err(error) = state.control.refresh_snapshot_cache(&state.run_store) {
+        log::warn!("failed to refresh run snapshot cache at startup: {error:#}");
+    }
     {
         let state = state.clone();
         tokio::spawn(async move {
@@ -5004,10 +5159,16 @@ async fn spawn_supervisor(config: &SupervisorConfig) -> Result<()> {
     if let Some(app_base) = config.app_base.as_ref() {
         command.arg("--app-base").arg(app_base);
     }
+    let log_dir = SupervisorPaths::for_config(config).app_base.join("run");
+    std::fs::create_dir_all(&log_dir)?;
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("supervisor.log"))?;
     command
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
+        .stderr(log)
         .spawn()
         .context("Spawn supervisor")?;
     Ok(())
@@ -5041,6 +5202,8 @@ async fn handle_connection(
     let response = json!({
         "ok": true,
         "protocol": RZN_LOCAL_PROTOCOL,
+        "version": env!("CARGO_PKG_VERSION"),
+        "exe": std::env::current_exe().ok().map(|path| path.to_string_lossy().to_string()),
         "pid": std::process::id()
     });
     write_frame(&mut stream, &serde_json::to_vec(&response)?).await?;
@@ -5059,7 +5222,7 @@ async fn handle_connection(
             .unwrap_or("");
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
 
-        let response = match state.dispatch(method, params).await {
+        let response = match state.dispatch_shared(method, params).await {
             Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
             Err(err) => json!({
                 "jsonrpc": "2.0",
@@ -5147,6 +5310,8 @@ async fn handle_native_bridge_connection(
             "bridge_id": bridge_id,
             "supervisor_boot_id": state.supervisor_boot_id.clone(),
             "supervisor_bridge_epoch": bridge_epoch,
+            "version": env!("CARGO_PKG_VERSION"),
+            "exe": std::env::current_exe().ok().map(|path| path.to_string_lossy().to_string()),
             "pid": std::process::id(),
             "accepts": ["native_host.extension_call"]
         }
@@ -5225,7 +5390,9 @@ impl SupervisorClient {
             "token": token,
             "client": {
                 "name": "rzn-browser",
-                "pid": std::process::id()
+                "pid": std::process::id(),
+                "version": env!("CARGO_PKG_VERSION"),
+                "exe": std::env::current_exe().ok().map(|path| path.to_string_lossy().to_string())
             }
         });
         write_frame(&mut stream, &serde_json::to_vec(&handshake)?).await?;
@@ -5238,6 +5405,17 @@ impl SupervisorClient {
         let value: Value = serde_json::from_slice(&response)?;
         if value.get("ok").and_then(|value| value.as_bool()) != Some(true) {
             return Err(anyhow!("Supervisor handshake failed: {}", value));
+        }
+        if value
+            .get("version")
+            .and_then(Value::as_str)
+            .is_some_and(|version| version != env!("CARGO_PKG_VERSION"))
+        {
+            eprintln!(
+                "Version mismatch: CLI {} is connected to supervisor {}. Restart with `rzn-browser supervisor shutdown` and retry.",
+                env!("CARGO_PKG_VERSION"),
+                value.get("version").and_then(Value::as_str).unwrap_or("unknown")
+            );
         }
         Ok(stream)
     }
@@ -6639,14 +6817,11 @@ mod tests {
         };
         let paths = SupervisorPaths::for_config(&config);
         prepare_paths(&paths).expect("prepare paths");
-        std::fs::write(
-            &paths.lock_path,
-            serde_json::to_string(&json!({ "pid": std::process::id() })).unwrap(),
-        )
-        .expect("write lock");
+        let held = acquire_supervisor_process_lock(&paths).expect("first lock acquired");
 
         let error = acquire_supervisor_process_lock(&paths).expect_err("live pid lock rejects");
         assert!(error.to_string().contains("already running or starting"));
+        drop(held);
         let _ = std::fs::remove_dir_all(app_base);
     }
 
@@ -6664,7 +6839,7 @@ mod tests {
         let lock = acquire_supervisor_process_lock(&paths).expect("stale pid lock replaced");
         assert!(paths.lock_path.exists());
         drop(lock);
-        assert!(!paths.lock_path.exists());
+        assert!(paths.lock_path.exists());
         let _ = std::fs::remove_dir_all(app_base);
     }
 
