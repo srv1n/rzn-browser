@@ -52,6 +52,9 @@ const STDOUT_HEARTBEAT_INTERVAL_MS: u64 = 20_000;
 const STDOUT_HEARTBEAT_CMD: &str = "native_host_heartbeat";
 const NATIVE_READER_EXIT_UPSTREAM_FLUSH_GRACE_MS: u64 = 1_000;
 const SUPERVISOR_RESPAWN_COOLDOWN_MS: u64 = 5_000;
+const SUPERVISOR_RESPAWN_COOLDOWN_MAX_MS: u64 = 60_000;
+const ENDPOINT_POLL_BASE_MS: u64 = 250;
+const ENDPOINT_POLL_CAP_MS: u64 = 5_000;
 const SUPERVISOR_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const SUPERVISOR_RPC_DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const OVERSIZE_ARTIFACT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -397,8 +400,59 @@ fn spawn_local_supervisor() -> Result<()> {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    command.spawn().context("spawn sibling supervisor")?;
+    let mut child = command.spawn().context("spawn sibling supervisor")?;
+    // ponytail: reap in a plain thread rather than a tokio task, since
+    // std::process::Child::wait is blocking and this fn is sync.
+    std::thread::spawn(move || match child.wait() {
+        Ok(status) => info!("sibling supervisor exited: {:?}", status),
+        Err(error) => warn!("failed to reap sibling supervisor: {}", error),
+    });
     Ok(())
+}
+
+/// Whether a failed connect attempt to a supervisor endpoint indicates a
+/// supervisor is not running (safe to spawn one) or is running but rejected
+/// the connection/handshake (do not spawn a duplicate).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SupervisorProbe {
+    Absent,
+    Present,
+}
+
+fn classify_supervisor_connect_error(error: &anyhow::Error) -> SupervisorProbe {
+    for cause in error.chain() {
+        if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+            return match io_err.kind() {
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
+                    SupervisorProbe::Absent
+                }
+                _ => SupervisorProbe::Present,
+            };
+        }
+    }
+    // No io::Error in the chain means the socket connected fine and the
+    // failure came from the handshake (rejected token, timeout, closed
+    // mid-hello) — a supervisor is present, don't spawn another one.
+    SupervisorProbe::Present
+}
+
+/// Doubles `current_ms`, capped at `cap_ms`. Pure, used for both the
+/// supervisor-respawn cooldown and the endpoint-poll interval.
+fn next_backoff_ms(current_ms: u64, cap_ms: u64) -> u64 {
+    current_ms.saturating_mul(2).min(cap_ms)
+}
+
+/// Applies +/-20% jitter to `base_ms`, derived from `Uuid::new_v4()` bytes
+/// (no rand dependency needed since uuid is already pulled in).
+fn jitter_ms(base_ms: u64) -> u64 {
+    if base_ms == 0 {
+        return 0;
+    }
+    let bytes = Uuid::new_v4().into_bytes();
+    let raw = u16::from_le_bytes([bytes[0], bytes[1]]);
+    let percent = (raw as i64 * 40 / 65535) - 20; // -20..=20
+    let delta = (base_ms as i64 * percent) / 100;
+    (base_ms as i64 + delta).max(1) as u64
 }
 
 async fn connect_upstream_runtime(
@@ -1336,11 +1390,17 @@ async fn endpoint_manager_loop(
 ) {
     let may_spawn_supervisor = socket_arg.is_none() && token_arg.is_none();
     let mut last_supervisor_spawn_attempt: Option<Instant> = None;
+    let mut spawn_cooldown_ms = SUPERVISOR_RESPAWN_COOLDOWN_MS;
+    let mut poll_delay_ms = ENDPOINT_POLL_BASE_MS;
+
     loop {
         let endpoints = candidate_endpoints(socket_arg.clone(), token_arg.clone());
+        let mut bridge_connected = !active_bridges.lock().await.is_empty();
+        let mut supervisor_present = false;
 
         for endpoint in &endpoints {
             if !active_bridges.lock().await.is_empty() {
+                bridge_connected = true;
                 break;
             }
             if !endpoint.token_path.exists() {
@@ -1350,6 +1410,7 @@ async fn endpoint_manager_loop(
             let key = UpstreamKey::from(endpoint);
             let already_connected = active_bridges.lock().await.contains(&key);
             if already_connected {
+                bridge_connected = true;
                 continue;
             }
 
@@ -1362,6 +1423,7 @@ async fn endpoint_manager_loop(
                         endpoint.token_path
                     );
                     active_bridges.lock().await.insert(key);
+                    bridge_connected = true;
                     tokio::spawn(run_upstream_connection(
                         endpoint.clone(),
                         stream,
@@ -1372,6 +1434,9 @@ async fn endpoint_manager_loop(
                     ));
                 }
                 Err(e) => {
+                    if classify_supervisor_connect_error(&e) == SupervisorProbe::Present {
+                        supervisor_present = true;
+                    }
                     warn!(
                         "Failed to connect runtime bridge kind={} socket={:?} token_path={:?}: {}",
                         endpoint.kind.label(),
@@ -1383,20 +1448,32 @@ async fn endpoint_manager_loop(
             }
         }
 
+        if bridge_connected {
+            // A live bridge means a supervisor is reachable; reset both
+            // backoffs so a future disconnect starts retrying fast again.
+            spawn_cooldown_ms = SUPERVISOR_RESPAWN_COOLDOWN_MS;
+            poll_delay_ms = ENDPOINT_POLL_BASE_MS;
+        }
+
         if may_spawn_supervisor
-            && active_bridges.lock().await.is_empty()
-            && last_supervisor_spawn_attempt.is_none_or(|attempt| {
-                attempt.elapsed() >= Duration::from_millis(SUPERVISOR_RESPAWN_COOLDOWN_MS)
-            })
+            && !bridge_connected
+            && !supervisor_present
+            && last_supervisor_spawn_attempt
+                .is_none_or(|attempt| attempt.elapsed() >= Duration::from_millis(spawn_cooldown_ms))
         {
             last_supervisor_spawn_attempt = Some(Instant::now());
             match spawn_local_supervisor() {
                 Ok(()) => info!("Started sibling browser supervisor"),
                 Err(error) => warn!("Failed to start sibling browser supervisor: {}", error),
             }
+            spawn_cooldown_ms =
+                next_backoff_ms(spawn_cooldown_ms, SUPERVISOR_RESPAWN_COOLDOWN_MAX_MS);
         }
 
-        tokio::time::sleep(Duration::from_millis(1000)).await;
+        tokio::time::sleep(Duration::from_millis(jitter_ms(poll_delay_ms))).await;
+        if !bridge_connected {
+            poll_delay_ms = next_backoff_ms(poll_delay_ms, ENDPOINT_POLL_CAP_MS);
+        }
     }
 }
 
@@ -2285,5 +2362,89 @@ mod tests {
         ] {
             assert!(APP_BASE_ENV_KEYS.contains(&key));
         }
+    }
+
+    #[test]
+    fn backoff_doubles_and_caps() {
+        let mut ms = SUPERVISOR_RESPAWN_COOLDOWN_MS;
+        let mut seen = vec![ms];
+        for _ in 0..6 {
+            ms = next_backoff_ms(ms, SUPERVISOR_RESPAWN_COOLDOWN_MAX_MS);
+            seen.push(ms);
+        }
+        assert_eq!(
+            seen,
+            vec![5_000, 10_000, 20_000, 40_000, 60_000, 60_000, 60_000]
+        );
+    }
+
+    #[test]
+    fn backoff_caps_for_endpoint_poll() {
+        let mut ms = ENDPOINT_POLL_BASE_MS;
+        for _ in 0..10 {
+            ms = next_backoff_ms(ms, ENDPOINT_POLL_CAP_MS);
+        }
+        assert_eq!(ms, ENDPOINT_POLL_CAP_MS);
+    }
+
+    #[test]
+    fn jitter_stays_within_twenty_percent() {
+        for base in [250_u64, 1_000, 5_000, 60_000] {
+            for _ in 0..50 {
+                let jittered = jitter_ms(base);
+                let lower = (base as f64 * 0.8).floor() as u64;
+                let upper = (base as f64 * 1.2).ceil() as u64;
+                assert!(
+                    jittered >= lower.saturating_sub(1) && jittered <= upper + 1,
+                    "base={base} jittered={jittered} lower={lower} upper={upper}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn jitter_of_zero_is_zero() {
+        assert_eq!(jitter_ms(0), 0);
+    }
+
+    #[test]
+    fn classify_connect_error_detects_absent_supervisor() {
+        for kind in [
+            std::io::ErrorKind::NotFound,
+            std::io::ErrorKind::ConnectionRefused,
+        ] {
+            let io_err = std::io::Error::new(kind, "no listener");
+            let err = anyhow::Error::new(io_err).context("connect supervisor socket");
+            assert_eq!(
+                classify_supervisor_connect_error(&err),
+                SupervisorProbe::Absent
+            );
+        }
+    }
+
+    #[test]
+    fn classify_connect_error_detects_present_supervisor() {
+        // Socket-level errors other than not-found/refused mean something is
+        // there but unreachable for another reason.
+        let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let err = anyhow::Error::new(io_err).context("connect supervisor socket");
+        assert_eq!(
+            classify_supervisor_connect_error(&err),
+            SupervisorProbe::Present
+        );
+
+        // Handshake-level failures (bad token, timeout, closed mid-hello)
+        // have no io::Error in the chain and mean a supervisor answered.
+        let hello_err = anyhow!("Supervisor runtime.hello failed: {}", "boom");
+        assert_eq!(
+            classify_supervisor_connect_error(&hello_err),
+            SupervisorProbe::Present
+        );
+
+        let timeout_err = anyhow!("Supervisor runtime.hello timed out after 5s");
+        assert_eq!(
+            classify_supervisor_connect_error(&timeout_err),
+            SupervisorProbe::Present
+        );
     }
 }
