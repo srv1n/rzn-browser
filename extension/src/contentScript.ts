@@ -5409,24 +5409,77 @@ async function executeWithSharedRequestDedup<T>(
     return cached as T;
   }
 
+  // Publish the outcome for any duplicate instance already waiting on this node, but only keep
+  // successes replayable: a failed attempt must re-run when the broker retries the same request.
   try {
     const result = await compute();
     node.setAttribute('data-rzn-resp', JSON.stringify(result));
     node.setAttribute('data-rzn-ts', String(Date.now()));
+    if ((result as any)?.success === false) {
+      node.remove();
+    }
     return result;
   } catch (error: any) {
     const message = error?.message || String(error);
     node.setAttribute('data-rzn-err', message);
     node.setAttribute('data-rzn-ts', String(Date.now()));
+    node.remove();
     throw error;
   }
 }
 
+// Instance lifecycle. The top frame can host several instances of this script (manifest static
+// + dynamic registration + ensureContentReady re-injection), and an extension reload orphans the
+// old ones. All instances of this extension share one isolated world, so a global handle (not
+// visible to the page) lets a newly activated instance tear down its predecessor.
+const CONTENT_SCRIPT_TEARDOWN_GLOBAL = '__rznContentScriptTeardown';
+const contentScriptLifecycle = new AbortController();
+const contentScriptTeardownHooks: Array<() => void> = [];
+let contentScriptTornDown = false;
+
+function onContentScriptTeardown(hook: () => void): void {
+  contentScriptTeardownHooks.push(hook);
+}
+
+function teardownContentScriptInstance(reason: string): void {
+  if (contentScriptTornDown) return;
+  contentScriptTornDown = true;
+  contentScriptLifecycle.abort();
+  for (const hook of contentScriptTeardownHooks.splice(0)) {
+    try {
+      hook();
+    } catch {}
+  }
+  const globalScope = globalThis as any;
+  if (globalScope[CONTENT_SCRIPT_TEARDOWN_GLOBAL] === teardownContentScriptInstance) {
+    delete globalScope[CONTENT_SCRIPT_TEARDOWN_GLOBAL];
+  }
+  console.debug('[RZN] content script instance torn down', { instance_id: CONTENT_SCRIPT_INSTANCE_ID, reason });
+}
+
+function extensionContextInvalidated(): boolean {
+  try {
+    return !chrome.runtime?.id;
+  } catch {
+    return true;
+  }
+}
+
 claimActiveContentScriptInstance();
+{
+  const globalScope = globalThis as any;
+  const previousTeardown = globalScope[CONTENT_SCRIPT_TEARDOWN_GLOBAL];
+  globalScope[CONTENT_SCRIPT_TEARDOWN_GLOBAL] = teardownContentScriptInstance;
+  if (typeof previousTeardown === 'function' && previousTeardown !== teardownContentScriptInstance) {
+    try {
+      previousTeardown('superseded');
+    } catch {}
+  }
+}
 
 // Message listener
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (!isActiveContentScriptInstance()) {
+  if (contentScriptTornDown || !isActiveContentScriptInstance()) {
     return false;
   }
 
@@ -6469,6 +6522,7 @@ function attachDomBridgeObserver(container: HTMLElement) {
   });
   obs.observe(container, { childList: true });
   domBridgeObserver = obs;
+  if (contentScriptTornDown) obs.disconnect();
 
   // Process anything already queued.
   for (const child of Array.from(container.children)) {
@@ -6487,7 +6541,14 @@ function attachDomBridgeObserver(container: HTMLElement) {
     }
   };
   bind();
-  new MutationObserver(bind).observe(document, { childList: true, subtree: true });
+  const bindObserver = new MutationObserver(bind);
+  bindObserver.observe(document, { childList: true, subtree: true });
+  onContentScriptTeardown(() => {
+    bindObserver.disconnect();
+    domBridgeObserver?.disconnect();
+    domBridgeObserver = null;
+    observedDomBridgeContainer = null;
+  });
 })();
 
 let lastNativeWakeMs = 0;
@@ -6551,7 +6612,12 @@ function runtimeLastErrorMessage(): string | undefined {
 
 function scheduleNativeKeepaliveReconnect(): void {
   if (!isTopLevelFrame()) return;
-  if (nativeKeepalivePausedForPageLifecycle) return;
+  if (nativeKeepalivePausedForPageLifecycle || contentScriptTornDown) return;
+  if (extensionContextInvalidated()) {
+    // Orphaned by an extension reload: reconnecting can never succeed, so stop for good.
+    teardownContentScriptInstance('extension_context_invalidated');
+    return;
+  }
   if (nativeKeepaliveReconnectTimer) return;
   nativeKeepaliveReconnectTimer = setTimeout(() => {
     nativeKeepaliveReconnectTimer = null;
@@ -6591,7 +6657,11 @@ function sendNativeKeepalive(reason: string): void {
 
 function connectNativeKeepalivePort(reason: string): void {
   if (!isTopLevelFrame()) return;
-  if (nativeKeepalivePausedForPageLifecycle) return;
+  if (nativeKeepalivePausedForPageLifecycle || contentScriptTornDown) return;
+  if (extensionContextInvalidated()) {
+    teardownContentScriptInstance('extension_context_invalidated');
+    return;
+  }
   if (nativeKeepalivePort) {
     sendNativeKeepalive(reason);
     return;
@@ -6631,13 +6701,18 @@ function connectNativeKeepalivePort(reason: string): void {
   }
 }
 
+onContentScriptTeardown(() => {
+  nativeKeepalivePausedForPageLifecycle = true;
+  disconnectNativeKeepalivePort('teardown');
+});
+const contentScriptListenerOptions = { passive: true, signal: contentScriptLifecycle.signal };
 wakeNativeHost('content_script_loaded');
 connectNativeKeepalivePort('content_script_loaded');
-window.addEventListener('focus', () => wakeNativeHost('window_focus'), { passive: true });
+window.addEventListener('focus', () => wakeNativeHost('window_focus'), contentScriptListenerOptions);
 window.addEventListener(
   'focus',
   () => connectNativeKeepalivePort('window_focus'),
-  { passive: true }
+  contentScriptListenerOptions
 );
 document.addEventListener(
   'visibilitychange',
@@ -6647,7 +6722,7 @@ document.addEventListener(
       connectNativeKeepalivePort('visibility_visible');
     }
   },
-  { passive: true }
+  contentScriptListenerOptions
 );
 window.addEventListener(
   'pagehide',
@@ -6655,7 +6730,7 @@ window.addEventListener(
     nativeKeepalivePausedForPageLifecycle = true;
     disconnectNativeKeepalivePort('pagehide');
   },
-  { passive: true }
+  contentScriptListenerOptions
 );
 window.addEventListener(
   'pageshow',
@@ -6664,7 +6739,7 @@ window.addEventListener(
     wakeNativeHost('pageshow');
     connectNativeKeepalivePort('pageshow');
   },
-  { passive: true }
+  contentScriptListenerOptions
 );
 
 // DOM function injection removed - enhanced actions handle element resolution directly

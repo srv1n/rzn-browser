@@ -28,6 +28,25 @@ export class CdpSessionManager {
   private records = new Map<SessionKey, CdpSessionRecord>();
   private tabOwners = new Map<number, Set<string>>();
 
+  constructor() {
+    // Records are only meaningful while the debugger is attached to a live tab; drop them when
+    // the tab closes or Chrome detaches the debugger so they do not accumulate forever.
+    if (typeof chrome === 'undefined') return;
+    chrome.tabs?.onRemoved?.addListener?.((tabId) => this.forgetTab(tabId));
+    chrome.debugger?.onDetach?.addListener?.((source) => {
+      if (typeof source?.tabId === 'number') this.forgetTab(source.tabId);
+    });
+  }
+
+  forgetTab(tabId: number): void {
+    for (const [key, record] of Array.from(this.records.entries())) {
+      if (record.tabId === tabId) {
+        this.records.delete(key);
+      }
+    }
+    this.tabOwners.delete(tabId);
+  }
+
   async acquire(sessionIdRaw: unknown, tabId: number): Promise<CdpSessionHandle> {
     const sessionId = normalizeSessionId(sessionIdRaw);
     const key = this.key(sessionId, tabId);
@@ -93,12 +112,7 @@ export class CdpSessionManager {
   }
 
   async releaseTab(tabId: number): Promise<void> {
-    for (const [key, record] of Array.from(this.records.entries())) {
-      if (record.tabId === tabId) {
-        this.records.delete(key);
-      }
-    }
-    this.tabOwners.delete(tabId);
+    this.forgetTab(tabId);
     await frameRouter.detachFromTab(tabId).catch((error) => {
       console.warn(`[CdpSessionManager] Failed to detach tab ${tabId}:`, error);
     });

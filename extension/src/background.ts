@@ -925,6 +925,34 @@ interface StoredWorkflowSessionState {
   currentUrl?: string;
   tabLifecycle?: RetainedWorkflowTabState;
   updatedAtMs: number;
+  // Per-browser-boot id: tab ids are reused across browser restarts, so a session stored
+  // under a previous boot must not re-bind to whatever tab now has that id.
+  bootId?: string;
+}
+
+const BROWSER_BOOT_ID_STORAGE_KEY = 'rzn_browser_boot_id';
+let browserBootIdPromise: Promise<string | null> | null = null;
+
+// chrome.storage.session survives service-worker restarts but not browser restarts, so a
+// marker stored there identifies the current browser boot.
+function getBrowserBootId(): Promise<string | null> {
+  if (!browserBootIdPromise) {
+    browserBootIdPromise = (async () => {
+      const area = chrome.storage?.session;
+      if (!area) return null;
+      try {
+        const existing = (await area.get(BROWSER_BOOT_ID_STORAGE_KEY))?.[BROWSER_BOOT_ID_STORAGE_KEY];
+        if (typeof existing === 'string' && existing) return existing;
+        const bootId = createBrokerLeaseId();
+        await area.set({ [BROWSER_BOOT_ID_STORAGE_KEY]: bootId });
+        return bootId;
+      } catch (error) {
+        console.warn('[WorkflowSessions] Failed to resolve browser boot id:', error);
+        return null;
+      }
+    })();
+  }
+  return browserBootIdPromise;
 }
 
 const workflowSessions = new Map<string, WorkflowSessionState>();
@@ -991,11 +1019,17 @@ async function loadWorkflowSessionsFromStorage(): Promise<void> {
   if (!workflowSessionsLoadPromise) {
     workflowSessionsLoadPromise = (async () => {
       try {
+        const bootId = await getBrowserBootId();
         const stored = await chrome.storage.local.get(WORKFLOW_SESSION_STORAGE_KEY);
         const raw = stored?.[WORKFLOW_SESSION_STORAGE_KEY];
+        let droppedStale = false;
         if (raw && typeof raw === 'object') {
           for (const [sessionId, value] of Object.entries(raw as Record<string, StoredWorkflowSessionState>)) {
             if (!value || typeof value !== 'object') continue;
+            if (bootId && value.bootId !== bootId) {
+              droppedStale = true;
+              continue;
+            }
             const normalized = normalizeSessionId(sessionId);
             workflowSessions.set(normalized, {
               workflowTabId:
@@ -1019,6 +1053,9 @@ async function loadWorkflowSessionsFromStorage(): Promise<void> {
               queue: Promise.resolve(),
             });
           }
+        }
+        if (droppedStale) {
+          scheduleWorkflowSessionsPersist();
         }
       } catch (error) {
         console.warn('[WorkflowSessions] Failed to load from storage:', error);
@@ -1052,6 +1089,10 @@ function scheduleWorkflowSessionsPersist(): void {
     .catch(() => {})
     .then(async () => {
       try {
+        const bootId = await getBrowserBootId();
+        if (bootId) {
+          for (const entry of Object.values(snapshot)) entry.bootId = bootId;
+        }
         await chrome.storage.local.set({
           [WORKFLOW_SESSION_STORAGE_KEY]: snapshot,
         });
@@ -3926,6 +3967,20 @@ function dispatchBrokerMessageWithWatchdog(
     });
   }
 
+  if (brokerDispatchCommandName(message) === 'session_close') {
+    // session_close must not wait in the FIFO behind the step it is meant to tear down:
+    // cancel the session's in-flight leases, bump its epoch, and run immediately.
+    for (const lease of Array.from(brokerRequestLeasesById.values())) {
+      if (lease.workflowSessionId === sessionId) {
+        cancelBrokerRequestLease(lease, 'workflow session closed');
+      }
+    }
+    invalidateWorkflowSessionEpoch(sessionId, 'session_close');
+    return run().catch(err => {
+      console.error('[RZN] session_close handler error:', err);
+    });
+  }
+
   const state = getWorkflowSessionState(sessionId);
   const queued = state.queue.then(run);
   state.queue = queued.catch(err => {
@@ -4119,7 +4174,6 @@ const BROKER_COMMAND_REGISTRY = new Map<string, BrokerCommandRegistration>([
   'get_dom_hash',
   'get_dom_snapshot',
   'get_interactive_elements',
-  'native_input_response',
   'observe',
   'ping',
   'process_dom',
@@ -4240,18 +4294,6 @@ async function handleBrokerMessage(
 
   // Handle delta messages
   handleDeltaMessage(message);
-
-  // Handle native_input_response messages
-  if (registeredCommand === 'native_input_response') {
-    console.log('Received native_input_response:', { req_id: requestId });
-    const callback = nativeInputCallbacks.get(requestId);
-    if (callback) {
-      clearTimeout(callback.timeoutId);
-      callback.sendResponse(message.payload || { ok: false, error: 'No payload' });
-      nativeInputCallbacks.delete(requestId);
-    }
-    return;
-  }
 
   if (registeredCommand === 'ping') {
     const browserInstanceIdentity = await browserInstancePingMetadata().catch((error: any) => {
@@ -7870,12 +7912,6 @@ async function executeWorkflow(
   }
 }
 
-// Track pending native input callbacks
-const nativeInputCallbacks: Map<string, {
-  sendResponse: (response: any) => void;
-  timeoutId: NodeJS.Timeout;
-}> = new Map();
-
 async function fetchCloudJson<T>(input: string, init?: RequestInit): Promise<T> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 10_000);
@@ -8361,29 +8397,10 @@ if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
     });
     return true; // Keep message channel open for async response
   } else if (message.cmd === 'native_input') {
-    if (!requireContentSender(message.cmd, sender, sendResponse)) return false;
-    if (!nativePort) {
-      sendResponse({ ok: false, error: 'Native host is not connected' });
-      return false;
-    }
-    console.log('Forwarding native_input request to broker:', {
-      req_id: message.req_id,
-      cmd: message.cmd,
-    });
-
-    // Store callback for when broker responds
-    const messageId = message.req_id;
-    const timeoutId = setTimeout(() => {
-      nativeInputCallbacks.delete(messageId);
-      sendResponse({ ok: false, error: 'Native input timeout' });
-    }, 5000);
-
-    nativeInputCallbacks.set(messageId, { sendResponse, timeoutId });
-
-    // Forward to broker
-    nativePort.postMessage(message);
-
-    return true; // Keep message channel open for async response
+    // The native host has no native_input handler; answer immediately so the content-side
+    // probe falls back to DOM input instead of waiting on a callback that never resolves.
+    sendResponse({ ok: false, error: 'native input is not supported by the native host' });
+    return false;
   } else if (message.cmd === 'export_flight_recorder') {
     if (!requireContentSender(message.cmd, sender, sendResponse)) return false;
     // Handle flight recorder export request

@@ -52,10 +52,22 @@ export interface FrameCommandTarget {
   sessionId?: string;
 }
 
+export function restrictedUrlError(detail: string): Error {
+  const error = new Error(`RESTRICTED_URL: CDP cannot attach to ${detail}`);
+  (error as any).code = 'RESTRICTED_URL';
+  (error as any).retryable = false;
+  return error;
+}
+
+function isRestrictedUrlError(error: unknown): boolean {
+  return (error as any)?.code === 'RESTRICTED_URL';
+}
+
 export class FrameRouter {
   private routes = new Map<string, FrameRoute>(); // frameId -> route
   private targetSessions = new Map<string, string>(); // targetId -> sessionId
-  private contextMap = new Map<number, ExecutionContext>(); // contextId -> context
+  // Context ids are only unique per CDP session, so key by tab + session + id.
+  private contextMap = new Map<string, ExecutionContext>(); // `${tabId}:${sessionId}:${contextId}` -> context
   private attachedTabs = new Set<number>();
   private tabSessions = new Map<number, string>(); // tabId -> root sessionId
   private sessions = new Map<string, SessionInfo>(); // sessionId -> info
@@ -102,10 +114,10 @@ export class FrameRouter {
         const tab = await chrome.tabs.get(tabId);
         const url = tab?.url || '';
         if (/^(chrome|edge|about|devtools|chrome-extension):\/\//.test(url)) {
-          console.warn(`[FrameRouter] Skipping CDP attach for restricted URL: ${url}`);
-          return;
+          throw restrictedUrlError(url);
         }
-      } catch {
+      } catch (error) {
+        if (isRestrictedUrlError(error)) throw error;
         // If tab lookup fails, we still attempt to attach; chrome.debugger will provide a clear error.
       }
 
@@ -142,6 +154,7 @@ export class FrameRouter {
       console.log(`[FrameRouter] Successfully attached to tab ${tabId}`);
       
     } catch (error: any) {
+      if (isRestrictedUrlError(error)) throw error;
       const msg = (error && error.message) ? String(error.message) : String(error);
       // If another debugger is attached, do not loop/throw; mark as not attached and return
       if (msg.includes('Another debugger')) {
@@ -157,8 +170,7 @@ export class FrameRouter {
       }
       // Common non-fatal case: trying to attach to internal pages (chrome://, etc.)
       if (msg.includes('chrome://') || msg.includes('Cannot access a chrome://')) {
-        console.warn(`[FrameRouter] CDP attach skipped for tab ${tabId}: ${msg}`);
-        return;
+        throw restrictedUrlError(`tab ${tabId} (${msg})`);
       }
       // If protocol method not found (e.g., Target.enable), we already skipped it above
       if (msg.includes("wasn't found") || msg.includes('not found')) {
@@ -417,7 +429,7 @@ export class FrameRouter {
         break;
         
       case 'Runtime.executionContextDestroyed':
-        this.handleExecutionContextDestroyed(params);
+        this.handleExecutionContextDestroyed(params, tabId, (source as any).sessionId);
         break;
         
       case 'Page.frameAttached':
@@ -507,7 +519,7 @@ export class FrameRouter {
     const { context } = params;
     
     // Store execution context
-    this.contextMap.set(context.id, context);
+    this.contextMap.set(this.contextKey(tabId, sessionId, context.id), context);
     
     // If this context has auxData with frameId, create the route
     if (context.auxData && context.auxData.frameId) {
@@ -523,9 +535,13 @@ export class FrameRouter {
   /**
    * Handle Runtime.executionContextDestroyed
    */
-  private handleExecutionContextDestroyed(params: any): void {
+  private handleExecutionContextDestroyed(params: any, tabId: number, sessionId?: string): void {
     const { executionContextId } = params;
-    this.contextMap.delete(executionContextId);
+    this.contextMap.delete(this.contextKey(tabId, sessionId, executionContextId));
+  }
+
+  private contextKey(tabId: number, sessionId: string | undefined, contextId: number): string {
+    return `${tabId}:${sessionId ?? ''}:${contextId}`;
   }
 
   /**
@@ -606,7 +622,12 @@ export class FrameRouter {
       }
     }
     
-    this.contextMap.clear();
+    const tabPrefix = `${tabId}:`;
+    for (const key of Array.from(this.contextMap.keys())) {
+      if (key.startsWith(tabPrefix)) {
+        this.contextMap.delete(key);
+      }
+    }
   }
 }
 

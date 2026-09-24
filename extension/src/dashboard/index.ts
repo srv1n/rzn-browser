@@ -9,6 +9,7 @@ import { mountWorkflows } from './workflows';
 
 const app = document.querySelector<HTMLElement>('#app');
 let dispose: (() => void) | undefined;
+let renderGeneration = 0;
 
 export function route(hash = location.hash): DashboardRoute {
   const [path, queryString = ''] = hash.slice(1).split('?');
@@ -19,6 +20,13 @@ export function route(hash = location.hash): DashboardRoute {
 export async function render(): Promise<void> {
   if (!app) return;
   dispose?.(); dispose = undefined;
+  const generation = ++renderGeneration;
+  // A hash change during a slow mount starts a newer render; dispose the stale mount as soon
+  // as it resolves instead of letting its timers leak.
+  const adopt = (d: (() => void) | undefined) => {
+    if (generation === renderGeneration) dispose = d;
+    else d?.();
+  };
   const current = route();
   app.innerHTML = `<aside class="sidebar"><div class="brand">RZN <small>Browser Automation</small></div><nav aria-label="Dashboard">${tabs.map(tab => `<a class="${tab === current.tab ? 'active' : ''}" href="#${tab}" ${tab === current.tab ? 'aria-current="page"' : ''}>${tab}</a>`).join('')}</nav></aside><main><p class="muted">Loading…</p></main>`;
   const main = app.querySelector<HTMLElement>('main')!;
@@ -26,8 +34,8 @@ export async function render(): Promise<void> {
   try {
     if (current.tab === 'runs') await mountRuns(main, rpc, current, { navigate });
     else if (current.tab === 'workflows') await mountWorkflows(main, rpc, current, { navigate });
-    else if (current.tab === 'fleet') dispose = await mountFleet(main, rpc, current, { navigate });
-    else if (current.tab === 'logs') dispose = await mountLogs(main, rpc, current);
+    else if (current.tab === 'fleet') adopt(await mountFleet(main, rpc, current, { navigate }));
+    else if (current.tab === 'logs') adopt(await mountLogs(main, rpc, current));
     else await mountSettings(main, rpc, current);
   } catch (error) {
     if (error instanceof SupervisorUnreachable) unavailable(main, error);
