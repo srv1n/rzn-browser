@@ -953,22 +953,45 @@ async fn pair_actor(args: CloudPairArgs) -> Result<()> {
 async fn run_workflow(args: CloudRunWorkflowArgs) -> Result<()> {
     let workflow_path = PathBuf::from(&args.workflow_file);
     let workflow = load_json_file(&workflow_path)?;
+    let timeout_ms = args.timeout_ms.max(1);
+    // The POST blocks until the whole run finishes server-side, so the HTTP
+    // request timeout must exceed the run's total time budget (per-step
+    // timeout x step count), not the shared client's flat 30s default.
+    // Undershooting here means the client times out while the actor is
+    // still executing, and a naive retry double-runs the workflow.
+    let step_count = workflow
+        .get("steps")
+        .and_then(Value::as_array)
+        .map(|steps| steps.len().max(1))
+        .unwrap_or(1) as u64;
+    let request_budget =
+        Duration::from_millis(timeout_ms.saturating_mul(step_count).saturating_add(15_000));
     let request = RunWorkflowRequest {
         actor_id: args.actor_id,
         workflow,
         parameters: args.params.into_iter().collect(),
         session_id: args.session_id,
-        timeout_ms: Some(args.timeout_ms.max(1)),
+        timeout_ms: Some(timeout_ms),
     };
     let response: RunWorkflowResponse = cloud_http_client()
         .post(format!(
             "{}/v1/runs/workflow",
             normalize_server_url(&args.server)?
         ))
+        .timeout(request_budget)
         .json(&request)
         .send()
         .await
-        .context("POST /v1/runs/workflow")?
+        .map_err(|err| {
+            if err.is_timeout() {
+                anyhow!(
+                    "POST /v1/runs/workflow timed out after {:?} waiting for the actor; the run may still be executing on the actor. Do not retry blindly \u{2014} check `rzn-browser cloud get-run <run_id>` (see the actor/control-plane logs for the run id) before resubmitting.",
+                    request_budget
+                )
+            } else {
+                anyhow!(err).context("POST /v1/runs/workflow")
+            }
+        })?
         .error_for_status()
         .context("Hosted workflow run failed")?
         .json()

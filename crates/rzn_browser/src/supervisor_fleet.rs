@@ -24,7 +24,7 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 
@@ -73,24 +73,62 @@ const CACHE_GC_INTERVAL_SECS: u64 = 24 * 60 * 60;
 // fleet.status / fleet.disable local RPC bridge
 // ---------------------------------------------------------------------------
 
-/// Shared handle the running loop publishes so `dispatch` can serve the local
-/// `fleet.status` / `fleet.disable` RPCs the CLI calls.
-static FLEET_RUNTIME: OnceLock<Arc<FleetShared>> = OnceLock::new();
+/// The current (possibly finished) loop: its published status plus the
+/// supervising task handle, so enroll can restart it and disable/unenroll can
+/// stop it. Replaced on every start.
+struct FleetRuntime {
+    shared: Arc<FleetShared>,
+    handle: JoinHandle<()>,
+}
+
+static FLEET_RUNTIME: Mutex<Option<FleetRuntime>> = Mutex::new(None);
+/// The supervisor the loop runs against, recorded at `serve` start so a later
+/// `fleet.enroll` can start the loop without a supervisor.rs change.
+static FLEET_SUPERVISOR: Mutex<Option<Weak<SupervisorState>>> = Mutex::new(None);
+/// Serializes start/restart so two concurrent enrolls cannot leak a loop.
+static FLEET_START_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// `fleet.status` RPC. Returns the live loop state (CLI reads `state`/`reason`).
 pub(crate) fn fleet_status_rpc() -> Value {
-    match FLEET_RUNTIME.get() {
-        Some(shared) => shared.status_json(),
+    match FLEET_RUNTIME.lock().unwrap().as_ref() {
+        Some(runtime) => runtime.shared.status_json(),
         None => json!({ "state": "disabled", "reason": "fleet not enrolled" }),
     }
 }
 
 /// `fleet.disable` RPC. Stops the loop (and cancels any running job) if present.
 pub(crate) fn fleet_disable_rpc() -> Value {
-    if let Some(shared) = FLEET_RUNTIME.get() {
-        shared.request_disable();
-    }
+    stop_fleet_loop("disabled via fleet.disable");
     json!({ "ok": true })
+}
+
+/// Signal the running loop (if any) to stop; status flips immediately. The
+/// loop itself winds down asynchronously (the next start awaits it).
+pub(crate) fn stop_fleet_loop(reason: &str) {
+    if let Some(runtime) = FLEET_RUNTIME.lock().unwrap().as_ref() {
+        runtime.shared.request_stop(reason);
+    }
+}
+
+/// Stop any existing loop, wait for it to exit, then start a fresh one from
+/// the on-disk config. Returns whether a loop is now running. Called after
+/// `fleet.enroll` writes a new config; also recovers a crashed loop.
+pub(crate) async fn restart_fleet_loop() -> bool {
+    let _serial = FLEET_START_LOCK.lock().await;
+    let state = FLEET_SUPERVISOR
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(Weak::upgrade);
+    let Some(state) = state else {
+        return false;
+    };
+    let old = FLEET_RUNTIME.lock().unwrap().take();
+    if let Some(old) = old {
+        old.shared.request_stop("restarting");
+        let _ = old.handle.await;
+    }
+    start_fleet_loop(state)
 }
 
 // ---------------------------------------------------------------------------
@@ -137,8 +175,15 @@ fn load_fleet_config() -> Option<FleetDeviceConfig> {
 /// Start the fleet poll loop when this device is enrolled. No-op otherwise, so
 /// local-only supervisors are entirely unchanged. Never logs the device token.
 pub(crate) fn maybe_spawn_fleet_loop(state: Arc<SupervisorState>) {
+    *FLEET_SUPERVISOR.lock().unwrap() = Some(Arc::downgrade(&state));
+    start_fleet_loop(state);
+}
+
+/// Build and spawn the loop from `fleet_config.json`. Caller guarantees no
+/// other loop is live (serve start, or `restart_fleet_loop` after awaiting it).
+fn start_fleet_loop(state: Arc<SupervisorState>) -> bool {
     let Some(config) = load_fleet_config() else {
-        return;
+        return false;
     };
 
     let base = default_app_base_dir();
@@ -146,7 +191,7 @@ pub(crate) fn maybe_spawn_fleet_loop(state: Arc<SupervisorState>) {
         Ok(journal) => Arc::new(journal),
         Err(err) => {
             tracing::warn!("fleet: could not open journal, fleet mode disabled: {err}");
-            return;
+            return false;
         }
     };
     let results_dir = base.join(RESULTS_DIRNAME);
@@ -170,23 +215,12 @@ pub(crate) fn maybe_spawn_fleet_loop(state: Arc<SupervisorState>) {
     });
 
     let shared = Arc::new(FleetShared::new());
-    // The first serve() wins the global; a second call (should not happen) is a
-    // no-op so the CLI keeps reading the original loop's status.
-    let _ = FLEET_RUNTIME.set(shared.clone());
-
-    // Daily best-effort manifest cache GC (keep newest 3 per id, drop >30d).
-    tokio::spawn(async move {
-        loop {
-            cache.gc(3, 30);
-            tokio::time::sleep(Duration::from_secs(CACHE_GC_INTERVAL_SECS)).await;
-        }
-    });
 
     let fleet = FleetLoop {
         api,
         executor,
         health,
-        shared,
+        shared: shared.clone(),
         journal,
         results_dir,
         config_interval_secs: config.poll_interval_seconds,
@@ -201,7 +235,55 @@ pub(crate) fn maybe_spawn_fleet_loop(state: Arc<SupervisorState>) {
         device_id = %config.device_id,
         "fleet mode enabled; starting poll loop"
     );
-    tokio::spawn(fleet.run());
+    let handle = spawn_supervised(fleet, Some(cache));
+    let previous = FLEET_RUNTIME
+        .lock()
+        .unwrap()
+        .replace(FleetRuntime { shared, handle });
+    if let Some(previous) = previous {
+        // Should not happen (callers stop the old loop first); never leave two polling.
+        previous.shared.request_stop("replaced by a new fleet loop");
+    }
+    true
+}
+
+/// Run the loop on its own task and watch it: a panic flips the published
+/// status to `crashed` instead of leaving it stale. The daily manifest-cache GC
+/// (keep newest 3 per id, drop >30d) lives and dies with the loop.
+fn spawn_supervised(fleet: FleetLoop, cache: Option<Arc<WorkflowCache>>) -> JoinHandle<()> {
+    let shared = fleet.shared.clone();
+    tokio::spawn(async move {
+        let mut inner = tokio::spawn(fleet.run());
+        let outcome = match cache {
+            Some(cache) => tokio::select! {
+                outcome = &mut inner => outcome,
+                _ = async move {
+                    loop {
+                        cache.gc(3, 30);
+                        tokio::time::sleep(Duration::from_secs(CACHE_GC_INTERVAL_SECS)).await;
+                    }
+                } => unreachable!("cache gc loop never returns"),
+            },
+            None => inner.await,
+        };
+        if let Err(err) = outcome {
+            let message = format!("fleet loop crashed: {}", join_error_message(err));
+            tracing::error!("{message}");
+            shared.set_state(LoopState::Crashed, Some(message));
+        }
+    })
+}
+
+fn join_error_message(err: tokio::task::JoinError) -> String {
+    if !err.is_panic() {
+        return err.to_string();
+    }
+    let payload = err.into_panic();
+    payload
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "panic".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -214,6 +296,8 @@ enum LoopState {
     StoppedRevoked,
     StoppedDormant,
     Disabled,
+    /// The loop task panicked; `fleet.enroll` (restart) brings it back.
+    Crashed,
 }
 
 impl LoopState {
@@ -223,6 +307,7 @@ impl LoopState {
             LoopState::StoppedRevoked => "stopped_revoked",
             LoopState::StoppedDormant => "stopped_dormant",
             LoopState::Disabled => "disabled",
+            LoopState::Crashed => "crashed",
         }
     }
 }
@@ -241,6 +326,8 @@ struct FleetShared {
     disabled: AtomicBool,
     cancel_current: Mutex<Option<Arc<AtomicBool>>>,
     steps_seen: AtomicU64,
+    /// Cuts the poll/backoff sleep short so a stop takes effect promptly.
+    wake: tokio::sync::Notify,
 }
 
 impl FleetShared {
@@ -256,13 +343,34 @@ impl FleetShared {
             disabled: AtomicBool::new(false),
             cancel_current: Mutex::new(None),
             steps_seen: AtomicU64::new(0),
+            wake: tokio::sync::Notify::new(),
         }
     }
 
     fn request_disable(&self) {
+        self.request_stop("disabled via fleet.disable");
+    }
+
+    /// Stop the loop for good (this instance): status flips to `disabled` now,
+    /// the running job is cancelled, and a sleeping loop wakes up to exit.
+    fn request_stop(&self, reason: &str) {
         self.disabled.store(true, Ordering::SeqCst);
+        {
+            let mut status = self.status.lock().unwrap();
+            status.state = LoopState::Disabled;
+            status.reason = Some(reason.to_string());
+        }
         if let Some(cancel) = self.cancel_current.lock().unwrap().as_ref() {
             cancel.store(true, Ordering::SeqCst);
+        }
+        // notify_one stores a permit, so a loop not yet sleeping still wakes.
+        self.wake.notify_one();
+    }
+
+    async fn sleep_or_wake(&self, ms: u64) {
+        tokio::select! {
+            _ = sleep_ms(ms) => {}
+            _ = self.wake.notified() => {}
         }
     }
 
@@ -275,6 +383,10 @@ impl FleetShared {
     }
 
     fn set_state(&self, state: LoopState, reason: Option<String>) {
+        // Once stopped, the exiting loop must not flip status back to polling.
+        if self.disabled.load(Ordering::SeqCst) && state == LoopState::Polling {
+            return;
+        }
         let mut status = self.status.lock().unwrap();
         status.state = state;
         status.reason = reason;
@@ -870,6 +982,7 @@ impl RunEventSink for FleetRunSink {
 
 struct RunningJob {
     job_id: String,
+    workflow_id: String,
     cancel: Arc<AtomicBool>,
     handle: JoinHandle<()>,
 }
@@ -904,10 +1017,6 @@ impl FleetLoop {
 
         loop {
             if self.shared.disabled.load(Ordering::SeqCst) {
-                self.shared.set_state(
-                    LoopState::Disabled,
-                    Some("disabled via fleet.disable".to_string()),
-                );
                 if let Some(job) = &current {
                     job.cancel.store(true, Ordering::SeqCst);
                 }
@@ -921,7 +1030,12 @@ impl FleetLoop {
                 .unwrap_or(false)
             {
                 if let Some(job) = current.take() {
-                    let _ = job.handle.await;
+                    if let Err(err) = job.handle.await {
+                        // The job task panicked: finish it as aborted now rather
+                        // than leaving it `running` until the next restart.
+                        let message = format!("fleet job crashed: {}", join_error_message(err));
+                        self.abort_job(&job.job_id, &job.workflow_id, "job_crashed", &message);
+                    }
                     self.shared.clear_cancel();
                     self.shared.refresh_tail(&self.journal);
                 }
@@ -992,7 +1106,7 @@ impl FleetLoop {
 
                     self.shared.set_state(LoopState::Polling, None);
                     let base = self.base_interval_ms(server_interval);
-                    sleep_ms(jittered_ms(base)).await;
+                    self.shared.sleep_or_wake(jittered_ms(base)).await;
                 }
                 Err(FleetCallError::Stop { code, message }) => {
                     let state = if code == error_codes::DEVICE_DORMANT {
@@ -1010,14 +1124,32 @@ impl FleetLoop {
                     failures = failures.saturating_add(1);
                     tracing::debug!("fleet poll network error: {message}");
                     let base = self.base_interval_ms(server_interval);
-                    sleep_ms(backoff_ms(base, failures)).await;
+                    self.shared.sleep_or_wake(backoff_ms(base, failures)).await;
                 }
             }
         }
 
         // Give any in-flight job a brief window to land its result, then flush.
-        if let Some(job) = current.take() {
-            let _ = tokio::time::timeout(Duration::from_secs(5), job.handle).await;
+        if let Some(mut job) = current.take() {
+            match tokio::time::timeout(Duration::from_secs(5), &mut job.handle).await {
+                Ok(Ok(())) => {}
+                Ok(Err(err)) => {
+                    let message = format!("fleet job crashed: {}", join_error_message(err));
+                    self.abort_job(&job.job_id, &job.workflow_id, "job_crashed", &message);
+                }
+                Err(_) => {
+                    // Don't orphan it: a restarted loop would race its result.
+                    job.handle.abort();
+                    let _ = (&mut job.handle).await;
+                    self.abort_job(
+                        &job.job_id,
+                        &job.workflow_id,
+                        "fleet_loop_stopped",
+                        "fleet loop stopped mid-run",
+                    );
+                }
+            }
+            self.shared.clear_cancel();
             self.flush_pending().await;
         }
         self.shared.refresh_tail(&self.journal);
@@ -1162,9 +1294,40 @@ impl FleetLoop {
 
         Some(RunningJob {
             job_id: assignment.job_id,
+            workflow_id: assignment.workflow_id,
             cancel,
             handle,
         })
+    }
+
+    /// Finish a job that ended without its own result (task panic, or aborted
+    /// at loop stop): persist an Aborted result and journal `finished`, unless
+    /// the job already reached `finished`/`posted` on its own.
+    fn abort_job(&self, job_id: &str, workflow_id: &str, code: &str, message: &str) {
+        let latest = self.journal.latest(job_id);
+        if matches!(
+            latest.as_ref().map(|e| e.state),
+            Some(JournalState::Finished | JournalState::Posted)
+        ) {
+            return;
+        }
+        let post = aborted_post_with(job_id, workflow_id, code, message);
+        let _ = persist_result(&self.results_dir, job_id, &post);
+        let entry = match &latest {
+            Some(prev) => JournalEntry::carry(
+                prev,
+                JournalState::Finished,
+                Some(FleetJobTerminalStatus::Aborted),
+            ),
+            None => JournalEntry::marker(
+                job_id,
+                workflow_id,
+                JournalState::Finished,
+                Some(FleetJobTerminalStatus::Aborted),
+            ),
+        };
+        let _ = self.journal.append(entry);
+        self.shared.refresh_tail(&self.journal);
     }
 
     /// Post every persisted-but-unposted result; on ack, journal `posted` and
@@ -1338,6 +1501,20 @@ fn strip_hash_prefix(hash: &str) -> String {
 }
 
 fn aborted_post(job_id: &str, workflow_id: &str) -> FleetResultPost {
+    aborted_post_with(
+        job_id,
+        workflow_id,
+        "supervisor_restarted",
+        "supervisor restarted mid-run",
+    )
+}
+
+fn aborted_post_with(
+    job_id: &str,
+    workflow_id: &str,
+    code: &str,
+    message: &str,
+) -> FleetResultPost {
     let now = now_ms();
     FleetResultPost {
         job_id: job_id.to_string(),
@@ -1353,14 +1530,14 @@ fn aborted_post(job_id: &str, workflow_id: &str) -> FleetResultPost {
             steps: Vec::new(),
             debug: None,
             error: Some(RunError {
-                code: "supervisor_restarted".to_string(),
-                message: "supervisor restarted mid-run".to_string(),
+                code: code.to_string(),
+                message: message.to_string(),
                 step_id: None,
                 retry_hint: None,
             }),
             failure_summary: None,
         },
-        error: Some("supervisor restarted mid-run".to_string()),
+        error: Some(message.to_string()),
         started_at_ms: now,
         finished_at_ms: now,
     }

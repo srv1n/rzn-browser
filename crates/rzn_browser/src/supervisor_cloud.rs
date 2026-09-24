@@ -27,6 +27,9 @@ const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_EXTENSION_RPC_GRACE_MS: u64 = 5_000;
 const CONFIG_RELOAD_INTERVAL_MS: u64 = 5_000;
 const MAX_CACHED_COMMAND_RESULTS: usize = 256;
+/// Client keepalive: ping cadence and the silence that forces a reconnect.
+const CLOUD_PING_INTERVAL: Duration = Duration::from_secs(20);
+const CLOUD_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(crate) struct CloudDispatchRequest {
     pub envelope: CloudCommandEnvelope,
@@ -399,11 +402,43 @@ where
 }
 
 async fn run_cloud_actor_session<S>(
+    socket: tokio_tungstenite::WebSocketStream<S>,
+    config: LocalCloudActorConfig,
+    dispatch_tx: mpsc::UnboundedSender<CloudDispatchRequest>,
+    result_cache: Arc<Mutex<CommandResultCache>>,
+    status: Arc<Mutex<CloudActorRuntimeState>>,
+) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    run_cloud_actor_session_with(
+        socket,
+        config,
+        dispatch_tx,
+        result_cache,
+        status,
+        CLOUD_PING_INTERVAL,
+        CLOUD_IDLE_TIMEOUT,
+    )
+    .await
+}
+
+/// Session body with injectable keepalive timings (tests use milliseconds).
+///
+/// The read loop only services the socket: it pings every `ping_every`, and
+/// errors out (→ the caller's reconnect path) when nothing at all arrives for
+/// `idle_timeout`, so a half-open TCP connection (laptop sleep) cannot keep
+/// status "connected" forever. Commands run on a separate worker task, one at
+/// a time in arrival order (ack, then result — same wire order as before), so
+/// a long command never stalls pings/pongs.
+async fn run_cloud_actor_session_with<S>(
     mut socket: tokio_tungstenite::WebSocketStream<S>,
     config: LocalCloudActorConfig,
     dispatch_tx: mpsc::UnboundedSender<CloudDispatchRequest>,
     result_cache: Arc<Mutex<CommandResultCache>>,
     status: Arc<Mutex<CloudActorRuntimeState>>,
+    ping_every: Duration,
+    idle_timeout: Duration,
 ) -> Result<()>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -432,65 +467,125 @@ where
     let _ready = wait_for_actor_ready(&mut socket).await?;
     mark_cloud_actor_ready(&status).await;
 
-    while let Some(message) = socket.next().await {
-        match message {
-            Ok(Message::Text(text)) => {
-                let envelope: CloudCommandEnvelope =
-                    serde_json::from_str(&text).context("Decode cloud command envelope")?;
-                if envelope.payload.kind != CloudCommandKind::BrowserCommand {
-                    let result = error_command_result(
-                        &envelope,
-                        "Unsupported cloud command kind; only browser_command is implemented"
-                            .to_string(),
-                    );
-                    socket
-                        .send(Message::Text(serde_json::to_string(&result)?))
-                        .await?;
-                    continue;
-                }
+    let default_timeout = config
+        .request_timeout_ms
+        .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS)
+        .max(1);
+    let (command_tx, command_rx) = mpsc::unbounded_channel::<CloudCommandEnvelope>();
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<String>();
+    // Aborted when the session ends (error, close, or the session task abort).
+    let _worker = AbortOnDrop(tokio::spawn(run_cloud_command_worker(
+        command_rx,
+        outbound_tx,
+        default_timeout,
+        dispatch_tx,
+        result_cache,
+        status,
+    )));
 
-                let cached = result_cache.lock().await.get(&envelope.command_id);
-                if let Some(cached_result) = cached {
-                    let ack = command_ack(&envelope);
-                    socket
-                        .send(Message::Text(serde_json::to_string(&ack)?))
-                        .await?;
-                    socket
-                        .send(Message::Text(serde_json::to_string(&cached_result)?))
-                        .await?;
-                    continue;
+    let mut ping = tokio::time::interval_at(tokio::time::Instant::now() + ping_every, ping_every);
+    let mut last_rx = tokio::time::Instant::now();
+    loop {
+        tokio::select! {
+            message = socket.next() => {
+                let Some(message) = message else { return Ok(()); };
+                last_rx = tokio::time::Instant::now();
+                match message {
+                    Ok(Message::Text(text)) => {
+                        let envelope: CloudCommandEnvelope =
+                            serde_json::from_str(&text).context("Decode cloud command envelope")?;
+                        let _ = command_tx.send(envelope);
+                    }
+                    Ok(Message::Ping(payload)) => {
+                        send_with_timeout(&mut socket, Message::Pong(payload), idle_timeout).await?;
+                    }
+                    Ok(Message::Pong(_)) => {}
+                    Ok(Message::Close(_)) => bail!("Cloud control plane closed websocket"),
+                    Err(error) => return Err(error.into()),
+                    _ => {}
                 }
-
-                let ack = command_ack(&envelope);
-                socket
-                    .send(Message::Text(serde_json::to_string(&ack)?))
-                    .await?;
-                let default_timeout = config
-                    .request_timeout_ms
-                    .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS)
-                    .max(1);
-                let result = dispatch_command_with_dedupe(
-                    envelope,
-                    default_timeout,
-                    dispatch_tx.clone(),
-                    result_cache.clone(),
-                    status.clone(),
-                )
-                .await;
-                socket
-                    .send(Message::Text(serde_json::to_string(&result)?))
-                    .await?;
             }
-            Ok(Message::Ping(payload)) => {
-                socket.send(Message::Pong(payload)).await?;
+            Some(text) = outbound_rx.recv() => {
+                send_with_timeout(&mut socket, Message::Text(text), idle_timeout).await?;
             }
-            Ok(Message::Pong(_)) => {}
-            Ok(Message::Close(_)) => bail!("Cloud control plane closed websocket"),
-            Err(error) => return Err(error.into()),
-            _ => {}
+            _ = ping.tick() => {
+                send_with_timeout(&mut socket, Message::Ping(Vec::new()), idle_timeout).await?;
+            }
+            _ = tokio::time::sleep_until(last_rx + idle_timeout) => {
+                bail!(
+                    "Cloud control plane silent for {}ms; reconnecting",
+                    idle_timeout.as_millis()
+                );
+            }
         }
     }
+}
+
+/// A blocked write (full send buffer on a dead connection) must not wedge the
+/// loop past the idle deadline either.
+async fn send_with_timeout<S>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+    message: Message,
+    timeout: Duration,
+) -> Result<()>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    tokio::time::timeout(timeout, socket.send(message))
+        .await
+        .context("Cloud websocket send timed out")??;
     Ok(())
+}
+
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn run_cloud_command_worker(
+    mut command_rx: mpsc::UnboundedReceiver<CloudCommandEnvelope>,
+    outbound_tx: mpsc::UnboundedSender<String>,
+    default_timeout: u64,
+    dispatch_tx: mpsc::UnboundedSender<CloudDispatchRequest>,
+    result_cache: Arc<Mutex<CommandResultCache>>,
+    status: Arc<Mutex<CloudActorRuntimeState>>,
+) {
+    let queue = |value: String| outbound_tx.send(value).is_ok();
+    while let Some(envelope) = command_rx.recv().await {
+        if envelope.payload.kind != CloudCommandKind::BrowserCommand {
+            let result = error_command_result(
+                &envelope,
+                "Unsupported cloud command kind; only browser_command is implemented".to_string(),
+            );
+            if !queue(to_json(&result)) {
+                return;
+            }
+            continue;
+        }
+        // Ack first; a duplicate command_id replays its cached result inside
+        // dispatch_command_with_dedupe without reaching the extension.
+        if !queue(to_json(&command_ack(&envelope))) {
+            return;
+        }
+        let result = dispatch_command_with_dedupe(
+            envelope,
+            default_timeout,
+            dispatch_tx.clone(),
+            result_cache.clone(),
+            status.clone(),
+        )
+        .await;
+        if !queue(to_json(&result)) {
+            return;
+        }
+    }
+}
+
+fn to_json<T: serde::Serialize>(value: &T) -> String {
+    serde_json::to_string(value).unwrap_or_default()
 }
 
 async fn dispatch_command_with_dedupe(
@@ -1148,6 +1243,126 @@ mod tests {
                 .is_err(),
             "duplicate command should not reach extension dispatch"
         );
+    }
+
+    type Ws = tokio_tungstenite::WebSocketStream<tokio::io::DuplexStream>;
+
+    /// In-memory client/server websocket pair; the server has sent actor.ready.
+    async fn ws_pair() -> (Ws, Ws) {
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        let (a, b) = tokio::io::duplex(64 * 1024);
+        let client = Ws::from_raw_socket(a, Role::Client, None).await;
+        let mut server = Ws::from_raw_socket(b, Role::Server, None).await;
+        let ready = ActorReady {
+            version: CLOUD_CONTRACT.to_string(),
+            message_type: "actor.ready".to_string(),
+            actor_id: "actor-1".to_string(),
+            heartbeat_interval_ms: 0,
+            resume_token: None,
+            config: None,
+        };
+        server
+            .send(Message::Text(serde_json::to_string(&ready).unwrap()))
+            .await
+            .unwrap();
+        (client, server)
+    }
+
+    #[tokio::test]
+    async fn session_pings_and_reconnects_on_silent_peer() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio_tungstenite::tungstenite::protocol::Role;
+        // Raw server end: a websocket library would auto-pong, and a half-open
+        // peer never answers anything.
+        let (a, mut raw) = tokio::io::duplex(64 * 1024);
+        let client = Ws::from_raw_socket(a, Role::Client, None).await;
+        let ready = serde_json::to_vec(&json!({
+            "version": CLOUD_CONTRACT, "type": "actor.ready",
+            "actor_id": "actor-1", "heartbeat_interval_ms": 0
+        }))
+        .unwrap();
+        assert!(ready.len() < 126);
+        let mut frame = vec![0x81, ready.len() as u8]; // FIN|text, unmasked
+        frame.extend_from_slice(&ready);
+        raw.write_all(&frame).await.unwrap();
+
+        let (dispatch_tx, _dispatch_rx) = mpsc::unbounded_channel();
+        let err = tokio::time::timeout(
+            Duration::from_secs(2),
+            run_cloud_actor_session_with(
+                client,
+                sample_actor_config(),
+                dispatch_tx,
+                Arc::new(Mutex::new(CommandResultCache::default())),
+                Arc::new(Mutex::new(CloudActorRuntimeState::default())),
+                Duration::from_millis(20),
+                Duration::from_millis(150),
+            ),
+        )
+        .await
+        .expect("idle timeout must end the session")
+        .expect_err("silent peer is an error so the caller reconnects");
+        assert!(err.to_string().contains("silent"), "{err}");
+
+        // Parse the client's (masked) frames and count pings.
+        let mut bytes = Vec::new();
+        raw.read_to_end(&mut bytes).await.unwrap();
+        let (mut i, mut pings) = (0, 0);
+        while i + 2 <= bytes.len() {
+            let opcode = bytes[i] & 0x0f;
+            let mut len = (bytes[i + 1] & 0x7f) as usize;
+            i += 2;
+            if len == 126 {
+                len = u16::from_be_bytes([bytes[i], bytes[i + 1]]) as usize;
+                i += 2;
+            }
+            i += 4 + len; // mask key + payload
+            pings += usize::from(opcode == 0x9);
+        }
+        assert!(pings >= 2, "expected keepalive pings, got {pings}");
+    }
+
+    #[tokio::test]
+    async fn long_command_does_not_stall_pongs() {
+        let (client, mut server) = ws_pair().await;
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel::<CloudDispatchRequest>();
+        let status = Arc::new(Mutex::new(CloudActorRuntimeState::default()));
+        let session = tokio::spawn(run_cloud_actor_session_with(
+            client,
+            sample_actor_config(),
+            dispatch_tx,
+            Arc::new(Mutex::new(CommandResultCache::default())),
+            status,
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        ));
+
+        server
+            .send(Message::Text(
+                serde_json::to_string(&sample_envelope("command-slow")).unwrap(),
+            ))
+            .await
+            .unwrap();
+        // The command reaches dispatch and is never answered (a long command).
+        let _pending = dispatch_rx.recv().await.expect("dispatched");
+        server.send(Message::Ping(b"alive".to_vec())).await.unwrap();
+
+        let mut saw_ack = false;
+        let pong = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                match server.next().await {
+                    Some(Ok(Message::Pong(payload))) => return payload,
+                    Some(Ok(Message::Text(text))) if text.contains("command.ack") => saw_ack = true,
+                    Some(Ok(_)) => {}
+                    other => panic!("unexpected {other:?}"),
+                }
+            }
+        })
+        .await
+        .expect("pong while the command is still running");
+        assert_eq!(pong, b"alive".to_vec());
+        assert!(saw_ack, "ack is sent before the command finishes");
+        session.abort();
     }
 
     #[test]

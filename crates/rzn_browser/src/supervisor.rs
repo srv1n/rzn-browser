@@ -1391,7 +1391,7 @@ impl SupervisorState {
         raw_params: Value,
     ) -> Result<Value> {
         if self.control.paused() {
-            return Err(anyhow!("automation is paused"));
+            return Err(anyhow!(AUTOMATION_PAUSED_MESSAGE));
         }
         let path = self.resolve_local_workflow(workflow_id)?;
         let params: HashMap<String, String> = raw_params
@@ -2014,9 +2014,10 @@ impl SupervisorState {
                     )
                     .map_err(|current| {
                         anyhow!(
-                            "a run is already in progress: {} ({})",
+                            "a run is already in progress: {} ({}); cancel with `rzn-browser supervisor call runs.cancel --params '{{\"run_id\":\"{}\"}}'`",
                             current.run_id,
-                            current.origin
+                            current.origin,
+                            current.run_id
                         )
                     })?;
                 Ok(json!({"ok": true, "run_id": run_id}))
@@ -2034,6 +2035,9 @@ impl SupervisorState {
             // FLA-T-0003: fleet poll-loop local RPCs (read-only status + disable).
             "fleet.status" => Ok(crate::supervisor_fleet::fleet_status_rpc()),
             "fleet.disable" => Ok(crate::supervisor_fleet::fleet_disable_rpc()),
+            "fleet.start" => Ok(
+                json!({"ok": true, "loop_started": crate::supervisor_fleet::restart_fleet_loop().await}),
+            ),
             "runs.list" => {
                 let filter: RunListFilter =
                     serde_json::from_value(params).context("invalid runs.list filters")?;
@@ -2091,7 +2095,7 @@ impl SupervisorState {
                 Ok(result)
             }
             "runs.start" | "runs.replay" if self.control.paused() => {
-                Err(anyhow!("automation is paused"))
+                Err(anyhow!(AUTOMATION_PAUSED_MESSAGE))
             }
             "runs.start" | "runs.replay" => Err(anyhow!(
                 "runs.start and runs.replay require a shared supervisor connection"
@@ -2122,10 +2126,7 @@ impl SupervisorState {
                 &self.control,
                 self.has_native_bridge().await,
                 self.has_extension_connection().await,
-                crate::supervisor_fleet::fleet_status_rpc()
-                    .get("fleet")
-                    .cloned()
-                    .unwrap_or(Value::Null),
+                crate::supervisor_fleet::fleet_status_rpc(),
             ),
             "status.snapshot.refresh" => {
                 self.control.refresh_snapshot_cache(&self.run_store)?;
@@ -5545,18 +5546,57 @@ async fn handle_connection(
     Ok(())
 }
 
+const AUTOMATION_PAUSED_MESSAGE: &str = "automation is paused (the pause persists across supervisor restarts); resume with `rzn-browser supervisor call automation.resume`";
+
+/// Per-frame write deadline for a native-host bridge. A peer that stops reading would otherwise
+/// wedge the writer forever while frames pile up in the unbounded queue.
+const NATIVE_BRIDGE_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
 async fn handle_cloud_dispatch_requests(
     state: Arc<SupervisorState>,
     mut rx: mpsc::UnboundedReceiver<CloudDispatchRequest>,
 ) {
+    // Each command gets its own task: bridge calls are matched by request id, so one slow
+    // browser command must not hold later ones in the queue until their deadlines expire.
     while let Some(request) = rx.recv().await {
-        let result = state
-            .dispatch_cloud_command_to_extension(
-                &request.envelope,
-                request.default_request_timeout_ms,
-            )
-            .await;
-        let _ = request.respond_to.send(result);
+        let state = state.clone();
+        tokio::spawn(async move {
+            let result = state
+                .dispatch_cloud_command_to_extension(
+                    &request.envelope,
+                    request.default_request_timeout_ms,
+                )
+                .await;
+            let _ = request.respond_to.send(result);
+        });
+    }
+}
+
+/// Drains a bridge's outbound queue. Returns when the queue closes, a write fails, or a write
+/// exceeds `write_timeout`; on timeout the bridge is cleared so pending calls fail fast.
+async fn run_native_bridge_writer<W: tokio::io::AsyncWrite + Unpin>(
+    mut writer: W,
+    mut rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    state: Arc<SupervisorState>,
+    bridge_id: String,
+    write_timeout: Duration,
+) {
+    while let Some(bytes) = rx.recv().await {
+        match timeout(write_timeout, write_frame(&mut writer, &bytes)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => break,
+            Err(_) => {
+                log::warn!(
+                    target: "rzn_browser::supervisor",
+                    "native_host_bridge_write_timeout bridge_id={} timeout_ms={} queued_frames={}",
+                    bridge_id,
+                    write_timeout.as_millis(),
+                    rx.len()
+                );
+                state.clear_native_bridge(&bridge_id).await;
+                break;
+            }
+        }
     }
 }
 
@@ -5605,7 +5645,7 @@ async fn handle_native_bridge_connection(
         }
     };
     let (mut reader, mut writer) = stream.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let bridge_epoch = state
         .register_native_bridge_with_metadata(bridge_id.clone(), tx, metadata)
         .await;
@@ -5627,19 +5667,23 @@ async fn handle_native_bridge_connection(
     });
     write_frame(&mut writer, &serde_json::to_vec(&response)?).await?;
 
-    let writer_task = tokio::spawn(async move {
-        while let Some(bytes) = rx.recv().await {
-            if write_frame(&mut writer, &bytes).await.is_err() {
-                break;
-            }
-        }
-    });
+    let mut writer_task = tokio::spawn(run_native_bridge_writer(
+        writer,
+        rx,
+        state.clone(),
+        bridge_id.clone(),
+        NATIVE_BRIDGE_WRITE_TIMEOUT,
+    ));
 
     loop {
-        let frame = match read_frame(&mut reader).await {
-            Ok(Some(frame)) => frame,
-            Ok(None) => break,
-            Err(_) => break,
+        // A dead writer (timeout, write error, bridge replaced) means this connection is unusable;
+        // stop reading so the socket is dropped instead of lingering half-open.
+        let frame = tokio::select! {
+            frame = read_frame(&mut reader) => match frame {
+                Ok(Some(frame)) => frame,
+                Ok(None) | Err(_) => break,
+            },
+            _ = &mut writer_task => break,
         };
         let value: Value = match serde_json::from_slice(&frame) {
             Ok(value) => value,
@@ -5654,7 +5698,9 @@ async fn handle_native_bridge_connection(
     }
 
     state.clear_native_bridge(&bridge_id).await;
-    let _ = writer_task.await;
+    if !writer_task.is_finished() {
+        let _ = writer_task.await;
+    }
     Ok(())
 }
 
@@ -7179,6 +7225,91 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or("")
             .contains("AMBIGUOUS_BROWSER_TARGET"));
+    }
+
+    #[tokio::test]
+    async fn native_bridge_write_timeout_clears_bridge() {
+        let state = Arc::new(SupervisorState::new(test_config()));
+        let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        state
+            .register_native_bridge("stuck-bridge".to_string(), tx.clone())
+            .await;
+        // Peer never reads: a 16-byte duplex buffer fills and the frame write blocks.
+        let (writer, _peer) = tokio::io::duplex(16);
+        tx.send(vec![0u8; 1024]).expect("queue frame");
+        timeout(
+            Duration::from_secs(5),
+            run_native_bridge_writer(
+                writer,
+                rx,
+                state.clone(),
+                "stuck-bridge".to_string(),
+                Duration::from_millis(50),
+            ),
+        )
+        .await
+        .expect("writer exits after write timeout");
+        assert!(!state
+            .native_bridges
+            .lock()
+            .await
+            .contains_key("stuck-bridge"));
+    }
+
+    #[tokio::test]
+    async fn cloud_dispatch_requests_run_concurrently() {
+        use rzn_contracts::browser::{CloudCommandKind, CloudCommandPayload};
+        let state = Arc::new(SupervisorState::new(test_config()));
+        let (bridge_tx, mut bridge_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        state
+            .register_native_bridge("cloud-bridge".to_string(), bridge_tx)
+            .await;
+        let (dispatch_tx, dispatch_rx) = mpsc::unbounded_channel::<CloudDispatchRequest>();
+        tokio::spawn(handle_cloud_dispatch_requests(state.clone(), dispatch_rx));
+        let mut responses = Vec::new();
+        for command_id in ["cmd-1", "cmd-2"] {
+            let (respond_to, response_rx) = oneshot::channel();
+            responses.push(response_rx);
+            dispatch_tx
+                .send(CloudDispatchRequest {
+                    envelope: CloudCommandEnvelope {
+                        version: CLOUD_CONTRACT.to_string(),
+                        message_type: "command.execute".to_string(),
+                        actor_id: "actor-1".to_string(),
+                        run_id: "run-1".to_string(),
+                        // Empty session resolves to the default (sole) bridge.
+                        session_id: String::new(),
+                        command_id: command_id.to_string(),
+                        lease_id: "lease-1".to_string(),
+                        deadline_ms: now_ms() + 30_000,
+                        trace_id: None,
+                        parent_command_id: None,
+                        planner_step_index: None,
+                        payload: CloudCommandPayload {
+                            kind: CloudCommandKind::BrowserCommand,
+                            command: Some(CloudBrowserCommand {
+                                cmd: "get_current_url".to_string(),
+                                payload: Some(json!({})),
+                                data: None,
+                            }),
+                            side_effecting: Some(false),
+                            idempotency_policy: None,
+                            metadata: None,
+                        },
+                    },
+                    default_request_timeout_ms: 30_000,
+                    respond_to,
+                })
+                .expect("queue cloud dispatch");
+        }
+        // Serial dispatch would hold cmd-2 until cmd-1 answers; both must reach the bridge first.
+        for _ in 0..2 {
+            timeout(Duration::from_secs(5), bridge_rx.recv())
+                .await
+                .expect("both cloud commands reach the bridge without a reply")
+                .expect("bridge frame");
+        }
+        drop(responses);
     }
 
     #[tokio::test]

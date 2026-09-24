@@ -136,6 +136,11 @@ impl BrowserRuntimeMcpBackend for SupervisorBackend {
 struct BrowserMcpServer<B> {
     backend: B,
     shutdown_requested: bool,
+    /// Session ids returned by `browser.session_open` that have not yet been
+    /// closed via `browser.session_close`. Closed best-effort on shutdown/EOF
+    /// so an MCP client that disconnects without cleaning up doesn't leak
+    /// sessions in the backend/extension.
+    open_sessions: std::collections::HashSet<String>,
 }
 
 impl<B: BrowserRuntimeMcpBackend> BrowserMcpServer<B> {
@@ -143,6 +148,40 @@ impl<B: BrowserRuntimeMcpBackend> BrowserMcpServer<B> {
         Self {
             backend,
             shutdown_requested: false,
+            open_sessions: std::collections::HashSet::new(),
+        }
+    }
+
+    fn track_session_lifecycle(&mut self, tool_name: &str, arguments: &Value, result: &Value) {
+        let is_error = result
+            .get("isError")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        match tool_name {
+            "browser.session_open" if !is_error => {
+                if let Some(session_id) = extract_opened_session_id(result) {
+                    self.open_sessions.insert(session_id);
+                }
+            }
+            "browser.session_close" => {
+                if let Some(session_id) = arguments.get("session_id").and_then(Value::as_str) {
+                    self.open_sessions.remove(session_id);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Best-effort close of any sessions this server opened but never closed.
+    /// Each close is bounded by a short timeout so a wedged backend can't
+    /// hang process shutdown.
+    async fn close_open_sessions(&mut self) {
+        let session_ids: Vec<String> = self.open_sessions.drain().collect();
+        for session_id in session_ids {
+            let call = self
+                .backend
+                .call_tool("browser.session_close", json!({ "session_id": session_id }));
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), call).await;
         }
     }
 
@@ -182,6 +221,7 @@ impl<B: BrowserRuntimeMcpBackend> BrowserMcpServer<B> {
             }
         }
 
+        self.close_open_sessions().await;
         self.backend.shutdown().await;
         Ok(())
     }
@@ -219,8 +259,11 @@ impl<B: BrowserRuntimeMcpBackend> BrowserMcpServer<B> {
                     .unwrap_or_else(|| json!({}));
 
                 let result = if is_browser_tool(tool_name) {
-                    match self.backend.call_tool(tool_name, arguments).await {
-                        Ok(result) => result,
+                    match self.backend.call_tool(tool_name, arguments.clone()).await {
+                        Ok(result) => {
+                            self.track_session_lifecycle(tool_name, &arguments, &result);
+                            result
+                        }
                         Err(err) => backend_unavailable_tool_result(tool_name, &err.to_string()),
                     }
                 } else {
@@ -314,6 +357,20 @@ fn browser_tool_list() -> Value {
             }
         }
     ])
+}
+
+/// Pull the freshly-minted session id out of a `browser.session_open` tool
+/// result. The real supervisor backend nests it under the raw response
+/// (`metadata.rzn_raw_supervisor_response.session_id`) or under the run
+/// result's `output`; test/fake backends may put it directly on
+/// `structuredContent`. Check all three.
+fn extract_opened_session_id(result: &Value) -> Option<String> {
+    result
+        .pointer("/metadata/rzn_raw_supervisor_response/session_id")
+        .or_else(|| result.pointer("/structuredContent/session_id"))
+        .or_else(|| result.pointer("/structuredContent/output/session_id"))
+        .and_then(Value::as_str)
+        .map(str::to_string)
 }
 
 fn unknown_tool_result(tool_name: &str) -> Value {
@@ -588,5 +645,74 @@ mod tests {
             response.pointer("/result/structuredContent/ready"),
             Some(&json!(false))
         );
+    }
+
+    #[tokio::test]
+    async fn session_open_is_tracked_and_closed_on_shutdown() {
+        let open_result = build_tool_result(
+            "session opened".to_string(),
+            json!({ "ok": true, "session_id": "leaked-1" }),
+            false,
+            HashMap::new(),
+        );
+        let mut server = BrowserMcpServer::new(FakeBackend::ok(open_result));
+        server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": { "name": "browser.session_open", "arguments": {} }
+            }))
+            .await;
+
+        assert!(server.open_sessions.contains("leaked-1"));
+
+        server.close_open_sessions().await;
+
+        assert!(server.open_sessions.is_empty());
+        assert_eq!(server.backend.calls.len(), 2);
+        assert_eq!(server.backend.calls[1].0, "browser.session_close");
+        assert_eq!(
+            server.backend.calls[1].1,
+            json!({ "session_id": "leaked-1" })
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_session_close_untracks_session() {
+        let open_result = build_tool_result(
+            "session opened".to_string(),
+            json!({ "ok": true, "session_id": "s-explicit" }),
+            false,
+            HashMap::new(),
+        );
+        let mut server = BrowserMcpServer::new(FakeBackend::ok(open_result));
+        server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": { "name": "browser.session_open", "arguments": {} }
+            }))
+            .await;
+        assert!(server.open_sessions.contains("s-explicit"));
+
+        server
+            .handle_request(json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "browser.session_close",
+                    "arguments": { "session_id": "s-explicit" }
+                }
+            }))
+            .await;
+
+        assert!(server.open_sessions.is_empty());
+
+        // Shutdown should not attempt to close it again since it's untracked.
+        server.close_open_sessions().await;
+        assert_eq!(server.backend.calls.len(), 2);
     }
 }

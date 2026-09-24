@@ -201,6 +201,7 @@ impl FleetApi for MockApi {
 enum ExecBehavior {
     Succeed,
     RunUntilCancelled,
+    Panic,
 }
 
 struct MockExecutor {
@@ -235,6 +236,7 @@ impl FleetJobExecutor for MockExecutor {
         let run_id = format!("run-{}", a.job_id);
         match self.behavior {
             ExecBehavior::Succeed => succeeded_run_result(&run_id, &a.workflow_id),
+            ExecBehavior::Panic => panic!("executor exploded"),
             ExecBehavior::RunUntilCancelled => {
                 for _ in 0..500 {
                     if cancel.load(Ordering::SeqCst) {
@@ -887,4 +889,98 @@ async fn http_poll_403_revoked_maps_to_stop() {
         }
         other => panic!("expected Stop, got {other:?}"),
     }
+}
+
+// ---------------------------------------------------------------------------
+// SUP-10 / SUP-11: stop/restart state + panic handling
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn job_panic_posts_aborted_result_without_restart() {
+    let dir = temp_dir("job-panic");
+    let journal = Arc::new(Journal::open(dir.join("j.jsonl")).unwrap());
+    let shared = Arc::new(FleetShared::new());
+    let api = Arc::new(MockApi::new(
+        vec![MockPoll::Ok(poll_with_job(assignment("job_boom")))],
+        poll_active_empty(),
+    ));
+    let executor = Arc::new(MockExecutor::new(ExecBehavior::Panic));
+    let fleet = build_loop(&dir, api.clone(), executor, shared.clone(), journal.clone());
+    let handle = tokio::spawn(fleet.run());
+
+    wait_until(|| !api.posts().is_empty(), "aborted result posted").await;
+    shared.request_disable();
+    handle.await.unwrap();
+
+    let posts = api.posts();
+    assert_eq!(posts.len(), 1);
+    assert_eq!(posts[0].job_id, "job_boom");
+    assert_eq!(posts[0].status, FleetJobTerminalStatus::Aborted);
+    assert!(posts[0]
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("executor exploded"));
+    let states = journal_states(&journal, "job_boom");
+    assert_eq!(states.last(), Some(&JournalState::Posted));
+    let _ = fs::remove_dir_all(dir);
+}
+
+struct PanicApi;
+
+#[async_trait]
+impl FleetApi for PanicApi {
+    async fn poll(&self, _req: &FleetPollRequest) -> Result<FleetPollResponse, FleetCallError> {
+        panic!("poll exploded")
+    }
+    async fn post_result(
+        &self,
+        _job_id: &str,
+        _post: &FleetResultPost,
+    ) -> Result<FleetResultAck, FleetCallError> {
+        Err(FleetCallError::Network("unused".to_string()))
+    }
+}
+
+#[tokio::test]
+async fn loop_panic_marks_status_crashed() {
+    let dir = temp_dir("loop-panic");
+    let journal = Arc::new(Journal::open(dir.join("j.jsonl")).unwrap());
+    let shared = Arc::new(FleetShared::new());
+    let executor = Arc::new(MockExecutor::new(ExecBehavior::Succeed));
+    let fleet = build_loop(&dir, Arc::new(PanicApi), executor, shared.clone(), journal);
+
+    spawn_supervised(fleet, None).await.unwrap();
+
+    let status = shared.status_json();
+    assert_eq!(status["state"], json!("crashed"));
+    assert!(status["reason"].as_str().unwrap().contains("poll exploded"));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn stop_wakes_sleeping_loop_and_status_stays_disabled() {
+    let dir = temp_dir("stop");
+    let journal = Arc::new(Journal::open(dir.join("j.jsonl")).unwrap());
+    let shared = Arc::new(FleetShared::new());
+    let api = Arc::new(MockApi::new(vec![], poll_active_empty()));
+    let executor = Arc::new(MockExecutor::new(ExecBehavior::Succeed));
+    let mut fleet = build_loop(&dir, api.clone(), executor, shared.clone(), journal);
+    fleet.interval_ms_override = Some(60_000); // would sleep a minute without the wake
+    let handle = spawn_supervised(fleet, None);
+
+    wait_until(|| api.poll_count() >= 1, "first poll").await;
+    shared.request_stop("fleet unenrolled");
+    tokio::time::timeout(Duration::from_secs(2), handle)
+        .await
+        .expect("stopped loop exits promptly")
+        .unwrap();
+
+    // The exiting loop cannot flip status back to polling.
+    shared.set_state(LoopState::Polling, None);
+    let status = shared.status_json();
+    assert_eq!(status["state"], json!("disabled"));
+    assert_eq!(status["reason"], json!("fleet unenrolled"));
+    assert_eq!(api.poll_count(), 1, "no poll after stop");
+    let _ = fs::remove_dir_all(dir);
 }

@@ -183,12 +183,16 @@ pub(crate) async fn enroll_from_rpc(server: &str, code: &str) -> Result<Value> {
         false,
     )
     .await?;
+    // Start polling now with the new identity instead of on the next restart.
+    let loop_started = crate::supervisor_fleet::restart_fleet_loop().await;
     Ok(
-        json!({"ok":true,"device_id":config.device_id,"tenant_id":config.tenant_id,"server_url":config.server_url}),
+        json!({"ok":true,"device_id":config.device_id,"tenant_id":config.tenant_id,"server_url":config.server_url,"loop_started":loop_started}),
     )
 }
 
 pub(crate) fn unenroll_from_rpc() -> Result<Value> {
+    // Stop the loop first so it never polls again with the discarded token.
+    crate::supervisor_fleet::stop_fleet_loop("fleet unenrolled");
     let removed = delete_fleet_config(&fleet_config_path())?;
     Ok(json!({"ok":true,"removed":removed}))
 }
@@ -223,7 +227,11 @@ async fn run_enroll(args: FleetEnrollArgs) -> Result<()> {
     println!("tenant_id={}", config.tenant_id);
     println!("server={}", config.server_url);
     println!("config written to {}", config_path.display());
-    println!("supervisor will start polling within a minute; restart it if it is already running");
+    if notify_supervisor_start().await {
+        println!("supervisor fleet loop started");
+    } else {
+        println!("supervisor not reachable; it will start polling the next time it starts");
+    }
     Ok(())
 }
 
@@ -465,6 +473,16 @@ async fn probe_fleet_loop_state() -> Value {
         Ok(Err(err)) => json!({ "available": false, "reason": describe_rpc_error(&err) }),
         Err(_) => json!({ "available": false, "reason": "supervisor did not respond" }),
     }
+}
+
+/// Ask a running supervisor to (re)start its fleet loop from the new config.
+async fn notify_supervisor_start() -> bool {
+    let config = crate::supervisor::SupervisorConfig { app_base: None };
+    let future = crate::supervisor::call(config, "fleet.start", json!({}));
+    matches!(
+        tokio::time::timeout(SUPERVISOR_PROBE_TIMEOUT, future).await,
+        Ok(Ok(value)) if value.get("loop_started").and_then(Value::as_bool) == Some(true)
+    )
 }
 
 async fn notify_supervisor_disable() {

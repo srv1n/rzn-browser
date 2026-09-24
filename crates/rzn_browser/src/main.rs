@@ -102,7 +102,8 @@ enum Commands {
     /// Update the CLI, native host, extension, and bundled workflows to the latest release
     Update(UpdateArgs),
 
-    /// Re-check the local browser supervisor and native-host bridge
+    /// Repair the local runtime: restart a stuck supervisor, re-register the
+    /// native host, restart the extension bridge, then report what is left
     Heal(HealArgs),
 
     /// Diagnose the installed runtime chain
@@ -257,6 +258,14 @@ struct HealArgs {
     /// Override APP_BASE for supervisor socket/token/runtime files
     #[arg(long)]
     app_base: Option<String>,
+
+    /// Browser whose native-host registration to check and repair
+    #[arg(long, default_value = "chrome")]
+    browser: String,
+
+    /// Restart the supervisor even if it answers (kills any active run)
+    #[arg(long)]
+    restart: bool,
 
     /// Emit machine-readable JSON
     #[arg(long)]
@@ -2075,12 +2084,63 @@ fn host_path_checks(path: &Path) -> Vec<NativeHostDoctorCheck> {
     checks
 }
 
+/// Run a command with stdout/stderr captured, killing it if it hasn't
+/// finished within `deadline`. `Command::output()` has no built-in timeout,
+/// so a wedged native host would otherwise hang `doctor` forever.
+fn output_with_deadline(
+    mut command: Command,
+    deadline: std::time::Duration,
+) -> std::io::Result<std::process::Output> {
+    use std::io::Read;
+    use std::process::Stdio;
+
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    let started_at = std::time::Instant::now();
+
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started_at.elapsed() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("command did not exit within {:?}", deadline),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    };
+
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    if let Some(mut out) = child.stdout.take() {
+        out.read_to_end(&mut stdout)?;
+    }
+    if let Some(mut err) = child.stderr.take() {
+        err.read_to_end(&mut stderr)?;
+    }
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+const NATIVE_HOST_SELF_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 fn native_host_self_test_checks(path: &Path) -> Vec<NativeHostDoctorCheck> {
     if !path.exists() || !path.is_file() {
         return Vec::new();
     }
 
-    match Command::new(path).arg("--self-test").output() {
+    let mut command = Command::new(path);
+    command.arg("--self-test");
+    match output_with_deadline(command, NATIVE_HOST_SELF_TEST_TIMEOUT) {
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             vec![
@@ -2942,17 +3002,120 @@ async fn handle_run(args: RunArgs) -> anyhow::Result<()> {
 
 async fn handle_heal(args: HealArgs) -> anyhow::Result<()> {
     let json_output = args.json;
+    let browser = args
+        .browser
+        .parse::<BrowserKind>()
+        .map_err(|err| anyhow::anyhow!("invalid browser target `{}`: {}", args.browser, err))?;
     let config = supervisor::SupervisorConfig {
         app_base: args.app_base.as_ref().map(PathBuf::from),
     };
-    supervisor::ensure_running(config.clone()).await?;
-    let report = supervisor::call(config, "runtime.heal", json!({})).await?;
+    let mut actions: Vec<String> = Vec::new();
+    let log = |line: &str| {
+        if !json_output {
+            println!("[HEAL] {line}");
+        }
+    };
+
+    // 1. Native-host registration. Chrome launches whatever the manifest points at, so a
+    //    missing or stale manifest is repaired before touching the supervisor.
+    let bundle_path = default_extension_bundle_path_for_browser(browser, &config);
+    let before = build_native_host_doctor_report(
+        browser,
+        RZN_DEV_EXTENSION_ORIGIN.to_string(),
+        bundle_path.clone(),
+        &config,
+    )
+    .await;
+    if heal_needs_native_host_reinstall(&before.checks) {
+        log("native-host registration is broken; re-registering");
+        let host_path = resolve_native_host_executable_path()
+            .map_err(|err| anyhow::anyhow!("failed to resolve native-host executable: {err}"))?;
+        install_rzn_native_host_for_browser_with_origins(
+            browser,
+            &host_path,
+            [RZN_DEV_EXTENSION_ORIGIN],
+        )
+        .map_err(|err| anyhow::anyhow!("native-host re-register failed: {err}"))?;
+        actions.push(format!("re-registered native host for {}", browser.slug()));
+    }
+
+    // 2. Supervisor. A wedged supervisor holds its lock but never answers; kill and respawn it.
+    if args.restart {
+        log("restarting supervisor (--restart)");
+        supervisor::force_shutdown(config.clone()).await?;
+        actions.push("restarted supervisor (--restart)".to_string());
+    }
+    if let Err(err) = supervisor::ensure_running(config.clone()).await {
+        log(&format!(
+            "supervisor is not answering ({err}); force-restarting"
+        ));
+        supervisor::force_shutdown(config.clone()).await?;
+        supervisor::ensure_running(config.clone()).await?;
+        actions.push("force-restarted unresponsive supervisor".to_string());
+    }
+
+    // 3. Bridge. runtime.heal restarts the native-host bridge and waits for it to be stable.
+    let report = match supervisor::call(config.clone(), "runtime.heal", json!({})).await {
+        Ok(report) => report,
+        Err(err) => {
+            log(&format!(
+                "bridge heal failed ({err}); restarting supervisor and retrying"
+            ));
+            supervisor::force_shutdown(config.clone()).await?;
+            supervisor::ensure_running(config.clone()).await?;
+            actions.push("force-restarted supervisor after failed bridge heal".to_string());
+            supervisor::call(config.clone(), "runtime.heal", json!({})).await?
+        }
+    };
+    let ready = report
+        .get("ready")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    // 4. Final doctor pass. Anything still failing needs a human (e.g. the extension is not
+    //    loaded), so print it with the doctor's own remediation text.
+    let after = build_native_host_doctor_report(
+        browser,
+        RZN_DEV_EXTENSION_ORIGIN.to_string(),
+        bundle_path,
+        &config,
+    )
+    .await;
+    let healthy = ready && after.success;
+
     if json_output {
-        println!("{}", serde_json::to_string_pretty(&report)?);
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "healthy": healthy,
+                "actions": actions,
+                "heal": report,
+                "doctor": after,
+            }))?
+        );
     } else {
         render_supervisor_heal_report(&report);
+        for action in &actions {
+            println!("   • {action}");
+        }
+        if !after.success || !ready {
+            render_native_host_doctor_output(&after);
+        }
+    }
+    if !healthy {
+        anyhow::bail!("runtime still unhealthy after heal; see the failing checks above");
     }
     Ok(())
+}
+
+fn heal_needs_native_host_reinstall(checks: &[NativeHostDoctorCheck]) -> bool {
+    checks.iter().any(|check| {
+        check.status == DoctorCheckStatus::Fail
+            && (check.name.starts_with("manifest_")
+                || check.name.starts_with("host_path")
+                || check.name == "host_name"
+                || check.name == "allowed_origin")
+    })
 }
 
 fn render_supervisor_heal_report(report: &Value) {
@@ -6722,6 +6885,8 @@ fn release_artifact_url(
 fn latest_release_tag(repo: &str) -> anyhow::Result<String> {
     let output = Command::new("curl")
         .arg("-fsSL")
+        .arg("--max-time")
+        .arg("15")
         .arg("-H")
         .arg("Accept: application/vnd.github+json")
         .arg(format!(
@@ -6822,6 +6987,8 @@ async fn handle_update(args: UpdateArgs) -> Result<(), Box<dyn std::error::Error
         "curl",
         Command::new("curl")
             .arg("-fsSL")
+            .arg("--max-time")
+            .arg("120")
             .arg(&artifact_url)
             .arg("-o")
             .arg(&archive_path),
@@ -6830,6 +6997,8 @@ async fn handle_update(args: UpdateArgs) -> Result<(), Box<dyn std::error::Error
         "curl",
         Command::new("curl")
             .arg("-fsSL")
+            .arg("--max-time")
+            .arg("120")
             .arg(format!("{}.sha256", artifact_url))
             .arg("-o")
             .arg(&sidecar_path),
@@ -8079,6 +8248,28 @@ mod tests {
         let message = err.to_string();
         assert!(message.contains("INVALID_EXTENSION_ORIGIN"));
         assert!(message.contains("wildcard"));
+    }
+
+    #[test]
+    fn heal_reinstalls_only_for_broken_registration() {
+        let check = |name: &str, status| NativeHostDoctorCheck {
+            name: name.to_string(),
+            status,
+            message: String::new(),
+        };
+        assert!(!heal_needs_native_host_reinstall(&[
+            check("manifest_registered", DoctorCheckStatus::Pass),
+            check("connected_bridge", DoctorCheckStatus::Fail),
+            check("extension_bundle_directory", DoctorCheckStatus::Fail),
+        ]));
+        assert!(heal_needs_native_host_reinstall(&[check(
+            "host_path_exists",
+            DoctorCheckStatus::Fail
+        )]));
+        assert!(heal_needs_native_host_reinstall(&[check(
+            "allowed_origin",
+            DoctorCheckStatus::Fail
+        )]));
     }
 
     #[test]
