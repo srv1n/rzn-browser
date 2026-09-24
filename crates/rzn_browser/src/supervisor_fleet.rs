@@ -794,6 +794,10 @@ struct InProcessTransport {
 
 #[async_trait]
 impl StepTransport for InProcessTransport {
+    fn cancelled(&self) -> bool {
+        self.cancel.load(Ordering::SeqCst)
+    }
+
     async fn call(
         &self,
         method: &str,

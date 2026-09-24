@@ -1186,6 +1186,7 @@ struct NativeBridgeHealth {
     last_successful_roundtrip_ping_ms: Option<u64>,
     last_successful_roundtrip_ping_age_ms: Option<u64>,
     missed_roundtrip_count: Option<u64>,
+    consecutive_failed_health_pings: u64,
     last_failure_at_ms: Option<u64>,
     last_failure_cause: Option<String>,
     last_failure_error: Option<String>,
@@ -1248,6 +1249,7 @@ impl NativeBridgeHealth {
             "last_successful_roundtrip_ping_ms": self.last_successful_roundtrip_ping_ms,
             "last_successful_roundtrip_ping_age_ms": self.last_successful_roundtrip_ping_age_ms,
             "missed_roundtrip_count": self.missed_roundtrip_count,
+            "consecutive_failed_health_pings": self.consecutive_failed_health_pings,
             "last_failure_at_ms": self.last_failure_at_ms,
             "last_failure_cause": self.last_failure_cause.clone(),
             "last_failure_error": self.last_failure_error.clone(),
@@ -3366,12 +3368,18 @@ impl SupervisorState {
                     cmd != "ping",
                 )
                 .await;
-                self.request_native_bridge_restart(
-                    &active_bridge_id,
-                    active_bridge_epoch,
-                    "native-host bridge response channel closed",
-                )
-                .await;
+                if cmd == "ping"
+                    && self
+                        .health_ping_failure_requires_restart(&active_bridge_id)
+                        .await
+                {
+                    self.request_native_bridge_restart(
+                        &active_bridge_id,
+                        active_bridge_epoch,
+                        "native-host bridge response channel closed",
+                    )
+                    .await;
+                }
                 if cmd != "ping" {
                     return Err(anyhow!("Native-host bridge response channel closed"));
                 }
@@ -3387,8 +3395,18 @@ impl SupervisorState {
                     cmd != "ping",
                 )
                 .await;
-                self.request_native_bridge_restart(&active_bridge_id, active_bridge_epoch, &reason)
+                if cmd == "ping"
+                    && self
+                        .health_ping_failure_requires_restart(&active_bridge_id)
+                        .await
+                {
+                    self.request_native_bridge_restart(
+                        &active_bridge_id,
+                        active_bridge_epoch,
+                        &reason,
+                    )
                     .await;
+                }
                 return Err(anyhow!(
                     "Native-host extension bridge timeout after {}ms",
                     timeout_ms
@@ -3407,12 +3425,18 @@ impl SupervisorState {
                     step_timeout,
                 )
                 .await;
-                self.request_native_bridge_restart(
-                    &active_bridge_id,
-                    active_bridge_epoch,
-                    &error_message,
-                )
-                .await;
+                if cmd == "ping"
+                    && self
+                        .health_ping_failure_requires_restart(&active_bridge_id)
+                        .await
+                {
+                    self.request_native_bridge_restart(
+                        &active_bridge_id,
+                        active_bridge_epoch,
+                        &error_message,
+                    )
+                    .await;
+                }
             }
             return Err(anyhow!("Native-host extension bridge error: {}", error));
         }
@@ -3684,6 +3708,7 @@ impl SupervisorState {
             });
         health.last_successful_ping_at_ms = Some(now_ms());
         health.last_successful_ping_latency_ms = Some(latency_ms);
+        health.consecutive_failed_health_pings = 0;
         health.last_successful_extension_build_signature = Some(
             ping_response
                 .pointer("/result/extension_build_signature")
@@ -3785,6 +3810,16 @@ impl SupervisorState {
         if step_timeout {
             health.last_step_timeout_at_ms = Some(now_ms());
         }
+    }
+
+    async fn health_ping_failure_requires_restart(&self, bridge_id: &str) -> bool {
+        let mut health_by_bridge = self.native_bridge_health.lock().await;
+        let Some(health) = health_by_bridge.get_mut(bridge_id) else {
+            return false;
+        };
+        health.consecutive_failed_health_pings =
+            health.consecutive_failed_health_pings.saturating_add(1);
+        health.consecutive_failed_health_pings >= 2
     }
 
     async fn set_native_bridge_pending_deadline(&self, request_id: &str, deadline_at_ms: u64) {
@@ -3925,6 +3960,10 @@ struct ControlTransport<'a> {
 }
 #[async_trait::async_trait]
 impl StepTransport for ControlTransport<'_> {
+    fn cancelled(&self) -> bool {
+        self.state.control.cancel_requested()
+    }
+
     async fn call(
         &self,
         method: &str,
@@ -3935,6 +3974,22 @@ impl StepTransport for ControlTransport<'_> {
             return Err(TransportError::Call(anyhow!("run cancelled before step")));
         }
         let call = self.state.dispatch(method, params);
+        tokio::pin!(call);
+        if method == "browser.execute_step" {
+            let cancelled = async {
+                while !self.state.control.cancel_requested() {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            };
+            tokio::pin!(cancelled);
+            let watchdog = tokio::time::sleep(Duration::from_millis(timeout_ms));
+            tokio::pin!(watchdog);
+            return tokio::select! {
+                result = &mut call => result.map_err(TransportError::Call),
+                _ = &mut cancelled => Err(TransportError::Call(anyhow!("run cancelled during step"))),
+                _ = &mut watchdog, if timeout_ms > 0 => Err(TransportError::Timeout),
+            };
+        }
         if timeout_ms == 0 {
             call.await.map_err(TransportError::Call)
         } else {
@@ -5083,6 +5138,16 @@ pub(crate) async fn serve(config: SupervisorConfig) -> Result<SupervisorServeRep
         token_path: state.paths.token_path.to_string_lossy().to_string(),
     };
 
+    #[cfg(unix)]
+    let mut terminate_signal =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    #[cfg(unix)]
+    let terminate = async move {
+        terminate_signal.recv().await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::pin!(terminate);
     loop {
         if state.shutdown.load(Ordering::SeqCst) {
             break;
@@ -5090,6 +5155,9 @@ pub(crate) async fn serve(config: SupervisorConfig) -> Result<SupervisorServeRep
         tokio::select! {
             biased;
             _ = tokio::signal::ctrl_c() => {
+                break;
+            }
+            _ = &mut terminate => {
                 break;
             }
             accepted = listener.accept() => {
@@ -5125,7 +5193,13 @@ pub(crate) async fn ensure_running(config: SupervisorConfig) -> Result<Superviso
     match call(config.clone(), "runtime.status", json!({})).await {
         Ok(result) => Ok(SupervisorClientStatus { ok: true, result }),
         Err(first_err) => {
-            spawn_supervisor(&config).await?;
+            let paths = SupervisorPaths::for_config(&config);
+            // A held lock can also mean a supervisor that is still starting (it locks before it
+            // binds the socket), so wait for readiness before calling it unresponsive.
+            let lock_held = supervisor_lock_is_held(&paths.lock_path);
+            if !lock_held {
+                spawn_supervisor(&config).await?;
+            }
             let deadline = tokio::time::Instant::now() + Duration::from_millis(5_000);
             loop {
                 match call(config.clone(), "runtime.status", json!({})).await {
@@ -5133,6 +5207,14 @@ pub(crate) async fn ensure_running(config: SupervisorConfig) -> Result<Superviso
                     Err(err) if tokio::time::Instant::now() < deadline => {
                         let _ = err;
                         tokio::time::sleep(Duration::from_millis(150)).await;
+                    }
+                    Err(_) if lock_held => {
+                        let pid = read_supervisor_lock_pid(&paths.lock_path)
+                            .map_or_else(|| "unknown".to_string(), |pid| pid.to_string());
+                        return Err(anyhow!(
+                            "supervisor pid {} unresponsive — run `rzn-browser supervisor shutdown --force`",
+                            pid
+                        ));
                     }
                     Err(err) => {
                         return Err(anyhow!(
@@ -5145,6 +5227,48 @@ pub(crate) async fn ensure_running(config: SupervisorConfig) -> Result<Superviso
             }
         }
     }
+}
+
+#[cfg(unix)]
+fn supervisor_lock_is_held(path: &Path) -> bool {
+    use std::os::fd::AsRawFd;
+    let Ok(file) = OpenOptions::new().read(true).write(true).open(path) else {
+        return false;
+    };
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+        return true;
+    }
+    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+    false
+}
+
+#[cfg(not(unix))]
+fn supervisor_lock_is_held(path: &Path) -> bool {
+    path.exists()
+}
+
+pub(crate) async fn force_shutdown(config: SupervisorConfig) -> Result<Value> {
+    let paths = SupervisorPaths::for_config(&config);
+    if !supervisor_lock_is_held(&paths.lock_path) {
+        return Ok(json!({"ok": true, "stopped": false, "reason": "supervisor is not running"}));
+    }
+    let pid = read_supervisor_lock_pid(&paths.lock_path)
+        .ok_or_else(|| anyhow!("Supervisor lock is held but contains no pid"))?;
+    #[cfg(unix)]
+    {
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while process_is_live(pid) && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        if process_is_live(pid) {
+            unsafe { libc::kill(pid as libc::pid_t, libc::SIGKILL) };
+        }
+    }
+    #[cfg(not(unix))]
+    return Err(anyhow!("--force is not supported on this platform"));
+    #[cfg(unix)]
+    Ok(json!({"ok": true, "stopped": true, "pid": pid}))
 }
 
 async fn spawn_supervisor(config: &SupervisorConfig) -> Result<()> {
@@ -7372,7 +7496,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_bridge_retry_timeout_clears_reconnected_bridge() {
+    async fn first_native_bridge_retry_ping_timeout_keeps_reconnected_bridge() {
         let state = Arc::new(SupervisorState::new(test_config()));
         let (retired_tx, retired_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         drop(retired_rx);
@@ -7405,11 +7529,11 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Native-host extension bridge timeout after 10ms"));
-        assert!(state.native_bridges.lock().await.is_empty());
+        assert!(state.native_bridges.lock().await.contains_key("new-bridge"));
     }
 
     #[tokio::test]
-    async fn native_bridge_timeout_requests_native_host_shutdown() {
+    async fn native_bridge_step_timeout_keeps_native_host_connected() {
         let state = Arc::new(SupervisorState::new(test_config()));
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
         state
@@ -7436,21 +7560,6 @@ mod tests {
             Some("native_host.extension_call")
         );
 
-        let shutdown = timeout(Duration::from_millis(250), rx.recv())
-            .await
-            .expect("shutdown frame should be sent after timeout")
-            .expect("shutdown frame");
-        let shutdown: Value = serde_json::from_slice(&shutdown).expect("shutdown json");
-        assert_eq!(
-            shutdown.get("method").and_then(Value::as_str),
-            Some(NATIVE_HOST_SHUTDOWN_METHOD)
-        );
-        assert!(shutdown
-            .pointer("/params/reason")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .contains("execute_step"));
-
         let err = call
             .await
             .expect("call task completes")
@@ -7458,7 +7567,12 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Native-host extension bridge timeout after 10ms"));
-        assert!(state.native_bridges.lock().await.is_empty());
+        assert!(timeout(Duration::from_millis(50), rx.recv()).await.is_err());
+        assert!(state
+            .native_bridges
+            .lock()
+            .await
+            .contains_key("zombie-bridge"));
         let health_by_bridge = state.native_bridge_health.lock().await;
         assert_eq!(
             health_by_bridge
@@ -7471,7 +7585,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_host_extension_timeout_error_requests_shutdown() {
+    async fn native_host_extension_timeout_error_keeps_bridge() {
         let state = Arc::new(SupervisorState::new(test_config()));
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
         state
@@ -7510,16 +7624,6 @@ mod tests {
             complete_bridge_response_for_test(&state, "native-timeout-bridge", &response).await
         );
 
-        let shutdown = timeout(Duration::from_millis(250), rx.recv())
-            .await
-            .expect("shutdown frame should be sent after native-host timeout error")
-            .expect("shutdown frame");
-        let shutdown: Value = serde_json::from_slice(&shutdown).expect("shutdown json");
-        assert_eq!(
-            shutdown.get("method").and_then(Value::as_str),
-            Some(NATIVE_HOST_SHUTDOWN_METHOD)
-        );
-
         let err = call
             .await
             .expect("call task completes")
@@ -7527,7 +7631,12 @@ mod tests {
         assert!(err
             .to_string()
             .contains("Native-host extension bridge error"));
-        assert!(state.native_bridges.lock().await.is_empty());
+        assert!(timeout(Duration::from_millis(50), rx.recv()).await.is_err());
+        assert!(state
+            .native_bridges
+            .lock()
+            .await
+            .contains_key("native-timeout-bridge"));
         let health_by_bridge = state.native_bridge_health.lock().await;
         assert_eq!(
             health_by_bridge
@@ -10547,7 +10656,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn native_bridge_command_jsonrpc_error_does_not_restart_bridge() {
+    async fn native_bridge_step_timeout_does_not_restart_bridge() {
         let state = Arc::new(SupervisorState::new(test_config()));
         let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
         state
@@ -10587,9 +10696,8 @@ mod tests {
                     "jsonrpc": "2.0",
                     "id": request_id,
                     "error": {
-                        "code": -32602,
-                        "message": "selector not found",
-                        "data": { "error_code": "SELECTOR_NOT_FOUND" }
+                        "code": -32003,
+                        "message": "Extension timeout after 1000ms"
                     }
                 })
             )
@@ -10600,7 +10708,7 @@ mod tests {
             .await
             .expect("task joins")
             .expect_err("command error propagates");
-        assert!(error.to_string().contains("selector not found"));
+        assert!(error.to_string().contains("Extension timeout"));
         assert!(timeout(Duration::from_millis(50), rx.recv()).await.is_err());
         assert!(state
             .native_bridges
@@ -11026,7 +11134,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn readiness_probe_timeout_clears_cached_bridge_and_status() {
+    async fn readiness_probe_restarts_bridge_after_two_timeouts() {
         let state = SupervisorState::new(test_config());
         let (stale_tx, _stale_rx) = mpsc::unbounded_channel::<Vec<u8>>();
         state
@@ -11060,11 +11168,19 @@ mod tests {
             readiness.pointer("/native_host_bridge/health/last_failure_cause"),
             Some(&json!(READINESS_CAUSE_ZOMBIE_NATIVE_HOST))
         );
-        assert!(readiness
-            .pointer("/native_host_bridge/health/last_restart_reason")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .contains("extension call 'ping' timed out"));
+        assert!(state
+            .native_bridges
+            .lock()
+            .await
+            .contains_key("stale-bridge"));
+
+        let _ = state
+            .ensure_ready(json!({
+                "bridge_wait_ms": 0,
+                "bridge_probe_timeout_ms": 10
+            }))
+            .await
+            .expect("second readiness probe returns structured failure");
         assert!(state.native_bridges.lock().await.is_empty());
 
         let status = state.runtime_status().await;
@@ -11226,7 +11342,11 @@ mod tests {
             .and_then(Value::as_str)
             .unwrap_or("")
             .contains("Native-host extension bridge timeout"));
-        assert!(state.native_bridges.lock().await.is_empty());
+        assert!(state
+            .native_bridges
+            .lock()
+            .await
+            .contains_key("one-shot-bridge"));
     }
 
     #[test]

@@ -278,7 +278,7 @@ enum SupervisorCommands {
     EnsureReady(SupervisorCommonArgs),
 
     /// Ask a running supervisor to shut down
-    Shutdown(SupervisorCommonArgs),
+    Shutdown(SupervisorShutdownArgs),
 
     /// Call a supervisor method with JSON params
     Call(SupervisorCallArgs),
@@ -335,6 +335,16 @@ struct SupervisorCommonArgs {
     /// Emit machine-readable JSON
     #[arg(long)]
     json: bool,
+}
+
+#[derive(Args, Debug, Clone)]
+struct SupervisorShutdownArgs {
+    #[command(flatten)]
+    common: SupervisorCommonArgs,
+
+    /// Terminate an unresponsive supervisor using the locked pid file
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Args, Debug, Clone)]
@@ -2416,13 +2426,19 @@ async fn handle_supervisor_commands(cmd: SupervisorCommands) -> anyhow::Result<(
             }
         }
         SupervisorCommands::Shutdown(args) => {
+            if args.force {
+                let result =
+                    supervisor::force_shutdown(supervisor_config_from_common(&args.common)).await?;
+                render_supervisor_json_result(&result, args.common.json)?;
+                return Ok(());
+            }
             let result = supervisor::call(
-                supervisor_config_from_common(&args),
+                supervisor_config_from_common(&args.common),
                 "runtime.shutdown",
                 json!({}),
             )
             .await?;
-            render_supervisor_json_result(&result, args.json)?;
+            render_supervisor_json_result(&result, args.common.json)?;
         }
         SupervisorCommands::Call(args) => {
             let mut params: Value = serde_json::from_str(&args.params)

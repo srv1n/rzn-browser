@@ -75,6 +75,10 @@ impl std::error::Error for TransportError {}
 /// the CLI never wrapped in an outer timeout).
 #[async_trait::async_trait]
 pub trait StepTransport: Send + Sync {
+    fn cancelled(&self) -> bool {
+        false
+    }
+
     async fn call(
         &self,
         method: &str,
@@ -283,7 +287,16 @@ pub(crate) async fn run_workflow(
             let rpc_timeout_ms = timeout_ms.saturating_add(rpc_grace_ms).max(timeout_ms);
 
             if should_handle_step_locally(&step_type) {
-                tokio::time::sleep(Duration::from_millis(timeout_ms)).await;
+                let deadline = tokio::time::Instant::now() + Duration::from_millis(timeout_ms);
+                while tokio::time::Instant::now() < deadline {
+                    if transport.cancelled() {
+                        return Err(anyhow!("run cancelled during {}", step_type));
+                    }
+                    tokio::time::sleep(Duration::from_millis(50).min(
+                        deadline.saturating_duration_since(tokio::time::Instant::now()),
+                    ))
+                    .await;
+                }
                 let response = json!({ "ok": true, "success": true, "waited_ms": timeout_ms });
                 sink.on_step_response(step_id, &step_type, &response);
                 continue;

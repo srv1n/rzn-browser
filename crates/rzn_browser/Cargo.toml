@@ -27,7 +27,7 @@ log = "0.4"
 env_logger = "0.10"
 uuid = "1.11"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["fmt", "std"] }
+tracing-subscriber = { version = "0.3", features = ["fmt", "std", "tracing-log"] }
 dirs = "5.0"
 dotenvy = "0.15"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }

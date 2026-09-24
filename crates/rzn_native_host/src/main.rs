@@ -1303,12 +1303,12 @@ async fn run_upstream_connection(
         });
     }
 
-    drop(upstream_tx);
-    let _ = writer_task.await;
     active_bridges.lock().await.remove(&key);
     if let Some(reason) = shutdown_reason {
         let _ = shutdown_tx.send(reason);
     }
+    drop(upstream_tx);
+    writer_task.abort();
 }
 
 async fn endpoint_manager_loop(
@@ -1530,8 +1530,15 @@ async fn main() -> Result<()> {
             if control_cmd == "supervisor_rpc" || cloud_supervisor_method(&control_cmd).is_some() {
                 let native_tx_control = native_tx_native.clone();
                 let request = v.clone();
-                let control_socket = socket_arg_for_control.clone();
-                let control_token = token_arg_for_control.clone();
+                let active_endpoint = active_bridges_native.lock().await.iter().next().cloned();
+                let control_socket = active_endpoint
+                    .as_ref()
+                    .map(|endpoint| endpoint.socket_path.to_string_lossy().to_string())
+                    .or_else(|| socket_arg_for_control.clone());
+                let control_token = active_endpoint
+                    .as_ref()
+                    .map(|endpoint| endpoint.token_path.to_string_lossy().to_string())
+                    .or_else(|| token_arg_for_control.clone());
                 tokio::spawn(async move {
                     let response = forward_supervisor_cloud_control_command(
                         &request,
