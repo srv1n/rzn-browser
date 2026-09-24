@@ -449,6 +449,7 @@ interface DOMSnapshot {
 type ObserveCacheEntry = { ts: number; dom_hash: string; candidates: any[] };
 const observeCache = new Map<string, ObserveCacheEntry>();
 const OBSERVE_TTL_MS = 120_000;
+const OBSERVE_CACHE_MAX_ENTRIES = 128;
 
 function simpleHash(str: string): string {
   let h = 0;
@@ -686,7 +687,7 @@ let lastNativeHostPid: number | null = null;
 const WATCHDOG_STALE_RESPONSE_TTL_MS = 120_000;
 const brokerWatchdogTimedOutLeaseIds = new Set<string>();
 const brokerWatchdogTimedOutRequestIds = new Set<string>();
-const CONTROL_PLANE_BROKER_COMMANDS = new Set(['ping']);
+const CONTROL_PLANE_BROKER_COMMANDS = new Set(['ping', 'RZN_CANCEL_REQUEST']);
 type BrokerRequestLease = {
   leaseId: string;
   requestId: string;
@@ -4146,6 +4147,19 @@ async function handleBrokerMessage(
   sessionId?: string,
   brokerLease: BrokerRequestLease | null = null
 ): Promise<void> {
+  if (message.cmd === 'RZN_CANCEL_REQUEST') {
+    const requestId = String(message.payload?.request_id || '');
+    const leases = activeBrokerLeasesForRequestId(requestId);
+    for (const lease of leases) {
+      cancelBrokerRequestLease(lease, String(message.payload?.reason || 'run cancelled'));
+    }
+    sendResponseToBrokerRaw({
+      req_id: brokerRequestId(message),
+      success: true,
+      result: { cancelled: leases.length, request_id: requestId },
+    });
+    return;
+  }
   assertBrokerLeaseCurrent(brokerLease, 'handleBrokerMessage start');
   await loadWorkflowSessionsFromStorage();
   assertBrokerLeaseCurrent(brokerLease, 'after workflow session load');
@@ -5724,6 +5738,12 @@ async function handleBrokerMessage(
       }
 
       if (response?.success && response?.result?.candidates) {
+        for (const [key, cached] of observeCache) {
+          if ((now - cached.ts) >= OBSERVE_TTL_MS) observeCache.delete(key);
+        }
+        while (observeCache.size >= OBSERVE_CACHE_MAX_ENTRIES) {
+          observeCache.delete(observeCache.keys().next().value!);
+        }
         observeCache.set(cacheKey, { ts: now, dom_hash, candidates: response.result.candidates });
       }
 
@@ -7857,8 +7877,13 @@ const nativeInputCallbacks: Map<string, {
 }> = new Map();
 
 async function fetchCloudJson<T>(input: string, init?: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+  if (init?.signal) init.signal.addEventListener('abort', () => controller.abort(), { once: true });
+  try {
   const response = await fetch(input, {
     ...init,
+    signal: controller.signal,
     headers: {
       'content-type': 'application/json',
       ...(init?.headers || {}),
@@ -7869,6 +7894,9 @@ async function fetchCloudJson<T>(input: string, init?: RequestInit): Promise<T> 
     throw new Error((json as any)?.error || `Cloud request failed (${response.status})`);
   }
   return json as T;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 async function getCloudActorStatus(): Promise<CloudActorStatus | null> {
@@ -8106,6 +8134,10 @@ if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
 
   if (message && message.type === 'RZN_WAKE_NATIVE') {
     try {
+      if (message.resetTerminal === true) {
+        nativeReconnectTerminal = false;
+        reconnectAttempts = 0;
+      }
       if (!nativePort) {
         scheduleReconnect();
       }
