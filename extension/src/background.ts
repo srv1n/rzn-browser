@@ -107,12 +107,16 @@ async function removePersistedCdpLease(tabId: TabId): Promise<void> {
 
 function ensureCdpLeaseSweepAlarm(): void {
   try {
-    if (!chrome.alarms?.create) {
+    if (!chrome.alarms?.create || !chrome.alarms?.get) {
       console.warn('[CDPLease] chrome.alarms unavailable; CDP lease expiry may not survive service worker suspension');
       return;
     }
-    chrome.alarms.create(CDP_LEASE_SWEEP_ALARM_NAME, {
-      periodInMinutes: CDP_LEASE_SWEEP_PERIOD_MINUTES,
+    void chrome.alarms.get(CDP_LEASE_SWEEP_ALARM_NAME).then((alarm) => {
+      if (!alarm) {
+        chrome.alarms.create(CDP_LEASE_SWEEP_ALARM_NAME, {
+          periodInMinutes: CDP_LEASE_SWEEP_PERIOD_MINUTES,
+        });
+      }
     });
   } catch (error) {
     console.warn('[CDPLease] Failed to schedule lease sweep alarm:', error);
@@ -590,7 +594,7 @@ function maybeResolveNativeControlCallback(message: BrokerMessage): boolean {
 
 async function ensureNativeHostConnected(timeoutMs = 1500): Promise<void> {
   if (nativePort) return;
-  connectToNative();
+  scheduleReconnect();
   const deadline = Date.now() + timeoutMs;
   while (!nativePort && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -649,6 +653,7 @@ async function callNativeHostControl(
 let reconnectTimer: number | null = null;
 let reconnectAttempts = 0;
 let nativeConnectInFlight = false;
+let nativeReconnectTerminal = false;
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
 const RECONNECT_ALARM_NAME = 'rzn_native_reconnect';
@@ -733,6 +738,7 @@ function startHeartbeat() {
         lastNativeRoundtripPingMs = Date.now();
         missedNativeHeartbeats = 0;
         reconnectAttempts = 0;
+        nativeReconnectTerminal = false;
       } catch (e) {
         const stdoutFresh =
           lastNativeHostStdoutHeartbeatMs !== null &&
@@ -789,12 +795,16 @@ function ensureNativeKeepaliveAlarm() {
   // A lightweight periodic alarm gives the extension a chance to wake up and reconnect the
   // native host before the next native-run attaches.
   try {
-    if (!chrome.alarms?.create) {
+    if (!chrome.alarms?.create || !chrome.alarms?.get) {
       console.warn('[NativeKeepalive] chrome.alarms unavailable; add the alarms permission to enable SW wakeups');
       return;
     }
-    chrome.alarms.create(NATIVE_KEEPALIVE_ALARM_NAME, {
-      periodInMinutes: NATIVE_KEEPALIVE_PERIOD_MINUTES,
+    void chrome.alarms.get(NATIVE_KEEPALIVE_ALARM_NAME).then((alarm) => {
+      if (!alarm) {
+        chrome.alarms.create(NATIVE_KEEPALIVE_ALARM_NAME, {
+          periodInMinutes: NATIVE_KEEPALIVE_PERIOD_MINUTES,
+        });
+      }
     });
   } catch (e) {
     console.warn('[NativeKeepalive] Failed to schedule keepalive alarm:', e);
@@ -812,6 +822,7 @@ function ensureAutomationBadgeAlarm() {
 }
 
 function scheduleReconnect() {
+  if (nativeReconnectTerminal) return;
   // Avoid duplicate timers
   if (reconnectTimer !== null) return;
   // Compute exponential backoff with cap
@@ -866,7 +877,6 @@ function isNativeHostStdoutHeartbeat(message: BrokerMessage): boolean {
 }
 
 function handleNativeHostStdoutHeartbeat(message: BrokerMessage): void {
-  reconnectAttempts = 0;
   lastNativeHostStdoutHeartbeatMs = Date.now();
   lastNativeHostStdoutHeartbeatSeq =
     typeof message.payload?.seq === 'number' ? message.payload.seq : lastNativeHostStdoutHeartbeatSeq;
@@ -2375,7 +2385,14 @@ async function ensureContentReady(tabId: number, injectPath = 'contentScript.js'
   // 3) Fallback: inject content script
   try {
     await chrome.scripting.executeScript({ target: { tabId }, files: [injectPath] });
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['pageBridge.js'], world: 'MAIN' });
+    const [bridge] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => (window as any).__rznPageBridgeInstalled === true,
+    });
+    if (bridge?.result !== true) {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['pageBridge.js'], world: 'MAIN' });
+    }
   } catch (e) {
     console.warn('[ensureContentReady] executeScript returned:', e);
   }
@@ -3618,9 +3635,10 @@ async function captureScreenshotForTab(
     ? opts.selector.trim()
     : undefined;
   if (selector || opts?.fullPage === true) {
-    const sessionId = `screenshot-${tabId}-${Date.now()}`;
-    const handle = await cdpSessionManager.acquire(sessionId, tabId);
-    try {
+    return await withCdpLock(tabId, async () => {
+      const sessionId = `screenshot-${tabId}-${Date.now()}`;
+      const handle = await cdpSessionManager.acquire(sessionId, tabId);
+      try {
       let clip: { x: number; y: number; width: number; height: number; scale: number } | undefined;
       if (selector) {
         const expression = `(() => {
@@ -3657,9 +3675,10 @@ async function captureScreenshotForTab(
       });
       if (!result?.data) throw new Error('Chrome returned an empty screenshot');
       return `data:image/${format};base64,${result.data}`;
-    } finally {
-      await cdpSessionManager.releaseSession(sessionId);
-    }
+      } finally {
+        await cdpSessionManager.releaseSession(sessionId);
+      }
+    });
   }
 
   const tab = await chrome.tabs.get(tabId);
@@ -4024,6 +4043,7 @@ function connectToNative(): void {
           return;
         }
         if (err && (err.toLowerCase().includes('host not found') || err.toLowerCase().includes('forbidden'))) {
+          nativeReconnectTerminal = true;
           logError('Native host unavailable; run `rzn-browser native-host doctor`', { error: err });
           return;
         }
@@ -6411,7 +6431,7 @@ if (chrome.alarms?.onAlarm?.addListener) {
     if (alarm?.name === NATIVE_KEEPALIVE_ALARM_NAME) {
       if (nativePort) return;
       console.log('[NativeKeepalive] Alarm fired; native port missing, attempting reconnect');
-      connectToNative();
+      scheduleReconnect();
       return;
     }
 
@@ -6451,7 +6471,7 @@ if (chrome.runtime?.onConnect?.addListener) {
           tabId: senderTabId,
           frameId: senderFrameId,
         });
-        connectToNative();
+        scheduleReconnect();
       }
 
       const now = Date.now();
@@ -8087,7 +8107,7 @@ if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
   if (message && message.type === 'RZN_WAKE_NATIVE') {
     try {
       if (!nativePort) {
-        connectToNative();
+        scheduleReconnect();
       }
       sendResponse({
         ok: true,
