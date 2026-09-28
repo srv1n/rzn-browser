@@ -332,6 +332,7 @@ mod tests {
             .is_ok());
     }
 
+    #[cfg(unix)]
     #[test]
     fn slot_claimed_by_exited_client_is_reclaimed() {
         let control = SupervisorControl::open(&temp());

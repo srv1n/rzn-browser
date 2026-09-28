@@ -5443,6 +5443,7 @@ fn acquire_supervisor_process_lock(paths: &SupervisorPaths) -> Result<Supervisor
         use std::os::fd::AsRawFd;
         let mut file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&paths.lock_path)?;
@@ -5466,7 +5467,7 @@ fn acquire_supervisor_process_lock(paths: &SupervisorPaths) -> Result<Supervisor
         file.write_all(serde_json::to_string(&payload)?.as_bytes())?;
         file.write_all(b"\n")?;
         let _ = file.sync_all();
-        return Ok(SupervisorProcessLock { file });
+        Ok(SupervisorProcessLock { file })
     }
 
     #[cfg(not(unix))]
@@ -7673,6 +7674,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(app_base);
     }
 
+    #[cfg(unix)]
     #[test]
     fn supervisor_process_lock_replaces_stale_pid_lock() {
         let app_base =
@@ -7691,6 +7693,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(app_base);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn cached_token_repair_allows_normal_client_after_file_deletion() {
         let app_base = PathBuf::from(format!("/tmp/rzt-{}", &Uuid::new_v4().to_string()[..8]));
@@ -7741,6 +7744,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(app_base);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn partial_next_frame_survives_slow_dispatch() {
         let app_base = PathBuf::from(format!("/tmp/rzf-{}", &Uuid::new_v4().to_string()[..8]));
@@ -7798,6 +7802,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(app_base);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn queued_frame_does_not_hide_client_disconnect() {
         let app_base = PathBuf::from(format!("/tmp/rze-{}", &Uuid::new_v4().to_string()[..8]));

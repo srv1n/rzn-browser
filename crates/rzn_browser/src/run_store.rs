@@ -292,6 +292,7 @@ impl IndexFileGuard {
     fn lock(root: &Path) -> Result<Self> {
         let file = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(root.join("index.lock"))?;
