@@ -7090,14 +7090,7 @@ fn download_catalog_source(url: &str) -> anyhow::Result<PathBuf> {
         .map_err(|e| anyhow::anyhow!("create temp dir {}: {}", temp_root.display(), e))?;
 
     let archive_path = temp_root.join("catalog.tar.gz");
-    run_checked_command(
-        "curl",
-        Command::new("curl")
-            .arg("-fsSL")
-            .arg(url)
-            .arg("-o")
-            .arg(&archive_path),
-    )?;
+    download_catalog_archive(url, &archive_path, std::time::Duration::from_secs(120))?;
 
     let extract_dir = temp_root.join("extract");
     fs::create_dir_all(&extract_dir)
@@ -7113,6 +7106,28 @@ fn download_catalog_source(url: &str) -> anyhow::Result<PathBuf> {
     )?;
 
     Ok(extract_dir)
+}
+
+fn download_catalog_archive(
+    url: &str,
+    archive_path: &Path,
+    deadline: std::time::Duration,
+) -> anyhow::Result<()> {
+    run_checked_command(
+        "catalog download",
+        Command::new("curl")
+            // Ignore user curlrc retries so the deadline bounds the entire download.
+            .arg("-q")
+            .arg("-fsSL")
+            .arg("--connect-timeout")
+            .arg("10")
+            .arg("--max-time")
+            .arg(deadline.as_secs_f64().to_string())
+            .arg("--url")
+            .arg(url)
+            .arg("--output")
+            .arg(archive_path),
+    )
 }
 
 fn run_checked_command(label: &str, command: &mut Command) -> anyhow::Result<()> {
@@ -7636,6 +7651,55 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("{}_{}", prefix, uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         dir
+    }
+
+    #[test]
+    fn catalog_download_times_out_when_server_stops_responding() {
+        use std::io::Read;
+        use std::net::TcpListener;
+        use std::time::{Duration, Instant};
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture");
+        let url = format!("http://{}/catalog.tar.gz", listener.local_addr().unwrap());
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(3);
+            while Instant::now() < deadline {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(2)))
+                            .unwrap();
+                        let mut buf = [0; 1024];
+                        while matches!(stream.read(&mut buf), Ok(n) if n > 0) {}
+                        return;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("accept fixture: {error}"),
+                }
+            }
+            panic!("curl never connected to fixture");
+        });
+        let dir = temp_dir("catalog-timeout");
+        let started = Instant::now();
+        let result = download_catalog_archive(
+            &url,
+            &dir.join("catalog.tar.gz"),
+            Duration::from_millis(150),
+        );
+        let elapsed = started.elapsed();
+        server.join().expect("fixture stopped");
+        fs::remove_dir_all(&dir).expect("remove fixture");
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("catalog download failed"));
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "download exceeded deadline: {elapsed:?}"
+        );
     }
 
     #[test]

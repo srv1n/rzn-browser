@@ -13,8 +13,10 @@ use rzn_contracts::workflow::{
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
+use std::future::pending;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 // ---------------------------------------------------------------------------
@@ -562,6 +564,152 @@ fn test_opts(snapshot_mode: SnapshotMode) -> RunOptions {
         snapshot_mode,
         workflow_path: "test-workflow.json".to_string(),
     }
+}
+
+struct HangingStepTransport {
+    cancelled: Arc<AtomicBool>,
+    methods: Mutex<Vec<String>>,
+    hang_close: bool,
+}
+
+#[async_trait::async_trait]
+impl StepTransport for HangingStepTransport {
+    fn cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
+    async fn call(
+        &self,
+        method: &str,
+        _params: Value,
+        _timeout_ms: u64,
+    ) -> Result<Value, TransportError> {
+        self.methods.lock().unwrap().push(method.to_string());
+        match method {
+            "browser.session_open" => Ok(json!({"session_id": "test-session"})),
+            "browser.execute_step" => pending().await,
+            "browser.session_close" if self.hang_close => pending().await,
+            "browser.session_close" => Ok(json!({"ok": true})),
+            _ => panic!("unexpected call: {method}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn run_deadline_closes_session_after_inflight_step_hangs() {
+    let transport = HangingStepTransport {
+        cancelled: Arc::new(AtomicBool::new(false)),
+        methods: Mutex::new(Vec::new()),
+        hang_close: false,
+    };
+    let mut opts = test_opts(SnapshotMode::None);
+    opts.deadline = Some(Duration::from_millis(20));
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        execute_workflow(
+            &transport,
+            &RecordingSink::default(),
+            single_manifest_step("step", false),
+            opts,
+        ),
+    )
+    .await
+    .expect("deadline must stop hung step");
+
+    assert_eq!(result.status, RunStatus::TimedOut);
+    assert_eq!(
+        result.error.as_ref().unwrap().code,
+        "execution_deadline_exceeded"
+    );
+    assert_eq!(
+        transport
+            .methods
+            .lock()
+            .unwrap()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "browser.session_open",
+            "browser.execute_step",
+            "browser.session_close"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn cancellation_stops_inflight_step_and_closes_session() {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let transport = HangingStepTransport {
+        cancelled: cancelled.clone(),
+        methods: Mutex::new(Vec::new()),
+        hang_close: false,
+    };
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        cancelled.store(true, Ordering::SeqCst);
+    });
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(1),
+        execute_workflow(
+            &transport,
+            &RecordingSink::default(),
+            single_manifest_step("step", false),
+            test_opts(SnapshotMode::None),
+        ),
+    )
+    .await
+    .expect("cancellation must stop hung step");
+
+    assert_eq!(result.status, RunStatus::Cancelled);
+    assert_eq!(result.error.as_ref().unwrap().code, "run_cancelled");
+    assert_eq!(
+        transport
+            .methods
+            .lock()
+            .unwrap()
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "browser.session_open",
+            "browser.execute_step",
+            "browser.session_close"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn deadline_does_not_leave_hung_session_close_running_forever() {
+    let transport = HangingStepTransport {
+        cancelled: Arc::new(AtomicBool::new(false)),
+        methods: Mutex::new(Vec::new()),
+        hang_close: true,
+    };
+    let mut opts = test_opts(SnapshotMode::None);
+    opts.deadline = Some(Duration::from_millis(20));
+
+    let result = tokio::time::timeout(
+        Duration::from_secs(6),
+        execute_workflow(
+            &transport,
+            &RecordingSink::default(),
+            single_manifest_step("step", false),
+            opts,
+        ),
+    )
+    .await
+    .expect("session close must be bounded");
+
+    assert_eq!(result.status, RunStatus::TimedOut);
+    assert!(transport
+        .methods
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|method| method == "browser.session_close"));
 }
 
 #[tokio::test]

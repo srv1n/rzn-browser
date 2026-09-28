@@ -20,7 +20,7 @@ export class TypeTextAction {
   async execute(
     tabId: number,
     text: string,
-    options: { manageDebuggerLifecycle?: boolean } = {}
+    options: { manageDebuggerLifecycle?: boolean; assertActive?: () => void } = {}
   ): Promise<void> {
     console.log(`[TypeTextAction] Typing text via CDP (length=${text.length})`);
     const manageDebuggerLifecycle = options.manageDebuggerLifecycle !== false;
@@ -31,6 +31,7 @@ export class TypeTextAction {
       }
 
       for (const ch of text) {
+        options.assertActive?.();
         const mapping = this.mapChar(ch);
         if (mapping.text) {
           await chrome.debugger.sendCommand({ tabId }, 'Input.insertText', {
@@ -67,6 +68,7 @@ export class TypeTextAction {
         });
         await new Promise(resolve => setTimeout(resolve, 20));
       }
+      options.assertActive?.();
     } catch (error) {
       console.error('[TypeTextAction] Failed to type text:', error);
       throw error;
@@ -152,7 +154,7 @@ export async function handleTypeText(step: any): Promise<any> {
   }
 
   const startedAt = Date.now();
-  await typeTextAction.execute(targetTabId, text, { manageDebuggerLifecycle });
+  await typeTextAction.execute(targetTabId, text, { manageDebuggerLifecycle, assertActive: step.assertActive });
 
   const result = {
     inserted: true,

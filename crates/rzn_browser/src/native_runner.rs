@@ -23,6 +23,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::Duration;
@@ -79,7 +80,13 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
     let transport = CliStepTransport {
         config: supervisor_config.clone(),
         session_id: Arc::new(Mutex::new(None)),
+        cancelled: Arc::new(AtomicBool::new(false)),
     };
+    let cancel_watch = tokio::spawn(watch_run_cancellation(
+        supervisor_config.clone(),
+        run_id.clone(),
+        transport.cancelled.clone(),
+    ));
     let sink = CliEventSink;
     let opts = RunOptions {
         run_id: run_id.clone(),
@@ -90,6 +97,7 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
             browser_target: config.browser_target.clone(),
             tab_ref: config.tab_ref.clone(),
             retain_tab_on_close: config.keep_tab_open,
+            origin: Some("cli".to_string()),
             ..SessionSpec::default()
         },
         snapshot_mode: config.snapshot_mode,
@@ -102,21 +110,39 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
     let outcome = tokio::select! {
         outcome = &mut run => outcome,
         _ = tokio::signal::ctrl_c() => {
-            let _ = supervisor::call(supervisor_config.clone(), "browser.cancel_pending", json!({})).await;
-            if let Some(session_id) = transport.session_id.lock().unwrap().clone() {
-                let _ = supervisor::call(
+            transport.cancelled.store(true, Ordering::SeqCst);
+            let _ = tokio::time::timeout(
+                Duration::from_secs(2),
+                supervisor::call(
                     supervisor_config.clone(),
-                    "browser.session_close",
-                    json!({"session_id": session_id}),
-                ).await;
+                    "runs.cancel",
+                    json!({"run_id": run_id}),
+                ),
+            ).await;
+            if tokio::time::timeout(Duration::from_secs(6), &mut run).await.is_err() {
+                let session_id = transport.session_id.lock().unwrap().clone();
+                if let Some(session_id) = session_id {
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        supervisor::call(
+                            supervisor_config.clone(),
+                            "browser.session_close",
+                            json!({"session_id": session_id}),
+                        ),
+                    ).await;
+                }
             }
             Err(anyhow!("workflow cancelled by Ctrl-C"))
         }
     };
-    let _ = supervisor::call(
-        supervisor_config.clone(),
-        "runs.release",
-        json!({"run_id": run_id}),
+    cancel_watch.abort();
+    let _ = tokio::time::timeout(
+        Duration::from_secs(2),
+        supervisor::call(
+            supervisor_config.clone(),
+            "runs.release",
+            json!({"run_id": run_id}),
+        ),
     )
     .await;
     let mut result = match &outcome {
@@ -133,7 +159,11 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
             None,
         ),
         Err(e) => crate::workflow_runner::run_result_shell(
-            RunStatus::Failed,
+            if transport.cancelled() {
+                RunStatus::Cancelled
+            } else {
+                RunStatus::Failed
+            },
             None,
             &opts.run_id,
             &workflow_id,
@@ -141,19 +171,27 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
                 code: e
                     .downcast_ref::<WorkflowRunFailure>()
                     .and_then(|failure| failure.error_code.clone())
-                    .unwrap_or_else(|| "workflow_execution_error".into()),
+                    .unwrap_or_else(|| {
+                        if transport.cancelled() {
+                            "run_cancelled".into()
+                        } else {
+                            "workflow_execution_error".into()
+                        }
+                    }),
                 message: e.to_string(),
                 step_id: None,
                 retry_hint: None,
             }),
         ),
     };
-    if let Err(error) = &outcome {
-        crate::workflow_runner::enrich_failure_result(
-            &mut result,
-            error,
-            &workflow_hash(&config.workflow_path).unwrap_or_default(),
-        );
+    if result.status == RunStatus::Failed {
+        if let Err(error) = &outcome {
+            crate::workflow_runner::enrich_failure_result(
+                &mut result,
+                error,
+                &workflow_hash(&config.workflow_path).unwrap_or_default(),
+            );
+        }
     }
     if result.status != RunStatus::Succeeded && result.failure_summary.is_none() {
         let error = result.error.as_ref();
@@ -196,19 +234,49 @@ fn epoch_ms() -> i64 {
         .as_millis() as i64
 }
 
+async fn watch_run_cancellation(
+    config: supervisor::SupervisorConfig,
+    run_id: String,
+    cancelled: Arc<AtomicBool>,
+) {
+    loop {
+        if let Ok(Ok(response)) = tokio::time::timeout(
+            Duration::from_secs(2),
+            supervisor::call(
+                config.clone(),
+                "runs.cancel_status",
+                json!({"run_id": run_id}),
+            ),
+        )
+        .await
+        {
+            if response.get("cancel_requested").and_then(Value::as_bool) == Some(true) {
+                cancelled.store(true, Ordering::SeqCst);
+                return;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 /// [`StepTransport`] over the existing local-socket JSON-RPC client.
 ///
 /// `timeout_ms == 0` means "no client-side watchdog, await the call directly" —
-/// exactly how the CLI has always issued session open/close and snapshot calls.
+/// how the CLI issues session open and snapshot calls.
 /// A non-zero `timeout_ms` reproduces the per-step watchdog: the call is bounded
 /// by `tokio::time::timeout`, and elapsing surfaces as [`TransportError::Timeout`].
 struct CliStepTransport {
     config: supervisor::SupervisorConfig,
     session_id: Arc<Mutex<Option<String>>>,
+    cancelled: Arc<AtomicBool>,
 }
 
 #[async_trait]
 impl StepTransport for CliStepTransport {
+    fn cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::SeqCst)
+    }
+
     async fn call(
         &self,
         method: &str,

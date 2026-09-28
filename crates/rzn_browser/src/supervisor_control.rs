@@ -69,9 +69,12 @@ impl SupervisorControl {
         self.paused.load(Ordering::SeqCst)
     }
     pub fn pause(&self, cancel: bool) -> Result<Value> {
-        self.paused.store(true, Ordering::SeqCst);
-        if cancel {
-            self.cancel.store(true, Ordering::SeqCst)
+        {
+            let running = self.running.lock().unwrap();
+            self.paused.store(true, Ordering::SeqCst);
+            if cancel && running.is_some() {
+                self.cancel.store(true, Ordering::SeqCst);
+            }
         }
         self.persist()?;
         Ok(json!({"ok":true,"paused":true,"cancel_current":cancel}))
@@ -94,6 +97,13 @@ impl SupervisorControl {
     }
     pub fn cancel_requested(&self) -> bool {
         self.cancel.load(Ordering::SeqCst)
+    }
+    pub fn cancel_requested_for(&self, run_id: &str) -> bool {
+        self.running
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|run| run.run_id == run_id && self.cancel_requested())
     }
     pub fn try_begin_run(
         &self,
@@ -366,6 +376,20 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_status_is_scoped_to_current_run() {
+        let control = SupervisorControl::open(&temp());
+        control
+            .try_begin_run("run-1".into(), "wf".into(), "cli".into(), 1)
+            .unwrap();
+        assert!(!control.cancel_requested_for("run-1"));
+        assert_eq!(control.cancel(Some("run-1"))["ok"], true);
+        assert!(control.cancel_requested_for("run-1"));
+        assert!(!control.cancel_requested_for("run-2"));
+        control.end_run_if(Some("run-1"));
+        assert!(!control.cancel_requested_for("run-1"));
+    }
+
+    #[test]
     fn supervisor_control_diagnostics_excludes_token_and_params_members() {
         let base = temp();
         fs::create_dir_all(base.join("runs")).unwrap();
@@ -408,6 +432,12 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("paused"));
+        let error = state
+            .dispatch("runs.claim", json!({"run_id":"claimed-during-pause"}))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("paused"));
+        assert!(state.control.now_running().is_null());
     }
 
     #[tokio::test]

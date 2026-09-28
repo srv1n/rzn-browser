@@ -413,7 +413,7 @@ async function runMainWorldScript(
   return await runViaScriptTag(functionBody, args, params, returnValue, nonce);
 }
 
-async function fillAndSubmitInMainWorld(payload: any): Promise<any> {
+async function fillAndSubmitInMainWorld(payload: any, requestNode: HTMLElement): Promise<any> {
   const selector = String(payload?.selector || '').trim();
   const value = String(payload?.value ?? payload?.text ?? '');
   if (!selector) throw new Error('Missing selector for fill_and_submit');
@@ -421,7 +421,13 @@ async function fillAndSubmitInMainWorld(payload: any): Promise<any> {
 
   const timeoutMs = Math.max(500, Number(payload?.timeout_ms ?? payload?.timeoutMs ?? 10000));
   const waitTimeoutMs = Math.max(0, Number(payload?.wait_timeout_ms ?? payload?.waitTimeoutMs ?? 15000));
-  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  const assertActive = () => {
+    if (!requestNode.isConnected) throw new Error('Page bridge request cancelled');
+  };
+  const sleep = async (ms: number) => {
+    await new Promise(resolve => setTimeout(resolve, ms));
+    assertActive();
+  };
   const normalize = (text: string | null | undefined) =>
     String(text || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
   const isVisible = (element: Element | null) => {
@@ -572,6 +578,7 @@ async function fillAndSubmitInMainWorld(payload: any): Promise<any> {
   const increaseSelector = String(payload?.wait_for_increase_selector || payload?.waitForIncreaseSelector || '').trim();
   const countBefore = increaseSelector ? document.querySelectorAll(increaseSelector).length : null;
 
+  assertActive();
   setText(target, value);
   await sleep(250);
   target = findTarget() || target;
@@ -580,12 +587,14 @@ async function fillAndSubmitInMainWorld(payload: any): Promise<any> {
   const buttonDeadline = Date.now() + timeoutMs;
   let submitButton: HTMLElement | null = null;
   while (Date.now() < buttonDeadline) {
+    assertActive();
     submitButton = findSubmitButton(target);
     if (submitButton) break;
     await sleep(150);
   }
 
   if (submitButton) {
+    assertActive();
     submitButton.scrollIntoView?.({ block: 'center', inline: 'center' });
     submitButton.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, composed: true, view: window }));
     submitButton.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, composed: true, view: window }));
@@ -594,6 +603,7 @@ async function fillAndSubmitInMainWorld(payload: any): Promise<any> {
     return { submitted: true, submit_method: 'button_click', filled: textConfirmed, count_before: countBefore, ...waited };
   }
 
+  assertActive();
   const keyboardSubmitted = pressEnter(target);
   const waited = await waitForIncrease(increaseSelector, countBefore);
   if (waited.increased) {
@@ -686,7 +696,7 @@ function handlePageRequestNode(node: HTMLElement) {
     }
 
     if (type === 'fill_and_submit') {
-      const result = await fillAndSubmitInMainWorld(payload);
+      const result = await fillAndSubmitInMainWorld(payload, node);
       node.setAttribute('data-rzn-resp', JSON.stringify({ success: true, result }));
       return;
     }

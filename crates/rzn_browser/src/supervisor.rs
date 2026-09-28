@@ -17,18 +17,20 @@ use rzn_core::runtime_paths::{
     default_app_base_dir, env_trimmed, infer_current_app_base, supervisor_paths_for_app_base,
     APP_BASE_ENV_KEYS,
 };
-use rzn_core::secure_files::{set_secret_file_permissions, write_secret_file};
+use rzn_core::secure_files::{ensure_private_dir, set_secret_file_permissions, write_secret_file};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Write as _;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio::time::{timeout, Duration};
 use uuid::Uuid;
 
@@ -90,6 +92,7 @@ const READINESS_CAUSE_BROWSER_TARGET_MISMATCH: &str = "browser_target_mismatch";
 const READINESS_CAUSE_TRANSPORT_TIMEOUT: &str = "transport_timeout";
 const READINESS_CAUSE_ZOMBIE_NATIVE_HOST: &str = "zombie_native_host";
 const NATIVE_HOST_SHUTDOWN_METHOD: &str = "native_host.shutdown";
+const NATIVE_BRIDGE_QUEUE_CAPACITY: usize = 64;
 const STRICT_BRIDGE_IDENTITY_ENV: &str = "RZN_SUPERVISOR_STRICT_BRIDGE_IDENTITY";
 
 #[derive(Clone, Debug)]
@@ -167,7 +170,8 @@ pub(crate) struct SupervisorState {
     native_bridge_health: Mutex<HashMap<String, NativeBridgeHealth>>,
     last_registered_bridge_id: Mutex<Option<String>>,
     cloud_actor: Option<SupervisorCloudActor>,
-    sessions: Mutex<HashMap<String, BrowserSessionRecord>>,
+    sessions: Arc<Mutex<HashMap<String, BrowserSessionRecord>>>,
+    mcp_cancelled: Mutex<HashMap<String, Instant>>,
     run_store: RunStore,
     pub(crate) control: SupervisorControl,
     settings: SettingsStore,
@@ -186,14 +190,155 @@ impl Drop for LocalRunGuard {
     }
 }
 
+struct SessionOpenGuard {
+    sessions: Arc<Mutex<HashMap<String, BrowserSessionRecord>>>,
+    session_id: String,
+    bridge: Option<NativeHostBridge>,
+    supervisor_boot_id: String,
+    armed: bool,
+}
+
+impl SessionOpenGuard {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for SessionOpenGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let sessions = self.sessions.clone();
+        let session_id = self.session_id.clone();
+        let bridge = self.bridge.clone();
+        let supervisor_boot_id = self.supervisor_boot_id.clone();
+        tokio::spawn(async move {
+            if let Some(bridge) = bridge {
+                let request = json!({
+                    "jsonrpc":"2.0",
+                    "id":format!("orphan-close-{}", Uuid::new_v4()),
+                    "method":"native_host.extension_call",
+                    "params":{
+                        "cmd":"session_close",
+                        "payload":{"session_id":session_id},
+                        "req_id":format!("orphan-close-{}", Uuid::new_v4()),
+                        "timeout_ms":2_000,
+                        "supervisor_bridge_id":bridge.id,
+                        "supervisor_bridge_epoch":bridge.epoch,
+                        "supervisor_boot_id":supervisor_boot_id
+                    }
+                });
+                if let Ok(bytes) = serde_json::to_vec(&request) {
+                    if let Err(error) = bridge.tx.send_wait(bytes, Duration::from_secs(2)).await {
+                        log::warn!(
+                            "orphan session close could not be queued for {session_id}: {error:#}"
+                        );
+                        return;
+                    }
+                }
+            }
+            sessions.lock().await.remove(&session_id);
+        });
+    }
+}
+
 #[allow(dead_code)]
 #[derive(Clone)]
 struct NativeHostBridge {
     id: String,
     epoch: u64,
-    tx: mpsc::UnboundedSender<Vec<u8>>,
+    tx: NativeBridgeSender,
     registered_at_ms: u64,
     metadata: NativeHostBridgeMetadata,
+}
+
+#[derive(Clone)]
+enum NativeBridgeSender {
+    Bounded(mpsc::Sender<Vec<u8>>),
+    #[cfg(test)]
+    Unbounded(mpsc::UnboundedSender<Vec<u8>>),
+}
+
+enum BridgeSendError {
+    Full,
+    Closed,
+}
+
+impl NativeBridgeSender {
+    fn send(&self, bytes: Vec<u8>) -> std::result::Result<(), BridgeSendError> {
+        match self {
+            Self::Bounded(tx) => tx.try_send(bytes).map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => BridgeSendError::Full,
+                mpsc::error::TrySendError::Closed(_) => BridgeSendError::Closed,
+            }),
+            #[cfg(test)]
+            Self::Unbounded(tx) => tx.send(bytes).map_err(|_| BridgeSendError::Closed),
+        }
+    }
+
+    async fn send_wait(&self, bytes: Vec<u8>, deadline: Duration) -> Result<()> {
+        match self {
+            Self::Bounded(tx) => timeout(deadline, tx.send(bytes))
+                .await
+                .context("native-host bridge queue remained full")?
+                .map_err(|_| anyhow!("native-host bridge writer closed")),
+            #[cfg(test)]
+            Self::Unbounded(tx) => tx
+                .send(bytes)
+                .map_err(|_| anyhow!("native-host bridge writer closed")),
+        }
+    }
+}
+
+impl From<mpsc::Sender<Vec<u8>>> for NativeBridgeSender {
+    fn from(tx: mpsc::Sender<Vec<u8>>) -> Self {
+        Self::Bounded(tx)
+    }
+}
+
+#[cfg(test)]
+impl From<mpsc::UnboundedSender<Vec<u8>>> for NativeBridgeSender {
+    fn from(tx: mpsc::UnboundedSender<Vec<u8>>) -> Self {
+        Self::Unbounded(tx)
+    }
+}
+
+enum NativeBridgeReceiver {
+    Bounded(mpsc::Receiver<Vec<u8>>),
+    #[cfg(test)]
+    Unbounded(mpsc::UnboundedReceiver<Vec<u8>>),
+}
+
+impl NativeBridgeReceiver {
+    async fn recv(&mut self) -> Option<Vec<u8>> {
+        match self {
+            Self::Bounded(rx) => rx.recv().await,
+            #[cfg(test)]
+            Self::Unbounded(rx) => rx.recv().await,
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Self::Bounded(rx) => rx.len(),
+            #[cfg(test)]
+            Self::Unbounded(rx) => rx.len(),
+        }
+    }
+}
+
+impl From<mpsc::Receiver<Vec<u8>>> for NativeBridgeReceiver {
+    fn from(rx: mpsc::Receiver<Vec<u8>>) -> Self {
+        Self::Bounded(rx)
+    }
+}
+
+#[cfg(test)]
+impl From<mpsc::UnboundedReceiver<Vec<u8>>> for NativeBridgeReceiver {
+    fn from(rx: mpsc::UnboundedReceiver<Vec<u8>>) -> Self {
+        Self::Unbounded(rx)
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, PartialEq, Eq)]
@@ -435,6 +580,9 @@ struct PendingNativeCall {
     bridge_epoch: u64,
     method: String,
     extension_request_id: String,
+    run_id: Option<String>,
+    session_id: Option<String>,
+    mcp_request_id: Option<String>,
     deadline_at_ms: u64,
     responder: oneshot::Sender<Value>,
 }
@@ -601,6 +749,7 @@ struct BrowserSessionLifecycle {
     origin: Option<String>,
     run_id: Option<String>,
     job_id: Option<String>,
+    mcp_request_id: Option<String>,
 }
 
 impl BrowserSessionLifecycle {
@@ -617,6 +766,7 @@ impl BrowserSessionLifecycle {
             origin: value("origin"),
             run_id: value("run_id"),
             job_id: value("job_id"),
+            mcp_request_id: value("mcp_request_id"),
         }
     }
 
@@ -636,6 +786,11 @@ impl BrowserSessionLifecycle {
         }
         if let Some(job_id) = &self.job_id {
             object.insert("job_id".to_string(), Value::String(job_id.clone()));
+        }
+        if let Some(mcp_request_id) = &self.mcp_request_id {
+            object
+                .entry("mcp_request_id".to_string())
+                .or_insert_with(|| Value::String(mcp_request_id.clone()));
         }
     }
 }
@@ -929,6 +1084,29 @@ fn browser_target_error_value(code: &str, message: String, candidates: Vec<Value
         "candidates": candidates,
         "next_steps": browser_target_next_steps(&candidates),
     })
+}
+
+fn bridge_queue_full_response(cmd: &str, bridge_id: &str) -> Value {
+    with_run_result(
+        cmd,
+        json!({
+            "ok": false,
+            "success": false,
+            "error_code": "NATIVE_BRIDGE_QUEUE_FULL",
+            "error": format!("native-host bridge {bridge_id} is busy; retry this request"),
+        }),
+        true,
+    )
+}
+
+fn bridge_cancelled_response(cmd: &str) -> Value {
+    with_run_result(
+        cmd,
+        json!({
+            "ok":false,"success":false,"error_code":"REQUEST_CANCELLED","error":"request cancelled before bridge dispatch"
+        }),
+        true,
+    )
 }
 
 fn invalid_tab_ref_error(message: impl Into<String>) -> anyhow::Error {
@@ -1273,6 +1451,12 @@ impl NativeBridgeHealth {
 }
 
 impl SupervisorState {
+    async fn mcp_request_cancelled(&self, params: &Value) -> bool {
+        let Some(id) = params.get("mcp_request_id").and_then(Value::as_str) else {
+            return false;
+        };
+        self.mcp_cancelled.lock().await.contains_key(id)
+    }
     pub(crate) fn new(config: SupervisorConfig) -> Self {
         let paths = SupervisorPaths::for_config(&config);
         let run_store = RunStore::open(&paths.app_base).expect("create supervisor run store");
@@ -1289,7 +1473,8 @@ impl SupervisorState {
             native_bridge_health: Mutex::new(HashMap::new()),
             last_registered_bridge_id: Mutex::new(None),
             cloud_actor: None,
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            mcp_cancelled: Mutex::new(HashMap::new()),
             run_store,
             control,
             settings,
@@ -1473,7 +1658,10 @@ impl SupervisorState {
             workflow_hash: workflow_file_hash(&path).ok(),
             params,
             deadline: Some(LOCAL_RUN_DEADLINE),
-            session: SessionSpec::default(),
+            session: SessionSpec {
+                origin: Some("local_cli".to_string()),
+                ..SessionSpec::default()
+            },
             snapshot_mode: SnapshotMode::OnError,
             workflow_path: path.to_string_lossy().into_owned(),
         };
@@ -1928,6 +2116,47 @@ impl SupervisorState {
 
     async fn dispatch_shared(self: &Arc<Self>, method: &str, params: Value) -> Result<Value> {
         match method {
+            "browser.cancel_pending" => {
+                let request_id = params
+                    .get("mcp_request_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        anyhow!("browser.cancel_pending missing params.mcp_request_id")
+                    })?;
+                let mut cancelled = self.mcp_cancelled.lock().await;
+                cancelled.retain(|_, at| at.elapsed() < Duration::from_secs(60));
+                cancelled.insert(request_id.to_string(), Instant::now());
+                let cancel_delivered = self
+                    .cancel_pending_extension_steps_for_mcp(request_id)
+                    .await;
+                drop(cancelled);
+                let sessions = self
+                    .sessions
+                    .lock()
+                    .await
+                    .values()
+                    .filter(|session| {
+                        session.lifecycle.mcp_request_id.as_deref() == Some(request_id)
+                    })
+                    .map(|session| session.session_id.clone())
+                    .collect::<Vec<_>>();
+                for session_id in sessions {
+                    let state = self.clone();
+                    tokio::spawn(async move {
+                        if let Err(error) = state
+                            .try_session_close(json!({"session_id":session_id}))
+                            .await
+                        {
+                            log::warn!("failed to close cancelled MCP session: {error:#}");
+                        }
+                    });
+                }
+                Ok(if cancel_delivered {
+                    json!({"ok":true})
+                } else {
+                    json!({"ok":false,"error_code":"CANCEL_DELIVERY_FAILED","error":"native-host bridge could not queue cancellation"})
+                })
+            }
             "runs.start" => {
                 let id = params
                     .get("workflow_id")
@@ -1979,11 +2208,13 @@ impl SupervisorState {
         match method {
             "runtime.hello" | "runtime.status" => Ok(self.runtime_status().await),
             "browser.targets" => Ok(self.browser_targets().await),
-            "browser.cancel_pending" => {
-                self.cancel_pending_extension_steps().await;
-                Ok(json!({"ok": true}))
-            }
+            "browser.cancel_pending" => Err(anyhow!(
+                "browser.cancel_pending requires a shared supervisor connection"
+            )),
             "runs.claim" => {
+                if self.control.paused() {
+                    return Err(anyhow!(AUTOMATION_PAUSED_MESSAGE));
+                }
                 let run_id = params
                     .get("run_id")
                     .and_then(Value::as_str)
@@ -2086,13 +2317,34 @@ impl SupervisorState {
             ),
             "automation.resume" => self.control.resume(),
             "runs.cancel" => {
-                let result = self
+                let pending_guard = self.native_bridge_pending.lock().await;
+                let mut result = self
                     .control
                     .cancel(params.get("run_id").and_then(Value::as_str));
+                drop(pending_guard);
                 if result.get("ok").and_then(Value::as_bool) == Some(true) {
-                    self.cancel_pending_extension_steps().await;
+                    let delivered = self
+                        .cancel_pending_extension_steps_for_run(
+                            result
+                                .get("run_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                        )
+                        .await;
+                    if !delivered {
+                        result["ok"] = json!(false);
+                        result["error_code"] = json!("CANCEL_DELIVERY_FAILED");
+                        result["error"] = json!("native-host bridge could not queue cancellation");
+                    }
                 }
                 Ok(result)
+            }
+            "runs.cancel_status" => {
+                let run_id = params
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("runs.cancel_status missing params.run_id"))?;
+                Ok(json!({"cancel_requested": self.control.cancel_requested_for(run_id)}))
             }
             "runs.start" | "runs.replay" if self.control.paused() => {
                 Err(anyhow!(AUTOMATION_PAUSED_MESSAGE))
@@ -3001,27 +3253,55 @@ impl SupervisorState {
         let Some(resolved_target) = self.resolve_native_bridge_target(&target, true).await? else {
             return Ok(None);
         };
+        if self.mcp_request_cancelled(&params).await {
+            return Ok(Some(with_run_result(
+                "browser.session_open",
+                json!({
+                    "ok":false,"success":false,"error_code":"REQUEST_CANCELLED","error":"request cancelled before session open"
+                }),
+                true,
+            )));
+        }
         let resolved_target_json = resolved_target.to_json();
 
         let session_id = Uuid::new_v4().to_string();
         let session_record =
             BrowserSessionRecord::from_resolved(session_id.clone(), &resolved_target, lifecycle);
-        self.sessions
-            .lock()
-            .await
-            .insert(session_id.clone(), session_record.clone());
         let requested_url = params
             .get("url")
             .and_then(|value| value.as_str())
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
+        let mut guard = SessionOpenGuard {
+            sessions: self.sessions.clone(),
+            session_id: session_id.clone(),
+            bridge: requested_url
+                .as_ref()
+                .map(|_| resolved_target.bridge.clone()),
+            supervisor_boot_id: self.supervisor_boot_id.clone(),
+            armed: true,
+        };
+        self.sessions
+            .lock()
+            .await
+            .insert(session_id.clone(), session_record.clone());
+        if self.mcp_request_cancelled(&params).await {
+            return Ok(Some(with_run_result(
+                "browser.session_open",
+                json!({
+                    "ok":false,"success":false,"error_code":"REQUEST_CANCELLED","error":"request cancelled before session open"
+                }),
+                true,
+            )));
+        }
         if let Some(url) = requested_url.clone() {
             let payload = json!({
                 "session_id": session_id,
                 "step": { "type": "navigate_to_url", "url": url }
             });
             if let Some(result) = self.try_execute_step(payload).await? {
+                guard.disarm();
                 let response = json!({
                     "ok": true,
                     "session_id": session_id,
@@ -3036,7 +3316,6 @@ impl SupervisorState {
                     true,
                 )));
             }
-            self.sessions.lock().await.remove(&session_id);
             return Ok(None);
         }
 
@@ -3047,6 +3326,7 @@ impl SupervisorState {
             "browser_session": session_record.target_json(),
             "resolved_browser_target": resolved_target_json
         });
+        guard.disarm();
         Ok(Some(with_run_result(
             "browser.session_open",
             response,
@@ -3067,6 +3347,13 @@ impl SupervisorState {
                 true,
             )));
         }
+        let mut cleanup = SessionOpenGuard {
+            sessions: self.sessions.clone(),
+            session_id: session_id.clone(),
+            bridge: None,
+            supervisor_boot_id: self.supervisor_boot_id.clone(),
+            armed: true,
+        };
 
         let lifecycle = self
             .sessions
@@ -3101,6 +3388,7 @@ impl SupervisorState {
         };
 
         self.sessions.lock().await.remove(&session_id);
+        cleanup.disarm();
         let response = json!({
             "ok": true,
             "session_id": session_id,
@@ -3143,6 +3431,26 @@ impl SupervisorState {
             {
                 lifecycle.add_to(&mut params);
             }
+        }
+        if params
+            .get("run_id")
+            .and_then(Value::as_str)
+            .is_some_and(|run_id| self.control.cancel_requested_for(run_id))
+        {
+            return Ok(Some(with_run_result(
+                "browser.execute_step",
+                json!({"ok":false,"success":false,"error_code":"RUN_CANCELLED","error":"run cancelled before step"}),
+                true,
+            )));
+        }
+        if self.mcp_request_cancelled(&params).await {
+            return Ok(Some(with_run_result(
+                "browser.execute_step",
+                json!({
+                    "ok":false,"success":false,"error_code":"REQUEST_CANCELLED","error":"request cancelled before step"
+                }),
+                true,
+            )));
         }
         match self.try_call_native_bridge("execute_step", params).await {
             Ok(value) => Ok(value),
@@ -3304,17 +3612,18 @@ impl SupervisorState {
             .map(clamp_caller_timeout_ms)
             .unwrap_or_else(|| extension_timeout_ms(&payload));
         let (tx, rx) = oneshot::channel();
-        self.native_bridge_pending.lock().await.insert(
-            id.clone(),
-            PendingNativeCall {
-                bridge_id: bridge.id.clone(),
-                bridge_epoch: bridge.epoch,
-                method: cmd.to_string(),
-                extension_request_id: req_id.clone(),
-                deadline_at_ms: 0,
-                responder: tx,
-            },
-        );
+        let run_id = payload
+            .get("run_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let session_id = payload
+            .get("session_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let mcp_request_id = payload
+            .get("mcp_request_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
 
         let request = json!({
             "jsonrpc": "2.0",
@@ -3340,81 +3649,139 @@ impl SupervisorState {
             .and_then(value_id_string)
             .unwrap_or_default();
         let bytes = serde_json::to_vec(&request)?;
-        if bridge.tx.send(bytes).is_err() {
-            let pending_call = self.native_bridge_pending.lock().await.remove(&request_id);
-            self.record_native_bridge_failure(
-                Some(&bridge.id),
-                READINESS_CAUSE_BRIDGE_DOWN,
-                "native-host bridge sender is closed",
-                false,
-            )
-            .await;
-            self.clear_native_bridge(&bridge.id).await;
-            if !allow_reconnect_wait {
-                return Ok(None);
+        let cancelled = self.mcp_cancelled.lock().await;
+        let mut pending = self.native_bridge_pending.lock().await;
+        if mcp_request_id
+            .as_ref()
+            .is_some_and(|id| cancelled.contains_key(id))
+            || run_id
+                .as_ref()
+                .is_some_and(|id| self.control.cancel_requested_for(id))
+        {
+            return Ok(Some(bridge_cancelled_response(cmd)));
+        }
+        pending.insert(
+            request_id.clone(),
+            PendingNativeCall {
+                bridge_id: bridge.id.clone(),
+                bridge_epoch: bridge.epoch,
+                method: cmd.to_string(),
+                extension_request_id: req_id.clone(),
+                run_id,
+                session_id,
+                mcp_request_id,
+                deadline_at_ms: 0,
+                responder: tx,
+            },
+        );
+        let send_result = bridge.tx.send(bytes);
+        drop(pending);
+        drop(cancelled);
+        match send_result {
+            Ok(()) => {}
+            Err(BridgeSendError::Full) => {
+                self.native_bridge_pending.lock().await.remove(&request_id);
+                return Ok(Some(bridge_queue_full_response(cmd, &bridge.id)));
             }
-            if !self
-                .wait_for_native_bridge(BRIDGE_RECONNECT_BEFORE_CALL_WAIT_MS)
-                .await
-            {
-                return Ok(None);
-            }
-
-            let Some(reconnected_target) = self
-                .resolve_native_bridge_target(&target, allow_reconnect_wait)
-                .await?
-            else {
-                return Ok(None);
-            };
-            let reconnected_target_json = reconnected_target.to_json();
-            let reconnected_bridge = reconnected_target.bridge;
-            if let Some(pending_call) = pending_call {
-                self.native_bridge_pending.lock().await.insert(
+            Err(BridgeSendError::Closed) => {
+                let Some(pending_call) =
+                    self.native_bridge_pending.lock().await.remove(&request_id)
+                else {
+                    return Ok(None);
+                };
+                self.record_native_bridge_failure(
+                    Some(&bridge.id),
+                    READINESS_CAUSE_BRIDGE_DOWN,
+                    "native-host bridge sender is closed",
+                    false,
+                )
+                .await;
+                self.clear_native_bridge(&bridge.id).await;
+                if !allow_reconnect_wait
+                    || !self
+                        .wait_for_native_bridge(BRIDGE_RECONNECT_BEFORE_CALL_WAIT_MS)
+                        .await
+                {
+                    return Ok(None);
+                }
+                let Some(reconnected_target) =
+                    self.resolve_native_bridge_target(&target, true).await?
+                else {
+                    return Ok(None);
+                };
+                let reconnected_target_json = reconnected_target.to_json();
+                let reconnected_bridge = reconnected_target.bridge;
+                request["params"]["supervisor_bridge_id"] = json!(reconnected_bridge.id.clone());
+                request["params"]["supervisor_bridge_epoch"] = json!(reconnected_bridge.epoch);
+                active_resolved_target_json = reconnected_target_json.clone();
+                request["params"]["resolved_browser_target"] = reconnected_target_json;
+                let resolved_browser_target = request["params"]["resolved_browser_target"].clone();
+                inject_resolved_browser_target(
+                    &mut request["params"]["payload"],
+                    resolved_browser_target,
+                );
+                let retry_bytes = serde_json::to_vec(&request)?;
+                let cancelled = self.mcp_cancelled.lock().await;
+                let mut pending = self.native_bridge_pending.lock().await;
+                if pending_call
+                    .mcp_request_id
+                    .as_ref()
+                    .is_some_and(|id| cancelled.contains_key(id))
+                    || pending_call
+                        .run_id
+                        .as_ref()
+                        .is_some_and(|id| self.control.cancel_requested_for(id))
+                {
+                    return Ok(Some(bridge_cancelled_response(cmd)));
+                }
+                pending.insert(
                     request_id.clone(),
                     PendingNativeCall {
                         bridge_id: reconnected_bridge.id.clone(),
                         bridge_epoch: reconnected_bridge.epoch,
                         method: pending_call.method,
                         extension_request_id: pending_call.extension_request_id,
+                        run_id: pending_call.run_id,
+                        session_id: pending_call.session_id,
+                        mcp_request_id: pending_call.mcp_request_id,
                         deadline_at_ms: 0,
                         responder: pending_call.responder,
                     },
                 );
-            } else {
-                return Ok(None);
+                let retry_result = reconnected_bridge.tx.send(retry_bytes);
+                drop(pending);
+                drop(cancelled);
+                match retry_result {
+                    Ok(()) => {}
+                    Err(BridgeSendError::Full) => {
+                        self.native_bridge_pending.lock().await.remove(&request_id);
+                        return Ok(Some(bridge_queue_full_response(
+                            cmd,
+                            &reconnected_bridge.id,
+                        )));
+                    }
+                    Err(BridgeSendError::Closed) => {
+                        self.native_bridge_pending.lock().await.remove(&request_id);
+                        self.clear_native_bridge(&reconnected_bridge.id).await;
+                        return Ok(None);
+                    }
+                }
+                if let Some(health) = self
+                    .native_bridge_health
+                    .lock()
+                    .await
+                    .get_mut(&reconnected_bridge.id)
+                {
+                    health.session_rebind_count = health.session_rebind_count.saturating_add(1);
+                }
+                log::info!(
+                    target: "rzn_browser::supervisor",
+                    "native_host_bridge_rebound request_id={} cmd={} bridge_id={} reason=sender_closed outcome=retry_sent",
+                    request_id, cmd, reconnected_bridge.id
+                );
+                active_bridge_id = reconnected_bridge.id.clone();
+                active_bridge_epoch = reconnected_bridge.epoch;
             }
-            request["params"]["supervisor_bridge_id"] = json!(reconnected_bridge.id.clone());
-            request["params"]["supervisor_bridge_epoch"] = json!(reconnected_bridge.epoch);
-            active_resolved_target_json = reconnected_target_json.clone();
-            request["params"]["resolved_browser_target"] = reconnected_target_json;
-            let resolved_browser_target = request["params"]["resolved_browser_target"].clone();
-            inject_resolved_browser_target(
-                &mut request["params"]["payload"],
-                resolved_browser_target,
-            );
-            let retry_bytes = serde_json::to_vec(&request)?;
-            if reconnected_bridge.tx.send(retry_bytes).is_err() {
-                self.native_bridge_pending.lock().await.remove(&request_id);
-                self.clear_native_bridge(&reconnected_bridge.id).await;
-                return Ok(None);
-            }
-            if let Some(health) = self
-                .native_bridge_health
-                .lock()
-                .await
-                .get_mut(&reconnected_bridge.id)
-            {
-                health.session_rebind_count = health.session_rebind_count.saturating_add(1);
-            }
-            log::info!(
-                target: "rzn_browser::supervisor",
-                "native_host_bridge_rebound request_id={} cmd={} bridge_id={} reason=sender_closed outcome=retry_sent",
-                request_id,
-                cmd,
-                reconnected_bridge.id
-            );
-            active_bridge_id = reconnected_bridge.id.clone();
-            active_bridge_epoch = reconnected_bridge.epoch;
         }
         self.set_native_bridge_pending_deadline(&request_id, now_ms().saturating_add(timeout_ms))
             .await;
@@ -3517,7 +3884,7 @@ impl SupervisorState {
     async fn register_native_bridge_with_metadata(
         &self,
         id: String,
-        tx: mpsc::UnboundedSender<Vec<u8>>,
+        tx: impl Into<NativeBridgeSender>,
         metadata: NativeHostBridgeMetadata,
     ) -> u64 {
         if let Some(instance_id) = metadata.browser_instance_id.as_deref() {
@@ -3552,7 +3919,7 @@ impl SupervisorState {
         let bridge = NativeHostBridge {
             id: id.clone(),
             epoch,
-            tx,
+            tx: tx.into(),
             registered_at_ms,
             metadata: metadata.clone(),
         };
@@ -3899,13 +4266,42 @@ impl SupervisorState {
         }
     }
 
-    async fn cancel_pending_extension_steps(&self) {
+    async fn cancel_pending_extension_steps_for_run(&self, run_id: &str) -> bool {
+        let sessions = self
+            .sessions
+            .lock()
+            .await
+            .values()
+            .filter(|session| session.lifecycle.run_id.as_deref() == Some(run_id))
+            .map(|session| session.session_id.clone())
+            .collect::<HashSet<_>>();
+        self.cancel_pending_extension_steps_matching(|pending| {
+            pending.run_id.as_deref() == Some(run_id)
+                || pending
+                    .session_id
+                    .as_ref()
+                    .is_some_and(|id| sessions.contains(id))
+        })
+        .await
+    }
+
+    async fn cancel_pending_extension_steps_for_mcp(&self, request_id: &str) -> bool {
+        self.cancel_pending_extension_steps_matching(|pending| {
+            pending.mcp_request_id.as_deref() == Some(request_id)
+        })
+        .await
+    }
+
+    async fn cancel_pending_extension_steps_matching(
+        &self,
+        matches: impl Fn(&PendingNativeCall) -> bool,
+    ) -> bool {
         let pending = self
             .native_bridge_pending
             .lock()
             .await
             .iter()
-            .filter(|(_, pending)| pending.method == "browser.execute_step")
+            .filter(|(_, pending)| pending.method == "execute_step" && matches(pending))
             .map(|(_, pending)| {
                 (
                     pending.bridge_id.clone(),
@@ -3915,6 +4311,7 @@ impl SupervisorState {
             })
             .collect::<Vec<_>>();
         let bridges = self.native_bridges.lock().await;
+        let mut delivered = true;
         for (bridge_id, bridge_epoch, request_id) in pending {
             let Some(bridge) = bridges
                 .get(&bridge_id)
@@ -3936,10 +4333,15 @@ impl SupervisorState {
                     "supervisor_boot_id": self.supervisor_boot_id.clone()
                 }
             });
-            let _ = bridge
+            if bridge
                 .tx
-                .send(serde_json::to_vec(&message).unwrap_or_default());
+                .send(serde_json::to_vec(&message).unwrap_or_default())
+                .is_err()
+            {
+                delivered = false;
+            }
         }
+        delivered
     }
 
     async fn complete_native_bridge_response(
@@ -5171,6 +5573,7 @@ pub(crate) async fn serve(config: SupervisorConfig) -> Result<SupervisorServeRep
     prepare_paths(&state.paths)?;
     let token = read_token(&state.paths.token_path)?;
     let _ = state.token.set(token);
+    tokio::spawn(maintain_cached_token_file(state.clone()));
     {
         use tracing_subscriber::prelude::*;
         let _ = tracing_subscriber::registry()
@@ -5466,9 +5869,7 @@ async fn handle_connection(
     state: Arc<SupervisorState>,
 ) -> Result<()> {
     let token = if let Some(token) = state.token.get() {
-        if !state.paths.token_path.exists() {
-            write_secret_file(&state.paths.token_path, format!("{}\n", token))?;
-        }
+        restore_cached_token_if_missing(&state.paths.token_path, token)?;
         token.clone()
     } else {
         read_token(&state.paths.token_path)?
@@ -5503,18 +5904,29 @@ async fn handle_connection(
     write_frame(&mut stream, &serde_json::to_vec(&response)?).await?;
 
     let (mut reader, mut writer) = stream.split();
-    let mut queued_frame = None;
+    let (frame_tx, mut frame_rx) = mpsc::channel(32);
+    let (closed_tx, mut closed_rx) = watch::channel(false);
+    let reader_task = tokio::spawn(async move {
+        loop {
+            let frame = read_frame(&mut reader).await;
+            let done = !matches!(frame, Ok(Some(_)));
+            if done {
+                closed_tx.send_replace(true);
+            }
+            if frame_tx.try_send(frame).is_err() || done {
+                closed_tx.send_replace(true);
+                break;
+            }
+        }
+    });
     loop {
-        let frame = match queued_frame.take() {
-            Some(frame) => frame,
-            None => match read_frame(&mut reader).await {
-                Ok(Some(frame)) => frame,
-                Ok(None) => break,
-                Err(error) => {
-                    log::warn!("supervisor client frame read failed: {error:#}");
-                    break;
-                }
-            },
+        let frame = match frame_rx.recv().await {
+            Some(Ok(Some(frame))) => frame,
+            Some(Ok(None)) | None => break,
+            Some(Err(error)) => {
+                log::warn!("supervisor client frame read failed: {error:#}");
+                break;
+            }
         };
         let request: Value = match serde_json::from_slice(&frame) {
             Ok(request) => request,
@@ -5539,17 +5951,7 @@ async fn handle_connection(
         tokio::pin!(dispatch);
         let result = tokio::select! {
             result = &mut dispatch => result,
-            next = read_frame(&mut reader) => match next {
-                Ok(Some(frame)) => {
-                    queued_frame = Some(frame);
-                    dispatch.await
-                }
-                Ok(None) => break,
-                Err(error) => {
-                    log::warn!("supervisor client disconnected during {method}: {error:#}");
-                    break;
-                }
-            }
+            _ = closed_rx.changed() => break,
         };
         let response = match result {
             Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
@@ -5562,7 +5964,21 @@ async fn handle_connection(
         write_frame(&mut writer, &serde_json::to_vec(&response)?).await?;
     }
 
+    reader_task.abort();
     Ok(())
+}
+
+async fn maintain_cached_token_file(state: Arc<SupervisorState>) {
+    let mut interval = tokio::time::interval(Duration::from_secs(1));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+        if let Some(token) = state.token.get() {
+            if let Err(error) = restore_cached_token_if_missing(&state.paths.token_path, token) {
+                log::warn!("failed to restore missing supervisor token: {error:#}");
+            }
+        }
+    }
 }
 
 const AUTOMATION_PAUSED_MESSAGE: &str = "automation is paused (the pause persists across supervisor restarts); resume with `rzn-browser supervisor call automation.resume`";
@@ -5595,11 +6011,12 @@ async fn handle_cloud_dispatch_requests(
 /// exceeds `write_timeout`; on timeout the bridge is cleared so pending calls fail fast.
 async fn run_native_bridge_writer<W: tokio::io::AsyncWrite + Unpin>(
     mut writer: W,
-    mut rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    rx: impl Into<NativeBridgeReceiver>,
     state: Arc<SupervisorState>,
     bridge_id: String,
     write_timeout: Duration,
 ) {
+    let mut rx = rx.into();
     while let Some(bytes) = rx.recv().await {
         match timeout(write_timeout, write_frame(&mut writer, &bytes)).await {
             Ok(Ok(())) => {}
@@ -5664,7 +6081,7 @@ async fn handle_native_bridge_connection(
         }
     };
     let (mut reader, mut writer) = stream.split();
-    let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
+    let (tx, rx) = mpsc::channel::<Vec<u8>>(NATIVE_BRIDGE_QUEUE_CAPACITY);
     let bridge_epoch = state
         .register_native_bridge_with_metadata(bridge_id.clone(), tx, metadata)
         .await;
@@ -5853,6 +6270,28 @@ fn get_or_create_token(path: &Path) -> Result<String> {
     let token = Uuid::new_v4().to_string();
     write_secret_file(path, format!("{}\n", token))?;
     Ok(token)
+}
+
+fn restore_cached_token_if_missing(path: &Path, token: &str) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        ensure_private_dir(parent)?;
+    }
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    match options.open(path) {
+        Ok(mut file) => {
+            file.write_all(format!("{token}\n").as_bytes())?;
+            file.flush()?;
+            set_secret_file_permissions(path)?;
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("restore supervisor token {}", path.display()))
+        }
+    }
 }
 
 fn read_token(path: &Path) -> Result<String> {
@@ -7252,6 +7691,167 @@ mod tests {
         let _ = std::fs::remove_dir_all(app_base);
     }
 
+    #[tokio::test]
+    async fn cached_token_repair_allows_normal_client_after_file_deletion() {
+        let app_base = PathBuf::from(format!("/tmp/rzt-{}", &Uuid::new_v4().to_string()[..8]));
+        let state = Arc::new(SupervisorState::new(SupervisorConfig {
+            app_base: Some(app_base.clone()),
+        }));
+        prepare_paths(&state.paths).unwrap();
+        let original = read_token(&state.paths.token_path).unwrap();
+        state.token.set(original.clone()).unwrap();
+        let name = state
+            .paths
+            .socket_path
+            .clone()
+            .to_fs_name::<GenericFilePath>()
+            .unwrap();
+        let listener = ListenerOptions::new().name(name).create_tokio().unwrap();
+        let repair = tokio::spawn(maintain_cached_token_file(state.clone()));
+        std::fs::remove_file(&state.paths.token_path).unwrap();
+        timeout(Duration::from_secs(2), async {
+            while !state.paths.token_path.exists() {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(read_token(&state.paths.token_path).unwrap(), original);
+        let server_state = state.clone();
+        let server = tokio::spawn(async move {
+            let stream = listener.accept().await.unwrap();
+            handle_connection(stream, server_state).await.unwrap();
+        });
+        let mut client = SupervisorClient::connect_with_paths(state.paths.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            client.call("runtime.status", json!({})).await.unwrap()["ok"],
+            true
+        );
+        drop(client);
+        timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        repair.abort();
+        write_secret_file(&state.paths.token_path, "replacement\n").unwrap();
+        restore_cached_token_if_missing(&state.paths.token_path, &original).unwrap();
+        assert_eq!(read_token(&state.paths.token_path).unwrap(), "replacement");
+        let _ = std::fs::remove_dir_all(app_base);
+    }
+
+    #[tokio::test]
+    async fn partial_next_frame_survives_slow_dispatch() {
+        let app_base = PathBuf::from(format!("/tmp/rzf-{}", &Uuid::new_v4().to_string()[..8]));
+        let state = Arc::new(SupervisorState::new(SupervisorConfig {
+            app_base: Some(app_base.clone()),
+        }));
+        prepare_paths(&state.paths).unwrap();
+        state
+            .token
+            .set(read_token(&state.paths.token_path).unwrap())
+            .unwrap();
+        let name = state
+            .paths
+            .socket_path
+            .clone()
+            .to_fs_name::<GenericFilePath>()
+            .unwrap();
+        let listener = ListenerOptions::new()
+            .name(name.clone())
+            .create_tokio()
+            .unwrap();
+        let server = tokio::spawn(async move {
+            let stream = listener.accept().await.unwrap();
+            handle_connection(stream, state).await.unwrap();
+        });
+        let mut client = LocalSocketStream::connect(name).await.unwrap();
+        write_frame(&mut client, &serde_json::to_vec(&json!({
+            "type":"rzn_local_handshake","v":1,"token":read_token(&SupervisorPaths::for_config(&SupervisorConfig { app_base: Some(app_base.clone()) }).token_path).unwrap()
+        })).unwrap()).await.unwrap();
+        read_required_frame(&mut client).await.unwrap();
+        write_frame(&mut client, &serde_json::to_vec(&json!({
+            "jsonrpc":"2.0","id":"slow","method":"runtime.ensure_ready","params":{"bridge_wait_ms":200}
+        })).unwrap()).await.unwrap();
+        let next = serde_json::to_vec(
+            &json!({"jsonrpc":"2.0","id":"next","method":"runtime.status","params":{}}),
+        )
+        .unwrap();
+        client
+            .write_all(&(next.len() as u32).to_le_bytes())
+            .await
+            .unwrap();
+        client.write_all(&next[..next.len() / 2]).await.unwrap();
+        let first: Value =
+            serde_json::from_slice(&read_required_frame(&mut client).await.unwrap()).unwrap();
+        assert_eq!(first["id"], "slow");
+        client.write_all(&next[next.len() / 2..]).await.unwrap();
+        let second: Value =
+            serde_json::from_slice(&read_required_frame(&mut client).await.unwrap()).unwrap();
+        assert_eq!(second["id"], "next");
+        drop(client);
+        timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(app_base);
+    }
+
+    #[tokio::test]
+    async fn queued_frame_does_not_hide_client_disconnect() {
+        let app_base = PathBuf::from(format!("/tmp/rze-{}", &Uuid::new_v4().to_string()[..8]));
+        let state = Arc::new(SupervisorState::new(SupervisorConfig {
+            app_base: Some(app_base.clone()),
+        }));
+        prepare_paths(&state.paths).unwrap();
+        let token = read_token(&state.paths.token_path).unwrap();
+        state.token.set(token.clone()).unwrap();
+        let name = state
+            .paths
+            .socket_path
+            .clone()
+            .to_fs_name::<GenericFilePath>()
+            .unwrap();
+        let listener = ListenerOptions::new()
+            .name(name.clone())
+            .create_tokio()
+            .unwrap();
+        let server = tokio::spawn(async move {
+            let stream = listener.accept().await.unwrap();
+            handle_connection(stream, state).await.unwrap();
+        });
+        let mut client = LocalSocketStream::connect(name).await.unwrap();
+        write_frame(
+            &mut client,
+            &serde_json::to_vec(&json!({
+                "type":"rzn_local_handshake","v":1,"token":token
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        read_required_frame(&mut client).await.unwrap();
+        write_frame(&mut client, &serde_json::to_vec(&json!({
+            "jsonrpc":"2.0","id":"slow","method":"runtime.ensure_ready","params":{"bridge_wait_ms":5_000}
+        })).unwrap()).await.unwrap();
+        write_frame(
+            &mut client,
+            &serde_json::to_vec(&json!({
+                "jsonrpc":"2.0","id":"queued","method":"runtime.status","params":{}
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+        drop(client);
+        timeout(Duration::from_secs(1), server)
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(app_base);
+    }
+
     #[test]
     fn browser_tool_allowlist_is_explicit() {
         assert!(is_browser_tool("browser.execute_step"));
@@ -8043,6 +8643,9 @@ mod tests {
                     bridge_epoch: retired_epoch,
                     method: "execute_step".to_string(),
                     extension_request_id: "retired-call".to_string(),
+                    run_id: None,
+                    session_id: None,
+                    mcp_request_id: None,
                     deadline_at_ms: now_ms() + 1_000,
                     responder: retired_pending_tx,
                 },
@@ -8054,6 +8657,9 @@ mod tests {
                     bridge_epoch: fresh_epoch,
                     method: "execute_step".to_string(),
                     extension_request_id: "fresh-call".to_string(),
+                    run_id: None,
+                    session_id: None,
+                    mcp_request_id: None,
                     deadline_at_ms: now_ms() + 1_000,
                     responder: fresh_pending_tx,
                 },
@@ -9741,6 +10347,7 @@ mod tests {
                 origin: None,
                 run_id: None,
                 job_id: None,
+                mcp_request_id: None,
             },
             created_at_ms: 1,
             last_activity_at_ms: 2,
@@ -11108,14 +11715,17 @@ mod tests {
             PendingNativeCall {
                 bridge_id: "cancel-bridge".to_string(),
                 bridge_epoch: epoch,
-                method: "browser.execute_step".to_string(),
+                method: "execute_step".to_string(),
                 extension_request_id: "extension-step".to_string(),
+                run_id: Some("run-1".to_string()),
+                session_id: None,
+                mcp_request_id: None,
                 deadline_at_ms: now_ms() + 1_000,
                 responder: response_tx,
             },
         );
 
-        state.cancel_pending_extension_steps().await;
+        assert!(state.cancel_pending_extension_steps_for_run("run-1").await);
 
         let message: Value = serde_json::from_slice(
             &bridge_rx
@@ -11134,6 +11744,182 @@ mod tests {
                 .and_then(Value::as_str),
             Some("extension-step")
         );
+    }
+
+    #[tokio::test]
+    async fn cancellation_only_targets_matching_run_and_reports_full_queue() {
+        let state = SupervisorState::new(test_config());
+        state
+            .control
+            .try_begin_run("run-1".into(), "wf".into(), "cli".into(), 1)
+            .unwrap();
+        let (bridge_tx, mut bridge_rx) = mpsc::channel::<Vec<u8>>(1);
+        state
+            .register_native_bridge_with_metadata(
+                "bounded-bridge".to_string(),
+                bridge_tx.clone(),
+                NativeHostBridgeMetadata::missing(),
+            )
+            .await;
+        let epoch = state.native_bridges.lock().await["bounded-bridge"].epoch;
+        let (run_tx, _run_rx) = oneshot::channel();
+        let (other_tx, _other_rx) = oneshot::channel();
+        {
+            let mut pending = state.native_bridge_pending.lock().await;
+            for (id, run_id, responder) in [
+                ("run-step", Some("run-1".to_string()), run_tx),
+                ("other-step", None, other_tx),
+            ] {
+                pending.insert(
+                    id.to_string(),
+                    PendingNativeCall {
+                        bridge_id: "bounded-bridge".to_string(),
+                        bridge_epoch: epoch,
+                        method: "execute_step".to_string(),
+                        extension_request_id: id.to_string(),
+                        run_id,
+                        session_id: None,
+                        mcp_request_id: None,
+                        deadline_at_ms: now_ms() + 1_000,
+                        responder,
+                    },
+                );
+            }
+        }
+        bridge_tx.try_send(vec![1]).unwrap();
+        let result = state
+            .dispatch("runs.cancel", json!({"run_id":"run-1"}))
+            .await
+            .unwrap();
+        assert_eq!(result["ok"], false);
+        assert_eq!(result["error_code"], "CANCEL_DELIVERY_FAILED");
+        assert_eq!(bridge_rx.recv().await.unwrap(), vec![1]);
+        assert!(state.cancel_pending_extension_steps_for_run("run-1").await);
+        let cancel: Value = serde_json::from_slice(&bridge_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            cancel.pointer("/params/payload/request_id"),
+            Some(&json!("run-step"))
+        );
+        assert!(timeout(Duration::from_millis(20), bridge_rx.recv())
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn cancel_reaches_real_pending_execute_step() {
+        let state = Arc::new(SupervisorState::new(test_config()));
+        let (bridge_tx, mut bridge_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        state
+            .register_native_bridge("real-step-bridge".to_string(), bridge_tx)
+            .await;
+        state
+            .control
+            .try_begin_run("run-real".into(), "wf".into(), "cli".into(), 1)
+            .unwrap();
+        let call_state = state.clone();
+        let call = tokio::spawn(async move {
+            call_state
+                .try_call_native_bridge_raw_with_target(
+                    "execute_step",
+                    json!({"run_id":"run-real"}),
+                    None,
+                    Some(2_000),
+                    None,
+                    BridgeTarget::Default,
+                )
+                .await
+        });
+        let request: Value = serde_json::from_slice(&bridge_rx.recv().await.unwrap()).unwrap();
+        let extension_id = request
+            .pointer("/params/req_id")
+            .and_then(Value::as_str)
+            .unwrap();
+        let result = state
+            .dispatch("runs.cancel", json!({"run_id":"run-real"}))
+            .await
+            .unwrap();
+        assert_eq!(result["ok"], true);
+        let cancel: Value = serde_json::from_slice(&bridge_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            cancel
+                .pointer("/params/payload/request_id")
+                .and_then(Value::as_str),
+            Some(extension_id)
+        );
+        call.abort();
+    }
+
+    #[tokio::test]
+    async fn dropped_session_open_and_close_release_session_records() {
+        let state = Arc::new(SupervisorState::new(test_config()));
+        let (bridge_tx, mut bridge_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        state
+            .register_native_bridge("session-bridge".to_string(), bridge_tx)
+            .await;
+
+        let open_state = state.clone();
+        let open = tokio::spawn(async move {
+            open_state
+                .dispatch("browser.session_open", json!({"url":"https://example.com"}))
+                .await
+        });
+        let navigation: Value = serde_json::from_slice(&bridge_rx.recv().await.unwrap()).unwrap();
+        let orphan_id = navigation
+            .pointer("/params/payload/session_id")
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        open.abort();
+        let _ = open.await;
+        timeout(Duration::from_secs(1), async {
+            while state.sessions.lock().await.contains_key(&orphan_id) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let orphan_close: Value = serde_json::from_slice(&bridge_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            orphan_close.pointer("/params/cmd"),
+            Some(&json!("session_close"))
+        );
+        assert_eq!(
+            orphan_close.pointer("/params/payload/session_id"),
+            Some(&json!(orphan_id))
+        );
+
+        let session = state
+            .dispatch("browser.session_open", json!({}))
+            .await
+            .unwrap();
+        let session_id = session
+            .pointer("/result/session_id")
+            .or_else(|| session.get("session_id"))
+            .and_then(Value::as_str)
+            .unwrap()
+            .to_string();
+        let close_state = state.clone();
+        let close_id = session_id.clone();
+        let close = tokio::spawn(async move {
+            close_state
+                .dispatch("browser.session_close", json!({"session_id":close_id}))
+                .await
+        });
+        let close_request: Value =
+            serde_json::from_slice(&bridge_rx.recv().await.unwrap()).unwrap();
+        assert_eq!(
+            close_request.pointer("/params/cmd"),
+            Some(&json!("session_close"))
+        );
+        close.abort();
+        let _ = close.await;
+        timeout(Duration::from_secs(1), async {
+            while state.sessions.lock().await.contains_key(&session_id) {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -11220,6 +12006,66 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_run_is_not_retried_after_bridge_reconnect() {
+        let state = Arc::new(SupervisorState::new(test_config()));
+        state
+            .control
+            .try_begin_run("retry-run".into(), "wf".into(), "cli".into(), 1)
+            .unwrap();
+        let (closed_tx, closed_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        drop(closed_rx);
+        state
+            .register_native_bridge("closed-retry".to_string(), closed_tx)
+            .await;
+        let call_state = state.clone();
+        let call = tokio::spawn(async move {
+            call_state
+                .try_call_native_bridge_raw_with_target(
+                    "execute_step",
+                    json!({"run_id":"retry-run"}),
+                    None,
+                    Some(1_000),
+                    None,
+                    BridgeTarget::Default,
+                )
+                .await
+        });
+        timeout(Duration::from_secs(1), async {
+            while state
+                .native_bridges
+                .lock()
+                .await
+                .contains_key("closed-retry")
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            state
+                .dispatch("runs.cancel", json!({"run_id":"retry-run"}))
+                .await
+                .unwrap()["ok"],
+            true
+        );
+        let (fresh_tx, mut fresh_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        state
+            .register_native_bridge("fresh-retry".to_string(), fresh_tx)
+            .await;
+        let response = timeout(Duration::from_secs(2), call)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(response.to_string().contains("REQUEST_CANCELLED"));
+        assert!(timeout(Duration::from_millis(50), fresh_rx.recv())
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
     async fn native_bridge_restart_scopes_shutdown_pending_drain_and_health_to_epoch() {
         let state = SupervisorState::new(test_config());
         let (chrome_tx, mut chrome_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -11242,6 +12088,9 @@ mod tests {
                     bridge_epoch: chrome_epoch,
                     method: "ping".to_string(),
                     extension_request_id: "chrome-call".to_string(),
+                    run_id: None,
+                    session_id: None,
+                    mcp_request_id: None,
                     deadline_at_ms: now_ms() + 1_000,
                     responder: chrome_pending_tx,
                 },
@@ -11253,6 +12102,9 @@ mod tests {
                     bridge_epoch: edge_epoch,
                     method: "ping".to_string(),
                     extension_request_id: "edge-call".to_string(),
+                    run_id: None,
+                    session_id: None,
+                    mcp_request_id: None,
                     deadline_at_ms: now_ms() + 1_000,
                     responder: edge_pending_tx,
                 },

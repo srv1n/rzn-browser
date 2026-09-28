@@ -57,6 +57,8 @@ const ENDPOINT_POLL_BASE_MS: u64 = 250;
 const ENDPOINT_POLL_CAP_MS: u64 = 5_000;
 const SUPERVISOR_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const SUPERVISOR_RPC_DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+const UPSTREAM_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_INFLIGHT_EXTENSION_CALLS: usize = 128;
 const OVERSIZE_ARTIFACT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
 const OVERSIZE_ARTIFACT_MAX_FILES: usize = 50;
 static NATIVE_HOST_BOOT_ID: OnceLock<String> = OnceLock::new();
@@ -882,6 +884,16 @@ async fn drain_native_pending_with_disconnect_error(
     count
 }
 
+async fn remove_session_pending(
+    native_pending: &Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
+    wire_req_ids: &HashSet<String>,
+) {
+    let mut guard = native_pending.lock().await;
+    for wire_req_id in wire_req_ids {
+        guard.remove(wire_req_id);
+    }
+}
+
 fn parse_shutdown_request(value: &Value) -> Option<(String, String)> {
     let method = value.get("method").and_then(|v| v.as_str())?;
     if method != SUPERVISOR_SHUTDOWN_METHOD {
@@ -988,6 +1000,14 @@ fn rewrite_response_correlation(value: &mut Value, wire_req_id: &str, original_r
     if let Some(task_id) = value.get_mut("task_id") {
         if task_id.as_str() == Some(wire_req_id) {
             *task_id = Value::String(original_req_id.to_string());
+        }
+    }
+}
+
+fn rewrite_cancel_target(payload: &mut Value, active_requests: &HashMap<String, String>) {
+    if let Some(target) = payload.get_mut("request_id") {
+        if let Some(wire_req_id) = target.as_str().and_then(|id| active_requests.get(id)) {
+            *target = Value::String(wire_req_id.clone());
         }
     }
 }
@@ -1144,10 +1164,13 @@ async fn run_upstream_connection(
     let (upstream_tx, mut upstream_rx) = mpsc::channel::<Vec<u8>>(64);
     active_bridges.lock().await.insert(key.clone());
 
-    let writer_task = tokio::spawn(async move {
+    let mut writer_task = tokio::spawn(async move {
         let mut writer = upstream_writer;
         while let Some(bytes) = upstream_rx.recv().await {
-            if write_frame(&mut writer, &bytes).await.is_err() {
+            if !matches!(
+                timeout(UPSTREAM_WRITE_TIMEOUT, write_frame(&mut writer, &bytes)).await,
+                Ok(Ok(()))
+            ) {
                 break;
             }
         }
@@ -1155,8 +1178,44 @@ async fn run_upstream_connection(
 
     let mut shutdown_reason: Option<String> = None;
     let mut session_tasks = JoinSet::new();
-    loop {
-        let frame = match read_frame(&mut upstream_reader).await {
+    let mut active_requests = HashMap::<String, String>::new();
+    let mut session_wire_req_ids = HashSet::<String>::new();
+    let (dispatch_tx, mut dispatch_rx) = mpsc::channel::<Vec<u8>>(MAX_INFLIGHT_EXTENSION_CALLS * 2);
+    let dispatch_shutdown_tx = shutdown_tx.clone();
+    let dispatch_task = tokio::spawn(async move {
+        while let Some(bytes) = dispatch_rx.recv().await {
+            if native_tx.send(bytes).await.is_err() {
+                let _ = dispatch_shutdown_tx.send(
+                    "native-host stdout channel closed before extension call; restarting native-host/native-port epoch"
+                        .to_string(),
+                );
+                break;
+            }
+        }
+    });
+    'connection: loop {
+        // read_frame uses read_exact: once a frame starts, joining another task must
+        // not cancel that read and discard its partial header or body.
+        while let Some(joined) = session_tasks.try_join_next() {
+            match joined {
+                Ok((original_req_id, wire_req_id)) => {
+                    if active_requests.get(&original_req_id) == Some(&wire_req_id) {
+                        active_requests.remove(&original_req_id);
+                    }
+                    session_wire_req_ids.remove(&wire_req_id);
+                    native_pending.lock().await.remove(&wire_req_id);
+                }
+                Err(error) => {
+                    warn!("Native-host extension call task failed: {}", error);
+                    break 'connection;
+                }
+            }
+        }
+        let frame = tokio::select! {
+            frame = read_frame(&mut upstream_reader) => frame,
+            _ = &mut writer_task => break,
+        };
+        let frame = match frame {
             Ok(Some(frame)) => frame,
             Ok(None) => break,
             Err(e) => {
@@ -1200,7 +1259,7 @@ async fn run_upstream_connection(
         let Some(extension_call) = parse_extension_call_request(&msg) else {
             continue;
         };
-        let extension_call = match extension_call {
+        let mut extension_call = match extension_call {
             Ok(extension_call) => extension_call,
             Err(resp) => {
                 if let Ok(bytes) = serde_json::to_vec(&resp) {
@@ -1209,65 +1268,45 @@ async fn run_upstream_connection(
                 continue;
             }
         };
-        let wire_req_id = format!("native-host-{}", Uuid::new_v4());
-
-        let (tx, rx) = oneshot::channel::<Value>();
-        {
-            let mut guard = native_pending.lock().await;
-            guard.insert(wire_req_id.clone(), tx);
+        if extension_call.cmd == "RZN_CANCEL_REQUEST" {
+            rewrite_cancel_target(&mut extension_call.payload, &active_requests);
         }
-
-        let native_tx_session = native_tx.clone();
-        let upstream_tx_session = upstream_tx.clone();
-        let pending_session = native_pending.clone();
-        let shutdown_tx_session = shutdown_tx.clone();
-        session_tasks.spawn(async move {
-            let ExtensionCallRequest {
-                upstream_request_id,
-                cmd,
-                payload,
-                data,
-                original_req_id,
-                timeout_ms,
-                supervisor_boot_id,
-                supervisor_bridge_id,
-                supervisor_bridge_epoch,
-            } = extension_call;
-            let mut out = json!({
-                "cmd": cmd,
-                "req_id": wire_req_id,
-                "payload": payload,
-                "timeout_ms": timeout_ms,
-                "rzn_bridge": {
-                    "supervisor_boot_id": supervisor_boot_id,
-                    "supervisor_bridge_id": supervisor_bridge_id,
-                    "supervisor_bridge_epoch": supervisor_bridge_epoch,
-                    "native_host_boot_id": native_host_boot_id(),
-                    "native_host_pid": std::process::id()
-                }
-            });
-            if let Some(data) = data {
-                out["data"] = data;
+        if session_tasks.len() >= MAX_INFLIGHT_EXTENSION_CALLS * 2
+            || (extension_call.cmd != "RZN_CANCEL_REQUEST"
+                && session_tasks.len() >= MAX_INFLIGHT_EXTENSION_CALLS)
+        {
+            let resp = jsonrpc_error(
+                extension_call.upstream_request_id,
+                -32006,
+                "native host has too many extension calls in flight",
+            );
+            if let Ok(bytes) = serde_json::to_vec(&resp) {
+                send_upstream(&upstream_tx, bytes).await;
             }
-            let bytes = match serde_json::to_vec(&out) {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    let resp = jsonrpc_error(
-                        upstream_request_id,
-                        -32700,
-                        format!("serialize error: {}", e),
-                    );
-                    if let Ok(bytes) = serde_json::to_vec(&resp) {
-                        send_upstream(&upstream_tx_session, bytes).await;
-                    }
-                    return;
-                }
-            };
-            if bytes.len() > NATIVE_HOST_TO_CHROME_MAX_BYTES {
-                let mut guard = pending_session.lock().await;
-                guard.remove(&wire_req_id);
+            continue;
+        }
+        let wire_req_id = format!("native-host-{}", Uuid::new_v4());
+        let mut out = json!({
+            "cmd": &extension_call.cmd,
+            "req_id": &wire_req_id,
+            "payload": &extension_call.payload,
+            "timeout_ms": extension_call.timeout_ms,
+            "rzn_bridge": {
+                "supervisor_boot_id": &extension_call.supervisor_boot_id,
+                "supervisor_bridge_id": &extension_call.supervisor_bridge_id,
+                "supervisor_bridge_epoch": extension_call.supervisor_bridge_epoch,
+                "native_host_boot_id": native_host_boot_id(),
+                "native_host_pid": std::process::id()
+            }
+        });
+        if let Some(data) = &extension_call.data {
+            out["data"] = data.clone();
+        }
+        let bytes = match serde_json::to_vec(&out) {
+            Ok(bytes) if bytes.len() <= NATIVE_HOST_TO_CHROME_MAX_BYTES => bytes,
+            Ok(bytes) => {
                 let resp = jsonrpc_error(
-                    upstream_request_id,
+                    extension_call.upstream_request_id,
                     -32004,
                     format!(
                         "Extension request exceeds Chrome native messaging host-to-browser cap: {} bytes",
@@ -1275,25 +1314,59 @@ async fn run_upstream_connection(
                     ),
                 );
                 if let Ok(bytes) = serde_json::to_vec(&resp) {
-                    send_upstream(&upstream_tx_session, bytes).await;
+                    send_upstream(&upstream_tx, bytes).await;
                 }
-                return;
+                continue;
             }
-
-            if native_tx_session.send(bytes).await.is_err() {
-                let mut guard = pending_session.lock().await;
-                guard.remove(&wire_req_id);
-                let resp = jsonrpc_error(upstream_request_id, -32000, "extension disconnected");
-                if let Ok(bytes) = serde_json::to_vec(&resp) {
-                    send_upstream(&upstream_tx_session, bytes).await;
-                }
-                let _ = shutdown_tx_session.send(
-                    "native-host stdout channel closed before extension call; restarting native-host/native-port epoch"
-                        .to_string(),
+            Err(error) => {
+                let resp = jsonrpc_error(
+                    extension_call.upstream_request_id,
+                    -32700,
+                    format!("serialize error: {}", error),
                 );
-                return;
+                if let Ok(bytes) = serde_json::to_vec(&resp) {
+                    send_upstream(&upstream_tx, bytes).await;
+                }
+                continue;
             }
+        };
+        let (tx, rx) = oneshot::channel::<Value>();
+        {
+            let mut guard = native_pending.lock().await;
+            guard.insert(wire_req_id.clone(), tx);
+        }
+        if dispatch_tx.try_send(bytes).is_err() {
+            native_pending.lock().await.remove(&wire_req_id);
+            let resp = jsonrpc_error(
+                extension_call.upstream_request_id,
+                -32006,
+                "native host extension dispatch queue is full or closed",
+            );
+            if let Ok(bytes) = serde_json::to_vec(&resp) {
+                send_upstream(&upstream_tx, bytes).await;
+            }
+            continue;
+        }
+        active_requests.insert(extension_call.original_req_id.clone(), wire_req_id.clone());
+        session_wire_req_ids.insert(wire_req_id.clone());
 
+        let upstream_tx_session = upstream_tx.clone();
+        let pending_session = native_pending.clone();
+        let tracked_original_req_id = extension_call.original_req_id.clone();
+        let tracked_wire_req_id = wire_req_id.clone();
+        session_tasks.spawn(async move {
+            async move {
+            let ExtensionCallRequest {
+                upstream_request_id,
+                cmd,
+                payload: _,
+                data: _,
+                original_req_id,
+                timeout_ms,
+                supervisor_boot_id: _,
+                supervisor_bridge_id: _,
+                supervisor_bridge_epoch: _,
+            } = extension_call;
             let response = match timeout(Duration::from_millis(timeout_ms), rx).await {
                 Ok(Ok(mut v)) => {
                     rewrite_response_correlation(&mut v, &wire_req_id, &original_req_id);
@@ -1367,11 +1440,17 @@ async fn run_upstream_connection(
                     }
                 }
             }
+            }
+            .await;
+            (tracked_original_req_id, tracked_wire_req_id)
         });
     }
 
     active_bridges.lock().await.remove(&key);
     session_tasks.abort_all();
+    session_tasks.shutdown().await;
+    remove_session_pending(&native_pending, &session_wire_req_ids).await;
+    dispatch_task.abort();
     if let Some(reason) = shutdown_reason {
         let _ = shutdown_tx.send(reason);
     }
@@ -1753,6 +1832,245 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
     use tokio::fs;
+
+    #[cfg(unix)]
+    async fn send_test_extension_call(
+        stream: &mut LocalSocketStream,
+        id: &str,
+        cmd: &str,
+        request_id: &str,
+        payload: Value,
+    ) {
+        let call = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": SUPERVISOR_EXTENSION_CALL_METHOD,
+            "params": {
+                "cmd": cmd,
+                "req_id": request_id,
+                "payload": payload,
+                "timeout_ms": 5_000
+            }
+        });
+        write_frame(stream, &serde_json::to_vec(&call).unwrap())
+            .await
+            .expect("send extension call");
+    }
+
+    #[cfg(unix)]
+    async fn next_test_native_message(rx: &mut mpsc::Receiver<Vec<u8>>) -> Value {
+        let bytes = timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("native dispatch deadline")
+            .expect("native dispatch channel open");
+        serde_json::from_slice(&bytes).expect("native dispatch JSON")
+    }
+
+    #[cfg(unix)]
+    async fn complete_test_native_message(
+        pending: &Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
+        message: &Value,
+    ) {
+        let wire_req_id = message["req_id"].as_str().expect("wire request ID");
+        let tx = pending
+            .lock()
+            .await
+            .remove(wire_req_id)
+            .expect("pending native call");
+        tx.send(json!({
+            "req_id": wire_req_id,
+            "success": true,
+            "result": {}
+        }))
+        .expect("deliver extension response");
+    }
+
+    #[cfg(unix)]
+    async fn next_test_supervisor_response(stream: &mut LocalSocketStream) -> Value {
+        let bytes = timeout(Duration::from_secs(2), read_frame(stream))
+            .await
+            .expect("supervisor response deadline")
+            .expect("supervisor response frame")
+            .expect("supervisor response before EOF");
+        serde_json::from_slice(&bytes).expect("supervisor response JSON")
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn upstream_connection_orders_cancel_and_reaps_only_its_pending_calls() {
+        use interprocess::local_socket::{traits::tokio::Listener as _, ListenerOptions};
+
+        let socket_path = PathBuf::from(format!("/tmp/rzn-nh-{}.sock", Uuid::new_v4()));
+        let name = socket_path
+            .clone()
+            .to_fs_name::<GenericFilePath>()
+            .expect("socket path");
+        let listener = ListenerOptions::new()
+            .name(name)
+            .create_tokio()
+            .expect("listener");
+        let endpoint = UpstreamEndpoint {
+            kind: RuntimeBridgeKind::SupervisorLocal,
+            socket_path: socket_path.clone(),
+            token_path: socket_path.with_extension("token"),
+        };
+        let pending: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let active = Arc::new(Mutex::new(HashSet::new()));
+        let (native_tx, mut native_rx) = mpsc::channel(128);
+        let (shutdown_tx, _shutdown_rx) = mpsc::unbounded_channel();
+
+        let name = socket_path
+            .clone()
+            .to_fs_name::<GenericFilePath>()
+            .expect("socket path");
+        let mut supervisor = LocalSocketStream::connect(name).await.expect("connect");
+        let host_stream = listener.accept().await.expect("accept");
+        let host_task = tokio::spawn(run_upstream_connection(
+            endpoint.clone(),
+            host_stream,
+            native_tx.clone(),
+            pending.clone(),
+            active.clone(),
+            shutdown_tx.clone(),
+        ));
+
+        send_test_extension_call(
+            &mut supervisor,
+            "step-rpc",
+            "browser.execute_step",
+            "supervisor-step",
+            json!({}),
+        )
+        .await;
+        send_test_extension_call(
+            &mut supervisor,
+            "cancel-rpc",
+            "RZN_CANCEL_REQUEST",
+            "cancel-request",
+            json!({"request_id": "supervisor-step"}),
+        )
+        .await;
+
+        let step = next_test_native_message(&mut native_rx).await;
+        let cancel = next_test_native_message(&mut native_rx).await;
+        assert_eq!(step["cmd"], "browser.execute_step");
+        assert_eq!(cancel["cmd"], "RZN_CANCEL_REQUEST");
+        assert_eq!(cancel["payload"]["request_id"], step["req_id"]);
+        complete_test_native_message(&pending, &step).await;
+        complete_test_native_message(&pending, &cancel).await;
+        let first = next_test_supervisor_response(&mut supervisor).await;
+        let second = next_test_supervisor_response(&mut supervisor).await;
+        let ids = [first["id"].as_str(), second["id"].as_str()];
+        assert!(ids.contains(&Some("step-rpc")));
+        assert!(ids.contains(&Some("cancel-rpc")));
+
+        send_test_extension_call(
+            &mut supervisor,
+            "fragment-parent",
+            "ping",
+            "fragment-parent",
+            json!({}),
+        )
+        .await;
+        let parent = next_test_native_message(&mut native_rx).await;
+        let fragmented_call = json!({
+            "jsonrpc": "2.0",
+            "id": "fragment-child",
+            "method": SUPERVISOR_EXTENSION_CALL_METHOD,
+            "params": {
+                "cmd": "ping",
+                "req_id": "fragment-child",
+                "payload": {},
+                "timeout_ms": 5_000
+            }
+        });
+        let fragmented_bytes = serde_json::to_vec(&fragmented_call).unwrap();
+        let header = (fragmented_bytes.len() as u32).to_le_bytes();
+        supervisor
+            .write_all(&header[..2])
+            .await
+            .expect("partial header");
+        supervisor.flush().await.expect("flush partial header");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        complete_test_native_message(&pending, &parent).await;
+        let parent_response = next_test_supervisor_response(&mut supervisor).await;
+        assert_eq!(parent_response["id"], "fragment-parent");
+        supervisor
+            .write_all(&header[2..])
+            .await
+            .expect("rest of header");
+        supervisor
+            .write_all(&fragmented_bytes)
+            .await
+            .expect("fragmented body");
+        supervisor.flush().await.expect("flush fragmented frame");
+        let child = next_test_native_message(&mut native_rx).await;
+        assert_eq!(child["cmd"], "ping");
+        complete_test_native_message(&pending, &child).await;
+        let child_response = next_test_supervisor_response(&mut supervisor).await;
+        assert_eq!(child_response["id"], "fragment-child");
+
+        for index in 0..=MAX_INFLIGHT_EXTENSION_CALLS {
+            let id = format!("completed-{index}");
+            send_test_extension_call(&mut supervisor, &id, "ping", &id, json!({})).await;
+            let message = next_test_native_message(&mut native_rx).await;
+            complete_test_native_message(&pending, &message).await;
+            let response = next_test_supervisor_response(&mut supervisor).await;
+            assert_eq!(response["id"].as_str(), Some(id.as_str()));
+        }
+
+        send_test_extension_call(
+            &mut supervisor,
+            "unfinished-rpc",
+            "browser.execute_step",
+            "supervisor-step",
+            json!({}),
+        )
+        .await;
+        let unfinished = next_test_native_message(&mut native_rx).await;
+        let old_wire_req_id = unfinished["req_id"].clone();
+        drop(supervisor);
+        timeout(Duration::from_secs(2), host_task)
+            .await
+            .expect("host disconnect deadline")
+            .expect("host task");
+        assert!(pending.lock().await.is_empty());
+
+        let name = socket_path
+            .clone()
+            .to_fs_name::<GenericFilePath>()
+            .expect("socket path");
+        let mut supervisor = LocalSocketStream::connect(name).await.expect("reconnect");
+        let host_stream = listener.accept().await.expect("reaccept");
+        let host_task = tokio::spawn(run_upstream_connection(
+            endpoint,
+            host_stream,
+            native_tx,
+            pending.clone(),
+            active,
+            shutdown_tx,
+        ));
+        send_test_extension_call(
+            &mut supervisor,
+            "late-cancel-rpc",
+            "RZN_CANCEL_REQUEST",
+            "late-cancel",
+            json!({"request_id": "supervisor-step"}),
+        )
+        .await;
+        let late_cancel = next_test_native_message(&mut native_rx).await;
+        assert_eq!(late_cancel["payload"]["request_id"], "supervisor-step");
+        assert_ne!(late_cancel["payload"]["request_id"], old_wire_req_id);
+        drop(supervisor);
+        timeout(Duration::from_secs(2), host_task)
+            .await
+            .expect("reconnected host disconnect deadline")
+            .expect("reconnected host task");
+        assert!(pending.lock().await.is_empty());
+        drop(listener);
+        let _ = std::fs::remove_file(socket_path);
+    }
 
     fn base_candidate(label: &str) -> BaseCandidate {
         BaseCandidate {
@@ -2179,6 +2497,33 @@ mod tests {
             response.get("error_code").and_then(Value::as_str),
             Some("EXTENSION_PROTOCOL_ERROR")
         );
+    }
+
+    #[test]
+    fn cancel_target_uses_active_wire_request_id() {
+        let active = HashMap::from([("supervisor-step".to_string(), "native-step".to_string())]);
+        let mut payload = json!({"request_id": "supervisor-step", "reason": "run cancelled"});
+
+        rewrite_cancel_target(&mut payload, &active);
+
+        assert_eq!(payload["request_id"], "native-step");
+        assert_eq!(payload["reason"], "run cancelled");
+    }
+
+    #[tokio::test]
+    async fn disconnect_removes_only_its_pending_extension_calls() {
+        let pending: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let (owned_tx, owned_rx) = oneshot::channel();
+        let (other_tx, _other_rx) = oneshot::channel();
+        pending.lock().await.insert("owned".to_string(), owned_tx);
+        pending.lock().await.insert("other".to_string(), other_tx);
+
+        remove_session_pending(&pending, &HashSet::from(["owned".to_string()])).await;
+
+        assert!(owned_rx.await.is_err());
+        assert_eq!(pending.lock().await.len(), 1);
+        assert!(pending.lock().await.contains_key("other"));
     }
 
     #[test]

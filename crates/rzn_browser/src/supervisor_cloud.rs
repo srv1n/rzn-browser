@@ -11,7 +11,7 @@ use std::net::IpAddr;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
@@ -27,6 +27,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_EXTENSION_RPC_GRACE_MS: u64 = 5_000;
 const CONFIG_RELOAD_INTERVAL_MS: u64 = 5_000;
 const MAX_CACHED_COMMAND_RESULTS: usize = 256;
+const MAX_QUEUED_CLOUD_MESSAGES: usize = 256;
 /// Client keepalive: ping cadence and the silence that forces a reconnect.
 const CLOUD_PING_INTERVAL: Duration = Duration::from_secs(20);
 const CLOUD_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -68,6 +69,8 @@ enum CloudActorControlMessage {
 struct CommandResultCache {
     order: Vec<String>,
     entries: HashMap<String, CloudCommandResult>,
+    inflight: HashMap<String, watch::Receiver<Option<CloudCommandResult>>>,
+    generation: u64,
 }
 
 impl CommandResultCache {
@@ -78,6 +81,8 @@ impl CommandResultCache {
     fn clear(&mut self) {
         self.order.clear();
         self.entries.clear();
+        self.inflight.clear();
+        self.generation = self.generation.wrapping_add(1);
     }
 
     fn insert(&mut self, command_id: String, result: CloudCommandResult) {
@@ -471,9 +476,9 @@ where
         .request_timeout_ms
         .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS)
         .max(1);
-    let (command_tx, command_rx) = mpsc::unbounded_channel::<CloudCommandEnvelope>();
-    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<String>();
-    // Aborted when the session ends (error, close, or the session task abort).
+    let (command_tx, command_rx) = mpsc::channel::<CloudCommandEnvelope>(MAX_QUEUED_CLOUD_MESSAGES);
+    let (outbound_tx, mut outbound_rx) = mpsc::channel::<String>(MAX_QUEUED_CLOUD_MESSAGES);
+    // The socket worker ends with the session; dispatch ownership lives in the shared cache.
     let _worker = AbortOnDrop(tokio::spawn(run_cloud_command_worker(
         command_rx,
         outbound_tx,
@@ -494,7 +499,7 @@ where
                     Ok(Message::Text(text)) => {
                         let envelope: CloudCommandEnvelope =
                             serde_json::from_str(&text).context("Decode cloud command envelope")?;
-                        let _ = command_tx.send(envelope);
+                        command_tx.try_send(envelope).context("Cloud command queue full or closed; reconnecting")?;
                     }
                     Ok(Message::Ping(payload)) => {
                         send_with_timeout(&mut socket, Message::Pong(payload), idle_timeout).await?;
@@ -505,7 +510,8 @@ where
                     _ => {}
                 }
             }
-            Some(text) = outbound_rx.recv() => {
+            text = outbound_rx.recv() => {
+                let Some(text) = text else { bail!("Cloud command worker stopped; reconnecting"); };
                 send_with_timeout(&mut socket, Message::Text(text), idle_timeout).await?;
             }
             _ = ping.tick() => {
@@ -546,14 +552,15 @@ impl Drop for AbortOnDrop {
 }
 
 async fn run_cloud_command_worker(
-    mut command_rx: mpsc::UnboundedReceiver<CloudCommandEnvelope>,
-    outbound_tx: mpsc::UnboundedSender<String>,
+    mut command_rx: mpsc::Receiver<CloudCommandEnvelope>,
+    outbound_tx: mpsc::Sender<String>,
     default_timeout: u64,
     dispatch_tx: mpsc::UnboundedSender<CloudDispatchRequest>,
     result_cache: Arc<Mutex<CommandResultCache>>,
     status: Arc<Mutex<CloudActorRuntimeState>>,
 ) {
-    let queue = |value: String| outbound_tx.send(value).is_ok();
+    // Overflow ends the session; a replay joins in-flight work or reads its cached result.
+    let queue = |value: String| outbound_tx.try_send(value).is_ok();
     while let Some(envelope) = command_rx.recv().await {
         if envelope.payload.kind != CloudCommandKind::BrowserCommand {
             let result = error_command_result(
@@ -595,26 +602,92 @@ async fn dispatch_command_with_dedupe(
     result_cache: Arc<Mutex<CommandResultCache>>,
     status: Arc<Mutex<CloudActorRuntimeState>>,
 ) -> CloudCommandResult {
-    if let Some(cached) = result_cache.lock().await.get(&envelope.command_id) {
-        return cached;
-    }
-
-    {
-        let mut guard = status.lock().await;
-        guard.inflight_command_id = Some(envelope.command_id.clone());
-        guard.last_command_id = Some(envelope.command_id.clone());
-    }
-
-    let result = dispatch_command(envelope.clone(), default_request_timeout_ms, dispatch_tx).await;
-    {
+    let mut result_rx = {
         let mut cache = result_cache.lock().await;
-        cache.insert(envelope.command_id.clone(), result.clone());
-        let mut guard = status.lock().await;
-        guard.inflight_command_id = None;
-        guard.last_result_at_ms = Some(now_ms());
-        guard.dedupe_cache_size = cache.len();
+        if let Some(cached) = cache.get(&envelope.command_id) {
+            return cached;
+        }
+        if let Some(inflight) = cache.inflight.get(&envelope.command_id) {
+            inflight.clone()
+        } else {
+            if cache.inflight.len() >= MAX_CACHED_COMMAND_RESULTS {
+                return error_command_result(
+                    &envelope,
+                    "Cloud command overload: too many in-flight dispatches",
+                );
+            }
+            let (result_tx, result_rx) = watch::channel(None);
+            cache
+                .inflight
+                .insert(envelope.command_id.clone(), result_rx.clone());
+            let generation = cache.generation;
+            let cache = result_cache.clone();
+            let status = status.clone();
+            let dispatch_envelope = envelope.clone();
+            tokio::spawn(async move {
+                if cache.lock().await.generation != generation {
+                    let _ = result_tx.send(Some(error_command_result(
+                        &dispatch_envelope,
+                        "Cloud actor config changed before dispatch",
+                    )));
+                    return;
+                }
+                {
+                    let mut guard = status.lock().await;
+                    guard.inflight_command_id = Some(dispatch_envelope.command_id.clone());
+                    guard.last_command_id = Some(dispatch_envelope.command_id.clone());
+                }
+                let config_changed = cache.lock().await.generation != generation;
+                if config_changed {
+                    let mut guard = status.lock().await;
+                    if guard.inflight_command_id.as_deref()
+                        == Some(dispatch_envelope.command_id.as_str())
+                    {
+                        guard.inflight_command_id = None;
+                    }
+                    let _ = result_tx.send(Some(error_command_result(
+                        &dispatch_envelope,
+                        "Cloud actor config changed before dispatch",
+                    )));
+                    return;
+                }
+                let result = dispatch_command(
+                    dispatch_envelope.clone(),
+                    default_request_timeout_ms,
+                    dispatch_tx,
+                )
+                .await;
+                {
+                    let mut cache = cache.lock().await;
+                    if cache.generation == generation {
+                        cache.inflight.remove(&dispatch_envelope.command_id);
+                        cache.insert(dispatch_envelope.command_id.clone(), result.clone());
+                        let mut guard = status.lock().await;
+                        if guard.inflight_command_id.as_deref()
+                            == Some(dispatch_envelope.command_id.as_str())
+                        {
+                            guard.inflight_command_id = None;
+                        }
+                        guard.last_result_at_ms = Some(now_ms());
+                        guard.dedupe_cache_size = cache.len();
+                    }
+                }
+                let _ = result_tx.send(Some(result));
+            });
+            result_rx
+        }
+    };
+    loop {
+        if let Some(result) = result_rx.borrow_and_update().clone() {
+            return result;
+        }
+        if result_rx.changed().await.is_err() {
+            return error_command_result(
+                &envelope,
+                "Cloud command dispatch ended without a result",
+            );
+        }
     }
-    result
 }
 
 async fn dispatch_command(
@@ -736,7 +809,6 @@ async fn mark_cloud_actor_ready(status: &Arc<Mutex<CloudActorRuntimeState>>) {
 async fn mark_cloud_actor_disconnected(status: &Arc<Mutex<CloudActorRuntimeState>>) {
     let mut guard = status.lock().await;
     guard.connected = false;
-    guard.inflight_command_id = None;
 }
 
 fn command_ack(envelope: &CloudCommandEnvelope) -> CloudCommandAck {
@@ -1243,6 +1315,166 @@ mod tests {
                 .is_err(),
             "duplicate command should not reach extension dispatch"
         );
+    }
+
+    #[tokio::test]
+    async fn in_flight_limit_returns_overload_without_dispatch() {
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel::<CloudDispatchRequest>();
+        let cache = Arc::new(Mutex::new(CommandResultCache::default()));
+        for index in 0..MAX_CACHED_COMMAND_RESULTS {
+            let (_, receiver) = watch::channel(None);
+            cache
+                .lock()
+                .await
+                .inflight
+                .insert(format!("pending-{index}"), receiver);
+        }
+        let result = dispatch_command_with_dedupe(
+            sample_envelope("over-limit"),
+            1_000,
+            dispatch_tx.clone(),
+            cache,
+            Arc::new(Mutex::new(CloudActorRuntimeState::default())),
+        )
+        .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("overload"));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), dispatch_rx.recv())
+                .await
+                .is_err(),
+            "overloaded command must not reach extension dispatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn abort_waiter_while_status_locked_keeps_dispatch_owned() {
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel::<CloudDispatchRequest>();
+        let cache = Arc::new(Mutex::new(CommandResultCache::default()));
+        let status = Arc::new(Mutex::new(CloudActorRuntimeState::default()));
+        let envelope = sample_envelope("command-aborted-waiter");
+        let status_guard = status.lock().await;
+        let first = tokio::spawn(dispatch_command_with_dedupe(
+            envelope.clone(),
+            1_000,
+            dispatch_tx.clone(),
+            cache.clone(),
+            status.clone(),
+        ));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if let Ok(guard) = cache.try_lock() {
+                    if guard.inflight.contains_key(&envelope.command_id) {
+                        break;
+                    }
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("command registered before dispatch");
+        first.abort();
+        assert!(first.await.unwrap_err().is_cancelled());
+        drop(status_guard);
+
+        let replay = tokio::spawn(dispatch_command_with_dedupe(
+            envelope.clone(),
+            1_000,
+            dispatch_tx.clone(),
+            cache.clone(),
+            status,
+        ));
+        let request = tokio::time::timeout(Duration::from_secs(2), dispatch_rx.recv())
+            .await
+            .unwrap()
+            .expect("owned dispatch survives waiter abort");
+        let expected = sample_result(&envelope);
+        request.respond_to.send(expected.clone()).unwrap();
+        assert_eq!(replay.await.unwrap(), expected);
+        assert_eq!(cache.lock().await.get(&envelope.command_id), Some(expected));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), dispatch_rx.recv())
+                .await
+                .is_err(),
+            "replay must not dispatch again"
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnect_mid_dispatch_replays_one_result_without_dispatching_twice() {
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel::<CloudDispatchRequest>();
+        let cache = Arc::new(Mutex::new(CommandResultCache::default()));
+        let status = Arc::new(Mutex::new(CloudActorRuntimeState::default()));
+        let envelope = sample_envelope("command-reconnect");
+        let (client, mut server) = ws_pair().await;
+        let session = tokio::spawn(run_cloud_actor_session_with(
+            client,
+            sample_actor_config(),
+            dispatch_tx.clone(),
+            cache.clone(),
+            status.clone(),
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        ));
+        server
+            .send(Message::Text(serde_json::to_string(&envelope).unwrap()))
+            .await
+            .unwrap();
+        let request = tokio::time::timeout(Duration::from_secs(2), dispatch_rx.recv())
+            .await
+            .unwrap()
+            .expect("first dispatch");
+        server.close(None).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(2), session)
+            .await
+            .expect("first session ended")
+            .unwrap()
+            .expect_err("closed socket reconnects");
+
+        let (client, mut server) = ws_pair().await;
+        let session = tokio::spawn(run_cloud_actor_session_with(
+            client,
+            sample_actor_config(),
+            dispatch_tx,
+            cache.clone(),
+            status,
+            Duration::from_secs(60),
+            Duration::from_secs(60),
+        ));
+        server
+            .send(Message::Text(serde_json::to_string(&envelope).unwrap()))
+            .await
+            .unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), dispatch_rx.recv())
+                .await
+                .is_err(),
+            "replayed command must await the original dispatch"
+        );
+        let expected = sample_result(&envelope);
+        request.respond_to.send(expected.clone()).unwrap();
+        let actual = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let Some(Ok(Message::Text(text))) = server.next().await else {
+                    panic!("socket closed before replay result");
+                };
+                let value: Value = serde_json::from_str(&text).unwrap();
+                if value["type"] == "command.result" {
+                    break serde_json::from_value::<CloudCommandResult>(value).unwrap();
+                }
+            }
+        })
+        .await
+        .expect("replayed result");
+        assert_eq!(actual, expected);
+        assert_eq!(cache.lock().await.get(&envelope.command_id), Some(expected));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), dispatch_rx.recv())
+                .await
+                .is_err(),
+            "only one command should reach extension dispatch"
+        );
+        session.abort();
     }
 
     type Ws = tokio_tungstenite::WebSocketStream<tokio::io::DuplexStream>;

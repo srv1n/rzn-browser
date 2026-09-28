@@ -121,22 +121,24 @@ function throwIfContentRequestCancelled(messageOrStep: any, where: string): void
   }
 }
 
-function contentCancellationPromise(messageOrStep: any): Promise<never> {
+function contentCancellationPromise(messageOrStep: any): { promise: Promise<never>; cleanup: () => void } {
   const keys: string[] = [];
   const requestId = contentRequestId(messageOrStep);
   const leaseId = contentLeaseId(messageOrStep);
   if (requestId) keys.push(`req:${requestId}`);
   if (leaseId) keys.push(`lease:${leaseId}`);
   if (!keys.length) {
-    return new Promise(() => {});
+    return { promise: new Promise<never>(() => {}), cleanup: () => {} };
   }
-  return new Promise((_, reject) => {
-    const waiters: Array<[string, (reason: string) => void]> = [];
-    const cleanup = () => {
-      for (const [key, waiter] of waiters) {
-        contentCancellationWaiters.get(key)?.delete(waiter);
-      }
-    };
+  const waiters: Array<[string, (reason: string) => void]> = [];
+  const cleanup = () => {
+    for (const [key, waiter] of waiters) {
+      const set = contentCancellationWaiters.get(key);
+      set?.delete(waiter);
+      if (set?.size === 0) contentCancellationWaiters.delete(key);
+    }
+  };
+  const promise = new Promise<never>((_, reject) => {
     for (const key of keys) {
       const waiter = (reason: string) => {
         cleanup();
@@ -151,17 +153,21 @@ function contentCancellationPromise(messageOrStep: any): Promise<never> {
       set.add(waiter);
     }
   });
+  return { promise, cleanup };
 }
 
 async function withContentCancellation<T>(messageOrStep: any, where: string, work: Promise<T>): Promise<T> {
   throwIfContentRequestCancelled(messageOrStep, `before ${where}`);
+  const cancellation = contentCancellationPromise(messageOrStep);
   try {
-    const result = await Promise.race([work, contentCancellationPromise(messageOrStep)]);
+    const result = await Promise.race([work, cancellation.promise]);
     throwIfContentRequestCancelled(messageOrStep, `after ${where}`);
     return result;
   } catch (error) {
     throwIfContentRequestCancelled(messageOrStep, `after ${where} error`);
     throw error;
+  } finally {
+    cancellation.cleanup();
   }
 }
 
@@ -394,6 +400,7 @@ function isElementVisible(element: Element): boolean {
 // Enhanced element discovery using element resolver
 async function findElementWithRetry(options: { selector?: string; encoded_id?: string }): Promise<Element> {
   console.log('findElementWithRetry called with:', options);
+  throwIfContentRequestCancelled(options, 'before element lookup');
   
   // Handle enhanced targeting
   if (options.encoded_id) {
@@ -442,6 +449,7 @@ async function findElementWithRetry(options: { selector?: string; encoded_id?: s
   const retryDelay = 300;
   
   for (let i = 0; i < maxRetries; i++) {
+    throwIfContentRequestCancelled(options, 'element lookup retry');
     console.log(`Attempt ${i + 1} to find selector: ${selector}`);
     const element = findMatchingElement(selector, {
       pierceShadow: (options as any).pierce_shadow === true,
@@ -467,7 +475,7 @@ async function findElementWithRetry(options: { selector?: string; encoded_id?: s
     }
     
     if (i < maxRetries - 1) {
-      await new Promise(resolve => setTimeout(resolve, retryDelay));
+      await withContentCancellation(options, 'element lookup wait', new Promise<void>(resolve => setTimeout(resolve, retryDelay)));
     }
   }
   
@@ -733,9 +741,11 @@ async function callPageBridge(type: string, payload: any, timeoutMs = 10000): Pr
 
   return await new Promise((resolve, reject) => {
     let done = false;
+    const cancellation = contentCancellationPromise(payload);
     const finish = (err: Error | null, value?: any) => {
       if (done) return;
       done = true;
+      cancellation.cleanup();
       observer.disconnect();
       clearTimeout(timer);
       try {
@@ -763,7 +773,7 @@ async function callPageBridge(type: string, payload: any, timeoutMs = 10000): Pr
     const observer = new MutationObserver(() => check());
     observer.observe(node, { attributes: true, attributeFilter: ['data-rzn-resp', 'data-rzn-err'] });
     const timer = window.setTimeout(() => finish(new Error(`Page bridge timeout for ${type}`)), timeoutMs);
-    void contentCancellationPromise(payload).catch((error) => {
+    void cancellation.promise.catch((error) => {
       finish(error instanceof Error ? error : new Error(String(error)));
     });
     check();
@@ -1340,7 +1350,8 @@ function ensurePageBridgeContainer(): HTMLElement {
   return el;
 }
 
-async function sendPageBridgeRequest(type: string, payload: any, timeoutMs = 10000): Promise<any> {
+async function sendPageBridgeRequest(type: string, payload: any, timeoutMs = 10000, cancellationContext?: any): Promise<any> {
+  throwIfContentRequestCancelled(cancellationContext, `before page bridge ${type}`);
   const container = ensurePageBridgeContainer();
   const requestId = `${type}_${Math.random().toString(36).slice(2)}`;
   const node = document.createElement('div');
@@ -1353,9 +1364,11 @@ async function sendPageBridgeRequest(type: string, payload: any, timeoutMs = 100
 
   return await new Promise((resolve, reject) => {
     let done = false;
+    const cancellation = contentCancellationPromise(cancellationContext);
     const finish = (err: Error | null, value?: any) => {
       if (done) return;
       done = true;
+      cancellation.cleanup();
       observer.disconnect();
       clearTimeout(timer);
       try {
@@ -1384,7 +1397,7 @@ async function sendPageBridgeRequest(type: string, payload: any, timeoutMs = 100
     });
 
     const timer = setTimeout(() => finish(new Error('Page bridge timeout')), timeoutMs);
-    void contentCancellationPromise(payload).catch((error) => {
+    void cancellation.promise.catch((error) => {
       finish(error instanceof Error ? error : new Error(String(error)));
     });
     check();
@@ -1924,6 +1937,7 @@ const actionHandlers = {
   fill_input_field: async (step: any) => {
     console.log('fill_input_field step:', JSON.stringify(redactStepForLog(step)));
     const element = await findElementWithRetry(step) as Element;
+    throwIfContentRequestCancelled(step, 'fill_input_field target');
     const fillDebug: Record<string, any> = {
       mode: 'unknown',
       useNativeInput: step.use_native_input === true,
@@ -1947,6 +1961,7 @@ const actionHandlers = {
     const useNativeInput = step.use_native_input === true;
     const preferTrustedTextInsert = step.prefer_trusted_text_insert === true;
     const nativeInputReady = useNativeInput ? await nativeInput.ensureAvailable({ force: true }) : false;
+    throwIfContentRequestCancelled(step, 'fill_input_field native input probe');
     fillDebug.nativeInputReady = nativeInputReady;
     const delayMsRaw = step.delay_ms;
     const delayMs =
@@ -1955,17 +1970,22 @@ const actionHandlers = {
         : undefined;
     const typingSpeed = (step.typing_speed as 'slow' | 'medium' | 'fast' | undefined) || 'medium';
 
-    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const sleep = (ms: number) => withContentCancellation(step, 'fill_input_field wait', new Promise<void>(resolve => setTimeout(resolve, ms)));
     const tryTrustedTextInsert = async (text: string): Promise<boolean> => {
+      throwIfContentRequestCancelled(step, 'before trusted text insert');
       fillDebug.triedTrustedTextInsert = true;
       try {
         const response = await chrome.runtime.sendMessage({
           action: 'type_text_cdp',
-          text
+          text,
+          req_id: contentRequestId(step),
+          lease_id: contentLeaseId(step),
         });
+        throwIfContentRequestCancelled(step, 'after trusted text insert');
         fillDebug.trustedTextInsertResponse = response ?? null;
         return response?.success === true;
       } catch (error) {
+        throwIfContentRequestCancelled(step, 'trusted text insert error');
         console.warn('Trusted CDP text insert failed:', error);
         fillDebug.trustedTextInsertError = error instanceof Error ? error.message : String(error);
         return false;
@@ -2081,14 +2101,16 @@ const actionHandlers = {
       if (shouldSimulateTyping) {
         const perCharDelay = delayMs ?? 40;
         for (const character of text) {
+          throwIfContentRequestCancelled(step, 'form control typing');
           emitKeyEvent(target, 'keydown', character);
           emitKeyEvent(target, 'keypress', character);
           currentValue += character;
           setFormControlValue(target, currentValue, character, 'insertText');
           emitKeyEvent(target, 'keyup', character);
-          if (perCharDelay > 0) await sleep(perCharDelay);
+          await sleep(perCharDelay);
         }
       } else {
+        throwIfContentRequestCancelled(step, 'form control fill');
         const nextValue = clearFirst ? text : `${target.value}${text}`;
         setFormControlValue(
           target,
@@ -2138,6 +2160,7 @@ const actionHandlers = {
                   natural_variance: true
                 })
               : await nativeInput.nativeTypeNatural(value, typingSpeed);
+          throwIfContentRequestCancelled(step, 'after native form control typing');
           fillDebug.nativeInserted = inserted;
           if (inserted && !(await confirmsInsertedText(element, value, previousText))) {
             inserted = false;
@@ -2312,12 +2335,13 @@ const actionHandlers = {
       const typeEditableCharacters = async (text: string) => {
         const perCharDelay = delayMs ?? 40;
         for (const character of text) {
+          throwIfContentRequestCancelled(step, 'contenteditable typing');
           emitEditableKeyEvent('keydown', character);
           emitEditableKeyEvent('keypress', character);
           dispatchBeforeInputEvent(element, character, 'insertText');
           insertEditableText(character);
           emitEditableKeyEvent('keyup', character);
-          if (perCharDelay > 0) await sleep(perCharDelay);
+          await sleep(perCharDelay);
         }
       };
 
@@ -2345,6 +2369,7 @@ const actionHandlers = {
                   natural_variance: true
                 })
               : await nativeInput.nativeTypeNatural(value, typingSpeed);
+          throwIfContentRequestCancelled(step, 'after native contenteditable typing');
           fillDebug.nativeInserted = inserted;
           if (inserted && !(await confirmsInsertedText(element, value, previousText))) {
             inserted = false;
@@ -2363,6 +2388,7 @@ const actionHandlers = {
           if (shouldSimulateTyping || hasStructuredEditableContent) {
             await typeEditableCharacters(value);
           } else {
+            throwIfContentRequestCancelled(step, 'contenteditable fill fallback');
             insertEditableText(value);
           }
         }
@@ -2372,6 +2398,7 @@ const actionHandlers = {
         if (shouldSimulateTyping || hasStructuredEditableContent) {
           await typeEditableCharacters(value);
         } else {
+          throwIfContentRequestCancelled(step, 'contenteditable fill');
           insertEditableText(value);
         }
       }
@@ -2388,6 +2415,7 @@ const actionHandlers = {
   fill_and_submit: async (step: any) => {
     const value = String(step.value ?? step.text ?? '');
     if (!value) throw new Error('Missing value for fill_and_submit');
+    throwIfContentRequestCancelled(step, 'before fill_and_submit');
 
     const timeoutMs = Math.max(500, Number(step.timeout_ms ?? step.timeoutMs ?? 10000));
     const waitTimeoutMs = Math.max(0, Number(step.wait_timeout_ms ?? step.waitTimeoutMs ?? 45000));
@@ -2404,8 +2432,10 @@ const actionHandlers = {
           timeout_ms: timeoutMs,
           wait_timeout_ms: waitTimeoutMs
         },
-        timeoutMs + waitTimeoutMs + 3000
+        timeoutMs + waitTimeoutMs + 3000,
+        step
       );
+      throwIfContentRequestCancelled(step, 'after page bridge fill_and_submit');
       if (bridgeResp?.success && bridgeResp.result?.submitted) {
         return {
           success: true,
@@ -2417,10 +2447,11 @@ const actionHandlers = {
         pageBridgeError = bridgeResp.error_msg || bridgeResp.error || JSON.stringify(bridgeResp);
       }
     } catch (error: any) {
+      throwIfContentRequestCancelled(step, 'page bridge fill_and_submit error');
       pageBridgeError = error?.message || String(error);
     }
 
-    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const sleep = (ms: number) => withContentCancellation(step, 'fill_and_submit wait', new Promise<void>(resolve => setTimeout(resolve, ms)));
     const normalize = (text: string | null | undefined) =>
       String(text || '').replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
     const readText = (target: Element | null): string => {
@@ -2618,6 +2649,7 @@ const actionHandlers = {
     };
 
     let target = await findElementWithRetry(step) as Element;
+    throwIfContentRequestCancelled(step, 'fill_and_submit target');
     const beforeCountSelector = String(step.wait_for_increase_selector || step.waitForIncreaseSelector || '').trim();
     const beforeCount = beforeCountSelector ? document.querySelectorAll(beforeCountSelector).length : null;
 
@@ -2628,6 +2660,7 @@ const actionHandlers = {
       clear_first: step.clear_first !== false,
       simulate_typing: step.simulate_typing === true
     });
+    throwIfContentRequestCancelled(step, 'after fill_and_submit fill');
     await sleep(180);
 
     target = findCurrentTarget() || target;
@@ -2652,6 +2685,7 @@ const actionHandlers = {
       await sleep(150);
     }
     if (!submitButton) {
+      throwIfContentRequestCancelled(step, 'before keyboard submit');
       const keyboardSubmitted = dispatchEnterSubmit(target);
       const keyboardWait = await waitForIncrease(beforeCountSelector, beforeCount);
       if (keyboardWait.increased) {
@@ -2681,6 +2715,7 @@ const actionHandlers = {
     try {
       submitButton.scrollIntoView({ block: 'center', inline: 'center' });
     } catch {}
+    throwIfContentRequestCancelled(step, 'before button submit');
     submitButton.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, composed: true, view: window }));
     submitButton.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, composed: true, view: window }));
     submitButton.click();
@@ -2717,9 +2752,11 @@ const actionHandlers = {
     if (!target) {
       throw new Error('No target element found for type_text');
     }
+    throwIfContentRequestCancelled(step, 'type_text target');
 
     const useNativeInput = step.use_native_input === true;
     const nativeInputReady = useNativeInput ? await nativeInput.ensureAvailable({ force: true }) : false;
+    throwIfContentRequestCancelled(step, 'type_text native input probe');
     const delayMsRaw = step.delay_ms;
     const delayMs =
       typeof delayMsRaw === 'number' && Number.isFinite(delayMsRaw) && delayMsRaw >= 0
@@ -2729,7 +2766,7 @@ const actionHandlers = {
     const shouldSimulateTyping = step.simulate_typing === true;
     const allowCdpTyping = step.use_cdp === true || step.prefer_trusted_text_insert === true;
 
-    const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+    const sleep = (ms: number) => withContentCancellation(step, 'type_text wait', new Promise<void>(resolve => setTimeout(resolve, ms)));
     const dispatchInputEvent = (
       targetEl: HTMLElement,
       data: string | null,
@@ -2772,6 +2809,7 @@ const actionHandlers = {
     };
 
     const domTypeCharacters = async (element: Element, value: string) => {
+      throwIfContentRequestCancelled(step, 'before DOM typing');
       placeCursorAtEnd(element);
 
       if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
@@ -2789,11 +2827,12 @@ const actionHandlers = {
         }
         const perCharDelay = delayMs ?? 35;
         for (const character of value) {
+          throwIfContentRequestCancelled(step, 'form control typing');
           current += character;
           if (valueSetter) valueSetter.call(element, current);
           else element.value = current;
           dispatchInputEvent(element, character, 'insertText');
-          if (perCharDelay > 0) await sleep(perCharDelay);
+          await sleep(perCharDelay);
         }
         return;
       }
@@ -2817,6 +2856,7 @@ const actionHandlers = {
         }
         const perCharDelay = delayMs ?? 35;
         for (const character of value) {
+          throwIfContentRequestCancelled(step, 'contenteditable typing');
           placeCursorAtEnd(element);
           const beforeText = element.innerText || element.textContent || '';
           let inserted = false;
@@ -2830,7 +2870,7 @@ const actionHandlers = {
             element.textContent = `${element.textContent || ''}${character}`;
             dispatchInputEvent(element, character, 'insertText');
           }
-          if (perCharDelay > 0) await sleep(perCharDelay);
+          await sleep(perCharDelay);
         }
         return;
       }
@@ -2849,6 +2889,7 @@ const actionHandlers = {
               natural_variance: true
             })
           : await nativeInput.nativeTypeNatural(text, typingSpeed);
+      throwIfContentRequestCancelled(step, 'after native typing');
     }
 
     if (!inserted) {
@@ -2857,13 +2898,18 @@ const actionHandlers = {
     }
 
     if (allowCdpTyping) {
+      throwIfContentRequestCancelled(step, 'before CDP typing');
       try {
         const response = await chrome.runtime.sendMessage({
           action: 'type_text_cdp',
-          text
+          text,
+          req_id: contentRequestId(step),
+          lease_id: contentLeaseId(step),
         });
+        throwIfContentRequestCancelled(step, 'after CDP typing');
         inserted = response?.success === true || inserted;
       } catch (error) {
+        throwIfContentRequestCancelled(step, 'CDP typing error');
         console.warn('type_text_cdp failed:', error);
       }
     }
@@ -2897,7 +2943,7 @@ const actionHandlers = {
     // Resolve target input
     let inputEl: HTMLElement | null = null;
     if (sel) {
-      inputEl = (await findElementWithRetry({ selector: sel })) as HTMLElement;
+      inputEl = (await findElementWithRetry({ ...step, selector: sel })) as HTMLElement;
     } else {
       inputEl = (document.activeElement as HTMLElement) || null;
       if (!(inputEl instanceof HTMLInputElement || inputEl instanceof HTMLTextAreaElement)) {
@@ -2909,6 +2955,7 @@ const actionHandlers = {
       cslog.logWarn('submit_text_query: no input element resolved', { step: redactStepForLog(step) });
       return { success: false, reason: 'no_input' };
     }
+    throwIfContentRequestCancelled(step, 'submit_text_query target');
 
     // Fill value if provided
     if (typeof value === 'string') {
@@ -2942,11 +2989,13 @@ const actionHandlers = {
 
     const waitForChange = async (deadline: number): Promise<boolean> => {
       while (Date.now() < deadline) {
+        throwIfContentRequestCancelled(step, 'submit_text_query wait');
         const nowHash = domHash();
         if (nowHash !== beforeHash) return true;
         if (window.location.href !== beforeUrl) return true;
-        await new Promise(r => setTimeout(r, 150));
+        await withContentCancellation(step, 'submit_text_query wait', new Promise<void>(resolve => setTimeout(resolve, 150)));
       }
+      throwIfContentRequestCancelled(step, 'after submit_text_query wait');
       return false;
     };
 
@@ -2988,7 +3037,7 @@ const actionHandlers = {
       // As last resort, Escape then Enter once
       const esc = new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true });
       inputEl.dispatchEvent(esc);
-      await new Promise(r => setTimeout(r, 50));
+      await withContentCancellation(step, 'submit_text_query escape wait', new Promise<void>(resolve => setTimeout(resolve, 50)));
       const kd2 = new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true });
       inputEl.dispatchEvent(kd2);
       const ku2 = new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true });
@@ -3029,16 +3078,19 @@ const actionHandlers = {
     // Attempt 5: CDP Enter (trusted) if allowed
     const allowCdp: boolean = step.allow_cdp !== false; // default true
     if (allowCdp) {
+      throwIfContentRequestCancelled(step, 'before submit_text_query CDP Enter');
       try {
         // Ensure input has focus in DOM world
         (inputEl as any).focus?.();
         const resp = await chrome.runtime.sendMessage({ action: 'press_key_cdp', key: 'Enter' });
+        throwIfContentRequestCancelled(step, 'after submit_text_query CDP Enter');
         cslog.logDebug('submit_text_query: cdp enter attempt', { ok: !!(resp && resp.success) });
         if (resp && resp.success) {
           const changed5 = await waitForChange(Date.now() + Math.min(1500, timeoutMs));
           if (changed5) return { success: true, method: 'cdp.enter' };
         }
       } catch (e: any) {
+        throwIfContentRequestCancelled(step, 'submit_text_query CDP Enter error');
         cslog.logWarn('submit_text_query: cdp enter failed', { error: e?.message || String(e) });
       }
     }
@@ -3131,12 +3183,14 @@ const actionHandlers = {
     
     const useNativeInput = step.use_native_input === true;
     const nativeInputReady = useNativeInput ? await nativeInput.ensureAvailable({ force: true }) : false;
+    throwIfContentRequestCancelled(step, 'press_special_key native input probe');
     
     // If requested, use native input for key press (Layer 2)
     if (useNativeInput && nativeInputReady) {
       const nativeKey = key === 'Enter' ? 'Return' : keyCode;
       console.log('Using Layer 2 native input for key press', nativeKey);
       const success = await nativeInput.nativeKey(nativeKey);
+      throwIfContentRequestCancelled(step, 'after native special key');
       if (success) {
         // Native input succeeded
         if (step.successCriteria) {
@@ -4700,6 +4754,7 @@ const actionHandlers = {
   submit_input: async (step: any) => {
     console.log('submit_input step:', JSON.stringify(redactStepForLog(step)));
     const element = await findElementWithRetry(step) as HTMLInputElement | HTMLTextAreaElement;
+    throwIfContentRequestCancelled(step, 'submit_input target');
     
     if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
       const useNativeInput = step.use_native_input === true;
@@ -4709,7 +4764,7 @@ const actionHandlers = {
         ...step,
         value: String(step.text ?? ''),
       });
-      await new Promise(resolve => setTimeout(resolve, 120));
+      await withContentCancellation(step, 'submit_input wait', new Promise<void>(resolve => setTimeout(resolve, 120)));
 
       const dispatchDomEnter = () => {
         const keydown = new KeyboardEvent('keydown', {
@@ -4748,9 +4803,11 @@ const actionHandlers = {
       };
 
       const nativeInputReady = useNativeInput ? await nativeInput.ensureAvailable({ force: true }) : false;
+      throwIfContentRequestCancelled(step, 'submit_input native input probe');
       if (useNativeInput && nativeInputReady) {
         console.log('Using native Enter key for submit_input');
         const success = await nativeInput.nativeKey('Return');
+        throwIfContentRequestCancelled(step, 'after native submit_input');
         if (!success) {
           console.warn('Native Enter key failed, falling back to DOM method');
           dispatchDomEnter();
@@ -4970,8 +5027,9 @@ const actionHandlers = {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
     let cancellationArmed = true;
+    const cancellation = controller ? contentCancellationPromise(step) : null;
     if (controller) {
-      void contentCancellationPromise(step).catch(() => {
+      void cancellation!.promise.catch(() => {
         if (cancellationArmed) {
           controller.abort();
         }
@@ -5019,6 +5077,7 @@ const actionHandlers = {
       };
     } finally {
       cancellationArmed = false;
+      cancellation?.cleanup();
       if (timer) clearTimeout(timer as any);
     }
   },

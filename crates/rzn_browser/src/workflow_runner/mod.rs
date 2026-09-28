@@ -23,6 +23,7 @@ use rzn_contracts::workflow::{
 use rzn_core::dsl;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::fmt;
 use std::path::Path;
 use tokio::time::Duration;
 use uuid::Uuid;
@@ -71,8 +72,8 @@ impl std::error::Error for TransportError {}
 /// How the runner talks to the browser session layer.
 ///
 /// `timeout_ms` is a client-side watchdog on the whole call; `0` means "no
-/// watchdog, await directly" (used for session open/close and snapshots, which
-/// the CLI never wrapped in an outer timeout).
+/// watchdog, await directly" (used for session open and snapshots). The runner
+/// separately bounds session close so cleanup cannot hold the run forever.
 #[async_trait::async_trait]
 pub trait StepTransport: Send + Sync {
     fn cancelled(&self) -> bool {
@@ -130,12 +131,25 @@ pub struct RunOptions {
     /// the server-assigned value; local callers use the workflow file digest.
     pub workflow_hash: Option<String>,
     pub params: HashMap<String, String>,
+    /// Bounds execution from session open through the last step; session close
+    /// gets its own cleanup window after this deadline.
     pub deadline: Option<Duration>,
     pub session: SessionSpec,
     pub snapshot_mode: SnapshotMode,
     /// Original workflow path (used only to build failure-report context).
     pub workflow_path: String,
 }
+
+#[derive(Debug)]
+struct RunDeadlineExceeded;
+
+impl fmt::Display for RunDeadlineExceeded {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("execution deadline exceeded")
+    }
+}
+
+impl std::error::Error for RunDeadlineExceeded {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnapshotMode {
@@ -166,8 +180,16 @@ pub async fn execute_workflow(
         Ok(Some(value)) => run_result_from_output_value(value, &opts.run_id, &workflow_id),
         Ok(None) => run_result_shell(RunStatus::Succeeded, None, &opts.run_id, &workflow_id, None),
         Err(err) => {
+            let timed_out = err.is::<RunDeadlineExceeded>();
+            let cancelled = transport.cancelled();
             let mut result = run_result_shell(
-                RunStatus::Failed,
+                if timed_out {
+                    RunStatus::TimedOut
+                } else if cancelled {
+                    RunStatus::Cancelled
+                } else {
+                    RunStatus::Failed
+                },
                 None,
                 &opts.run_id,
                 &workflow_id,
@@ -175,17 +197,27 @@ pub async fn execute_workflow(
                     code: err
                         .downcast_ref::<WorkflowRunFailure>()
                         .and_then(|failure| failure.error_code.clone())
-                        .unwrap_or_else(|| "step_failed".to_string()),
+                        .unwrap_or_else(|| {
+                            if timed_out {
+                                "execution_deadline_exceeded".to_string()
+                            } else if cancelled {
+                                "run_cancelled".to_string()
+                            } else {
+                                "step_failed".to_string()
+                            }
+                        }),
                     message: err.to_string(),
                     step_id: None,
                     retry_hint: None,
                 }),
             );
-            enrich_failure_result(
-                &mut result,
-                &err,
-                opts.workflow_hash.as_deref().unwrap_or(""),
-            );
+            if result.status == RunStatus::Failed {
+                enrich_failure_result(
+                    &mut result,
+                    &err,
+                    opts.workflow_hash.as_deref().unwrap_or(""),
+                );
+            }
             result
         }
     }
@@ -249,9 +281,8 @@ pub(crate) fn enrich_failure_result(
 
 /// The shared step loop. Returns the CLI's historical `Result<Option<Value>>`:
 /// `Ok(Some(run_result_value))` / `Ok(None)` on success, `Err(WorkflowRunFailure)`
-/// on step failure, and a plain `Err` on an underlying transport error — exactly
-/// as `native_runner`'s old inline loop did. Session open/close happens here so a
-/// single call is self-contained.
+/// on step failure, and a plain `Err` on transport, cancellation, or deadline
+/// failure. Session open/close happens here so a single call is self-contained.
 pub(crate) async fn run_workflow(
     transport: &dyn StepTransport,
     sink: &dyn RunEventSink,
@@ -262,19 +293,21 @@ pub(crate) async fn run_workflow(
     let mut final_payload: Option<Value> = None;
     let mut step_outputs: HashMap<String, Value> = HashMap::new();
 
-    let result: Result<()> = async {
+    let run = async {
+        if transport.cancelled() {
+            return Err(anyhow!("run cancelled"));
+        }
         let session_resp = transport
-            .call(
-                "browser.session_open",
-                session_open_payload(opts),
-                0,
-            )
+            .call("browser.session_open", session_open_payload(opts), 0)
             .await
             .map_err(TransportError::into_anyhow)?;
         session_id = extract_session_id(&session_resp);
         sink.on_session_open(session_id.as_deref());
 
         for (idx, step) in workflow.steps.iter().enumerate() {
+            if transport.cancelled() {
+                return Err(anyhow!("run cancelled"));
+            }
             let step_id = step.id();
             let step_type = step.step_type();
             let executor_step = step.executor_step();
@@ -294,9 +327,10 @@ pub(crate) async fn run_workflow(
                     if transport.cancelled() {
                         return Err(anyhow!("run cancelled during {}", step_type));
                     }
-                    tokio::time::sleep(Duration::from_millis(50).min(
-                        deadline.saturating_duration_since(tokio::time::Instant::now()),
-                    ))
+                    tokio::time::sleep(
+                        Duration::from_millis(50)
+                            .min(deadline.saturating_duration_since(tokio::time::Instant::now())),
+                    )
                     .await;
                 }
                 let response = json!({ "ok": true, "success": true, "waited_ms": timeout_ms });
@@ -342,9 +376,9 @@ pub(crate) async fn run_workflow(
                                 session_id.as_deref(),
                                 opts.session.tab_ref.as_deref(),
                             )
-                                .await
-                                .ok()
-                                .and_then(|snapshot| bounded_failure_capture(&snapshot))
+                            .await
+                            .ok()
+                            .and_then(|snapshot| bounded_failure_capture(&snapshot))
                         } else {
                             None
                         };
@@ -426,9 +460,9 @@ pub(crate) async fn run_workflow(
                         session_id.as_deref(),
                         opts.session.tab_ref.as_deref(),
                     )
-                        .await
-                        .ok()
-                        .and_then(|snapshot| bounded_failure_capture(&snapshot))
+                    .await
+                    .ok()
+                    .and_then(|snapshot| bounded_failure_capture(&snapshot))
                 } else {
                     None
                 };
@@ -480,8 +514,21 @@ pub(crate) async fn run_workflow(
         }
 
         Ok(())
-    }
-    .await;
+    };
+    let result: Result<()> = if let Some(deadline) = opts.deadline {
+        tokio::select! {
+            biased;
+            _ = wait_for_cancellation(transport) => Err(anyhow!("run cancelled")),
+            result = tokio::time::timeout(deadline, run) =>
+                result.unwrap_or_else(|_| Err(anyhow!(RunDeadlineExceeded))),
+        }
+    } else {
+        tokio::select! {
+            biased;
+            _ = wait_for_cancellation(transport) => Err(anyhow!("run cancelled")),
+            result = run => result,
+        }
+    };
 
     if session_id.is_some() {
         sink.on_session_close();
@@ -502,11 +549,19 @@ pub(crate) async fn run_workflow(
         if opts.session.retain_tab_on_close {
             close_payload["keep_tab"] = Value::Bool(true);
         }
-        let _ = transport
-            .call("browser.session_close", close_payload, 5_000)
-            .await;
+        let _ = tokio::time::timeout(
+            Duration::from_secs(5),
+            transport.call("browser.session_close", close_payload, 5_000),
+        )
+        .await;
     }
     result.map(|_| final_payload)
+}
+
+async fn wait_for_cancellation(transport: &dyn StepTransport) {
+    while !transport.cancelled() {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 }
 
 fn session_open_payload(opts: &RunOptions) -> Value {

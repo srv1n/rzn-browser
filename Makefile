@@ -1,6 +1,6 @@
 # RZN Browser Automation Makefile
 
-.PHONY: help build build-release build-rust build-rust-release build-ext build-ext-release clean codebasezip logs-clear logs-follow logs-show test test-dom test-dom-units ads-smoke dev setup install reload-ext rust \
+.PHONY: help build build-release build-rust build-rust-release build-ext build-ext-edge build-ext-chromium build-ext-release clean codebasezip logs-clear logs-follow logs-show test test-dom test-dom-units ads-smoke dev setup install reload-ext rust \
 	test-ext-unit test-setup-ext-sync test-ext-e2e-install test-ext-e2e-run test-ext-e2e \
 	test-release-extension test-release-install \
 	index sg-find-stream sg-guards context-snippets agent-run agent-validate scope scope-q reducers-index invariants schema-check \
@@ -10,12 +10,17 @@
 RZN_BROWSER ?= rzn-browser
 SCCACHE ?= $(shell command -v sccache 2>/dev/null)
 
+ifneq ($(CI),true)
 ifeq ($(strip $(SCCACHE)),)
 $(error sccache is required for Rust builds; install it and ensure it is on PATH)
 endif
 
 # Every recipe, including recipes that call helper scripts, inherits this wrapper.
 export RUSTC_WRAPPER := $(SCCACHE)
+else
+# CI runners have no sccache; override the wrapper from .cargo/config.toml.
+export RUSTC_WRAPPER :=
+endif
 
 # Default target
 help:
@@ -27,6 +32,8 @@ help:
 	@echo "  make build-rust    - Build debug Rust components"
 	@echo "  make build-rust-release - Build optimized Rust components"
 	@echo "  make build-ext     - Build Chrome extension"
+	@echo "  make build-ext-edge - Build Edge extension"
+	@echo "  make build-ext-chromium - Build Chromium extension"
 	@echo "  make build-ext-release - Build supported Chromium extension targets"
 	@echo "  make rust ARGS='check -p <crate>' - Run a focused Cargo command through Make"
 	@echo "  make clean         - Clean all build artifacts"
@@ -116,6 +123,14 @@ build-rust-release:
 build-ext:
 	@echo "🌐 Building Chrome extension..."
 	cd extension && bun install --frozen-lockfile && bun run build:chrome
+
+build-ext-edge:
+	@echo "🌐 Building Edge extension..."
+	cd extension && bun install --frozen-lockfile && bun run build:edge
+
+build-ext-chromium:
+	@echo "🌐 Building Chromium extension..."
+	cd extension && bun install --frozen-lockfile && bun run build:chromium
 
 # Build every supported browser extension target for distribution.
 build-ext-release:

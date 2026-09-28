@@ -2745,7 +2745,7 @@ async function focusTypeTextTarget(tabId: number, selector?: string): Promise<vo
   }
 }
 
-async function executeDirectTypeTextStep(tabId: number, step: any): Promise<any> {
+async function executeDirectTypeTextStep(tabId: number, step: any, brokerLease: BrokerRequestLease | null = null): Promise<any> {
   const text = String(step?.text ?? step?.value ?? '');
   if (!text) {
     return actionSuccess({
@@ -2760,10 +2760,17 @@ async function executeDirectTypeTextStep(tabId: number, step: any): Promise<any>
     });
   }
 
+  assertBrokerLeaseCurrent(brokerLease, 'before direct type_text focus');
   await focusTypeTextTarget(tabId, step?.selector);
+  assertBrokerLeaseCurrent(brokerLease, 'after direct type_text focus');
   const { handleTypeText } = await import('./actions/type_text');
   return await runWithAttachedCdpTab(tabId, async () =>
-    handleTypeText({ text, tabId, manageDebuggerLifecycle: false })
+    handleTypeText({
+      text,
+      tabId,
+      manageDebuggerLifecycle: false,
+      assertActive: () => assertBrokerLeaseCurrent(brokerLease, 'direct type_text CDP input'),
+    })
   );
 }
 
@@ -5264,7 +5271,7 @@ async function handleBrokerMessage(
           const result = await guardedBrokerSideEffect(
             brokerLease,
             'executeDirectTypeTextStep',
-            () => executeDirectTypeTextStep(tabId, step)
+            () => executeDirectTypeTextStep(tabId, step, brokerLease)
           );
           sendResponseToBroker({
             req_id: isOrchestratorFormat ? undefined : requestId,
@@ -7307,7 +7314,7 @@ async function executeWorkflow(
           const result = await guardedBrokerSideEffect(
             brokerLease,
             'executeDirectTypeTextStep workflow',
-            () => executeDirectTypeTextStep(tabId, step)
+            () => executeDirectTypeTextStep(tabId, step, brokerLease)
           );
           results.push(result);
           continue;
@@ -8476,15 +8483,27 @@ if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
 
     (async () => {
       try {
+        const assertActive = () => {
+          const leaseId = typeof message.lease_id === 'string' ? message.lease_id.trim() : '';
+          if (!leaseId) return;
+          const lease = brokerRequestLeasesById.get(leaseId);
+          if (!lease || (message.req_id && lease.requestId !== message.req_id)) {
+            throw new Error('type_text_cdp request lease is stale');
+          }
+          assertBrokerLeaseCurrent(lease, 'type_text_cdp input');
+        };
+        assertActive();
         const targetTabId = await resolveMessageTargetTab(sender);
         const { handleTypeText } = await import('./actions/type_text');
-        const result = await runWithAttachedCdpTab(targetTabId, async () =>
-          handleTypeText({
+        const result = await runWithAttachedCdpTab(targetTabId, async () => {
+          assertActive();
+          return handleTypeText({
             text: message.text,
             tabId: targetTabId,
             manageDebuggerLifecycle: false,
-          })
-        );
+            assertActive,
+          });
+        });
         sendResponse({ success: true, ...result });
       } catch (error: any) {
         console.error('type_text_cdp failed:', error);

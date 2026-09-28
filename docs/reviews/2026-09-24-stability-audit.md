@@ -1,7 +1,8 @@
 # Stability audit — 2026-09-24
 
-> **Status:** first tranche landed. See [Remaining work](#remaining-work-handoff) at the end
-> for what is left before the live test.
+> **Status:** shipping-review fixes implemented; final validation is recorded in
+> [Shipping-review follow-up](#shipping-review-follow-up-2026-09-26). Earlier tranche status below is historical.
+> See [Remaining work](#remaining-work-handoff) for the implementation history.
 
 Five read-only audits (extension service worker, content script / page bridge, native host,
 supervisor, CLI + process glue) produced 90 findings. This file merges them into 22 tickets.
@@ -512,3 +513,64 @@ Still open:
 - MCP request cancellation (the MCP loop is serial).
 - `download_catalog_source` has no timeout.
 - Supervisor bridge writer channels are unbounded (the 10s write timeout bounds a stuck bridge).
+
+### Shipping-review follow-up (2026-09-26)
+
+This section supersedes earlier “still open” lists for the changes below. Changes are local;
+the installed CLI/extension have not been replaced and nothing has been pushed.
+
+Implemented after tracing the real call paths:
+
+- Cancellation keeps the supervisor request id correlated with the native host wire id, and
+  FIFO dispatch prevents an immediate cancel from overtaking its action. CLI runs observe
+  run-id-scoped cancellation; paused automation rejects CLI claims. DOM and CDP typing check
+  cancellation between characters; fill/submit checks again before later mutations/submission.
+- Shared workflow execution enforces its configured deadline and cancellation while an action
+  or local wait is pending, then performs bounded session cleanup. Fleet uses that same path.
+- MCP reads cancellation/EOF while a tool call is running, cancels only the matching request,
+  preserves fragmented input, and closes its owned sessions. Supervisor cancellation fencing
+  covers readiness, initial bridge dispatch, and reconnect retry. Session-open/close cleanup
+  survives dropped futures; a full orphan-close queue retains cleanup ownership and logs failure.
+- Cloud commands retain an owned in-flight result across websocket disconnects; replay joins
+  that result instead of dispatching the same action again. Registration and owner creation have
+  no cancellation window. In-flight work and websocket queues are bounded.
+- Native-host connection tasks are reaped between complete frames; disconnect aborts owned
+  tasks and clears their pending entries. Native upstream writes and supervisor bridge queues
+  are bounded. Overload/cancellation-delivery failure is explicit rather than silently ignored.
+- The supervisor independently restores a deleted cached-token file without needing a client
+  connection first. Catalog downloads have a connection timeout and total deadline.
+- CI has a non-skipping Chromium chaos lane on PR/manual/nightly runs. It builds the
+  matching extension and binaries. Fixtures isolate app data and browser profiles and test host
+  kill, automatic supervisor respawn, service-worker termination, retained-page typing/submit cancel,
+  and exactly-once navigation. Copied executables pass a bounded preflight before transport tests;
+  read-only readiness probes verify the exact fixture supervisor PID and executable and cannot
+  silently start a replacement. Cleanup stops only fixture-owned processes before deleting profiles.
+
+Validation (local checkout, 2026-09-26):
+
+| Check | Result |
+|---|---|
+| `make test` | Full Rust workspace passed; browser binary 310 passed / 1 ignored, library 8 passed, native host 36 passed. |
+| `make test-ext-unit` | 148 passed across 35 files. |
+| `make build-rust`; Chrome, Edge and Chromium extension builds | Passed. Chromium also rebuilt with the page test bridge disabled for production-path chaos checks. |
+| Ordinary Playwright E2E (`--grep-invert native-host`) | Final clean-profile rerun: 35 passed (1.4 min) against local fixtures on the original dependencies. |
+| Isolated rebuilt-binary probes | Correct cancel wire id; paused CLI claim rejected; deleted token repaired independently and normal client succeeds. |
+| TypeScript `--noEmit`, compared with a read-only HEAD snapshot using the same dependencies | 51 errors in both; no added or removed diagnostics after ignoring shifted line numbers. Typecheck is not a clean gate. |
+| Rust formatting; scoped `git diff --check` | Passed. |
+| Production Chromium page chaos (`RZN_PAGE_TEST_BRIDGE_ENABLED=0`) | 3 passed: retained-page typing cancellation, no delayed submit after cancellation, exactly-once navigating click. |
+| Combined native lifecycle/page chaos | All 6 passed together (5.6 min), including fixture teardown, on Playwright 1.55 / Chromium 140 with the page test bridge disabled. |
+
+Unit/build evidence alone is not installed-runtime or live-provider acceptance. An already
+dispatched atomic browser command or arbitrary page JavaScript cannot be rolled back by
+cancellation. Branded-browser installation/upgrade and the intended `chatgpt/send` home-page
+routing still require release acceptance; this follow-up does not change that workflow behavior.
+
+Toolchain investigation: a temporary Playwright 1.60 / Chromium 148 trial did not resolve the
+captured macOS pre-main loader stall and passed 32/35 ordinary browser tests (two worker-API
+readiness failures, one OOPIF-route assertion). That dependency change was reverted completely.
+The final gates use the repository's original Playwright 1.55 dependency set. Newer-browser
+compatibility is not established by these results and needs separate qualification before release.
+After restoring the original browser, the reused ordinary-test profile caused 19 browser-startup
+failures (16 tests passed). Moving that inactive test profile aside, without changing code, restored
+35/35 passes. The profile is preserved at `/private/tmp/rzn-browser-profile-backup.cbLigN/profile`;
+no personal browser profile was changed.

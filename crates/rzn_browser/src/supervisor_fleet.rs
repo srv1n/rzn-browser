@@ -903,22 +903,13 @@ impl FleetJobExecutor for InProcessJobExecutor {
             workflow_path: path.to_string_lossy().into_owned(),
         };
 
-        // The runner does not enforce a global deadline itself; wrap it here.
-        match tokio::time::timeout(
-            deadline,
-            execute_workflow(&transport, &sink, workflow, opts),
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => timed_out_result(&run_id, &assignment.workflow_id),
-        }
+        execute_workflow(&transport, &sink, workflow, opts).await
     }
 }
 
 /// In-process `StepTransport`: drives `SupervisorState::dispatch` directly (never
-/// the local socket). A set cancel flag short-circuits the *next* step so the
-/// in-flight step completes and subsequent steps are skipped.
+/// the local socket). The shared runner observes cancellation during in-flight
+/// calls and still closes the session before returning.
 struct InProcessTransport {
     state: Arc<SupervisorState>,
     cancel: Arc<AtomicBool>,
@@ -1564,6 +1555,7 @@ fn failed_result(run_id: &str, workflow_id: &str, message: String) -> RunResult 
     }
 }
 
+#[cfg(test)]
 fn timed_out_result(run_id: &str, workflow_id: &str) -> RunResult {
     RunResult {
         version: RUN_RESULT_CONTRACT.to_string(),

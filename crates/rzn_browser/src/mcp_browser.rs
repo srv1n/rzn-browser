@@ -3,13 +3,14 @@ use crate::supervisor::{self, SupervisorConfig};
 use anyhow::Result;
 use clap::Args;
 use serde_json::{json, Map, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 
 const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 const DEFAULT_MCP_REQUEST_TIMEOUT_MS: u64 = 30_000;
+const MAX_QUEUED_REQUESTS: usize = 32;
 
 #[derive(Args, Debug, Clone)]
 pub struct BrowserMcpArgs {
@@ -48,6 +49,10 @@ trait BrowserRuntimeMcpBackend {
         tool_name: &'a str,
         arguments: Value,
     ) -> BackendFuture<'a, Result<Value>>;
+
+    fn cancel_request<'a>(&'a mut self, _request_id: &'a str) -> BackendFuture<'a, ()> {
+        Box::pin(async {})
+    }
 
     fn shutdown<'a>(&'a mut self) -> BackendFuture<'a, ()>;
 }
@@ -128,6 +133,17 @@ impl BrowserRuntimeMcpBackend for SupervisorBackend {
         })
     }
 
+    fn cancel_request<'a>(&'a mut self, request_id: &'a str) -> BackendFuture<'a, ()> {
+        Box::pin(async move {
+            let _ = supervisor::call(
+                self.config.clone(),
+                "browser.cancel_pending",
+                json!({ "mcp_request_id": request_id }),
+            )
+            .await;
+        })
+    }
+
     fn shutdown<'a>(&'a mut self) -> BackendFuture<'a, ()> {
         Box::pin(async move {})
     }
@@ -189,40 +205,162 @@ impl<B: BrowserRuntimeMcpBackend> BrowserMcpServer<B> {
         let stdin = tokio::io::stdin();
         let mut reader = BufReader::new(stdin);
         let mut stdout = tokio::io::stdout();
-        let mut line = String::new();
+        self.run_io(&mut reader, &mut stdout).await
+    }
 
-        while !self.shutdown_requested {
-            line.clear();
-            let bytes_read = reader.read_line(&mut line).await?;
-            if bytes_read == 0 {
-                break;
-            }
-
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-
-            let response = match serde_json::from_str::<Value>(trimmed) {
-                Ok(request) => self.handle_request(request).await,
-                Err(err) => Some(jsonrpc_error(
-                    None,
-                    -32700,
-                    &format!("Parse error: {}", err),
-                )),
-            };
-
-            if let Some(response) = response {
-                stdout
-                    .write_all(serde_json::to_string(&response)?.as_bytes())
-                    .await?;
-                stdout.write_all(b"\n").await?;
-                stdout.flush().await?;
-            }
-        }
-
+    async fn run_io<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin>(
+        &mut self,
+        reader: &mut R,
+        writer: &mut W,
+    ) -> Result<()> {
+        let result = self.process_io(reader, writer).await;
         self.close_open_sessions().await;
         self.backend.shutdown().await;
+        result
+    }
+
+    async fn process_io<R: AsyncBufRead + Unpin, W: AsyncWrite + Unpin>(
+        &mut self,
+        reader: &mut R,
+        writer: &mut W,
+    ) -> Result<()> {
+        let mut line = Vec::new();
+        let mut queued = VecDeque::new();
+
+        while !self.shutdown_requested {
+            let request = if let Some(request) = queued.pop_front() {
+                request
+            } else {
+                if reader.read_until(b'\n', &mut line).await? == 0 && line.is_empty() {
+                    break;
+                }
+                if line.iter().all(u8::is_ascii_whitespace) {
+                    line.clear();
+                    continue;
+                }
+                let parsed = serde_json::from_slice::<Value>(&line);
+                line.clear();
+                match parsed {
+                    Ok(request) => request,
+                    Err(err) => {
+                        write_response(
+                            writer,
+                            &jsonrpc_error(None, -32700, &format!("Parse error: {err}")),
+                        )
+                        .await?;
+                        continue;
+                    }
+                }
+            };
+
+            if request.get("method").and_then(Value::as_str) == Some("tools/call")
+                && request.get("id").is_some()
+            {
+                let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
+                let tool_name = params.get("name").and_then(Value::as_str).unwrap_or("");
+                if is_browser_tool(tool_name) {
+                    let id = request["id"].clone();
+                    let mut arguments = params
+                        .get("arguments")
+                        .cloned()
+                        .unwrap_or_else(|| json!({}));
+                    let Some(argument_map) = arguments.as_object_mut() else {
+                        write_response(
+                            writer,
+                            &jsonrpc_error(Some(id), -32602, "Tool arguments must be an object"),
+                        )
+                        .await?;
+                        continue;
+                    };
+                    let request_token = uuid::Uuid::new_v4().to_string();
+                    if tool_name.starts_with("browser.") {
+                        argument_map.insert("mcp_request_id".into(), json!(request_token));
+                    }
+                    let tool_name = tool_name.to_string();
+                    let mut call = Box::pin(self.backend.call_tool(&tool_name, arguments.clone()));
+                    enum Outcome {
+                        Complete(Result<Value>),
+                        Cancelled,
+                        Eof,
+                    }
+                    let outcome = loop {
+                        tokio::select! {
+                            result = &mut call => break Outcome::Complete(result),
+                            bytes = reader.read_until(b'\n', &mut line) => {
+                                if bytes? == 0 && line.is_empty() { break Outcome::Eof; }
+                                if line.iter().all(u8::is_ascii_whitespace) {
+                                    line.clear();
+                                    continue;
+                                }
+                                let parsed = serde_json::from_slice::<Value>(&line);
+                                line.clear();
+                                let incoming = match parsed {
+                                    Ok(value) => value,
+                                    Err(err) => {
+                                        write_response(writer, &jsonrpc_error(None, -32700, &format!("Parse error: {err}"))).await?;
+                                        continue;
+                                    }
+                                };
+                                if incoming.get("method").and_then(Value::as_str) == Some("notifications/cancelled") {
+                                    if incoming.pointer("/params/requestId") == Some(&id) {
+                                        break Outcome::Cancelled;
+                                    }
+                                    if let Some(cancelled_id) = incoming.pointer("/params/requestId") {
+                                        if let Some(position) = queued.iter().position(|request: &Value| request.get("id") == Some(cancelled_id)) {
+                                            queued.remove(position);
+                                            write_response(writer, &jsonrpc_error(Some(cancelled_id.clone()), -32800, "Request cancelled")).await?;
+                                        }
+                                    }
+                                } else if incoming.get("id").is_some() {
+                                    if queued.len() < MAX_QUEUED_REQUESTS {
+                                        queued.push_back(incoming);
+                                    } else {
+                                        write_response(writer, &jsonrpc_error(incoming.get("id").cloned(), -32000, "MCP request queue full")).await?;
+                                    }
+                                }
+                            }
+                        }
+                    };
+                    drop(call);
+                    match outcome {
+                        Outcome::Complete(Ok(result)) => {
+                            self.track_session_lifecycle(&tool_name, &arguments, &result);
+                            write_response(writer, &jsonrpc_result(id, result)).await?;
+                        }
+                        Outcome::Complete(Err(err)) => {
+                            let result =
+                                backend_unavailable_tool_result(&tool_name, &err.to_string());
+                            write_response(writer, &jsonrpc_result(id, result)).await?;
+                        }
+                        Outcome::Cancelled => {
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                self.backend.cancel_request(&request_token),
+                            )
+                            .await;
+                            write_response(
+                                writer,
+                                &jsonrpc_error(Some(id), -32800, "Request cancelled"),
+                            )
+                            .await?;
+                        }
+                        Outcome::Eof => {
+                            let _ = tokio::time::timeout(
+                                std::time::Duration::from_secs(5),
+                                self.backend.cancel_request(&request_token),
+                            )
+                            .await;
+                            break;
+                        }
+                    }
+                    continue;
+                }
+            }
+
+            if let Some(response) = self.handle_request(request).await {
+                write_response(writer, &response).await?;
+            }
+        }
         Ok(())
     }
 
@@ -231,6 +369,10 @@ impl<B: BrowserRuntimeMcpBackend> BrowserMcpServer<B> {
         let id = request.get("id").cloned();
         let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
         let is_notification = id.is_none();
+
+        if is_notification {
+            return None;
+        }
 
         match method {
             "initialize" => Some(jsonrpc_result(
@@ -272,7 +414,6 @@ impl<B: BrowserRuntimeMcpBackend> BrowserMcpServer<B> {
 
                 Some(jsonrpc_result(id.unwrap_or(Value::Null), result))
             }
-            _ if is_notification => None,
             _ => Some(jsonrpc_error(
                 id,
                 -32601,
@@ -483,15 +624,29 @@ fn jsonrpc_result(id: Value, result: Value) -> Value {
     })
 }
 
+async fn write_response<W: AsyncWrite + Unpin>(writer: &mut W, response: &Value) -> Result<()> {
+    writer
+        .write_all(serde_json::to_string(response)?.as_bytes())
+        .await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use anyhow::anyhow;
+    use tokio::io::AsyncReadExt;
 
     struct FakeBackend {
         calls: Vec<(String, Value)>,
         response: Value,
         error: Option<String>,
+        hang_on: Option<String>,
+        started: Option<std::sync::Arc<tokio::sync::Notify>>,
+        release: Option<std::sync::Arc<tokio::sync::Notify>>,
+        cancelled_requests: Vec<String>,
         shutdown_called: bool,
     }
 
@@ -501,6 +656,10 @@ mod tests {
                 calls: Vec::new(),
                 response,
                 error: None,
+                hang_on: None,
+                started: None,
+                release: None,
+                cancelled_requests: Vec::new(),
                 shutdown_called: false,
             }
         }
@@ -510,6 +669,10 @@ mod tests {
                 calls: Vec::new(),
                 response: json!({}),
                 error: Some(error.to_string()),
+                hang_on: None,
+                started: None,
+                release: None,
+                cancelled_requests: Vec::new(),
                 shutdown_called: false,
             }
         }
@@ -523,11 +686,27 @@ mod tests {
         ) -> BackendFuture<'a, Result<Value>> {
             Box::pin(async move {
                 self.calls.push((tool_name.to_string(), arguments));
+                if let Some(started) = &self.started {
+                    started.notify_one();
+                }
+                if self.hang_on.as_deref() == Some(tool_name) {
+                    if let Some(release) = &self.release {
+                        release.notified().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                }
                 if let Some(error) = self.error.clone() {
                     Err(anyhow!(error))
                 } else {
                     Ok(self.response.clone())
                 }
+            })
+        }
+
+        fn cancel_request<'a>(&'a mut self, request_id: &'a str) -> BackendFuture<'a, ()> {
+            Box::pin(async move {
+                self.cancelled_requests.push(request_id.to_string());
             })
         }
 
@@ -714,5 +893,143 @@ mod tests {
         // Shutdown should not attempt to close it again since it's untracked.
         server.close_open_sessions().await;
         assert_eq!(server.backend.calls.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn matching_cancel_interrupts_hung_call_without_replying_to_notifications() {
+        let mut backend = FakeBackend::ok(json!({}));
+        backend.hang_on = Some("browser.snapshot".into());
+        let started = std::sync::Arc::new(tokio::sync::Notify::new());
+        backend.started = Some(started.clone());
+        let mut server = BrowserMcpServer::new(backend);
+        let (client, server_io) = tokio::io::duplex(8192);
+        let (server_read, mut server_write) = tokio::io::split(server_io);
+        let mut server_read = BufReader::new(server_read);
+        let (mut client_read, mut client_write) = tokio::io::split(client);
+
+        let (server_result, output) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(async {
+                let result = server.run_io(&mut server_read, &mut server_write).await;
+                server_write.shutdown().await.unwrap();
+                result
+            }, async {
+                client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":\"call-1\",\"method\":\"tools/call\",\"params\":{\"name\":\"browser.snapshot\",\"arguments\":{\"session_id\":\"owned\"}}}\n").await.unwrap();
+                started.notified().await;
+                client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":\"other\"}}\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":\"queued\",\"method\":\"tools/call\",\"params\":{\"name\":\"browser.snapshot\",\"arguments\":{\"session_id\":\"other\"}}}\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":\"queued\"}}\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":\"call-1\"}}\n{\"jsonrpc\":\"2.0\",\"id\":\"list-1\",\"method\":\"tools/list\"}\n").await.unwrap();
+                client_write.shutdown().await.unwrap();
+                let mut output = String::new();
+                client_read.read_to_string(&mut output).await.unwrap();
+                output
+            })
+        }).await.expect("hung call must cancel promptly");
+
+        server_result.unwrap();
+        let responses: Vec<Value> = output
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(responses.len(), 3);
+        assert_eq!(responses[0].pointer("/error/code"), Some(&json!(-32800)));
+        assert_eq!(responses[0]["id"], "queued");
+        assert_eq!(responses[1].pointer("/error/code"), Some(&json!(-32800)));
+        assert_eq!(responses[1]["id"], "call-1");
+        assert_eq!(responses[2]["id"], "list-1");
+        assert_eq!(server.backend.calls.len(), 1);
+        let token = server.backend.calls[0].1["mcp_request_id"]
+            .as_str()
+            .unwrap();
+        assert_eq!(server.backend.cancelled_requests.len(), 1);
+        assert_eq!(server.backend.cancelled_requests[0], token);
+        assert!(server.backend.shutdown_called);
+    }
+
+    #[tokio::test]
+    async fn eof_interrupts_hung_call_and_closes_only_owned_sessions() {
+        let mut backend = FakeBackend::ok(json!({}));
+        backend.hang_on = Some("browser.snapshot".into());
+        let started = std::sync::Arc::new(tokio::sync::Notify::new());
+        backend.started = Some(started.clone());
+        let mut server = BrowserMcpServer::new(backend);
+        server.open_sessions.insert("owned".into());
+        let (client, server_io) = tokio::io::duplex(8192);
+        let (server_read, mut server_write) = tokio::io::split(server_io);
+        let mut server_read = BufReader::new(server_read);
+        let (mut client_read, mut client_write) = tokio::io::split(client);
+
+        let (server_result, output) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(async {
+                let result = server.run_io(&mut server_read, &mut server_write).await;
+                server_write.shutdown().await.unwrap();
+                result
+            }, async {
+                client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"browser.snapshot\",\"arguments\":{\"session_id\":\"unrelated\"}}}\n").await.unwrap();
+                started.notified().await;
+                client_write.shutdown().await.unwrap();
+                let mut output = String::new();
+                client_read.read_to_string(&mut output).await.unwrap();
+                output
+            })
+        }).await.expect("EOF must interrupt hung call promptly");
+
+        server_result.unwrap();
+        assert!(output.is_empty());
+        assert_eq!(server.backend.cancelled_requests.len(), 1);
+        assert_eq!(server.backend.calls.len(), 2);
+        assert_eq!(
+            server.backend.calls[1],
+            (
+                "browser.session_close".into(),
+                json!({"session_id":"owned"})
+            )
+        );
+        assert!(server.backend.shutdown_called);
+    }
+
+    #[tokio::test]
+    async fn partial_next_request_survives_active_call_completion() {
+        let mut backend = FakeBackend::ok(json!({ "ok": true }));
+        backend.hang_on = Some("browser.snapshot".into());
+        let started = std::sync::Arc::new(tokio::sync::Notify::new());
+        let release = std::sync::Arc::new(tokio::sync::Notify::new());
+        backend.started = Some(started.clone());
+        backend.release = Some(release.clone());
+        let mut server = BrowserMcpServer::new(backend);
+        let (client, server_io) = tokio::io::duplex(8192);
+        let (server_read, mut server_write) = tokio::io::split(server_io);
+        let mut server_read = BufReader::new(server_read);
+        let (client_read, mut client_write) = tokio::io::split(client);
+        let mut client_read = BufReader::new(client_read);
+
+        let (server_result, responses) = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            tokio::join!(async {
+                let result = server.run_io(&mut server_read, &mut server_write).await;
+                server_write.shutdown().await.unwrap();
+                result
+            }, async {
+                client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":\"first\",\"method\":\"tools/call\",\"params\":{\"name\":\"browser.snapshot\",\"arguments\":{}}}\n").await.unwrap();
+                started.notified().await;
+                client_write.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":\"next\",").await.unwrap();
+                tokio::task::yield_now().await;
+                tokio::task::yield_now().await;
+                release.notify_one();
+                let mut first = String::new();
+                client_read.read_line(&mut first).await.unwrap();
+                client_write.write_all(b"\"method\":\"tools/list\"}\n").await.unwrap();
+                client_write.shutdown().await.unwrap();
+                let mut rest = String::new();
+                client_read.read_to_string(&mut rest).await.unwrap();
+                format!("{first}{rest}")
+            })
+        }).await.expect("partial request must survive call completion");
+
+        server_result.unwrap();
+        let responses: Vec<Value> = responses
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(responses.len(), 2);
+        assert_eq!(responses[0]["id"], "first");
+        assert_eq!(responses[1]["id"], "next");
+        assert_eq!(server.backend.calls.len(), 1);
     }
 }
