@@ -3287,13 +3287,30 @@ async fn process_workflow_output(
                 .await
                 .with_context(|| format!("create {}", parent.display()))?;
         }
-        let body = output_payload
-            .map(workflow_output_body)
-            .unwrap_or_else(|| "null".to_string());
-        tokio::fs::write(path, body)
-            .await
-            .with_context(|| format!("write {}", path.display()))?;
-        println!("[OK] Wrote output to {}", path.display());
+        if is_image_path(path) {
+            // An image path asks for the run's screenshot, not its JSON output.
+            let shot = output_payload
+                .and_then(|payload| payload.pointer("/artifacts/screenshots/0/path"))
+                .and_then(|value| value.as_str())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--output-file {} is an image path, but the workflow produced no screenshot",
+                        path.display()
+                    )
+                })?;
+            tokio::fs::copy(shot, path)
+                .await
+                .with_context(|| format!("copy {} to {}", shot, path.display()))?;
+            println!("[OK] Wrote screenshot to {}", path.display());
+        } else {
+            let body = output_payload
+                .map(workflow_output_body)
+                .unwrap_or_else(|| "null".to_string());
+            tokio::fs::write(path, body)
+                .await
+                .with_context(|| format!("write {}", path.display()))?;
+            println!("[OK] Wrote output to {}", path.display());
+        }
     }
 
     if let Some(dir) = download_dir {
@@ -3305,6 +3322,17 @@ async fn process_workflow_output(
     }
 
     Ok(())
+}
+
+fn is_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "png" | "jpg" | "jpeg" | "webp"
+            )
+        })
 }
 
 fn workflow_output_payload(payload: &Value) -> &Value {

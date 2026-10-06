@@ -1664,6 +1664,7 @@ impl SupervisorState {
             },
             snapshot_mode: SnapshotMode::OnError,
             workflow_path: path.to_string_lossy().into_owned(),
+            artifacts_dir: Some(self.run_store.artifacts_dir(&run_id)),
         };
         let mut result = execute_workflow(&transport, &sink, workflow, opts).await;
         // A browser step may itself return a RunResult-shaped payload. The

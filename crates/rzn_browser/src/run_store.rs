@@ -97,6 +97,12 @@ impl RunStore {
         &self.root
     }
 
+    /// Per-run directory for files a run produces (screenshots). GC removes it
+    /// with the run record.
+    pub fn artifacts_dir(&self, run_id: &str) -> PathBuf {
+        self.root.join("artifacts").join(safe_id(run_id))
+    }
+
     pub fn append(&self, run: AppendRun<'_>) -> Result<RunRecord> {
         let _guard = self
             .lock
@@ -333,6 +339,7 @@ fn remove_run_files(root: &Path, row: &RunRecord) {
     let _ = fs::remove_file(root.join(&row.result_ref));
     let _ = fs::remove_file(root.join(format!("{id}.params.json")));
     let _ = fs::remove_file(root.join(format!("{id}.failure.json")));
+    let _ = fs::remove_dir_all(root.join("artifacts").join(&id));
 }
 
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<()> {

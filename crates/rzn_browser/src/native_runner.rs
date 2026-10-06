@@ -64,6 +64,11 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
     )
     .await?;
 
+    let base = config
+        .app_base
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(rzn_core::runtime_paths::default_app_base_dir);
     let run_id = format!("local-{}", Uuid::new_v4());
     supervisor::call(
         supervisor_config.clone(),
@@ -102,6 +107,7 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
         },
         snapshot_mode: config.snapshot_mode,
         workflow_path: config.workflow_path.clone(),
+        artifacts_dir: Some(RunStore::open(&base)?.artifacts_dir(&run_id)),
     };
 
     let started = epoch_ms();
@@ -205,11 +211,6 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
         ));
     }
     let params = serde_json::to_value(&config.params)?;
-    let base = config
-        .app_base
-        .as_deref()
-        .map(PathBuf::from)
-        .unwrap_or_else(rzn_core::runtime_paths::default_app_base_dir);
     let workflow_hash = workflow_hash(&config.workflow_path).ok();
     RunStore::open(base)?.append(AppendRun {
         origin: "local_cli",

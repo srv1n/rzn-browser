@@ -563,6 +563,7 @@ fn test_opts(snapshot_mode: SnapshotMode) -> RunOptions {
         session: SessionSpec::default(),
         snapshot_mode,
         workflow_path: "test-workflow.json".to_string(),
+        artifacts_dir: None,
     }
 }
 
@@ -973,6 +974,97 @@ async fn execute_workflow_applies_output_selector_path() {
 
     assert_eq!(result.status, RunStatus::Succeeded);
     assert_eq!(result.output, Some(json!("picked")));
+}
+
+#[tokio::test]
+async fn execute_workflow_saves_screenshot_artifact_beside_selected_output() {
+    let context = WorkflowRuntimeContext {
+        workflow_id: "x/screenshot".to_string(),
+        workflow_version: "1.0.0".to_string(),
+        system: "x".to_string(),
+        capability: "x.screenshot".to_string(),
+        declared_side_effects: vec!["read_only".to_string(), "file_write".to_string()],
+        enforce_side_effects: true,
+        output_selector_step_id: Some("locate".to_string()),
+        output_selector_path: None,
+    };
+    let workflow = LoadedWorkflow {
+        report_workflow: json!({ "id": "x/screenshot", "version": "1.0.0" }),
+        steps: vec![
+            manifest_step(
+                "locate",
+                WorkflowActionKind::ExecuteJavascript,
+                json!({ "script": "return 1;" }),
+                &[],
+            ),
+            manifest_step(
+                "shot",
+                WorkflowActionKind::TakeScreenshot,
+                json!({ "selector": "article" }),
+                &[],
+            ),
+        ],
+        prefer_current_tab: false,
+        runtime_context: Some(context),
+    };
+    // "iVBORw0KGgo=" is the 8-byte PNG signature.
+    let transport = MockTransport::new(
+        Some("s"),
+        vec![
+            Ok(json!({ "success": true, "result": { "width": 598 } })),
+            Ok(json!({ "success": true, "result": {
+                "type": "screenshot",
+                "data_url": "data:image/png;base64,iVBORw0KGgo="
+            } })),
+        ],
+    );
+    let dir = std::env::temp_dir().join(format!("rzn-shot-{}", Uuid::new_v4()));
+    let mut opts = test_opts(SnapshotMode::None);
+    opts.artifacts_dir = Some(dir.clone());
+
+    let result = execute_workflow(&transport, &RecordingSink::default(), workflow, opts).await;
+
+    assert_eq!(result.status, RunStatus::Succeeded);
+    assert_eq!(result.run_id, "test-run");
+    let output = result.output.expect("output");
+    assert_eq!(output["width"], json!(598));
+    let path = output
+        .pointer("/artifacts/screenshots/0/path")
+        .and_then(Value::as_str)
+        .expect("screenshot path");
+    assert_eq!(PathBuf::from(path), dir.join("shot.png"));
+    assert_eq!(fs::read(path).unwrap(), b"\x89PNG\r\n\x1a\n");
+    assert_eq!(result.artifacts[0].uri, path);
+    assert_eq!(result.artifacts[0].media_type.as_deref(), Some("image/png"));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[tokio::test]
+async fn execute_workflow_fails_when_screenshot_has_no_image() {
+    let workflow = LoadedWorkflow {
+        report_workflow: json!({ "id": "demo/x", "version": "1.0.0" }),
+        steps: vec![manifest_step(
+            "shot",
+            WorkflowActionKind::TakeScreenshot,
+            json!({}),
+            &[],
+        )],
+        prefer_current_tab: false,
+        runtime_context: None,
+    };
+    let transport = MockTransport::new(Some("s"), vec![Ok(json!({ "success": true }))]);
+    let mut opts = test_opts(SnapshotMode::None);
+    opts.artifacts_dir = Some(std::env::temp_dir().join(format!("rzn-shot-{}", Uuid::new_v4())));
+
+    let result = execute_workflow(&transport, &RecordingSink::default(), workflow, opts).await;
+
+    assert_eq!(result.status, RunStatus::Failed);
+    assert!(result
+        .error
+        .expect("error")
+        .message
+        .contains("returned no image data"));
 }
 
 #[tokio::test]

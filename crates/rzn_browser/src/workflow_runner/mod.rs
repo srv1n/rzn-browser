@@ -24,7 +24,7 @@ use rzn_core::dsl;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use tokio::time::Duration;
 use uuid::Uuid;
 
@@ -138,6 +138,9 @@ pub struct RunOptions {
     pub snapshot_mode: SnapshotMode,
     /// Original workflow path (used only to build failure-report context).
     pub workflow_path: String,
+    /// Where `take_screenshot` images are written. `None` leaves them out of
+    /// the result (the fleet loop has no local artifact store).
+    pub artifacts_dir: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -292,6 +295,7 @@ pub(crate) async fn run_workflow(
     let mut session_id: Option<String> = None;
     let mut final_payload: Option<Value> = None;
     let mut step_outputs: HashMap<String, Value> = HashMap::new();
+    let mut screenshots: Vec<Value> = Vec::new();
 
     let run = async {
         if transport.cancelled() {
@@ -431,7 +435,19 @@ pub(crate) async fn run_workflow(
 
                 if success {
                     sink.on_step_response(step_id, &step_type, &response);
-                    record_step_output(step_id, &response, &mut step_outputs, &mut final_payload);
+                    match opts.artifacts_dir.as_deref() {
+                        // The image is an artifact, not step output: keep the
+                        // base64 payload out of the selected/fallback output.
+                        Some(dir) if step_type == "take_screenshot" => {
+                            screenshots.push(persist_screenshot(dir, step_id, &response)?)
+                        }
+                        _ => record_step_output(
+                            step_id,
+                            &response,
+                            &mut step_outputs,
+                            &mut final_payload,
+                        ),
+                    }
                     stop_reason = response_stop_reason(&response);
                     break;
                 }
@@ -503,12 +519,19 @@ pub(crate) async fn run_workflow(
             }
         }
 
-        final_payload = selected_or_fallback_output(
+        let output = selected_or_fallback_output(
             workflow.runtime_context.as_ref(),
             &step_outputs,
             final_payload.take(),
-        )
-        .map(|payload| build_cli_run_result(workflow.runtime_context.as_ref(), payload));
+        );
+        final_payload = attach_screenshots(output, &screenshots).map(|payload| {
+            build_cli_run_result(
+                workflow.runtime_context.as_ref(),
+                &opts.run_id,
+                payload,
+                &screenshots,
+            )
+        });
         if let Some(run_result) = final_payload.as_ref() {
             sink.on_result(run_result);
         }
@@ -1440,7 +1463,61 @@ fn extract_payload_for_output(response: &Value) -> Option<Value> {
     Some(primary)
 }
 
-fn build_cli_run_result(runtime_context: Option<&WorkflowRuntimeContext>, output: Value) -> Value {
+/// Decode a `take_screenshot` response's data URL and write it under `dir`.
+fn persist_screenshot(dir: &Path, step_id: &str, response: &Value) -> Result<Value> {
+    let data_url = find_string_field(response, "data_url")
+        .or_else(|| find_string_field(response, "dataUrl"))
+        .ok_or_else(|| anyhow!("screenshot step {step_id} returned no image data"))?;
+    let (header, b64) = data_url
+        .split_once(',')
+        .ok_or_else(|| anyhow!("screenshot step {step_id} returned a malformed data URL"))?;
+    let format = if header.contains("image/jpeg") || header.contains("image/jpg") {
+        "jpeg"
+    } else if header.contains("image/webp") {
+        "webp"
+    } else {
+        "png"
+    };
+    let bytes = crate::base64_decode_standard(b64)
+        .with_context(|| format!("decode screenshot from step {step_id}"))?;
+    std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
+    let safe_step: String = step_id
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let path = dir.join(format!("{safe_step}.{}", if format == "jpeg" { "jpg" } else { format }));
+    std::fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
+    Ok(json!({
+        "type": "screenshot",
+        "step_id": step_id,
+        "format": format,
+        "path": path.to_string_lossy(),
+        "byte_count": bytes.len(),
+    }))
+}
+
+/// Expose saved screenshots as `output.artifacts.screenshots[]`.
+fn attach_screenshots(output: Option<Value>, screenshots: &[Value]) -> Option<Value> {
+    if screenshots.is_empty() {
+        return output;
+    }
+    let artifacts = json!({ "screenshots": screenshots });
+    Some(match output {
+        Some(Value::Object(mut map)) => {
+            map.insert("artifacts".to_string(), artifacts);
+            Value::Object(map)
+        }
+        Some(other) => json!({ "results": other, "artifacts": artifacts }),
+        None => json!({ "artifacts": artifacts }),
+    })
+}
+
+fn build_cli_run_result(
+    runtime_context: Option<&WorkflowRuntimeContext>,
+    run_id: &str,
+    output: Value,
+    screenshots: &[Value],
+) -> Value {
     if is_run_result(&output) {
         return output;
     }
@@ -1451,11 +1528,17 @@ fn build_cli_run_result(runtime_context: Option<&WorkflowRuntimeContext>, output
 
     json!({
         "version": RUN_RESULT_CONTRACT,
-        "run_id": format!("local-{}", Uuid::new_v4()),
+        "run_id": run_id,
         "workflow_id": workflow_id,
         "status": RunStatus::Succeeded,
         "output": output,
-        "artifacts": [],
+        "artifacts": screenshots.iter().map(|shot| json!({
+            "id": shot["step_id"],
+            "kind": "screenshot",
+            "uri": shot["path"],
+            "media_type": format!("image/{}", shot["format"].as_str().unwrap_or("png")),
+            "byte_count": shot["byte_count"],
+        })).collect::<Vec<_>>(),
         "warnings": [],
         "steps": []
     })

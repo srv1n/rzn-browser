@@ -901,6 +901,7 @@ impl FleetJobExecutor for InProcessJobExecutor {
             },
             snapshot_mode: SnapshotMode::None,
             workflow_path: path.to_string_lossy().into_owned(),
+            artifacts_dir: None,
         };
 
         execute_workflow(&transport, &sink, workflow, opts).await
