@@ -3687,31 +3687,57 @@ async function captureScreenshotForTab(
     return await withCdpLock(tabId, async () => {
       const sessionId = `screenshot-${tabId}-${Date.now()}`;
       const handle = await cdpSessionManager.acquire(sessionId, tabId);
+      let viewportOverridden = false;
       try {
-      let clip: { x: number; y: number; width: number; height: number; scale: number } | undefined;
-      if (selector) {
-        const expression = `(() => {
-          const element = document.querySelector(${JSON.stringify(selector)});
-          if (!element) throw new Error('Screenshot selector not found: ' + ${JSON.stringify(selector)});
-          const rect = element.getBoundingClientRect();
-          if (rect.width <= 0 || rect.height <= 0) throw new Error('Screenshot target has no visible area: ' + ${JSON.stringify(selector)});
-          return { x: rect.left + scrollX, y: rect.top + scrollY, width: rect.width, height: rect.height };
-        })()`;
+      // Clip in document coordinates plus the current viewport, measured together.
+      const measure = async () => {
+        const target = selector
+          ? `(() => {
+              const element = document.querySelector(${JSON.stringify(selector)});
+              if (!element) throw new Error('Screenshot selector not found: ' + ${JSON.stringify(selector)});
+              const rect = element.getBoundingClientRect();
+              if (rect.width <= 0 || rect.height <= 0) throw new Error('Screenshot target has no visible area: ' + ${JSON.stringify(selector)});
+              return { x: rect.left + scrollX, y: rect.top + scrollY, width: rect.width, height: rect.height };
+            })()`
+          : `({ x: 0, y: 0, width: document.documentElement.scrollWidth, height: document.documentElement.scrollHeight })`;
         const evaluated: any = await handle.sendCommand('Runtime.evaluate', {
-          expression,
+          expression: `({ clip: ${target}, sx: scrollX, sy: scrollY, w: innerWidth, h: innerHeight, dpr: devicePixelRatio })`,
           returnByValue: true,
           awaitPromise: false,
         });
         if (evaluated?.exceptionDetails) {
-          throw new Error(evaluated.exceptionDetails.exception?.description || evaluated.exceptionDetails.text || 'Failed to resolve screenshot selector');
+          throw new Error(evaluated.exceptionDetails.exception?.description || evaluated.exceptionDetails.text || 'Failed to resolve screenshot target');
         }
-        clip = { ...evaluated.result.value, scale: 1 };
-      } else {
-        const metrics: any = await handle.sendCommand('Page.getLayoutMetrics');
-        const size = metrics?.cssContentSize || metrics?.contentSize;
-        if (!size?.width || !size?.height) throw new Error('Chrome returned empty page dimensions');
-        clip = { x: 0, y: 0, width: size.width, height: size.height, scale: 1 };
+        return evaluated.result.value as {
+          clip: { x: number; y: number; width: number; height: number };
+          sx: number; sy: number; w: number; h: number; dpr: number;
+        };
+      };
+
+      let m = await measure();
+      if (!m.clip.width || !m.clip.height) throw new Error('Chrome returned empty page dimensions');
+      // A headed tab only paints its viewport; captureBeyondViewport fills the
+      // rest of the clip by repeating viewport pixels. Bring the clip top into
+      // view, then grow the viewport (same width and DPR) to hold the clip.
+      if (m.clip.y < m.sy) {
+        await handle.sendCommand('Runtime.evaluate', { expression: `scrollTo(${m.sx}, ${m.clip.y})` });
+        m = await measure();
       }
+      const neededHeight = Math.ceil(m.clip.y - m.sy + m.clip.height);
+      if (neededHeight > m.h) {
+        await handle.sendCommand('Emulation.setDeviceMetricsOverride', {
+          width: Math.round(m.w),
+          // ponytail: fixed 200px margin keeps bottom-pinned bars (X's Messages
+          // drawer, cookie banners) below the clip; taller bars would need hiding.
+          height: neededHeight + 200,
+          deviceScaleFactor: m.dpr || 1,
+          mobile: false,
+        });
+        viewportOverridden = true;
+        await new Promise(r => setTimeout(r, 400)); // let the page re-layout and paint
+        m = await measure();
+      }
+      const clip = { ...m.clip, scale: 1 };
 
       const format = normalizeScreenshotFormat(opts?.format);
       const quality = format === 'jpeg' ? clampScreenshotQuality(opts?.quality) : undefined;
@@ -3725,6 +3751,9 @@ async function captureScreenshotForTab(
       if (!result?.data) throw new Error('Chrome returned an empty screenshot');
       return `data:image/${format};base64,${result.data}`;
       } finally {
+        if (viewportOverridden) {
+          await handle.sendCommand('Emulation.clearDeviceMetricsOverride').catch(() => {});
+        }
         await cdpSessionManager.releaseSession(sessionId);
       }
     });
