@@ -709,6 +709,52 @@ async fn read_native_message<R: AsyncRead + Unpin>(reader: &mut R) -> Result<Opt
     Ok(Some(buf))
 }
 
+/// Parse a Chrome-to-host message. Chrome encodes lone UTF-16 surrogates
+/// (an emoji cut in half by a JS `slice`) as `\udXXX` escapes, which serde
+/// rejects; dropping the message leaves the step waiting for its watchdog.
+/// On that failure, retry with lone surrogates replaced by U+FFFD.
+fn parse_extension_message(msg: &[u8]) -> serde_json::Result<Value> {
+    serde_json::from_slice(msg).or_else(|err| {
+        serde_json::from_slice(&replace_lone_surrogate_escapes(msg)).map_err(|_| err)
+    })
+}
+
+fn replace_lone_surrogate_escapes(json: &[u8]) -> Vec<u8> {
+    let unit_at = |i: usize| -> Option<u16> {
+        let hex = json.get(i..i + 6)?;
+        if hex[0] != b'\\' || hex[1] != b'u' {
+            return None;
+        }
+        u16::from_str_radix(std::str::from_utf8(&hex[2..]).ok()?, 16).ok()
+    };
+    let mut out = Vec::with_capacity(json.len());
+    let mut i = 0;
+    while i < json.len() {
+        if json[i] != b'\\' {
+            out.push(json[i]);
+            i += 1;
+            continue;
+        }
+        let len = match unit_at(i) {
+            Some(0xD800..=0xDBFF)
+                if matches!(unit_at(i + 6), Some(0xDC00..=0xDFFF)) => 12,
+            Some(0xD800..=0xDFFF) => {
+                out.extend_from_slice(b"\\ufffd");
+                i += 6;
+                continue;
+            }
+            Some(_) => 6,
+            // Any other escape (`\\`, `\"`, ...) is two bytes; copying both
+            // keeps an escaped backslash from being read as a `\u` start.
+            None => 2,
+        };
+        let end = (i + len).min(json.len());
+        out.extend_from_slice(&json[i..end]);
+        i = end;
+    }
+    out
+}
+
 async fn write_native_message<W: AsyncWrite + Unpin>(writer: &mut W, payload: &[u8]) -> Result<()> {
     let len = payload.len();
     if len > NATIVE_HOST_TO_CHROME_MAX_BYTES {
@@ -1702,7 +1748,7 @@ async fn main() -> Result<()> {
             if msg.is_empty() {
                 continue;
             }
-            let v: Value = match serde_json::from_slice(&msg) {
+            let v: Value = match parse_extension_message(&msg) {
                 Ok(v) => v,
                 Err(e) => {
                     warn!("Native message parse error: {}", e);
@@ -2575,6 +2621,16 @@ mod tests {
             .expect_err("host-to-Chrome frames above 1 MiB must be rejected");
 
         assert!(err.to_string().contains("host-to-Chrome"));
+    }
+
+    #[test]
+    fn extension_message_with_cut_emoji_still_parses() {
+        let msg = br#"{"ok":true,"a":"x\ud83d","b":"\ude00 y","c":"\ud83d\ude00","d":"\\ud83d"}"#;
+        let v = parse_extension_message(msg).expect("lone surrogates are repaired");
+        assert_eq!(v["a"], "x\u{fffd}");
+        assert_eq!(v["b"], "\u{fffd} y");
+        assert_eq!(v["c"], "\u{1f600}");
+        assert_eq!(v["d"], "\\ud83d");
     }
 
     #[tokio::test]
