@@ -40,13 +40,20 @@ import {
   tabContentTargetUrl,
 } from './contentTarget';
 import {
-  browserInstancePingMetadata,
   ensureBrowserInstanceId,
   extensionRuntimePingMetadata,
   getCachedBrowserInstanceId,
+  resetBrowserInstanceIdCacheForTests,
 } from './browserInstanceId';
 import { isOwnExtensionPageSender } from './runtimeSender';
-import { firstWorkflowStepNeedsInitializedTab, navigationReuseDisposition } from './navigationReuse';
+import {
+  CHALLENGE_SELECTORS,
+  canNavigateInPage,
+  firstWorkflowStepNeedsInitializedTab,
+  navigationReuseDisposition,
+  siteChallengeKind,
+  type PageFacts,
+} from './navigationReuse';
 import {
   closeExactWorkflowTab,
   exactTabMissingError,
@@ -595,7 +602,11 @@ function maybeResolveNativeControlCallback(message: BrokerMessage): boolean {
 
 async function ensureNativeHostConnected(timeoutMs = 1500): Promise<void> {
   if (nativePort) return;
-  scheduleReconnect();
+  // A live request must not expire while a longer background backoff is pending.
+  if (!nativeReconnectSlowMode) {
+    clearReconnectTimer();
+    connectToNative();
+  }
   const deadline = Date.now() + timeoutMs;
   while (!nativePort && Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 50));
@@ -646,7 +657,14 @@ async function callNativeHostControl(
       } as BrokerMessage);
     } catch (error: any) {
       clearNativeControlCallback(reqId);
-      reject(new Error(error?.message || String(error)));
+      const reason = error?.message || String(error);
+      // A missed disconnect event must not leave a dead port cached as connected.
+      // Only tear down the port this request used; a replacement may already exist.
+      if (nativePort === requestPort && nativePortEpoch === requestNativePortEpoch) {
+        disconnectNativePort(reason);
+        scheduleReconnect();
+      }
+      reject(new Error(reason));
     }
   });
 }
@@ -654,9 +672,10 @@ async function callNativeHostControl(
 let reconnectTimer: number | null = null;
 let reconnectAttempts = 0;
 let nativeConnectInFlight = false;
-let nativeReconnectTerminal = false;
+let nativeReconnectSlowMode = false;
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
+const NATIVE_UNAVAILABLE_RETRY_DELAY_MS = RZN_PAGE_TEST_BRIDGE_ENABLED ? 1000 : 60_000;
 const RECONNECT_ALARM_NAME = 'rzn_native_reconnect';
 const NATIVE_KEEPALIVE_ALARM_NAME = 'rzn_native_keepalive';
 const NATIVE_KEEPALIVE_PERIOD_MINUTES = 0.5;
@@ -722,43 +741,52 @@ function clearHeartbeat() {
   missedNativeHeartbeats = 0;
 }
 
+async function runNativeHeartbeat(timeoutMs = HEARTBEAT_TIMEOUT_MS): Promise<void> {
+  const heartbeatPort = nativePort;
+  const heartbeatEpoch = nativePortEpoch;
+  if (!heartbeatPort) return;
+
+  try {
+    const pong = await callNativeHostControl(
+      'ping',
+      { source: 'extension_keepalive' },
+      { timeoutMs, responseCmd: 'ping_response' }
+    );
+    // A late response from a replaced connection cannot heal its successor's state.
+    if (nativePort !== heartbeatPort || nativePortEpoch !== heartbeatEpoch) return;
+    if (pong.result?.bridge_connected === false) {
+      throw new Error('supervisor bridge disconnected');
+    }
+    lastNativeRoundtripPingMs = Date.now();
+    missedNativeHeartbeats = 0;
+    reconnectAttempts = 0;
+    nativeReconnectSlowMode = false;
+  } catch (error) {
+    // disconnectNativePort rejects outstanding callbacks. Ignore those stale failures
+    // after a replacement port has been installed.
+    if (nativePort !== heartbeatPort || nativePortEpoch !== heartbeatEpoch) return;
+
+    const stdoutFresh =
+      lastNativeHostStdoutHeartbeatMs !== null &&
+      Date.now() - lastNativeHostStdoutHeartbeatMs < 2 * STDOUT_HEARTBEAT_INTERVAL_MS;
+    // Stdout proves the process is alive, not that it can answer extension control
+    // requests. Count missed round trips even while stdout heartbeats continue.
+    missedNativeHeartbeats += 1;
+    console.warn(
+      `[Heartbeat] native host control ping missed (${missedNativeHeartbeats}/${HEARTBEAT_MISSES_BEFORE_RECONNECT}; stdout fresh: ${stdoutFresh})`,
+      error
+    );
+    if (missedNativeHeartbeats >= HEARTBEAT_MISSES_BEFORE_RECONNECT) {
+      disconnectNativePort('heartbeat missed native host echo');
+      scheduleReconnect();
+    }
+  }
+}
+
 function startHeartbeat() {
   clearHeartbeat();
   heartbeatTimer = setInterval(() => {
-    void (async () => {
-      try {
-        if (!nativePort) return;
-        const pong = await callNativeHostControl(
-          'ping',
-          { source: 'extension_keepalive' },
-          { timeoutMs: HEARTBEAT_TIMEOUT_MS, responseCmd: 'ping_response' }
-        );
-        if (pong.result?.bridge_connected === false) {
-          throw new Error('supervisor bridge disconnected');
-        }
-        lastNativeRoundtripPingMs = Date.now();
-        missedNativeHeartbeats = 0;
-        reconnectAttempts = 0;
-        nativeReconnectTerminal = false;
-      } catch (e) {
-        const stdoutFresh =
-          lastNativeHostStdoutHeartbeatMs !== null &&
-          Date.now() - lastNativeHostStdoutHeartbeatMs < 2 * STDOUT_HEARTBEAT_INTERVAL_MS;
-        if (stdoutFresh && !(e instanceof Error && e.message.includes('supervisor bridge disconnected'))) {
-          console.warn('[Heartbeat] ping missed while native-host stdout heartbeat remains fresh', e);
-          return;
-        }
-        missedNativeHeartbeats += 1;
-        console.warn(
-          `[Heartbeat] native host ping missed (${missedNativeHeartbeats}/${HEARTBEAT_MISSES_BEFORE_RECONNECT})`,
-          e
-        );
-        if (missedNativeHeartbeats >= HEARTBEAT_MISSES_BEFORE_RECONNECT) {
-          disconnectNativePort('heartbeat missed native host echo');
-          scheduleReconnect();
-        }
-      }
-    })();
+    void runNativeHeartbeat();
   }, HEARTBEAT_INTERVAL_MS) as unknown as number;
 }
 
@@ -823,15 +851,19 @@ function ensureAutomationBadgeAlarm() {
 }
 
 function scheduleReconnect() {
-  if (nativeReconnectTerminal) return;
   // Avoid duplicate timers
   if (reconnectTimer !== null) return;
-  // Compute exponential backoff with cap
-  const baseDelay = Math.min(
-    RECONNECT_MAX_DELAY_MS,
-    RECONNECT_BASE_DELAY_MS * Math.pow(2, Math.max(0, reconnectAttempts))
-  );
-  const delay = Math.round(baseDelay * (0.8 + Math.random() * 0.4));
+  // Missing or temporarily forbidden host registration must not strand the
+  // extension forever. Keep probing slowly until an administrator repairs it.
+  const baseDelay = nativeReconnectSlowMode
+    ? NATIVE_UNAVAILABLE_RETRY_DELAY_MS
+    : Math.min(
+        RECONNECT_MAX_DELAY_MS,
+        RECONNECT_BASE_DELAY_MS * Math.pow(2, Math.max(0, reconnectAttempts))
+      );
+  const delay = nativeReconnectSlowMode
+    ? baseDelay
+    : Math.round(baseDelay * (0.8 + Math.random() * 0.4));
   console.log(`[NativeReconnect] Scheduling reconnect in ${delay}ms (attempt ${reconnectAttempts + 1})`);
   scheduleReconnectAlarm(delay);
   reconnectTimer = setTimeout(() => {
@@ -1125,10 +1157,15 @@ function refreshWorkflowSessionUrl(sessionId: string, tabId: number | undefined)
     updateWorkflowSessionMetadata(sessionId, { currentUrl: undefined });
     return;
   }
+  const normalized = normalizeSessionId(sessionId);
+  const state = getWorkflowSessionState(normalized);
+  const stillOwnsTab = () =>
+    workflowSessions.get(normalized) === state && state.workflowTabId === tabId;
 
   void chrome.tabs
     .get(tabId)
     .then((tab) => {
+      if (!stillOwnsTab()) return;
       updateWorkflowSessionMetadata(sessionId, {
         currentUrl: tab.url || tab.pendingUrl || undefined,
         tabLifecycle: updateRetainedWorkflowTabState(
@@ -1138,6 +1175,7 @@ function refreshWorkflowSessionUrl(sessionId: string, tabId: number | undefined)
       });
     })
     .catch(() => {
+      if (!stillOwnsTab()) return;
       updateWorkflowSessionMetadata(sessionId, { currentUrl: undefined });
     });
 }
@@ -1367,6 +1405,33 @@ function clearBrokerRequestLease(lease: BrokerRequestLease | null): void {
   if (brokerRequestLeasesById.get(lease.leaseId) === lease) {
     brokerRequestLeasesById.delete(lease.leaseId);
   }
+  scheduleWorkflowSessionPrune(lease.workflowSessionId);
+}
+
+function scheduleWorkflowSessionPrune(sessionId: string): void {
+  const normalized = normalizeSessionId(sessionId);
+  if (
+    normalized === DEFAULT_WORKFLOW_SESSION_ID ||
+    normalized === CONTROL_PLANE_WORKFLOW_SESSION_ID
+  ) {
+    return;
+  }
+  const state = workflowSessions.get(normalized);
+  if (!state) return;
+  const queueTail = state.queue;
+
+  const pruneIfIdle = () => {
+    if (workflowSessions.get(normalized) !== state || state.queue !== queueTail) return;
+    if (state.workflowTabId !== undefined || state.currentUrl || state.tabLifecycle) return;
+    for (const lease of brokerRequestLeasesById.values()) {
+      if (lease.workflowSessionId === normalized) return;
+    }
+    workflowSessions.delete(normalized);
+  };
+
+  // A close request bypasses this FIFO, so wait until all already-queued work
+  // has settled. Identity and queue-tail checks protect a reused session.
+  void queueTail.then(pruneIfIdle, pruneIfIdle);
 }
 
 function cancelBrokerRequestLease(lease: BrokerRequestLease | null, reason: string): void {
@@ -1915,8 +1980,8 @@ async function setFlagsForMessage(message: BrokerMessage): Promise<{
   }
 }
 
-// Close the dedicated tab bound to a session (if any), prune the session
-// state, and return whether a tab was actually closed. Used by session_close
+// Close the dedicated tab bound to a session (if any), clear its tab metadata,
+// and return whether a tab was actually closed. Used by session_close
 // so callers don't accumulate ghost tabs across `rzn-browser run` invocations.
 async function disposeWorkflowSession(
   sessionId: string,
@@ -1932,8 +1997,13 @@ async function disposeWorkflowSession(
     keepFleetWindow,
   );
 
-  workflowSessions.delete(normalized);
-  scheduleWorkflowSessionsPersist();
+  // Preserve the epoch and FIFO: deleting state resets the epoch to zero on
+  // the next lease check, invalidating session_close's own cleanup response.
+  updateWorkflowSessionMetadata(normalized, {
+    workflowTabId: undefined,
+    currentUrl: undefined,
+    tabLifecycle: undefined,
+  });
 
   if (fleetCleanup.handled) {
     return { closed: fleetCleanup.closed, tabId };
@@ -2256,6 +2326,87 @@ async function waitForNavigationOrUrlMatch(
     // Immediate check (handles the "already satisfied" case).
     void checkTab();
   });
+}
+
+// Browse like one person: when the tab already shows the same site, navigate
+// inside the page after a short pause instead of a cold address-bar jump.
+// Returns false when the caller must navigate the tab itself.
+async function navigateInPage(tabId: number, url: string, wait: any, timeoutMs: number): Promise<boolean> {
+  const tab = await chrome.tabs.get(tabId).catch(() => undefined);
+  if (!tab || tab.discarded || !canNavigateInPage(tab.url || '', url, tab.status)) return false;
+  await sleepMs(400 + Math.floor(Math.random() * 800));
+  // Listen before navigating so a fast load cannot slip past.
+  const loaded = waitForNavigation(tabId, wait, timeoutMs);
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (target: string) => {
+        setTimeout(() => location.assign(target), 0);
+      },
+      args: [url],
+    });
+  } catch {
+    return false;
+  }
+  await loaded;
+  return true;
+}
+
+function readPageFacts(selectors: string[]): PageFacts {
+  const text = document.body ? document.body.innerText || '' : '';
+  return {
+    url: location.href,
+    title: document.title || '',
+    selectorHits: selectors.filter((selector) => {
+      try {
+        return document.querySelector(selector) !== null;
+      } catch {
+        return false;
+      }
+    }),
+    bodyText: text.slice(0, 4000),
+    bodyLength: text.length,
+  };
+}
+
+// Bot check the tab shows after a navigation, or null. Cloudflare's automatic
+// check clears itself within seconds, so only a wall that stays counts.
+async function detectSiteChallenge(tabId: number): Promise<{ kind: string; url: string } | null> {
+  const deadline = Date.now() + 8000;
+  let seen: { kind: string; url: string } | null = null;
+  for (;;) {
+    try {
+      const [probe] = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: readPageFacts,
+        args: [Object.keys(CHALLENGE_SELECTORS)],
+      });
+      const facts = probe?.result as PageFacts | undefined;
+      const kind = facts ? siteChallengeKind(facts) : null;
+      if (!kind) return null;
+      seen = { kind, url: facts!.url };
+    } catch {
+      // Not scriptable (chrome://, PDF): nothing to check. After a challenge
+      // was seen, a failed probe means the page is moving on; look again.
+      if (!seen) return null;
+    }
+    if (Date.now() >= deadline) return seen;
+    await sleepMs(1000);
+  }
+}
+
+// The CLI pauses the site for a while when an error carries `site_challenge`.
+async function assertNoSiteChallenge(tabId: number): Promise<void> {
+  const challenge = await detectSiteChallenge(tabId);
+  if (challenge) {
+    throw new Error(
+      `site_challenge: ${challenge.url} shows a ${challenge.kind} bot check; solve it by hand in this tab`,
+    );
+  }
+}
+
+function isSiteChallengeError(error: any): boolean {
+  return String(error?.message || error).includes('site_challenge');
 }
 
 // Guard function to safely add listeners
@@ -4025,6 +4176,61 @@ function dispatchBrokerMessageWithWatchdog(
   return queued;
 }
 
+function isNativeHostUnavailableError(reason: string): boolean {
+  const normalized = reason.toLowerCase();
+  return normalized.includes('not found') || normalized.includes('forbidden');
+}
+
+function handleNativePortDisconnect(
+  port: chrome.runtime.Port,
+  portEpoch: number,
+  errorMessage?: string,
+): void {
+  const suppressed = suppressedNativeDisconnectPorts.has(port);
+  if (nativePort !== port) {
+    console.debug('[NativeReconnect] Ignoring stale native port disconnect', {
+      error: errorMessage,
+      host: brokerHostInUse,
+      suppressed,
+    });
+    return;
+  }
+  console.log('Native host disconnected:', errorMessage);
+  logWarn('Native host disconnected', { error: errorMessage, host: brokerHostInUse });
+  const disconnectedEpoch = portEpoch;
+  nativePortEpoch += 1;
+  lastNativePortDisconnectReason = errorMessage || 'Native host disconnected';
+  cancelBrokerLeasesForNativePortEpoch(disconnectedEpoch, errorMessage || 'Native host disconnected');
+  rejectAllNativeControlCallbacks(errorMessage || 'Native host disconnected');
+  setNativePort(null);  // Clear the logger's reference too
+  nativePort = null;
+  nativeConnectInFlight = false;
+  clearHeartbeat();
+  if (suppressed) {
+    return;
+  }
+  // If the preferred host isn't installed, immediately try the fallback host.
+  if (
+    errorMessage &&
+    brokerHostIndex < BROKER_HOST_CANDIDATES.length - 1 &&
+    (errorMessage.toLowerCase().includes('host not found') || errorMessage.toLowerCase().includes('not found'))
+  ) {
+    brokerHostIndex++;
+    reconnectAttempts = 0;
+    clearReconnectTimer();
+    connectToNative();
+    return;
+  }
+  if (errorMessage && isNativeHostUnavailableError(errorMessage)) {
+    nativeReconnectSlowMode = true;
+    logError('Native host unavailable; run `rzn-browser native-host doctor`', { error: errorMessage });
+    scheduleReconnect();
+    return;
+  }
+  // Attempt reconnection with backoff
+  scheduleReconnect();
+}
+
 // Connect to native messaging host
 function connectToNative(): void {
   initializeBrowserInstanceId();
@@ -4098,49 +4304,7 @@ function connectToNative(): void {
 
     if (guardListener(port?.onDisconnect, 'nativePort.onDisconnect')) {
       port.onDisconnect.addListener(() => {
-        const err = chrome.runtime.lastError?.message;
-        const suppressed = suppressedNativeDisconnectPorts.has(port);
-        if (nativePort !== port) {
-          console.debug('[NativeReconnect] Ignoring stale native port disconnect', {
-            error: err,
-            host: brokerHostInUse,
-            suppressed,
-          });
-          return;
-        }
-        console.log('Native host disconnected:', err);
-        logWarn('Native host disconnected', { error: err, host: brokerHostInUse });
-        const disconnectedEpoch = portEpoch;
-        nativePortEpoch += 1;
-        lastNativePortDisconnectReason = err || 'Native host disconnected';
-        cancelBrokerLeasesForNativePortEpoch(disconnectedEpoch, err || 'Native host disconnected');
-        rejectAllNativeControlCallbacks(err || 'Native host disconnected');
-        setNativePort(null);  // Clear the logger's reference too
-        nativePort = null;
-        nativeConnectInFlight = false;
-        clearHeartbeat();
-        if (suppressed) {
-          return;
-        }
-        // If the preferred host isn't installed, immediately try the fallback host.
-        if (
-          err &&
-          brokerHostIndex < BROKER_HOST_CANDIDATES.length - 1 &&
-          (err.toLowerCase().includes('host not found') || err.toLowerCase().includes('not found'))
-        ) {
-          brokerHostIndex++;
-          reconnectAttempts = 0;
-          clearReconnectTimer();
-          connectToNative();
-          return;
-        }
-        if (err && (err.toLowerCase().includes('host not found') || err.toLowerCase().includes('forbidden'))) {
-          nativeReconnectTerminal = true;
-          logError('Native host unavailable; run `rzn-browser native-host doctor`', { error: err });
-          return;
-        }
-        // Attempt reconnection with backoff
-        scheduleReconnect();
+        handleNativePortDisconnect(port, portEpoch, chrome.runtime.lastError?.message);
       });
     }
 
@@ -4155,6 +4319,10 @@ function connectToNative(): void {
     logError('Failed to connect to native host', { error: error });
     nativePort = null;
     nativeConnectInFlight = false;
+    const reason = error instanceof Error ? error.message : String(error);
+    if (isNativeHostUnavailableError(reason)) {
+      nativeReconnectSlowMode = true;
+    }
     // Schedule reconnect if initial connect fails
     scheduleReconnect();
   }
@@ -4251,6 +4419,78 @@ async function handleBrokerMessage(
     return;
   }
   assertBrokerLeaseCurrent(brokerLease, 'handleBrokerMessage start');
+  if (brokerDispatchCommandName(message) === 'ping') {
+    const requestId = message.req_id || message.task_id || 'unknown';
+    const isOrchestratorFormat = !!message.task_id || !!message.action;
+    const workflowSessionId = normalizeSessionId(sessionId || resolveSessionId(message));
+    // Health checks must not wait for startup persistence. Identity is included once
+    // the asynchronous browser-instance initialization has populated the memory cache.
+    sendResponseToBrokerRaw({
+      req_id: isOrchestratorFormat ? undefined : requestId,
+      task_id: isOrchestratorFormat ? requestId : undefined,
+      success: true,
+      result: {
+        pong: true,
+        source: message.payload?.source || 'extension_background',
+        current_tab_id: workflowSessions.get(workflowSessionId)?.workflowTabId,
+        extension_build_signature: RZN_BUILD_SIGNATURE,
+        extension_target: RZN_EXTENSION_TARGET,
+        bridge_contract_version: RZN_BRIDGE_PROTOCOL_LEVEL,
+        extension_worker_boot_id: EXTENSION_WORKER_BOOT_ID,
+        ...extensionRuntimePingMetadata(),
+        browser_instance_id: getCachedBrowserInstanceId(),
+        supervisor_boot_id: message.rzn_bridge?.supervisor_boot_id || null,
+        supervisor_bridge_id: message.rzn_bridge?.supervisor_bridge_id || null,
+        supervisor_bridge_epoch: message.rzn_bridge?.supervisor_bridge_epoch ?? null,
+        native_host_boot_id: message.rzn_bridge?.native_host_boot_id || lastNativeHostBootId,
+        native_host_pid: message.rzn_bridge?.native_host_pid ?? lastNativeHostPid,
+        native_host_connected: !!nativePort,
+        native_connect_in_flight: nativeConnectInFlight,
+        native_port_epoch: nativePortEpoch,
+        last_native_port_disconnect_reason: lastNativePortDisconnectReason,
+        last_native_host_stdout_heartbeat_ms: lastNativeHostStdoutHeartbeatMs,
+        last_native_host_stdout_heartbeat_seq: lastNativeHostStdoutHeartbeatSeq,
+        last_native_host_stdout_heartbeat_age_ms:
+          lastNativeHostStdoutHeartbeatMs === null ? null : Date.now() - lastNativeHostStdoutHeartbeatMs,
+        last_native_roundtrip_ping_ms: lastNativeRoundtripPingMs,
+        last_native_roundtrip_ping_age_ms:
+          lastNativeRoundtripPingMs === null ? null : Date.now() - lastNativeRoundtripPingMs,
+        missed_native_roundtrip_pings: missedNativeHeartbeats,
+        broker_active_request_count: brokerRequestLeasesById.size,
+        last_broker_watchdog_timeout_ms: lastBrokerWatchdogTimeoutMs,
+        last_broker_watchdog_request_id: lastBrokerWatchdogRequestId,
+        last_broker_watchdog_session_id: lastBrokerWatchdogSessionId,
+        last_broker_watchdog_quarantine_ms: lastBrokerWatchdogQuarantineMs,
+        last_broker_watchdog_quarantine_session_id: lastBrokerWatchdogQuarantineSessionId,
+        last_broker_watchdog_quarantine_reason: lastBrokerWatchdogQuarantineReason,
+        broker_watchdog_quarantine_count: brokerWatchdogQuarantineCount,
+        broker_watchdog_bridge_restart_count: brokerWatchdogBridgeRestartCount,
+        capabilities: {
+          content_keepalive_port: true,
+          content_keepalive_port_name: CONTENT_KEEPALIVE_PORT_NAME,
+          content_keepalive_interval_ms: CONTENT_KEEPALIVE_EXPECTED_INTERVAL_MS,
+          native_keepalive_alarm: !!chrome.alarms?.create,
+          native_host_stdout_heartbeat: true,
+          native_roundtrip_ping_health: true,
+          native_port_epoch_fencing: true,
+          workflow_session_epoch_fencing: true,
+          broker_watchdog: true,
+          request_lease_cancellation: true,
+          watchdog_queue_unblock: true,
+          epoch_chain_identity: true,
+          native_control_epoch_fencing: true,
+          supervisor_bridge_response_fencing: true,
+          health_beacon: true,
+          auxiliary_path_lease_guards: true,
+          control_plane_queue_bypass: true,
+          watchdog_session_quarantine: true,
+          port_scoped_disconnect_suppression: true,
+          native_message_frame_cap: true,
+        },
+      },
+    }, { lease: brokerLease });
+    return;
+  }
   await loadWorkflowSessionsFromStorage();
   assertBrokerLeaseCurrent(brokerLease, 'after workflow session load');
   const workflowSessionId = normalizeSessionId(sessionId || resolveSessionId(message));
@@ -4330,82 +4570,6 @@ async function handleBrokerMessage(
 
   // Handle delta messages
   handleDeltaMessage(message);
-
-  if (registeredCommand === 'ping') {
-    const browserInstanceIdentity = await browserInstancePingMetadata().catch((error: any) => {
-      logWarn('Failed to resolve browser instance id for ping response', {
-        error: error?.message || String(error),
-      });
-      return {
-        ...extensionRuntimePingMetadata(),
-        browser_instance_id: getCachedBrowserInstanceId(),
-      };
-    });
-    sendResponseToBroker({
-      req_id: isOrchestratorFormat ? undefined : requestId,
-      task_id: isOrchestratorFormat ? requestId : undefined,
-      success: true,
-      result: {
-        pong: true,
-        source: message.payload?.source || 'extension_background',
-        current_tab_id: workflowTabId,
-        extension_build_signature: RZN_BUILD_SIGNATURE,
-        extension_target: RZN_EXTENSION_TARGET,
-        bridge_contract_version: RZN_BRIDGE_PROTOCOL_LEVEL,
-        extension_worker_boot_id: EXTENSION_WORKER_BOOT_ID,
-        ...browserInstanceIdentity,
-        supervisor_boot_id: message.rzn_bridge?.supervisor_boot_id || null,
-        supervisor_bridge_id: message.rzn_bridge?.supervisor_bridge_id || null,
-        supervisor_bridge_epoch: message.rzn_bridge?.supervisor_bridge_epoch ?? null,
-        native_host_boot_id: message.rzn_bridge?.native_host_boot_id || lastNativeHostBootId,
-        native_host_pid: message.rzn_bridge?.native_host_pid ?? lastNativeHostPid,
-        native_host_connected: !!nativePort,
-        native_connect_in_flight: nativeConnectInFlight,
-        native_port_epoch: nativePortEpoch,
-        last_native_port_disconnect_reason: lastNativePortDisconnectReason,
-        last_native_host_stdout_heartbeat_ms: lastNativeHostStdoutHeartbeatMs,
-        last_native_host_stdout_heartbeat_seq: lastNativeHostStdoutHeartbeatSeq,
-        last_native_host_stdout_heartbeat_age_ms:
-          lastNativeHostStdoutHeartbeatMs === null ? null : Date.now() - lastNativeHostStdoutHeartbeatMs,
-        last_native_roundtrip_ping_ms: lastNativeRoundtripPingMs,
-        last_native_roundtrip_ping_age_ms:
-          lastNativeRoundtripPingMs === null ? null : Date.now() - lastNativeRoundtripPingMs,
-        missed_native_roundtrip_pings: missedNativeHeartbeats,
-        broker_active_request_count: brokerRequestLeasesById.size,
-        last_broker_watchdog_timeout_ms: lastBrokerWatchdogTimeoutMs,
-        last_broker_watchdog_request_id: lastBrokerWatchdogRequestId,
-        last_broker_watchdog_session_id: lastBrokerWatchdogSessionId,
-        last_broker_watchdog_quarantine_ms: lastBrokerWatchdogQuarantineMs,
-        last_broker_watchdog_quarantine_session_id: lastBrokerWatchdogQuarantineSessionId,
-        last_broker_watchdog_quarantine_reason: lastBrokerWatchdogQuarantineReason,
-        broker_watchdog_quarantine_count: brokerWatchdogQuarantineCount,
-        broker_watchdog_bridge_restart_count: brokerWatchdogBridgeRestartCount,
-        capabilities: {
-          content_keepalive_port: true,
-          content_keepalive_port_name: CONTENT_KEEPALIVE_PORT_NAME,
-          content_keepalive_interval_ms: CONTENT_KEEPALIVE_EXPECTED_INTERVAL_MS,
-          native_keepalive_alarm: !!chrome.alarms?.create,
-          native_host_stdout_heartbeat: true,
-          native_roundtrip_ping_health: true,
-          native_port_epoch_fencing: true,
-          workflow_session_epoch_fencing: true,
-          broker_watchdog: true,
-          request_lease_cancellation: true,
-          watchdog_queue_unblock: true,
-          epoch_chain_identity: true,
-          native_control_epoch_fencing: true,
-          supervisor_bridge_response_fencing: true,
-          health_beacon: true,
-          auxiliary_path_lease_guards: true,
-          control_plane_queue_bypass: true,
-          watchdog_session_quarantine: true,
-          port_scoped_disconnect_suppression: true,
-          native_message_frame_cap: true,
-        },
-      },
-    });
-    return;
-  }
 
   if (registeredCommand === 'session_close') {
     try {
@@ -4915,6 +5079,7 @@ async function handleBrokerMessage(
           const url = (step.url && typeof step.url === 'string') ? step.url.trim() : '';
           if (!url) throw new Error('Missing URL for navigation');
 
+          const createdTab = tabId === undefined;
           if (tabId === undefined) {
             const newTab = await guardedBrokerSideEffect(
               brokerLease,
@@ -4969,21 +5134,41 @@ async function handleBrokerMessage(
                 return;
               }
             }
+            const navTimeoutMs = step.timeout_ms || step.timeoutMs || 15000;
+            const inPage = await guardedBrokerSideEffect(
+              brokerLease,
+              'navigateInPage navigate_to_url',
+              () => navigateInPage(tabId!, url, step.wait, navTimeoutMs)
+            );
+            if (!inPage) {
+              await guardedBrokerSideEffect(
+                brokerLease,
+                'chrome.tabs.update navigate_to_url',
+                () => chrome.tabs.update(tabId!, { url })
+              );
+              await guardedBrokerSideEffect(
+                brokerLease,
+                'waitForNavigation navigate_to_url',
+                () => waitForNavigation(tabId!, step.wait, navTimeoutMs)
+              );
+            }
+          }
+          if (createdTab) {
             await guardedBrokerSideEffect(
               brokerLease,
-              'chrome.tabs.update navigate_to_url',
-              () => chrome.tabs.update(tabId!, { url })
+              'waitForNavigation navigate_to_url',
+              () => waitForNavigation(tabId!, step.wait, step.timeout_ms || step.timeoutMs || 15000)
             );
           }
           await guardedBrokerSideEffect(
             brokerLease,
-            'waitForNavigation navigate_to_url',
-            () => waitForNavigation(tabId!, step.wait, step.timeout_ms || step.timeoutMs || 15000)
+            'ensureContentReady navigate_to_url',
+            () => ensureContentReady(tabId!, 'contentScript.js', 8000).catch(() => {})
           );
           await guardedBrokerSideEffect(
             brokerLease,
-            'ensureContentReady navigate_to_url',
-            () => ensureContentReady(tabId!, 'contentScript.js', 8000).catch(() => {})
+            'assertNoSiteChallenge navigate_to_url',
+            () => assertNoSiteChallenge(tabId!)
           );
 
           sendResponseToBroker({
@@ -4991,7 +5176,9 @@ async function handleBrokerMessage(
             task_id: isOrchestratorFormat ? requestId : undefined,
             success: true,
             result: true,
-            current_url: url
+            current_url: url,
+            // The CLI site queue parks this tab for the next run of the site.
+            current_tab_id: tabId,
           } as any);
           return;
         } catch (error: any) {
@@ -4999,7 +5186,9 @@ async function handleBrokerMessage(
             req_id: isOrchestratorFormat ? undefined : requestId,
             task_id: isOrchestratorFormat ? requestId : undefined,
             success: false,
-            error_code: isExactTabMissingError(error) ? 'TAB_MISSING' : 'NAVIGATION_ERROR',
+            error_code: isExactTabMissingError(error)
+              ? 'TAB_MISSING'
+              : isSiteChallengeError(error) ? 'SITE_CHALLENGE' : 'NAVIGATION_ERROR',
             error_msg: error?.message || String(error)
           } as any);
           return;
@@ -5235,6 +5424,11 @@ async function handleBrokerMessage(
             'waitForNavigationOrUrlMatch',
             () => waitForNavigationOrUrlMatch(tabId, urlPattern, timeoutMs)
           );
+          await guardedBrokerSideEffect(
+            brokerLease,
+            'assertNoSiteChallenge wait_for_navigation',
+            () => assertNoSiteChallenge(tabId)
+          );
 
           sendResponseToBroker({
             req_id: isOrchestratorFormat ? undefined : requestId,
@@ -5248,7 +5442,7 @@ async function handleBrokerMessage(
             req_id: isOrchestratorFormat ? undefined : requestId,
             task_id: isOrchestratorFormat ? requestId : undefined,
             success: false,
-            error_code: 'WAIT_NAVIGATION_ERROR',
+            error_code: isSiteChallengeError(error) ? 'SITE_CHALLENGE' : 'WAIT_NAVIGATION_ERROR',
             error_msg: error?.message || String(error)
           } as any);
           return;
@@ -6622,6 +6816,61 @@ if (RZN_PAGE_TEST_BRIDGE_ENABLED) {
   // Expose test functions only in explicit dev/test extension builds.
   (globalThis as any).sendTestPing = sendTestPing;
   (globalThis as any).reconnectNative = connectToNative;
+  (globalThis as any).__rznTestCallNativeHostControl = callNativeHostControl;
+  (globalThis as any).__rznTestResetNativeConnection = () => {
+    disconnectNativePort('native reconnect regression setup');
+    nativeReconnectSlowMode = false;
+    reconnectAttempts = 0;
+    clearReconnectTimer();
+    missedNativeHeartbeats = 0;
+  };
+  (globalThis as any).__rznTestRunNativeHeartbeat = runNativeHeartbeat;
+  (globalThis as any).__rznTestSimulateNativePortDisconnect = (reason: string) => {
+    const port = nativePort;
+    if (!port) return false;
+    handleNativePortDisconnect(port, nativePortEpoch, reason);
+    return true;
+  };
+  (globalThis as any).__rznTestEmitNativeStdoutHeartbeat = () => {
+    handleNativeHostStdoutHeartbeat({
+      cmd: NATIVE_HOST_STDOUT_HEARTBEAT_CMD,
+      payload: { seq: Date.now() },
+    } as BrokerMessage);
+  };
+  (globalThis as any).__rznTestGetNativeConnectionState = () => ({
+    connected: !!nativePort,
+    slowMode: nativeReconnectSlowMode,
+    missedHeartbeats: missedNativeHeartbeats,
+    portEpoch: nativePortEpoch,
+  });
+  (globalThis as any).__rznTestHasWorkflowSession = (sessionId: string) =>
+    workflowSessions.has(normalizeSessionId(sessionId));
+  (globalThis as any).__rznTestStartBlockedStorageInitialization = () => {
+    workflowSessionsLoaded = false;
+    workflowSessionsLoadPromise = null;
+    browserBootIdPromise = Promise.resolve('test-browser-boot');
+    resetBrowserInstanceIdCacheForTests();
+    void loadWorkflowSessionsFromStorage();
+    void ensureBrowserInstanceId();
+  };
+  (globalThis as any).__rznTestFinishBlockedStorageInitialization = async () => {
+    await loadWorkflowSessionsFromStorage();
+    return await ensureBrowserInstanceId();
+  };
+  (globalThis as any).__rznTestGetWorkflowSession = (sessionId: string) => {
+    const state = workflowSessions.get(normalizeSessionId(sessionId));
+    return state
+      ? {
+          workflowTabId: state.workflowTabId,
+          currentUrl: state.currentUrl,
+          tabLifecycle: state.tabLifecycle,
+        }
+      : null;
+  };
+  (globalThis as any).__rznTestSetWorkflowTabId = setWorkflowTabId;
+  (globalThis as any).__rznTestFlushWorkflowSessionPersistence = async () => {
+    await workflowSessionsPersistChain;
+  };
   (globalThis as any).__rznTestRunWorkflowSteps = async (steps: any[], data?: any) => {
     await loadWorkflowSessionsFromStorage();
     const requestId = `pw-test-${Date.now()}`;
@@ -6676,7 +6925,9 @@ function waitForTestBrokerResponse(correlationId: string, timeoutMs = 20000): Pr
 
 if (RZN_PAGE_TEST_BRIDGE_ENABLED) {
   (globalThis as any).__rznTestHandleBrokerMessage = async (message: any, sessionId?: string) => {
-  await loadWorkflowSessionsFromStorage();
+  if (brokerDispatchCommandName(message as BrokerMessage) !== 'ping') {
+    await loadWorkflowSessionsFromStorage();
+  }
   const { normalizedMessage, correlationId } = normalizeTestBrokerMessage(message);
   const responsePromise = waitForTestBrokerResponse(correlationId);
 
@@ -6693,7 +6944,9 @@ if (RZN_PAGE_TEST_BRIDGE_ENABLED) {
   return await responsePromise;
   };
   (globalThis as any).__rznTestHandleBrokerMessageWithWatchdog = async (message: any, sessionId?: string) => {
-  await loadWorkflowSessionsFromStorage();
+  if (brokerDispatchCommandName(message as BrokerMessage) !== 'ping') {
+    await loadWorkflowSessionsFromStorage();
+  }
   const { normalizedMessage, correlationId } = normalizeTestBrokerMessage(message);
   if (sessionId && !extractSessionIdCandidate(normalizedMessage as BrokerMessage)) {
     normalizedMessage.payload = {
@@ -6716,7 +6969,21 @@ if (RZN_PAGE_TEST_BRIDGE_ENABLED) {
           const sleepMsRaw = Number(brokerMessage.payload?.sleep_ms ?? brokerMessage.payload?.sleepMs ?? 0);
           const sleepMs = Number.isFinite(sleepMsRaw) ? Math.max(0, sleepMsRaw) : 0;
           await new Promise(resolve => setTimeout(resolve, sleepMs));
-          assertBrokerLeaseCurrent(brokerLease, 'before __rzn_test_sleep_then_mutate mutation');
+          try {
+            assertBrokerLeaseCurrent(brokerLease, 'before __rzn_test_sleep_then_mutate mutation');
+          } catch (error) {
+            sendResponseToBrokerRaw(
+              {
+                req_id: requestId,
+                lease_id: brokerLease?.leaseId,
+                success: false,
+                error_code: 'STALE_BROKER_LEASE',
+                error_msg: error instanceof Error ? error.message : String(error),
+              },
+              { lease: brokerLease }
+            );
+            return;
+          }
           const currentCount = Number((globalThis as any).__rznTestLateMutationCount || 0);
           (globalThis as any).__rznTestLateMutationCount = currentCount + 1;
           sendResponseToBrokerRaw(
@@ -7131,6 +7398,7 @@ async function executeWorkflow(
           }
 
           let tabId: number;
+          let navigated = false;
 
           if (workflowTabId !== undefined) {
             // Reuse existing workflow tab
@@ -7175,11 +7443,19 @@ async function executeWorkflow(
                 continue;
               }
             }
-            await guardedBrokerSideEffect(
+            const navTimeoutMs = step.timeout_ms || step.timeoutMs || 15000;
+            navigated = await guardedBrokerSideEffect(
               brokerLease,
-              'chrome.tabs.update workflow navigate_to_url',
-              () => chrome.tabs.update(tabId, { url: step.url })
+              'navigateInPage workflow navigate_to_url',
+              () => navigateInPage(tabId, step.url, step.wait, navTimeoutMs)
             );
+            if (!navigated) {
+              await guardedBrokerSideEffect(
+                brokerLease,
+                'chrome.tabs.update workflow navigate_to_url',
+                () => chrome.tabs.update(tabId, { url: step.url })
+              );
+            }
           } else {
             // Create a dedicated workflow tab if none exists (do not hijack the user's active tab).
             const newTab = await guardedBrokerSideEffect(
@@ -7199,12 +7475,14 @@ async function executeWorkflow(
             );
           }
 
-          // Wait for navigation according to step.wait
-          await guardedBrokerSideEffect(
-            brokerLease,
-            'waitForNavigation workflow navigate_to_url',
-            () => waitForNavigation(tabId, step.wait, step.timeout_ms || step.timeoutMs || 15000)
-          );
+          // Wait for navigation according to step.wait (navigateInPage already did)
+          if (!navigated) {
+            await guardedBrokerSideEffect(
+              brokerLease,
+              'waitForNavigation workflow navigate_to_url',
+              () => waitForNavigation(tabId, step.wait, step.timeout_ms || step.timeoutMs || 15000)
+            );
+          }
 
           // Ensure content script is ready after navigation
           try {
@@ -7217,6 +7495,11 @@ async function executeWorkflow(
           } catch (injectionError) {
             console.warn('Content script not ready after navigation:', injectionError);
           }
+          await guardedBrokerSideEffect(
+            brokerLease,
+            'assertNoSiteChallenge workflow navigate_to_url',
+            () => assertNoSiteChallenge(tabId)
+          );
 
           // Navigation successful
           results.push({ type: 'navigation', url: step.url, success: true });
@@ -7227,7 +7510,9 @@ async function executeWorkflow(
             req_id: isOrchestratorFormat ? undefined : requestId,
             task_id: isOrchestratorFormat ? requestId : undefined,
             success: false,
-            error_code: isExactTabMissingError(error) ? 'TAB_MISSING' : 'NAVIGATION_ERROR',
+            error_code: isExactTabMissingError(error)
+              ? 'TAB_MISSING'
+              : isSiteChallengeError(error) ? 'SITE_CHALLENGE' : 'NAVIGATION_ERROR',
             error_msg: `Navigation failed: ${(error as Error).message}`
           });
           return;
@@ -7253,6 +7538,11 @@ async function executeWorkflow(
             'waitForNavigationOrUrlMatch workflow',
             () => waitForNavigationOrUrlMatch(tabId, urlPattern, timeoutMs)
           );
+          await guardedBrokerSideEffect(
+            brokerLease,
+            'assertNoSiteChallenge workflow wait_for_navigation',
+            () => assertNoSiteChallenge(tabId)
+          );
           results.push({ type: 'wait_for_navigation', url, url_pattern: urlPattern || null, success: true });
           continue;
         } catch (error: any) {
@@ -7271,7 +7561,7 @@ async function executeWorkflow(
             req_id: isOrchestratorFormat ? undefined : requestId,
             task_id: isOrchestratorFormat ? requestId : undefined,
             success: false,
-            error_code: 'WAIT_NAVIGATION_ERROR',
+            error_code: isSiteChallengeError(error) ? 'SITE_CHALLENGE' : 'WAIT_NAVIGATION_ERROR',
             error_msg: `Failed to wait for navigation: ${error?.message || String(error)}`,
           });
           return;
@@ -8207,11 +8497,13 @@ if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
   if (message && message.type === 'RZN_WAKE_NATIVE') {
     try {
       if (message.resetTerminal === true) {
-        nativeReconnectTerminal = false;
+        nativeReconnectSlowMode = false;
         reconnectAttempts = 0;
+        clearReconnectTimer();
       }
       if (!nativePort) {
-        scheduleReconnect();
+        if (message.resetTerminal === true) connectToNative();
+        else scheduleReconnect();
       }
       sendResponse({
         ok: true,

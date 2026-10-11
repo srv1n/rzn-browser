@@ -18,6 +18,7 @@ use crate::workflow_runner::{
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use rzn_browser::site_queue::{self, SiteGate};
 use rzn_contracts::workflow::{RunError, RunStatus};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -42,7 +43,73 @@ pub struct SupervisorRunConfig {
     pub keep_tab_open: bool,
 }
 
-pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Option<Value>> {
+pub async fn run_supervisor_workflow(mut config: SupervisorRunConfig) -> Result<Option<Value>> {
+    let seen_tab = Arc::new(Mutex::new(None));
+    let Some(policy) = site_queue::policy_for_workflow(&config.workflow_path) else {
+        return run_once(config, seen_tab, false, false).await;
+    };
+    let base = config
+        .app_base
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(rzn_core::runtime_paths::default_app_base_dir);
+    let site = policy.site.clone();
+    let mut gate = SiteGate::acquire(&base, policy).await?;
+    // An explicit --tab-ref is the caller's tab: never park it or replace it.
+    let parks = gate.park_tab() && config.tab_ref.is_none();
+    let target = config.browser_target.clone();
+    let parked = gate.parked_tab(target.as_ref()).filter(|_| parks);
+    // A fresh tab kept only for parking is closed again if no step reported its
+    // id: nothing could reuse it, so keeping it would leak a tab per run.
+    let close_unseen_tab = parks && !config.keep_tab_open;
+    if parks {
+        config.keep_tab_open = true;
+    }
+    if parked.is_some() {
+        config.tab_ref = parked.clone();
+    }
+    let mut outcome = run_once(
+        config.clone(),
+        seen_tab.clone(),
+        parked.is_some(),
+        close_unseen_tab && parked.is_none(),
+    )
+    .await;
+    let parked_tab_gone = |e: &anyhow::Error| {
+        let text = failure_text(e);
+        text.contains("TAB_MISSING") || text.contains("No tab with id")
+    };
+    // Retry only if no step ever ran in the tab; a rerun after progress could
+    // repeat a submit or send.
+    let tab_never_used = seen_tab.lock().unwrap().is_none();
+    if parked.is_some() && tab_never_used && outcome.as_ref().is_err_and(parked_tab_gone) {
+        eprintln!("[queue] the parked {site} tab is gone; opening a fresh one");
+        gate.forget_parked_tab();
+        config.tab_ref = None;
+        outcome = run_once(config, seen_tab.clone(), false, close_unseen_tab).await;
+    }
+    let challenged = outcome
+        .as_ref()
+        .is_err_and(|e| failure_text(e).contains(site_queue::CHALLENGE_MARKER));
+    let tab = seen_tab.lock().unwrap().clone().filter(|_| parks);
+    gate.finish(tab, target, challenged)?;
+    outcome
+}
+
+/// Error code + bridge message of a failed run, for marker matching.
+fn failure_text(error: &anyhow::Error) -> String {
+    match error.downcast_ref::<WorkflowRunFailure>() {
+        Some(failure) => format!("{} {}", failure, failure.classification_message),
+        None => format!("{error:#}"),
+    }
+}
+
+async fn run_once(
+    config: SupervisorRunConfig,
+    seen_tab: Arc<Mutex<Option<String>>>,
+    front_parked_tab: bool,
+    close_unseen_tab: bool,
+) -> Result<Option<Value>> {
     let workflow = load_workflow_for_run(&config.workflow_path, &config.params)?;
     let workflow_id = workflow
         .runtime_context
@@ -86,6 +153,9 @@ pub async fn run_supervisor_workflow(config: SupervisorRunConfig) -> Result<Opti
         config: supervisor_config.clone(),
         session_id: Arc::new(Mutex::new(None)),
         cancelled: Arc::new(AtomicBool::new(false)),
+        seen_tab,
+        front_tab: config.tab_ref.clone().filter(|_| front_parked_tab),
+        close_unseen_tab,
     };
     let cancel_watch = tokio::spawn(watch_run_cancellation(
         supervisor_config.clone(),
@@ -270,6 +340,14 @@ struct CliStepTransport {
     config: supervisor::SupervisorConfig,
     session_id: Arc<Mutex<Option<String>>>,
     cancelled: Arc<AtomicBool>,
+    /// Last tab a step ran in, so the site queue can reuse it on the next run.
+    seen_tab: Arc<Mutex<Option<String>>>,
+    /// Parked tab to bring to the front once the session opens. A hidden tab
+    /// throttles page timers (stalling Cloudflare's check), and a person looks
+    /// at the tab they browse.
+    front_tab: Option<String>,
+    /// Drop `keep_tab` at session close when no step reported the tab.
+    close_unseen_tab: bool,
 }
 
 #[async_trait]
@@ -284,6 +362,15 @@ impl StepTransport for CliStepTransport {
         params: Value,
         timeout_ms: u64,
     ) -> Result<Value, TransportError> {
+        let mut params = params;
+        if method == "browser.session_close"
+            && self.close_unseen_tab
+            && self.seen_tab.lock().unwrap().is_none()
+        {
+            if let Some(map) = params.as_object_mut() {
+                map.remove("keep_tab");
+            }
+        }
         let call = supervisor::call(self.config.clone(), method, params);
         let result = if timeout_ms == 0 {
             call.await.map_err(TransportError::Call)
@@ -295,13 +382,35 @@ impl StepTransport for CliStepTransport {
         };
         if let Ok(value) = &result {
             if method == "browser.session_open" {
-                *self.session_id.lock().unwrap() = value
+                let session_id = value
                     .get("session_id")
                     .or_else(|| value.pointer("/result/session_id"))
                     .and_then(Value::as_str)
                     .map(str::to_string);
+                if let (Some(session_id), Some(tab_ref)) = (&session_id, &self.front_tab) {
+                    // Best effort: a missing tab surfaces on the first real step.
+                    let _ = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        supervisor::call(
+                            self.config.clone(),
+                            "browser.execute_step",
+                            json!({
+                                "session_id": session_id,
+                                "tab_ref": tab_ref,
+                                "step": {"type": "switch_to_tab", "tab_identifier": "workflow"}
+                            }),
+                        ),
+                    )
+                    .await;
+                }
+                *self.session_id.lock().unwrap() = session_id;
             } else if method == "browser.session_close" {
                 *self.session_id.lock().unwrap() = None;
+            } else if let Some(tab_ref) = ["/current_tab_ref", "/result/current_tab_ref"]
+                .iter()
+                .find_map(|path| value.pointer(path).and_then(Value::as_str))
+            {
+                *self.seen_tab.lock().unwrap() = Some(tab_ref.to_string());
             }
         }
         result

@@ -31,6 +31,11 @@ catalog imports, or autonomous-mode flags. Read only what the task needs.
 
 - Reuse the user's Chrome profile. Dedicated workflow tabs preserve its login;
   use an existing tab when the task needs that exact page state.
+- Runs for one site queue and share one tab, like one person browsing. Calling
+  the same site in parallel gives no speedup, so run those calls one at a time.
+  Parallel calls to different sites are fine. If a run fails with
+  `site_challenge`, stop calling that site. Tell the user to solve the challenge
+  in the open tab; the site stays paused for 15 minutes.
 - A request to send, submit, purchase, or delete authorizes only the specified
   action and target. Prepare and inspect the result first; ask only for missing
   scope or approval not already supplied. Honor workflow gates.

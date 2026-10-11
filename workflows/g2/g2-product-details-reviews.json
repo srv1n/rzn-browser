@@ -2,7 +2,7 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "g2/product_details_reviews",
   "name": "G2: Product Details + Reviews",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "system": "g2",
   "capability": "g2.product.details.reviews",
   "summary": "Fetch product metadata and visible-page reviews for a G2 product. Reads schema.org review markup; falls back to og:title/meta tags for product chrome.",
@@ -20,7 +20,7 @@
       "product_url": {
         "kind": "string",
         "required": true,
-        "description": "Full G2 product URL \u2014 e.g. the .../products/<slug>/reviews canonical from g2/search. Trailing query strings (?utm=...) and #anchors are stripped automatically."
+        "description": "Full G2 product URL — e.g. the .../products/<slug>/reviews canonical from g2/search. Trailing query strings (?utm=...) and #anchors are stripped automatically."
       }
     },
     "additional_params": false
@@ -41,61 +41,17 @@
       "scopes": [
         "g2.com"
       ]
-    },
-    {
-      "class": "network_access",
-      "idempotency": "safe_retry",
-      "confirmation_required": false,
-      "scopes": [
-        "g2.com"
-      ]
-    },
-    {
-      "class": "external_read",
-      "idempotency": "safe_retry",
-      "confirmation_required": false,
-      "scopes": [
-        "g2.com"
-      ]
     }
   ],
   "runtime": {
     "actor": "supervisor",
     "requires_cdp": false,
     "requires_existing_session": false,
-    "timeout_ms": 90000
+    "timeout_ms": 420000
   },
   "steps": [
     {
-      "id": "s1",
-      "action": {
-        "kind": "navigate_to_url",
-        "inputs": {
-          "url": "{product_url}"
-        },
-        "side_effects": [
-          "browser_state"
-        ]
-      },
-      "name": "Navigate to product page"
-    },
-    {
-      "id": "s2",
-      "action": {
-        "kind": "wait_for_element",
-        "inputs": {},
-        "side_effects": [
-          "read_only"
-        ],
-        "target": {
-          "selector": "[itemprop='review'], h1"
-        }
-      },
-      "name": "Wait for review markup",
-      "timeout_ms": 20000
-    },
-    {
-      "id": "s3",
+      "id": "s1_think",
       "action": {
         "kind": "wait_for_timeout",
         "inputs": {},
@@ -103,11 +59,78 @@
           "read_only"
         ]
       },
-      "name": "Allow late content to render",
-      "timeout_ms": 1500
+      "name": "Pause before moving on",
+      "timeout_ms": 900
     },
     {
-      "id": "s4",
+      "id": "s1_go",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "{product_url}",
+            "g2.com"
+          ],
+          "script": "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };const site = cleanArg(arg1); const target = cleanArg(arg0).replace(/#.*$/, '');let url; try { url = new URL(target); } catch (_) { throw new Error('not a URL: ' + target); }if (url.hostname !== site && !url.hostname.endsWith('.' + site)) throw new Error('URL must be on ' + site + ': ' + target);const strip = (u) => u.replace(/#.*$/, '').replace(/\\/$/, '').replace(/\\/\\?/, '?');if (strip(location.href) === strip(target)) return { how: 'already_here', url: location.href };const onSite = location.hostname === url.hostname;const link = onSite ? Array.from(document.querySelectorAll('a[href]')).find((a) => { try { const u = new URL(a.href); return strip(u.href) === strip(target); } catch (_) { return false; } }) : null;window.__rzn_leaving = { url: location.href, body: document.body };document.querySelectorAll('article, h1, a[href], script[type=\"application/ld+json\"]').forEach((e) => e.setAttribute('data-rzn-stale', ''));if (link) { link.scrollIntoView({ block: 'center' }); link.removeAttribute('target'); link.click(); return { how: 'clicked', url: target }; }location.assign(target); return { how: onSite ? 'in_site' : 'entered', url: target };"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Go to the product inside the parked tab (click it if listed)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the navigation start",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s1_load",
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*g2.com*"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the page to load",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s1_ready",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "article[data-track-in-viewport-options], h1",
+            "20000"
+          ],
+          "script": "const challengeSel = \"iframe[src*='captcha-delivery.com'], iframe[src*='challenges.cloudflare.com'], #challenge-form, #challenge-running, #cf-challenge-running, .cf-turnstile, iframe[src*='hcaptcha.com']\";const isChallenge = () => { const title = (document.title || '').toLowerCase(); if (/just a moment|verification required|attention required|verify you are human|access denied/.test(title)) return true; if (document.querySelector(challengeSel)) return true; const body = document.body ? document.body.innerText || '' : ''; return body.length < 4000 && /verification required|slide right to|verify you are human|unusual activity from your device/i.test(body); };const check = () => { if (isChallenge()) return 'challenge'; const all = Array.from(document.querySelectorAll(arg0)); const stale = (e) => e.hasAttribute('data-rzn-stale'); if (!all.some((e) => !stale(e))) return null; const lv = window.__rzn_leaving; if (lv && location.href === lv.url && document.body === lv.body && all.some(stale)) return null; return 'ready'; };let state = check();if (!state) state = await new Promise((resolve) => { const obs = new MutationObserver(() => { const v = check(); if (v) { obs.disconnect(); resolve(v); } }); obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true }); setTimeout(() => { obs.disconnect(); resolve(check() || 'timeout'); }, Number(arg1) || 20000); });if (state === 'challenge') throw new Error('site_challenge: ' + location.hostname + ' is showing a bot check (\"' + document.title + '\"). Solve it by hand in that tab; runs for this site pause for 15 minutes.');if (state === 'timeout') throw new Error('page did not render ' + arg0 + ' at ' + location.href);window.__rzn_leaving = null; return { ready: true, url: location.href, title: document.title };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for content; stop on a bot check",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
       "action": {
         "kind": "dismiss_popups",
         "inputs": {},
@@ -118,25 +141,812 @@
       "name": "Dismiss popups if present"
     },
     {
-      "id": "s5",
+      "id": "s3_0",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 520,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "s3_0_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 1700
+    },
+    {
+      "id": "s3_1",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 760,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "s3_1_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 2300
+    },
+    {
+      "id": "s3_2",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 430,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "s3_2_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 1400
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const stripPrompts = (text) => norm(text).replace(/^(What do you (like best|dislike) about [^?]+\\?)+/i, '').trim(); const readItemprop = (root, prop) => { const el = (root || document).querySelector(\"[itemprop='\" + prop + \"']\"); if (!el) return ''; const c = el.getAttribute('content'); return norm(c || el.textContent || ''); }; const extractChrome = () => { const ogTitle = document.querySelector(\"meta[property='og:title']\")?.getAttribute('content') || ''; const metaDesc = document.querySelector(\"meta[name='description']\")?.getAttribute('content') || ''; const h1 = document.querySelector('h1')?.textContent || ''; const name = norm(ogTitle.replace(/^The G2 on\\s*/i, '').replace(/\\s*Reviews.*$/i, '')) || norm(h1.replace(/\\s*Reviews.*$/i, '')); const ratingFromMeta = readItemprop(document, 'ratingValue'); const countFromMeta = readItemprop(document, 'reviewCount'); const ratingFromAria = (() => { const el = document.querySelector(\"[aria-label*='out of 5']\"); const m = (el?.getAttribute('aria-label') || '').match(/(\\d(?:\\.\\d+)?)\\s*out of 5/); return m ? m[1] : ''; })(); const ratingFromText = (() => { const m = document.body.innerText.match(/(\\d\\.\\d)\\s*\\/\\s*5/); return m ? m[1] : ''; })(); const countFromText = (() => { const candidates = Array.from(document.querySelectorAll('div, span, a')).map(e => norm(e.textContent)); for (const t of candidates) { const m = t.match(/^\\(?(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\)?$/); if (m && parseInt(m[1].replace(/,/g, ''), 10) >= 10) return m[1].replace(/,/g, ''); } const m2 = document.body.innerText.match(/(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\s+reviews?\\b/i); return m2 ? m2[1].replace(/,/g, '') : ''; })(); const breadcrumbItems = Array.from(document.querySelectorAll(\"nav.elv-breadcrumbs li, nav[aria-label*='breadcrumb' i] li, nav.breadcrumb li, [data-eventaction='breadcrumb'] li\")).map(li => norm(li.textContent)).filter(Boolean); const productName = norm(name); const categoryFromBreadcrumb = (() => { for (const item of breadcrumbItems) { if (!item) continue; if (/^home$/i.test(item)) continue; if (/reviews?$/i.test(item)) continue; if (productName && item.toLowerCase() === productName.toLowerCase()) continue; if (productName && productName.toLowerCase().includes(item.toLowerCase()) && item.length < productName.length) { /* skip product fragment */ continue; } return item; } return ''; })(); return { name: productName || norm(h1) || 'N/A', description: norm(metaDesc) || 'N/A', rating: ratingFromMeta || ratingFromAria || ratingFromText || 'N/A', review_count: countFromMeta || countFromText || 'N/A', category: categoryFromBreadcrumb || 'N/A', url: location.href.replace(/#.*$/, '').replace(/\\?.*$/, '') }; }; const extractReviews = () => Array.from(document.querySelectorAll('article[data-track-in-viewport-options]')).filter((a) => a.offsetParent !== null).map((a) => { let opts = {}; try { opts = JSON.parse(a.getAttribute('data-track-in-viewport-options') || '{}'); } catch (_) {} const lines = (a.innerText || '').split('\\n').map((l) => l.trim()).filter(Boolean); const rating = (lines.find((l) => /^\\d(\\.\\d)?\\/5$/.test(l)) || '').replace('/5', ''); const title = (lines.find((l) => /^\".+\"$/.test(l)) || '').replace(/^\"|\"$/g, ''); const pd = String(opts.published_date || ''); const date = /^\\d{8}$/.test(pd) ? pd.slice(0, 4) + '-' + pd.slice(4, 6) + '-' + pd.slice(6) : (lines.find((l) => /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(l)) || ''); const start = lines.findIndex((l) => /^What do you like best/i.test(l)); const body = start < 0 ? '' : lines.slice(start).filter((l) => !/^Review collected by and hosted on G2\\.com\\.?$/i.test(l) && !/^Show (More|Less)$/i.test(l)).join('\\n'); return { title: norm(title) || 'N/A', body: body || 'N/A', author: norm(lines[0]) || 'N/A', date: date || 'N/A', rating: rating || 'N/A' }; }).filter((r) => r.body !== 'N/A' || r.title !== 'N/A');const product = extractChrome(); const reviews = extractReviews();const state = { product, reviews, pages_walked: 1 }; sessionStorage.setItem('__rzn_g2_reviews', JSON.stringify(state)); return state;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract product chrome + page 1 reviews"
+    },
+    {
+      "id": "p2_think",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Pause before the next page",
+      "timeout_ms": 1100
+    },
+    {
+      "id": "p2_next",
       "action": {
         "kind": "execute_javascript",
         "inputs": {
           "world": "main",
           "return_value": true,
           "args": [
-            "{max_pages}"
+            "{max_pages}",
+            "2"
           ],
-          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const stripPrompts = (text) => norm(text).replace(/^(What do you (like best|dislike) about [^?]+\\?)+/i, '').trim(); const readItemprop = (root, prop) => { const el = (root || document).querySelector(\"[itemprop='\" + prop + \"']\"); if (!el) return ''; const c = el.getAttribute('content'); return norm(c || el.textContent || ''); }; const extractChrome = () => { const ogTitle = document.querySelector(\"meta[property='og:title']\")?.getAttribute('content') || ''; const metaDesc = document.querySelector(\"meta[name='description']\")?.getAttribute('content') || ''; const h1 = document.querySelector('h1')?.textContent || ''; const name = norm(ogTitle.replace(/^The G2 on\\s*/i, '').replace(/\\s*Reviews.*$/i, '')) || norm(h1.replace(/\\s*Reviews.*$/i, '')); const ratingFromMeta = readItemprop(document, 'ratingValue'); const countFromMeta = readItemprop(document, 'reviewCount'); const ratingFromAria = (() => { const el = document.querySelector(\"[aria-label*='out of 5']\"); const m = (el?.getAttribute('aria-label') || '').match(/(\\d(?:\\.\\d+)?)\\s*out of 5/); return m ? m[1] : ''; })(); const ratingFromText = (() => { const m = document.body.innerText.match(/(\\d\\.\\d)\\s*\\/\\s*5/); return m ? m[1] : ''; })(); const countFromText = (() => { const candidates = Array.from(document.querySelectorAll('div, span, a')).map(e => norm(e.textContent)); for (const t of candidates) { const m = t.match(/^\\(?(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\)?$/); if (m && parseInt(m[1].replace(/,/g, ''), 10) >= 10) return m[1].replace(/,/g, ''); } const m2 = document.body.innerText.match(/(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\s+reviews?\\b/i); return m2 ? m2[1].replace(/,/g, '') : ''; })(); const breadcrumbItems = Array.from(document.querySelectorAll(\"nav.elv-breadcrumbs li, nav[aria-label*='breadcrumb' i] li, nav.breadcrumb li, [data-eventaction='breadcrumb'] li\")).map(li => norm(li.textContent)).filter(Boolean); const productName = norm(name); const categoryFromBreadcrumb = (() => { for (const item of breadcrumbItems) { if (!item) continue; if (/^home$/i.test(item)) continue; if (/reviews?$/i.test(item)) continue; if (productName && item.toLowerCase() === productName.toLowerCase()) continue; if (productName && productName.toLowerCase().includes(item.toLowerCase()) && item.length < productName.length) { /* skip product fragment */ continue; } return item; } return ''; })(); return { name: productName || norm(h1) || 'N/A', description: norm(metaDesc) || 'N/A', rating: ratingFromMeta || ratingFromAria || ratingFromText || 'N/A', review_count: countFromMeta || countFromText || 'N/A', category: categoryFromBreadcrumb || 'N/A', url: location.href.replace(/#.*$/, '').replace(/\\?.*$/, '') }; }; const extractReviews = () => { const items = Array.from(document.querySelectorAll(\"[itemprop='review']\")); return items.map((item) => { const title = item.querySelector(\"[itemprop='name'], h3, h4\")?.textContent || ''; const body = item.querySelector(\"[itemprop='reviewBody']\")?.textContent || item.querySelector(\"[class*='review-body']\")?.textContent || ''; const author = item.querySelector(\"[itemprop='author'], [class*='reviewer']\")?.textContent || ''; const date = item.querySelector(\"time, [datetime]\")?.getAttribute('datetime') || item.querySelector(\"time, [datetime]\")?.textContent || ''; const ratingMeta = item.querySelector(\"[itemprop='ratingValue']\")?.getAttribute('content') || item.querySelector(\"[itemprop='ratingValue']\")?.textContent || ''; const ratingAria = (() => { const el = item.querySelector(\"[aria-label*='out of 5']\"); const m = (el?.getAttribute('aria-label') || '').match(/(\\d(?:\\.\\d+)?)\\s*out of 5/); return m ? m[1] : ''; })(); return { title: norm(title) || 'N/A', body: stripPrompts(body) || 'N/A', author: norm(author) || 'N/A', date: norm(date) || 'N/A', rating: norm(ratingMeta) || ratingAria || 'N/A' }; }); }; const product = extractChrome(); const reviews = extractReviews(); const maxPagesRaw = cleanArg(arg0); const requestedMax = maxPagesRaw && /^[1-9]$/.test(maxPagesRaw) ? Math.min(parseInt(maxPagesRaw, 10), 5) : 1; const baseUrl = product.url.replace(/[?#].*$/, ''); let pagesWalked = 1; if (requestedMax > 1) { for (let page = 2; page <= requestedMax; page += 1) { const target = `${baseUrl}?page=${page}`; const res = await fetch(target, { credentials: 'same-origin' }); if (!res.ok) break; const html = await res.text(); const doc = new DOMParser().parseFromString(html, 'text/html'); const items = Array.from(doc.querySelectorAll(\"[itemprop='review']\")); if (!items.length) break; for (const item of items) { const title = item.querySelector(\"[itemprop='name'], h3, h4\")?.textContent || ''; const body = item.querySelector(\"[itemprop='reviewBody']\")?.textContent || item.querySelector(\"[class*='review-body']\")?.textContent || ''; const author = item.querySelector(\"[itemprop='author'], [class*='reviewer']\")?.textContent || ''; const date = item.querySelector(\"time, [datetime]\")?.getAttribute('datetime') || item.querySelector(\"time, [datetime]\")?.textContent || ''; const ratingMeta = item.querySelector(\"[itemprop='ratingValue']\")?.getAttribute('content') || item.querySelector(\"[itemprop='ratingValue']\")?.textContent || ''; reviews.push({ title: norm(title) || 'N/A', body: stripPrompts(body) || 'N/A', author: norm(author) || 'N/A', date: norm(date) || 'N/A', rating: norm(ratingMeta) || 'N/A' }); } pagesWalked = page; await sleep(400); } } return { product, reviews, pages_walked: pagesWalked };"
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const stripPrompts = (text) => norm(text).replace(/^(What do you (like best|dislike) about [^?]+\\?)+/i, '').trim(); const readItemprop = (root, prop) => { const el = (root || document).querySelector(\"[itemprop='\" + prop + \"']\"); if (!el) return ''; const c = el.getAttribute('content'); return norm(c || el.textContent || ''); }; const extractChrome = () => { const ogTitle = document.querySelector(\"meta[property='og:title']\")?.getAttribute('content') || ''; const metaDesc = document.querySelector(\"meta[name='description']\")?.getAttribute('content') || ''; const h1 = document.querySelector('h1')?.textContent || ''; const name = norm(ogTitle.replace(/^The G2 on\\s*/i, '').replace(/\\s*Reviews.*$/i, '')) || norm(h1.replace(/\\s*Reviews.*$/i, '')); const ratingFromMeta = readItemprop(document, 'ratingValue'); const countFromMeta = readItemprop(document, 'reviewCount'); const ratingFromAria = (() => { const el = document.querySelector(\"[aria-label*='out of 5']\"); const m = (el?.getAttribute('aria-label') || '').match(/(\\d(?:\\.\\d+)?)\\s*out of 5/); return m ? m[1] : ''; })(); const ratingFromText = (() => { const m = document.body.innerText.match(/(\\d\\.\\d)\\s*\\/\\s*5/); return m ? m[1] : ''; })(); const countFromText = (() => { const candidates = Array.from(document.querySelectorAll('div, span, a')).map(e => norm(e.textContent)); for (const t of candidates) { const m = t.match(/^\\(?(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\)?$/); if (m && parseInt(m[1].replace(/,/g, ''), 10) >= 10) return m[1].replace(/,/g, ''); } const m2 = document.body.innerText.match(/(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\s+reviews?\\b/i); return m2 ? m2[1].replace(/,/g, '') : ''; })(); const breadcrumbItems = Array.from(document.querySelectorAll(\"nav.elv-breadcrumbs li, nav[aria-label*='breadcrumb' i] li, nav.breadcrumb li, [data-eventaction='breadcrumb'] li\")).map(li => norm(li.textContent)).filter(Boolean); const productName = norm(name); const categoryFromBreadcrumb = (() => { for (const item of breadcrumbItems) { if (!item) continue; if (/^home$/i.test(item)) continue; if (/reviews?$/i.test(item)) continue; if (productName && item.toLowerCase() === productName.toLowerCase()) continue; if (productName && productName.toLowerCase().includes(item.toLowerCase()) && item.length < productName.length) { /* skip product fragment */ continue; } return item; } return ''; })(); return { name: productName || norm(h1) || 'N/A', description: norm(metaDesc) || 'N/A', rating: ratingFromMeta || ratingFromAria || ratingFromText || 'N/A', review_count: countFromMeta || countFromText || 'N/A', category: categoryFromBreadcrumb || 'N/A', url: location.href.replace(/#.*$/, '').replace(/\\?.*$/, '') }; }; const extractReviews = () => Array.from(document.querySelectorAll('article[data-track-in-viewport-options]')).filter((a) => a.offsetParent !== null).map((a) => { let opts = {}; try { opts = JSON.parse(a.getAttribute('data-track-in-viewport-options') || '{}'); } catch (_) {} const lines = (a.innerText || '').split('\\n').map((l) => l.trim()).filter(Boolean); const rating = (lines.find((l) => /^\\d(\\.\\d)?\\/5$/.test(l)) || '').replace('/5', ''); const title = (lines.find((l) => /^\".+\"$/.test(l)) || '').replace(/^\"|\"$/g, ''); const pd = String(opts.published_date || ''); const date = /^\\d{8}$/.test(pd) ? pd.slice(0, 4) + '-' + pd.slice(4, 6) + '-' + pd.slice(6) : (lines.find((l) => /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(l)) || ''); const start = lines.findIndex((l) => /^What do you like best/i.test(l)); const body = start < 0 ? '' : lines.slice(start).filter((l) => !/^Review collected by and hosted on G2\\.com\\.?$/i.test(l) && !/^Show (More|Less)$/i.test(l)).join('\\n'); return { title: norm(title) || 'N/A', body: body || 'N/A', author: norm(lines[0]) || 'N/A', date: date || 'N/A', rating: rating || 'N/A' }; }).filter((r) => r.body !== 'N/A' || r.title !== 'N/A');const max = Math.min(Math.max(parseInt(cleanArg(arg0), 10) || 1, 1), 5); const page = Number(arg1);const state = JSON.parse(sessionStorage.getItem('__rzn_g2_reviews') || 'null'); if (!state) throw new Error('review state lost between pages');const done = (reason) => ({ stop_workflow: true, stop_reason: reason, product: state.product, reviews: state.reviews, pages_walked: state.pages_walked });if (page > max) return done('max_pages reached');const anchors = Array.from(document.querySelectorAll('a[href]'));const next = document.querySelector(\"a[rel='next']\") || anchors.find((a) => { try { return new URL(a.href).searchParams.get('page') === String(page); } catch (_) { return false; } }) || anchors.find((a) => /^\\s*(next|›|»)\\s*$/i.test(a.textContent || '') || /^next/i.test(a.getAttribute('aria-label') || ''));if (!next) return done('no next page');next.scrollIntoView({ block: 'center' });window.__rzn_leaving = { url: location.href, body: document.body };document.querySelectorAll('article, h1, a[href], script[type=\"application/ld+json\"]').forEach((e) => e.setAttribute('data-rzn-stale', ''));next.removeAttribute('target'); next.click(); return { clicked: true, page };"
         },
         "side_effects": [
-          "read_only",
-          "network_access",
-          "external_read"
+          "browser_state",
+          "read_only"
         ]
       },
-      "name": "Extract product chrome + reviews; walk additional pages if requested",
-      "timeout_ms": 60000
+      "name": "Click to review page 2 (stops at max_pages or the last page)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "p2_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the navigation start",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "p2_load",
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*g2.com*"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the page to load",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "p2_ready",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "article[data-track-in-viewport-options]",
+            "20000"
+          ],
+          "script": "const challengeSel = \"iframe[src*='captcha-delivery.com'], iframe[src*='challenges.cloudflare.com'], #challenge-form, #challenge-running, #cf-challenge-running, .cf-turnstile, iframe[src*='hcaptcha.com']\";const isChallenge = () => { const title = (document.title || '').toLowerCase(); if (/just a moment|verification required|attention required|verify you are human|access denied/.test(title)) return true; if (document.querySelector(challengeSel)) return true; const body = document.body ? document.body.innerText || '' : ''; return body.length < 4000 && /verification required|slide right to|verify you are human|unusual activity from your device/i.test(body); };const check = () => { if (isChallenge()) return 'challenge'; const all = Array.from(document.querySelectorAll(arg0)); const stale = (e) => e.hasAttribute('data-rzn-stale'); if (!all.some((e) => !stale(e))) return null; const lv = window.__rzn_leaving; if (lv && location.href === lv.url && document.body === lv.body && all.some(stale)) return null; return 'ready'; };let state = check();if (!state) state = await new Promise((resolve) => { const obs = new MutationObserver(() => { const v = check(); if (v) { obs.disconnect(); resolve(v); } }); obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true }); setTimeout(() => { obs.disconnect(); resolve(check() || 'timeout'); }, Number(arg1) || 20000); });if (state === 'challenge') throw new Error('site_challenge: ' + location.hostname + ' is showing a bot check (\"' + document.title + '\"). Solve it by hand in that tab; runs for this site pause for 15 minutes.');if (state === 'timeout') throw new Error('page did not render ' + arg0 + ' at ' + location.href);window.__rzn_leaving = null; return { ready: true, url: location.href, title: document.title };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for reviews; stop on a bot check",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "p2_dwell_0",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 520,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p2_dwell_0_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 1700
+    },
+    {
+      "id": "p2_dwell_1",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 760,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p2_dwell_1_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 2300
+    },
+    {
+      "id": "p2_dwell_2",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 430,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p2_dwell_2_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 1400
+    },
+    {
+      "id": "p2_extract",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "2"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const stripPrompts = (text) => norm(text).replace(/^(What do you (like best|dislike) about [^?]+\\?)+/i, '').trim(); const readItemprop = (root, prop) => { const el = (root || document).querySelector(\"[itemprop='\" + prop + \"']\"); if (!el) return ''; const c = el.getAttribute('content'); return norm(c || el.textContent || ''); }; const extractChrome = () => { const ogTitle = document.querySelector(\"meta[property='og:title']\")?.getAttribute('content') || ''; const metaDesc = document.querySelector(\"meta[name='description']\")?.getAttribute('content') || ''; const h1 = document.querySelector('h1')?.textContent || ''; const name = norm(ogTitle.replace(/^The G2 on\\s*/i, '').replace(/\\s*Reviews.*$/i, '')) || norm(h1.replace(/\\s*Reviews.*$/i, '')); const ratingFromMeta = readItemprop(document, 'ratingValue'); const countFromMeta = readItemprop(document, 'reviewCount'); const ratingFromAria = (() => { const el = document.querySelector(\"[aria-label*='out of 5']\"); const m = (el?.getAttribute('aria-label') || '').match(/(\\d(?:\\.\\d+)?)\\s*out of 5/); return m ? m[1] : ''; })(); const ratingFromText = (() => { const m = document.body.innerText.match(/(\\d\\.\\d)\\s*\\/\\s*5/); return m ? m[1] : ''; })(); const countFromText = (() => { const candidates = Array.from(document.querySelectorAll('div, span, a')).map(e => norm(e.textContent)); for (const t of candidates) { const m = t.match(/^\\(?(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\)?$/); if (m && parseInt(m[1].replace(/,/g, ''), 10) >= 10) return m[1].replace(/,/g, ''); } const m2 = document.body.innerText.match(/(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\s+reviews?\\b/i); return m2 ? m2[1].replace(/,/g, '') : ''; })(); const breadcrumbItems = Array.from(document.querySelectorAll(\"nav.elv-breadcrumbs li, nav[aria-label*='breadcrumb' i] li, nav.breadcrumb li, [data-eventaction='breadcrumb'] li\")).map(li => norm(li.textContent)).filter(Boolean); const productName = norm(name); const categoryFromBreadcrumb = (() => { for (const item of breadcrumbItems) { if (!item) continue; if (/^home$/i.test(item)) continue; if (/reviews?$/i.test(item)) continue; if (productName && item.toLowerCase() === productName.toLowerCase()) continue; if (productName && productName.toLowerCase().includes(item.toLowerCase()) && item.length < productName.length) { /* skip product fragment */ continue; } return item; } return ''; })(); return { name: productName || norm(h1) || 'N/A', description: norm(metaDesc) || 'N/A', rating: ratingFromMeta || ratingFromAria || ratingFromText || 'N/A', review_count: countFromMeta || countFromText || 'N/A', category: categoryFromBreadcrumb || 'N/A', url: location.href.replace(/#.*$/, '').replace(/\\?.*$/, '') }; }; const extractReviews = () => Array.from(document.querySelectorAll('article[data-track-in-viewport-options]')).filter((a) => a.offsetParent !== null).map((a) => { let opts = {}; try { opts = JSON.parse(a.getAttribute('data-track-in-viewport-options') || '{}'); } catch (_) {} const lines = (a.innerText || '').split('\\n').map((l) => l.trim()).filter(Boolean); const rating = (lines.find((l) => /^\\d(\\.\\d)?\\/5$/.test(l)) || '').replace('/5', ''); const title = (lines.find((l) => /^\".+\"$/.test(l)) || '').replace(/^\"|\"$/g, ''); const pd = String(opts.published_date || ''); const date = /^\\d{8}$/.test(pd) ? pd.slice(0, 4) + '-' + pd.slice(4, 6) + '-' + pd.slice(6) : (lines.find((l) => /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(l)) || ''); const start = lines.findIndex((l) => /^What do you like best/i.test(l)); const body = start < 0 ? '' : lines.slice(start).filter((l) => !/^Review collected by and hosted on G2\\.com\\.?$/i.test(l) && !/^Show (More|Less)$/i.test(l)).join('\\n'); return { title: norm(title) || 'N/A', body: body || 'N/A', author: norm(lines[0]) || 'N/A', date: date || 'N/A', rating: rating || 'N/A' }; }).filter((r) => r.body !== 'N/A' || r.title !== 'N/A');const state = JSON.parse(sessionStorage.getItem('__rzn_g2_reviews') || 'null'); if (!state) throw new Error('review state lost between pages');const keyOf = (r) => [r.author, r.date, r.title].join('|'); const seen = new Set(state.reviews.map(keyOf));for (const r of extractReviews()) { if (!seen.has(keyOf(r))) { seen.add(keyOf(r)); state.reviews.push(r); } }state.pages_walked = Number(arg0); sessionStorage.setItem('__rzn_g2_reviews', JSON.stringify(state)); return state;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Add page 2 reviews"
+    },
+    {
+      "id": "p3_think",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Pause before the next page",
+      "timeout_ms": 1100
+    },
+    {
+      "id": "p3_next",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "{max_pages}",
+            "3"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const stripPrompts = (text) => norm(text).replace(/^(What do you (like best|dislike) about [^?]+\\?)+/i, '').trim(); const readItemprop = (root, prop) => { const el = (root || document).querySelector(\"[itemprop='\" + prop + \"']\"); if (!el) return ''; const c = el.getAttribute('content'); return norm(c || el.textContent || ''); }; const extractChrome = () => { const ogTitle = document.querySelector(\"meta[property='og:title']\")?.getAttribute('content') || ''; const metaDesc = document.querySelector(\"meta[name='description']\")?.getAttribute('content') || ''; const h1 = document.querySelector('h1')?.textContent || ''; const name = norm(ogTitle.replace(/^The G2 on\\s*/i, '').replace(/\\s*Reviews.*$/i, '')) || norm(h1.replace(/\\s*Reviews.*$/i, '')); const ratingFromMeta = readItemprop(document, 'ratingValue'); const countFromMeta = readItemprop(document, 'reviewCount'); const ratingFromAria = (() => { const el = document.querySelector(\"[aria-label*='out of 5']\"); const m = (el?.getAttribute('aria-label') || '').match(/(\\d(?:\\.\\d+)?)\\s*out of 5/); return m ? m[1] : ''; })(); const ratingFromText = (() => { const m = document.body.innerText.match(/(\\d\\.\\d)\\s*\\/\\s*5/); return m ? m[1] : ''; })(); const countFromText = (() => { const candidates = Array.from(document.querySelectorAll('div, span, a')).map(e => norm(e.textContent)); for (const t of candidates) { const m = t.match(/^\\(?(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\)?$/); if (m && parseInt(m[1].replace(/,/g, ''), 10) >= 10) return m[1].replace(/,/g, ''); } const m2 = document.body.innerText.match(/(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\s+reviews?\\b/i); return m2 ? m2[1].replace(/,/g, '') : ''; })(); const breadcrumbItems = Array.from(document.querySelectorAll(\"nav.elv-breadcrumbs li, nav[aria-label*='breadcrumb' i] li, nav.breadcrumb li, [data-eventaction='breadcrumb'] li\")).map(li => norm(li.textContent)).filter(Boolean); const productName = norm(name); const categoryFromBreadcrumb = (() => { for (const item of breadcrumbItems) { if (!item) continue; if (/^home$/i.test(item)) continue; if (/reviews?$/i.test(item)) continue; if (productName && item.toLowerCase() === productName.toLowerCase()) continue; if (productName && productName.toLowerCase().includes(item.toLowerCase()) && item.length < productName.length) { /* skip product fragment */ continue; } return item; } return ''; })(); return { name: productName || norm(h1) || 'N/A', description: norm(metaDesc) || 'N/A', rating: ratingFromMeta || ratingFromAria || ratingFromText || 'N/A', review_count: countFromMeta || countFromText || 'N/A', category: categoryFromBreadcrumb || 'N/A', url: location.href.replace(/#.*$/, '').replace(/\\?.*$/, '') }; }; const extractReviews = () => Array.from(document.querySelectorAll('article[data-track-in-viewport-options]')).filter((a) => a.offsetParent !== null).map((a) => { let opts = {}; try { opts = JSON.parse(a.getAttribute('data-track-in-viewport-options') || '{}'); } catch (_) {} const lines = (a.innerText || '').split('\\n').map((l) => l.trim()).filter(Boolean); const rating = (lines.find((l) => /^\\d(\\.\\d)?\\/5$/.test(l)) || '').replace('/5', ''); const title = (lines.find((l) => /^\".+\"$/.test(l)) || '').replace(/^\"|\"$/g, ''); const pd = String(opts.published_date || ''); const date = /^\\d{8}$/.test(pd) ? pd.slice(0, 4) + '-' + pd.slice(4, 6) + '-' + pd.slice(6) : (lines.find((l) => /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(l)) || ''); const start = lines.findIndex((l) => /^What do you like best/i.test(l)); const body = start < 0 ? '' : lines.slice(start).filter((l) => !/^Review collected by and hosted on G2\\.com\\.?$/i.test(l) && !/^Show (More|Less)$/i.test(l)).join('\\n'); return { title: norm(title) || 'N/A', body: body || 'N/A', author: norm(lines[0]) || 'N/A', date: date || 'N/A', rating: rating || 'N/A' }; }).filter((r) => r.body !== 'N/A' || r.title !== 'N/A');const max = Math.min(Math.max(parseInt(cleanArg(arg0), 10) || 1, 1), 5); const page = Number(arg1);const state = JSON.parse(sessionStorage.getItem('__rzn_g2_reviews') || 'null'); if (!state) throw new Error('review state lost between pages');const done = (reason) => ({ stop_workflow: true, stop_reason: reason, product: state.product, reviews: state.reviews, pages_walked: state.pages_walked });if (page > max) return done('max_pages reached');const anchors = Array.from(document.querySelectorAll('a[href]'));const next = document.querySelector(\"a[rel='next']\") || anchors.find((a) => { try { return new URL(a.href).searchParams.get('page') === String(page); } catch (_) { return false; } }) || anchors.find((a) => /^\\s*(next|›|»)\\s*$/i.test(a.textContent || '') || /^next/i.test(a.getAttribute('aria-label') || ''));if (!next) return done('no next page');next.scrollIntoView({ block: 'center' });window.__rzn_leaving = { url: location.href, body: document.body };document.querySelectorAll('article, h1, a[href], script[type=\"application/ld+json\"]').forEach((e) => e.setAttribute('data-rzn-stale', ''));next.removeAttribute('target'); next.click(); return { clicked: true, page };"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Click to review page 3 (stops at max_pages or the last page)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "p3_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the navigation start",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "p3_load",
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*g2.com*"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the page to load",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "p3_ready",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "article[data-track-in-viewport-options]",
+            "20000"
+          ],
+          "script": "const challengeSel = \"iframe[src*='captcha-delivery.com'], iframe[src*='challenges.cloudflare.com'], #challenge-form, #challenge-running, #cf-challenge-running, .cf-turnstile, iframe[src*='hcaptcha.com']\";const isChallenge = () => { const title = (document.title || '').toLowerCase(); if (/just a moment|verification required|attention required|verify you are human|access denied/.test(title)) return true; if (document.querySelector(challengeSel)) return true; const body = document.body ? document.body.innerText || '' : ''; return body.length < 4000 && /verification required|slide right to|verify you are human|unusual activity from your device/i.test(body); };const check = () => { if (isChallenge()) return 'challenge'; const all = Array.from(document.querySelectorAll(arg0)); const stale = (e) => e.hasAttribute('data-rzn-stale'); if (!all.some((e) => !stale(e))) return null; const lv = window.__rzn_leaving; if (lv && location.href === lv.url && document.body === lv.body && all.some(stale)) return null; return 'ready'; };let state = check();if (!state) state = await new Promise((resolve) => { const obs = new MutationObserver(() => { const v = check(); if (v) { obs.disconnect(); resolve(v); } }); obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true }); setTimeout(() => { obs.disconnect(); resolve(check() || 'timeout'); }, Number(arg1) || 20000); });if (state === 'challenge') throw new Error('site_challenge: ' + location.hostname + ' is showing a bot check (\"' + document.title + '\"). Solve it by hand in that tab; runs for this site pause for 15 minutes.');if (state === 'timeout') throw new Error('page did not render ' + arg0 + ' at ' + location.href);window.__rzn_leaving = null; return { ready: true, url: location.href, title: document.title };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for reviews; stop on a bot check",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "p3_dwell_0",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 520,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p3_dwell_0_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 1700
+    },
+    {
+      "id": "p3_dwell_1",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 760,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p3_dwell_1_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 2300
+    },
+    {
+      "id": "p3_dwell_2",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 430,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p3_dwell_2_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 1400
+    },
+    {
+      "id": "p3_extract",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "3"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const stripPrompts = (text) => norm(text).replace(/^(What do you (like best|dislike) about [^?]+\\?)+/i, '').trim(); const readItemprop = (root, prop) => { const el = (root || document).querySelector(\"[itemprop='\" + prop + \"']\"); if (!el) return ''; const c = el.getAttribute('content'); return norm(c || el.textContent || ''); }; const extractChrome = () => { const ogTitle = document.querySelector(\"meta[property='og:title']\")?.getAttribute('content') || ''; const metaDesc = document.querySelector(\"meta[name='description']\")?.getAttribute('content') || ''; const h1 = document.querySelector('h1')?.textContent || ''; const name = norm(ogTitle.replace(/^The G2 on\\s*/i, '').replace(/\\s*Reviews.*$/i, '')) || norm(h1.replace(/\\s*Reviews.*$/i, '')); const ratingFromMeta = readItemprop(document, 'ratingValue'); const countFromMeta = readItemprop(document, 'reviewCount'); const ratingFromAria = (() => { const el = document.querySelector(\"[aria-label*='out of 5']\"); const m = (el?.getAttribute('aria-label') || '').match(/(\\d(?:\\.\\d+)?)\\s*out of 5/); return m ? m[1] : ''; })(); const ratingFromText = (() => { const m = document.body.innerText.match(/(\\d\\.\\d)\\s*\\/\\s*5/); return m ? m[1] : ''; })(); const countFromText = (() => { const candidates = Array.from(document.querySelectorAll('div, span, a')).map(e => norm(e.textContent)); for (const t of candidates) { const m = t.match(/^\\(?(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\)?$/); if (m && parseInt(m[1].replace(/,/g, ''), 10) >= 10) return m[1].replace(/,/g, ''); } const m2 = document.body.innerText.match(/(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\s+reviews?\\b/i); return m2 ? m2[1].replace(/,/g, '') : ''; })(); const breadcrumbItems = Array.from(document.querySelectorAll(\"nav.elv-breadcrumbs li, nav[aria-label*='breadcrumb' i] li, nav.breadcrumb li, [data-eventaction='breadcrumb'] li\")).map(li => norm(li.textContent)).filter(Boolean); const productName = norm(name); const categoryFromBreadcrumb = (() => { for (const item of breadcrumbItems) { if (!item) continue; if (/^home$/i.test(item)) continue; if (/reviews?$/i.test(item)) continue; if (productName && item.toLowerCase() === productName.toLowerCase()) continue; if (productName && productName.toLowerCase().includes(item.toLowerCase()) && item.length < productName.length) { /* skip product fragment */ continue; } return item; } return ''; })(); return { name: productName || norm(h1) || 'N/A', description: norm(metaDesc) || 'N/A', rating: ratingFromMeta || ratingFromAria || ratingFromText || 'N/A', review_count: countFromMeta || countFromText || 'N/A', category: categoryFromBreadcrumb || 'N/A', url: location.href.replace(/#.*$/, '').replace(/\\?.*$/, '') }; }; const extractReviews = () => Array.from(document.querySelectorAll('article[data-track-in-viewport-options]')).filter((a) => a.offsetParent !== null).map((a) => { let opts = {}; try { opts = JSON.parse(a.getAttribute('data-track-in-viewport-options') || '{}'); } catch (_) {} const lines = (a.innerText || '').split('\\n').map((l) => l.trim()).filter(Boolean); const rating = (lines.find((l) => /^\\d(\\.\\d)?\\/5$/.test(l)) || '').replace('/5', ''); const title = (lines.find((l) => /^\".+\"$/.test(l)) || '').replace(/^\"|\"$/g, ''); const pd = String(opts.published_date || ''); const date = /^\\d{8}$/.test(pd) ? pd.slice(0, 4) + '-' + pd.slice(4, 6) + '-' + pd.slice(6) : (lines.find((l) => /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(l)) || ''); const start = lines.findIndex((l) => /^What do you like best/i.test(l)); const body = start < 0 ? '' : lines.slice(start).filter((l) => !/^Review collected by and hosted on G2\\.com\\.?$/i.test(l) && !/^Show (More|Less)$/i.test(l)).join('\\n'); return { title: norm(title) || 'N/A', body: body || 'N/A', author: norm(lines[0]) || 'N/A', date: date || 'N/A', rating: rating || 'N/A' }; }).filter((r) => r.body !== 'N/A' || r.title !== 'N/A');const state = JSON.parse(sessionStorage.getItem('__rzn_g2_reviews') || 'null'); if (!state) throw new Error('review state lost between pages');const keyOf = (r) => [r.author, r.date, r.title].join('|'); const seen = new Set(state.reviews.map(keyOf));for (const r of extractReviews()) { if (!seen.has(keyOf(r))) { seen.add(keyOf(r)); state.reviews.push(r); } }state.pages_walked = Number(arg0); sessionStorage.setItem('__rzn_g2_reviews', JSON.stringify(state)); return state;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Add page 3 reviews"
+    },
+    {
+      "id": "p4_think",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Pause before the next page",
+      "timeout_ms": 1100
+    },
+    {
+      "id": "p4_next",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "{max_pages}",
+            "4"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const stripPrompts = (text) => norm(text).replace(/^(What do you (like best|dislike) about [^?]+\\?)+/i, '').trim(); const readItemprop = (root, prop) => { const el = (root || document).querySelector(\"[itemprop='\" + prop + \"']\"); if (!el) return ''; const c = el.getAttribute('content'); return norm(c || el.textContent || ''); }; const extractChrome = () => { const ogTitle = document.querySelector(\"meta[property='og:title']\")?.getAttribute('content') || ''; const metaDesc = document.querySelector(\"meta[name='description']\")?.getAttribute('content') || ''; const h1 = document.querySelector('h1')?.textContent || ''; const name = norm(ogTitle.replace(/^The G2 on\\s*/i, '').replace(/\\s*Reviews.*$/i, '')) || norm(h1.replace(/\\s*Reviews.*$/i, '')); const ratingFromMeta = readItemprop(document, 'ratingValue'); const countFromMeta = readItemprop(document, 'reviewCount'); const ratingFromAria = (() => { const el = document.querySelector(\"[aria-label*='out of 5']\"); const m = (el?.getAttribute('aria-label') || '').match(/(\\d(?:\\.\\d+)?)\\s*out of 5/); return m ? m[1] : ''; })(); const ratingFromText = (() => { const m = document.body.innerText.match(/(\\d\\.\\d)\\s*\\/\\s*5/); return m ? m[1] : ''; })(); const countFromText = (() => { const candidates = Array.from(document.querySelectorAll('div, span, a')).map(e => norm(e.textContent)); for (const t of candidates) { const m = t.match(/^\\(?(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\)?$/); if (m && parseInt(m[1].replace(/,/g, ''), 10) >= 10) return m[1].replace(/,/g, ''); } const m2 = document.body.innerText.match(/(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\s+reviews?\\b/i); return m2 ? m2[1].replace(/,/g, '') : ''; })(); const breadcrumbItems = Array.from(document.querySelectorAll(\"nav.elv-breadcrumbs li, nav[aria-label*='breadcrumb' i] li, nav.breadcrumb li, [data-eventaction='breadcrumb'] li\")).map(li => norm(li.textContent)).filter(Boolean); const productName = norm(name); const categoryFromBreadcrumb = (() => { for (const item of breadcrumbItems) { if (!item) continue; if (/^home$/i.test(item)) continue; if (/reviews?$/i.test(item)) continue; if (productName && item.toLowerCase() === productName.toLowerCase()) continue; if (productName && productName.toLowerCase().includes(item.toLowerCase()) && item.length < productName.length) { /* skip product fragment */ continue; } return item; } return ''; })(); return { name: productName || norm(h1) || 'N/A', description: norm(metaDesc) || 'N/A', rating: ratingFromMeta || ratingFromAria || ratingFromText || 'N/A', review_count: countFromMeta || countFromText || 'N/A', category: categoryFromBreadcrumb || 'N/A', url: location.href.replace(/#.*$/, '').replace(/\\?.*$/, '') }; }; const extractReviews = () => Array.from(document.querySelectorAll('article[data-track-in-viewport-options]')).filter((a) => a.offsetParent !== null).map((a) => { let opts = {}; try { opts = JSON.parse(a.getAttribute('data-track-in-viewport-options') || '{}'); } catch (_) {} const lines = (a.innerText || '').split('\\n').map((l) => l.trim()).filter(Boolean); const rating = (lines.find((l) => /^\\d(\\.\\d)?\\/5$/.test(l)) || '').replace('/5', ''); const title = (lines.find((l) => /^\".+\"$/.test(l)) || '').replace(/^\"|\"$/g, ''); const pd = String(opts.published_date || ''); const date = /^\\d{8}$/.test(pd) ? pd.slice(0, 4) + '-' + pd.slice(4, 6) + '-' + pd.slice(6) : (lines.find((l) => /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(l)) || ''); const start = lines.findIndex((l) => /^What do you like best/i.test(l)); const body = start < 0 ? '' : lines.slice(start).filter((l) => !/^Review collected by and hosted on G2\\.com\\.?$/i.test(l) && !/^Show (More|Less)$/i.test(l)).join('\\n'); return { title: norm(title) || 'N/A', body: body || 'N/A', author: norm(lines[0]) || 'N/A', date: date || 'N/A', rating: rating || 'N/A' }; }).filter((r) => r.body !== 'N/A' || r.title !== 'N/A');const max = Math.min(Math.max(parseInt(cleanArg(arg0), 10) || 1, 1), 5); const page = Number(arg1);const state = JSON.parse(sessionStorage.getItem('__rzn_g2_reviews') || 'null'); if (!state) throw new Error('review state lost between pages');const done = (reason) => ({ stop_workflow: true, stop_reason: reason, product: state.product, reviews: state.reviews, pages_walked: state.pages_walked });if (page > max) return done('max_pages reached');const anchors = Array.from(document.querySelectorAll('a[href]'));const next = document.querySelector(\"a[rel='next']\") || anchors.find((a) => { try { return new URL(a.href).searchParams.get('page') === String(page); } catch (_) { return false; } }) || anchors.find((a) => /^\\s*(next|›|»)\\s*$/i.test(a.textContent || '') || /^next/i.test(a.getAttribute('aria-label') || ''));if (!next) return done('no next page');next.scrollIntoView({ block: 'center' });window.__rzn_leaving = { url: location.href, body: document.body };document.querySelectorAll('article, h1, a[href], script[type=\"application/ld+json\"]').forEach((e) => e.setAttribute('data-rzn-stale', ''));next.removeAttribute('target'); next.click(); return { clicked: true, page };"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Click to review page 4 (stops at max_pages or the last page)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "p4_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the navigation start",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "p4_load",
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*g2.com*"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the page to load",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "p4_ready",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "article[data-track-in-viewport-options]",
+            "20000"
+          ],
+          "script": "const challengeSel = \"iframe[src*='captcha-delivery.com'], iframe[src*='challenges.cloudflare.com'], #challenge-form, #challenge-running, #cf-challenge-running, .cf-turnstile, iframe[src*='hcaptcha.com']\";const isChallenge = () => { const title = (document.title || '').toLowerCase(); if (/just a moment|verification required|attention required|verify you are human|access denied/.test(title)) return true; if (document.querySelector(challengeSel)) return true; const body = document.body ? document.body.innerText || '' : ''; return body.length < 4000 && /verification required|slide right to|verify you are human|unusual activity from your device/i.test(body); };const check = () => { if (isChallenge()) return 'challenge'; const all = Array.from(document.querySelectorAll(arg0)); const stale = (e) => e.hasAttribute('data-rzn-stale'); if (!all.some((e) => !stale(e))) return null; const lv = window.__rzn_leaving; if (lv && location.href === lv.url && document.body === lv.body && all.some(stale)) return null; return 'ready'; };let state = check();if (!state) state = await new Promise((resolve) => { const obs = new MutationObserver(() => { const v = check(); if (v) { obs.disconnect(); resolve(v); } }); obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true }); setTimeout(() => { obs.disconnect(); resolve(check() || 'timeout'); }, Number(arg1) || 20000); });if (state === 'challenge') throw new Error('site_challenge: ' + location.hostname + ' is showing a bot check (\"' + document.title + '\"). Solve it by hand in that tab; runs for this site pause for 15 minutes.');if (state === 'timeout') throw new Error('page did not render ' + arg0 + ' at ' + location.href);window.__rzn_leaving = null; return { ready: true, url: location.href, title: document.title };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for reviews; stop on a bot check",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "p4_dwell_0",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 520,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p4_dwell_0_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 1700
+    },
+    {
+      "id": "p4_dwell_1",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 760,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p4_dwell_1_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 2300
+    },
+    {
+      "id": "p4_dwell_2",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 430,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p4_dwell_2_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 1400
+    },
+    {
+      "id": "p4_extract",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "4"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const stripPrompts = (text) => norm(text).replace(/^(What do you (like best|dislike) about [^?]+\\?)+/i, '').trim(); const readItemprop = (root, prop) => { const el = (root || document).querySelector(\"[itemprop='\" + prop + \"']\"); if (!el) return ''; const c = el.getAttribute('content'); return norm(c || el.textContent || ''); }; const extractChrome = () => { const ogTitle = document.querySelector(\"meta[property='og:title']\")?.getAttribute('content') || ''; const metaDesc = document.querySelector(\"meta[name='description']\")?.getAttribute('content') || ''; const h1 = document.querySelector('h1')?.textContent || ''; const name = norm(ogTitle.replace(/^The G2 on\\s*/i, '').replace(/\\s*Reviews.*$/i, '')) || norm(h1.replace(/\\s*Reviews.*$/i, '')); const ratingFromMeta = readItemprop(document, 'ratingValue'); const countFromMeta = readItemprop(document, 'reviewCount'); const ratingFromAria = (() => { const el = document.querySelector(\"[aria-label*='out of 5']\"); const m = (el?.getAttribute('aria-label') || '').match(/(\\d(?:\\.\\d+)?)\\s*out of 5/); return m ? m[1] : ''; })(); const ratingFromText = (() => { const m = document.body.innerText.match(/(\\d\\.\\d)\\s*\\/\\s*5/); return m ? m[1] : ''; })(); const countFromText = (() => { const candidates = Array.from(document.querySelectorAll('div, span, a')).map(e => norm(e.textContent)); for (const t of candidates) { const m = t.match(/^\\(?(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\)?$/); if (m && parseInt(m[1].replace(/,/g, ''), 10) >= 10) return m[1].replace(/,/g, ''); } const m2 = document.body.innerText.match(/(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\s+reviews?\\b/i); return m2 ? m2[1].replace(/,/g, '') : ''; })(); const breadcrumbItems = Array.from(document.querySelectorAll(\"nav.elv-breadcrumbs li, nav[aria-label*='breadcrumb' i] li, nav.breadcrumb li, [data-eventaction='breadcrumb'] li\")).map(li => norm(li.textContent)).filter(Boolean); const productName = norm(name); const categoryFromBreadcrumb = (() => { for (const item of breadcrumbItems) { if (!item) continue; if (/^home$/i.test(item)) continue; if (/reviews?$/i.test(item)) continue; if (productName && item.toLowerCase() === productName.toLowerCase()) continue; if (productName && productName.toLowerCase().includes(item.toLowerCase()) && item.length < productName.length) { /* skip product fragment */ continue; } return item; } return ''; })(); return { name: productName || norm(h1) || 'N/A', description: norm(metaDesc) || 'N/A', rating: ratingFromMeta || ratingFromAria || ratingFromText || 'N/A', review_count: countFromMeta || countFromText || 'N/A', category: categoryFromBreadcrumb || 'N/A', url: location.href.replace(/#.*$/, '').replace(/\\?.*$/, '') }; }; const extractReviews = () => Array.from(document.querySelectorAll('article[data-track-in-viewport-options]')).filter((a) => a.offsetParent !== null).map((a) => { let opts = {}; try { opts = JSON.parse(a.getAttribute('data-track-in-viewport-options') || '{}'); } catch (_) {} const lines = (a.innerText || '').split('\\n').map((l) => l.trim()).filter(Boolean); const rating = (lines.find((l) => /^\\d(\\.\\d)?\\/5$/.test(l)) || '').replace('/5', ''); const title = (lines.find((l) => /^\".+\"$/.test(l)) || '').replace(/^\"|\"$/g, ''); const pd = String(opts.published_date || ''); const date = /^\\d{8}$/.test(pd) ? pd.slice(0, 4) + '-' + pd.slice(4, 6) + '-' + pd.slice(6) : (lines.find((l) => /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(l)) || ''); const start = lines.findIndex((l) => /^What do you like best/i.test(l)); const body = start < 0 ? '' : lines.slice(start).filter((l) => !/^Review collected by and hosted on G2\\.com\\.?$/i.test(l) && !/^Show (More|Less)$/i.test(l)).join('\\n'); return { title: norm(title) || 'N/A', body: body || 'N/A', author: norm(lines[0]) || 'N/A', date: date || 'N/A', rating: rating || 'N/A' }; }).filter((r) => r.body !== 'N/A' || r.title !== 'N/A');const state = JSON.parse(sessionStorage.getItem('__rzn_g2_reviews') || 'null'); if (!state) throw new Error('review state lost between pages');const keyOf = (r) => [r.author, r.date, r.title].join('|'); const seen = new Set(state.reviews.map(keyOf));for (const r of extractReviews()) { if (!seen.has(keyOf(r))) { seen.add(keyOf(r)); state.reviews.push(r); } }state.pages_walked = Number(arg0); sessionStorage.setItem('__rzn_g2_reviews', JSON.stringify(state)); return state;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Add page 4 reviews"
+    },
+    {
+      "id": "p5_think",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Pause before the next page",
+      "timeout_ms": 1100
+    },
+    {
+      "id": "p5_next",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "{max_pages}",
+            "5"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const stripPrompts = (text) => norm(text).replace(/^(What do you (like best|dislike) about [^?]+\\?)+/i, '').trim(); const readItemprop = (root, prop) => { const el = (root || document).querySelector(\"[itemprop='\" + prop + \"']\"); if (!el) return ''; const c = el.getAttribute('content'); return norm(c || el.textContent || ''); }; const extractChrome = () => { const ogTitle = document.querySelector(\"meta[property='og:title']\")?.getAttribute('content') || ''; const metaDesc = document.querySelector(\"meta[name='description']\")?.getAttribute('content') || ''; const h1 = document.querySelector('h1')?.textContent || ''; const name = norm(ogTitle.replace(/^The G2 on\\s*/i, '').replace(/\\s*Reviews.*$/i, '')) || norm(h1.replace(/\\s*Reviews.*$/i, '')); const ratingFromMeta = readItemprop(document, 'ratingValue'); const countFromMeta = readItemprop(document, 'reviewCount'); const ratingFromAria = (() => { const el = document.querySelector(\"[aria-label*='out of 5']\"); const m = (el?.getAttribute('aria-label') || '').match(/(\\d(?:\\.\\d+)?)\\s*out of 5/); return m ? m[1] : ''; })(); const ratingFromText = (() => { const m = document.body.innerText.match(/(\\d\\.\\d)\\s*\\/\\s*5/); return m ? m[1] : ''; })(); const countFromText = (() => { const candidates = Array.from(document.querySelectorAll('div, span, a')).map(e => norm(e.textContent)); for (const t of candidates) { const m = t.match(/^\\(?(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\)?$/); if (m && parseInt(m[1].replace(/,/g, ''), 10) >= 10) return m[1].replace(/,/g, ''); } const m2 = document.body.innerText.match(/(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\s+reviews?\\b/i); return m2 ? m2[1].replace(/,/g, '') : ''; })(); const breadcrumbItems = Array.from(document.querySelectorAll(\"nav.elv-breadcrumbs li, nav[aria-label*='breadcrumb' i] li, nav.breadcrumb li, [data-eventaction='breadcrumb'] li\")).map(li => norm(li.textContent)).filter(Boolean); const productName = norm(name); const categoryFromBreadcrumb = (() => { for (const item of breadcrumbItems) { if (!item) continue; if (/^home$/i.test(item)) continue; if (/reviews?$/i.test(item)) continue; if (productName && item.toLowerCase() === productName.toLowerCase()) continue; if (productName && productName.toLowerCase().includes(item.toLowerCase()) && item.length < productName.length) { /* skip product fragment */ continue; } return item; } return ''; })(); return { name: productName || norm(h1) || 'N/A', description: norm(metaDesc) || 'N/A', rating: ratingFromMeta || ratingFromAria || ratingFromText || 'N/A', review_count: countFromMeta || countFromText || 'N/A', category: categoryFromBreadcrumb || 'N/A', url: location.href.replace(/#.*$/, '').replace(/\\?.*$/, '') }; }; const extractReviews = () => Array.from(document.querySelectorAll('article[data-track-in-viewport-options]')).filter((a) => a.offsetParent !== null).map((a) => { let opts = {}; try { opts = JSON.parse(a.getAttribute('data-track-in-viewport-options') || '{}'); } catch (_) {} const lines = (a.innerText || '').split('\\n').map((l) => l.trim()).filter(Boolean); const rating = (lines.find((l) => /^\\d(\\.\\d)?\\/5$/.test(l)) || '').replace('/5', ''); const title = (lines.find((l) => /^\".+\"$/.test(l)) || '').replace(/^\"|\"$/g, ''); const pd = String(opts.published_date || ''); const date = /^\\d{8}$/.test(pd) ? pd.slice(0, 4) + '-' + pd.slice(4, 6) + '-' + pd.slice(6) : (lines.find((l) => /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(l)) || ''); const start = lines.findIndex((l) => /^What do you like best/i.test(l)); const body = start < 0 ? '' : lines.slice(start).filter((l) => !/^Review collected by and hosted on G2\\.com\\.?$/i.test(l) && !/^Show (More|Less)$/i.test(l)).join('\\n'); return { title: norm(title) || 'N/A', body: body || 'N/A', author: norm(lines[0]) || 'N/A', date: date || 'N/A', rating: rating || 'N/A' }; }).filter((r) => r.body !== 'N/A' || r.title !== 'N/A');const max = Math.min(Math.max(parseInt(cleanArg(arg0), 10) || 1, 1), 5); const page = Number(arg1);const state = JSON.parse(sessionStorage.getItem('__rzn_g2_reviews') || 'null'); if (!state) throw new Error('review state lost between pages');const done = (reason) => ({ stop_workflow: true, stop_reason: reason, product: state.product, reviews: state.reviews, pages_walked: state.pages_walked });if (page > max) return done('max_pages reached');const anchors = Array.from(document.querySelectorAll('a[href]'));const next = document.querySelector(\"a[rel='next']\") || anchors.find((a) => { try { return new URL(a.href).searchParams.get('page') === String(page); } catch (_) { return false; } }) || anchors.find((a) => /^\\s*(next|›|»)\\s*$/i.test(a.textContent || '') || /^next/i.test(a.getAttribute('aria-label') || ''));if (!next) return done('no next page');next.scrollIntoView({ block: 'center' });window.__rzn_leaving = { url: location.href, body: document.body };document.querySelectorAll('article, h1, a[href], script[type=\"application/ld+json\"]').forEach((e) => e.setAttribute('data-rzn-stale', ''));next.removeAttribute('target'); next.click(); return { clicked: true, page };"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Click to review page 5 (stops at max_pages or the last page)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "p5_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the navigation start",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "p5_load",
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*g2.com*"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the page to load",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "p5_ready",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "article[data-track-in-viewport-options]",
+            "20000"
+          ],
+          "script": "const challengeSel = \"iframe[src*='captcha-delivery.com'], iframe[src*='challenges.cloudflare.com'], #challenge-form, #challenge-running, #cf-challenge-running, .cf-turnstile, iframe[src*='hcaptcha.com']\";const isChallenge = () => { const title = (document.title || '').toLowerCase(); if (/just a moment|verification required|attention required|verify you are human|access denied/.test(title)) return true; if (document.querySelector(challengeSel)) return true; const body = document.body ? document.body.innerText || '' : ''; return body.length < 4000 && /verification required|slide right to|verify you are human|unusual activity from your device/i.test(body); };const check = () => { if (isChallenge()) return 'challenge'; const all = Array.from(document.querySelectorAll(arg0)); const stale = (e) => e.hasAttribute('data-rzn-stale'); if (!all.some((e) => !stale(e))) return null; const lv = window.__rzn_leaving; if (lv && location.href === lv.url && document.body === lv.body && all.some(stale)) return null; return 'ready'; };let state = check();if (!state) state = await new Promise((resolve) => { const obs = new MutationObserver(() => { const v = check(); if (v) { obs.disconnect(); resolve(v); } }); obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true }); setTimeout(() => { obs.disconnect(); resolve(check() || 'timeout'); }, Number(arg1) || 20000); });if (state === 'challenge') throw new Error('site_challenge: ' + location.hostname + ' is showing a bot check (\"' + document.title + '\"). Solve it by hand in that tab; runs for this site pause for 15 minutes.');if (state === 'timeout') throw new Error('page did not render ' + arg0 + ' at ' + location.href);window.__rzn_leaving = null; return { ready: true, url: location.href, title: document.title };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for reviews; stop on a bot check",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "p5_dwell_0",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 520,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p5_dwell_0_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 1700
+    },
+    {
+      "id": "p5_dwell_1",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 760,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p5_dwell_1_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 2300
+    },
+    {
+      "id": "p5_dwell_2",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 430,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: scroll"
+    },
+    {
+      "id": "p5_dwell_2_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the page: pause",
+      "timeout_ms": 1400
+    },
+    {
+      "id": "p5_extract",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "5"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sleep = (ms) => new Promise((r) => setTimeout(r, ms)); const norm = (v) => String(v || '').replace(/\\s+/g, ' ').trim(); const stripPrompts = (text) => norm(text).replace(/^(What do you (like best|dislike) about [^?]+\\?)+/i, '').trim(); const readItemprop = (root, prop) => { const el = (root || document).querySelector(\"[itemprop='\" + prop + \"']\"); if (!el) return ''; const c = el.getAttribute('content'); return norm(c || el.textContent || ''); }; const extractChrome = () => { const ogTitle = document.querySelector(\"meta[property='og:title']\")?.getAttribute('content') || ''; const metaDesc = document.querySelector(\"meta[name='description']\")?.getAttribute('content') || ''; const h1 = document.querySelector('h1')?.textContent || ''; const name = norm(ogTitle.replace(/^The G2 on\\s*/i, '').replace(/\\s*Reviews.*$/i, '')) || norm(h1.replace(/\\s*Reviews.*$/i, '')); const ratingFromMeta = readItemprop(document, 'ratingValue'); const countFromMeta = readItemprop(document, 'reviewCount'); const ratingFromAria = (() => { const el = document.querySelector(\"[aria-label*='out of 5']\"); const m = (el?.getAttribute('aria-label') || '').match(/(\\d(?:\\.\\d+)?)\\s*out of 5/); return m ? m[1] : ''; })(); const ratingFromText = (() => { const m = document.body.innerText.match(/(\\d\\.\\d)\\s*\\/\\s*5/); return m ? m[1] : ''; })(); const countFromText = (() => { const candidates = Array.from(document.querySelectorAll('div, span, a')).map(e => norm(e.textContent)); for (const t of candidates) { const m = t.match(/^\\(?(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\)?$/); if (m && parseInt(m[1].replace(/,/g, ''), 10) >= 10) return m[1].replace(/,/g, ''); } const m2 = document.body.innerText.match(/(\\d{1,3}(?:,\\d{3})+|\\d{2,})\\s+reviews?\\b/i); return m2 ? m2[1].replace(/,/g, '') : ''; })(); const breadcrumbItems = Array.from(document.querySelectorAll(\"nav.elv-breadcrumbs li, nav[aria-label*='breadcrumb' i] li, nav.breadcrumb li, [data-eventaction='breadcrumb'] li\")).map(li => norm(li.textContent)).filter(Boolean); const productName = norm(name); const categoryFromBreadcrumb = (() => { for (const item of breadcrumbItems) { if (!item) continue; if (/^home$/i.test(item)) continue; if (/reviews?$/i.test(item)) continue; if (productName && item.toLowerCase() === productName.toLowerCase()) continue; if (productName && productName.toLowerCase().includes(item.toLowerCase()) && item.length < productName.length) { /* skip product fragment */ continue; } return item; } return ''; })(); return { name: productName || norm(h1) || 'N/A', description: norm(metaDesc) || 'N/A', rating: ratingFromMeta || ratingFromAria || ratingFromText || 'N/A', review_count: countFromMeta || countFromText || 'N/A', category: categoryFromBreadcrumb || 'N/A', url: location.href.replace(/#.*$/, '').replace(/\\?.*$/, '') }; }; const extractReviews = () => Array.from(document.querySelectorAll('article[data-track-in-viewport-options]')).filter((a) => a.offsetParent !== null).map((a) => { let opts = {}; try { opts = JSON.parse(a.getAttribute('data-track-in-viewport-options') || '{}'); } catch (_) {} const lines = (a.innerText || '').split('\\n').map((l) => l.trim()).filter(Boolean); const rating = (lines.find((l) => /^\\d(\\.\\d)?\\/5$/.test(l)) || '').replace('/5', ''); const title = (lines.find((l) => /^\".+\"$/.test(l)) || '').replace(/^\"|\"$/g, ''); const pd = String(opts.published_date || ''); const date = /^\\d{8}$/.test(pd) ? pd.slice(0, 4) + '-' + pd.slice(4, 6) + '-' + pd.slice(6) : (lines.find((l) => /^\\d{1,2}\\/\\d{1,2}\\/\\d{4}$/.test(l)) || ''); const start = lines.findIndex((l) => /^What do you like best/i.test(l)); const body = start < 0 ? '' : lines.slice(start).filter((l) => !/^Review collected by and hosted on G2\\.com\\.?$/i.test(l) && !/^Show (More|Less)$/i.test(l)).join('\\n'); return { title: norm(title) || 'N/A', body: body || 'N/A', author: norm(lines[0]) || 'N/A', date: date || 'N/A', rating: rating || 'N/A' }; }).filter((r) => r.body !== 'N/A' || r.title !== 'N/A');const state = JSON.parse(sessionStorage.getItem('__rzn_g2_reviews') || 'null'); if (!state) throw new Error('review state lost between pages');const keyOf = (r) => [r.author, r.date, r.title].join('|'); const seen = new Set(state.reviews.map(keyOf));for (const r of extractReviews()) { if (!seen.has(keyOf(r))) { seen.add(keyOf(r)); state.reviews.push(r); } }state.pages_walked = Number(arg0); sessionStorage.setItem('__rzn_g2_reviews', JSON.stringify(state)); return state;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Add page 5 reviews"
     }
   ],
   "result": {
@@ -150,12 +960,24 @@
         "product": {
           "type": "object",
           "properties": {
-            "name": { "type": "string" },
-            "description": { "type": "string" },
-            "rating": { "type": "string" },
-            "review_count": { "type": "string" },
-            "category": { "type": "string" },
-            "url": { "type": "string" }
+            "name": {
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "rating": {
+              "type": "string"
+            },
+            "review_count": {
+              "type": "string"
+            },
+            "category": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
           }
         },
         "reviews": {
@@ -163,27 +985,39 @@
           "items": {
             "type": "object",
             "properties": {
-              "title": { "type": "string" },
-              "body": { "type": "string" },
-              "author": { "type": "string" },
-              "date": { "type": "string" },
-              "rating": { "type": "string" }
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "date": {
+                "type": "string"
+              },
+              "rating": {
+                "type": "string"
+              }
             }
           }
         },
-        "pages_walked": { "type": "integer" }
+        "pages_walked": {
+          "type": "integer"
+        }
       }
     },
     "output_selector": {
-      "step_id": "s5",
+      "step_id": "p5_extract",
       "path": "$"
     }
   },
   "help": {
     "summary": "Fetch product metadata and visible-page reviews for a G2 product. Reads schema.org review markup; falls back to og:title/meta tags for product chrome.",
     "parameters": {
-      "max_pages": "How many review pages to walk. Each page yields ~10 reviews. Default 1 (just the landing page); pass 2\u20135 for deeper coverage.",
-      "product_url": "Full G2 product URL \u2014 e.g. the .../products/<slug>/reviews canonical from g2/search. Trailing query strings (?utm=...) and #anchors are stripped automatically."
+      "max_pages": "How many review pages to walk. Each page yields ~10 reviews. Default 1 (just the landing page); pass 2–5 for deeper coverage.",
+      "product_url": "Full G2 product URL — e.g. the .../products/<slug>/reviews canonical from g2/search. Trailing query strings (?utm=...) and #anchors are stripped automatically."
     },
     "examples": [
       {
@@ -199,9 +1033,10 @@
       "Object: { product: { name, description, rating, review_count, category, url }, reviews: [{ title, body, author, date, rating }], pages_walked }. body is the visible review text after stripping G2's prompt prefixes ('What do you like best...')."
     ],
     "notes": [
-      "G2 ships [itemprop='review'] / [itemprop='reviewBody'] schema markup \u2014 selectors target those first; CSS-class fallbacks only kick in if itemprop is missing.",
-      "Pagination uses ?page=<n> on the canonical URL \u2014 G2's pager is server-rendered so this is more reliable than clicking the next button (which sometimes lazy-loads via JS).",
-      "max_pages caps at 5 to avoid long runs and rate limiting."
+      "G2 ships [itemprop='review'] / [itemprop='reviewBody'] schema markup — selectors target those first; CSS-class fallbacks only kick in if itemprop is missing.",
+      "Pagination clicks the pager link on the page, then scrolls and pauses before reading; it never fetches pages in the background. Each extra page adds ~15-25s.",
+      "When the walk stops early (max_pages reached or no next link), the result carries stop_workflow/stop_reason next to product/reviews/pages_walked.",
+      "Runs for this site queue behind each other and reuse one parked tab, so parallel calls do not speed anything up. If the site shows a captcha or verification wall, the run fails with site_challenge and the site pauses for 15 minutes; solve the challenge by hand in the parked tab."
     ]
   }
 }

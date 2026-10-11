@@ -2,7 +2,7 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "capterra/search",
   "name": "Capterra: Product Search",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "system": "capterra",
   "capability": "capterra.search",
   "summary": "Discover Capterra products by keyword. Returns one row per unique product (deduplicated by /p/<id>/<slug>/reviews URL).",
@@ -43,35 +43,7 @@
   },
   "steps": [
     {
-      "id": "s1",
-      "action": {
-        "kind": "navigate_to_url",
-        "inputs": {
-          "url": "https://www.capterra.com/search/?query={search_query}"
-        },
-        "side_effects": [
-          "browser_state"
-        ]
-      },
-      "name": "Navigate to Capterra search"
-    },
-    {
-      "id": "s2",
-      "action": {
-        "kind": "wait_for_element",
-        "inputs": {},
-        "side_effects": [
-          "read_only"
-        ],
-        "target": {
-          "selector": "a[href*='/p/'][href*='/reviews/']"
-        }
-      },
-      "name": "Wait for product anchors",
-      "timeout_ms": 30000
-    },
-    {
-      "id": "s3",
+      "id": "s1_think",
       "action": {
         "kind": "wait_for_timeout",
         "inputs": {},
@@ -79,11 +51,78 @@
           "read_only"
         ]
       },
-      "name": "Allow cards to settle",
-      "timeout_ms": 1500
+      "name": "Pause before moving on",
+      "timeout_ms": 900
     },
     {
-      "id": "s4",
+      "id": "s1_go",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "{search_query}",
+            "capterra.com"
+          ],
+          "script": "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };const site = cleanArg(arg1); const q = cleanArg(arg0); if (!q) throw new Error('search_query is required'); const target = 'https://www.capterra.com/search/?query=' + encodeURIComponent(q);let url; try { url = new URL(target); } catch (_) { throw new Error('not a URL: ' + target); }if (url.hostname !== site && !url.hostname.endsWith('.' + site)) throw new Error('URL must be on ' + site + ': ' + target);const strip = (u) => u.replace(/#.*$/, '').replace(/\\/$/, '').replace(/\\/\\?/, '?');if (strip(location.href) === strip(target)) return { how: 'already_here', url: location.href };const onSite = location.hostname === url.hostname;const link = onSite ? Array.from(document.querySelectorAll('a[href]')).find((a) => { try { const u = new URL(a.href); return strip(u.href) === strip(target); } catch (_) { return false; } }) : null;window.__rzn_leaving = { url: location.href, body: document.body };document.querySelectorAll('article, h1, a[href], script[type=\"application/ld+json\"]').forEach((e) => e.setAttribute('data-rzn-stale', ''));if (link) { link.scrollIntoView({ block: 'center' }); link.removeAttribute('target'); link.click(); return { how: 'clicked', url: target }; }location.assign(target); return { how: onSite ? 'in_site' : 'entered', url: target };"
+        },
+        "side_effects": [
+          "browser_state",
+          "read_only"
+        ]
+      },
+      "name": "Go to Capterra search inside the parked tab",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s1_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the navigation start",
+      "timeout_ms": 2500
+    },
+    {
+      "id": "s1_load",
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*capterra.com*"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the page to load",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s1_ready",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [
+            "a[href*='/p/'][href*='/reviews/']",
+            "20000"
+          ],
+          "script": "const challengeSel = \"iframe[src*='captcha-delivery.com'], iframe[src*='challenges.cloudflare.com'], #challenge-form, #challenge-running, #cf-challenge-running, .cf-turnstile, iframe[src*='hcaptcha.com']\";const isChallenge = () => { const title = (document.title || '').toLowerCase(); if (/just a moment|verification required|attention required|verify you are human|access denied/.test(title)) return true; if (document.querySelector(challengeSel)) return true; const body = document.body ? document.body.innerText || '' : ''; return body.length < 4000 && /verification required|slide right to|verify you are human|unusual activity from your device/i.test(body); };const check = () => { if (isChallenge()) return 'challenge'; const all = Array.from(document.querySelectorAll(arg0)); const stale = (e) => e.hasAttribute('data-rzn-stale'); if (!all.some((e) => !stale(e))) return null; const lv = window.__rzn_leaving; if (lv && location.href === lv.url && document.body === lv.body && all.some(stale)) return null; return 'ready'; };let state = check();if (!state) state = await new Promise((resolve) => { const obs = new MutationObserver(() => { const v = check(); if (v) { obs.disconnect(); resolve(v); } }); obs.observe(document.documentElement, { childList: true, subtree: true, attributes: true }); setTimeout(() => { obs.disconnect(); resolve(check() || 'timeout'); }, Number(arg1) || 20000); });if (state === 'challenge') throw new Error('site_challenge: ' + location.hostname + ' is showing a bot check (\"' + document.title + '\"). Solve it by hand in that tab; runs for this site pause for 15 minutes.');if (state === 'timeout') throw new Error('page did not render ' + arg0 + ' at ' + location.href);window.__rzn_leaving = null; return { ready: true, url: location.href, title: document.title };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for content; stop on a bot check",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
       "action": {
         "kind": "dismiss_popups",
         "inputs": {},
@@ -94,7 +133,88 @@
       "name": "Dismiss popups if present"
     },
     {
-      "id": "s5",
+      "id": "s3_0",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 520,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Look over the results: scroll"
+    },
+    {
+      "id": "s3_0_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Look over the results: pause",
+      "timeout_ms": 1700
+    },
+    {
+      "id": "s3_1",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 760,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Look over the results: scroll"
+    },
+    {
+      "id": "s3_1_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Look over the results: pause",
+      "timeout_ms": 2300
+    },
+    {
+      "id": "s3_2",
+      "action": {
+        "kind": "scroll_window_to",
+        "inputs": {
+          "direction": "down",
+          "amount": 430,
+          "wait_after_ms": 0
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Look over the results: scroll"
+    },
+    {
+      "id": "s3_2_pause",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Look over the results: pause",
+      "timeout_ms": 1400
+    },
+    {
+      "id": "s4",
       "action": {
         "kind": "execute_javascript",
         "inputs": {
@@ -120,25 +240,39 @@
     "output_schema": {
       "type": "object",
       "properties": {
-        "query": { "type": "string" },
-        "count": { "type": "integer" },
+        "query": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
         "results": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "product_id": { "type": "string" },
-              "product_name": { "type": "string" },
-              "product_url": { "type": "string" },
-              "rating": { "type": "string" },
-              "review_count": { "type": "string" }
+              "product_id": {
+                "type": "string"
+              },
+              "product_name": {
+                "type": "string"
+              },
+              "product_url": {
+                "type": "string"
+              },
+              "rating": {
+                "type": "string"
+              },
+              "review_count": {
+                "type": "string"
+              }
             }
           }
         }
       }
     },
     "output_selector": {
-      "step_id": "s5",
+      "step_id": "s4",
       "path": "$"
     }
   },
@@ -157,9 +291,9 @@
       "Object: { query, count, results: [{ product_id, product_name, product_url, rating, review_count }] }. Feed product_url into capterra/product-details-reviews."
     ],
     "notes": [
-      "Capterra is fronted by Cloudflare. Cold sessions may hit a 'Just a moment...' challenge \u2014 open the URL once in the same browser profile to clear it before re-running.",
       "Dedup is by Capterra product id (the numeric segment in /p/<id>/<slug>/reviews/).",
-      "Rating + review count are parsed from anchor text matching '4.5 (1234)'."
+      "Rating + review count are parsed from anchor text matching '4.5 (1234)'.",
+      "Runs for this site queue behind each other and reuse one parked tab, so parallel calls do not speed anything up. If the site shows a captcha or verification wall, the run fails with site_challenge and the site pauses for 15 minutes; solve the challenge by hand in the parked tab."
     ]
   }
 }

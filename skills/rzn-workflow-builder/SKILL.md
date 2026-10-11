@@ -22,6 +22,13 @@ CLI does not export a workflow; translate observations into JSON explicitly.
 - Keep site selectors and DOM logic in workflow files; shared runtime stays generic.
 - Use dedicated tabs in the existing browser profile unless exact existing page
   state is needed. Declare that requirement in the manifest.
+- Move like a person. The extension already turns a same-site
+  `navigate_to_url` into an in-page navigation and fails a page that shows a bot
+  check with `site_challenge`. Click links when the flow follows one, scroll and
+  pause before extracting, and never fetch extra pages in the background. The
+  CLI queues runs per site and reuses one tab.
+- Keep timers out of page JavaScript; background tabs throttle them. Use
+  `wait_for_timeout` steps for pauses and a `MutationObserver` for waits.
 - Describe write behavior accurately. Test within the user's authorization;
   otherwise validate locally and exercise the draft path up to its approval gate.
 - Source edits and offline validation do not require installing the runtime.
