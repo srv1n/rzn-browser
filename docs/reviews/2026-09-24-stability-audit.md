@@ -574,3 +574,106 @@ After restoring the original browser, the reused ordinary-test profile caused 19
 failures (16 tests passed). Moving that inactive test profile aside, without changing code, restored
 35/35 passes. The profile is preserved at `/private/tmp/rzn-browser-profile-backup.cbLigN/profile`;
 no personal browser profile was changed.
+
+### Recurring installed-runtime incident (2026-10-09)
+
+The installed macOS runtime was inspected after the extension displayed
+`Supervisor unreachable`. The supervisor answered `runtime.status` (PID 60048);
+there was no native-host process and no registered browser bridge. The native
+host log records repeated supervisor-requested restarts after two failed 2s
+extension pings, including a restart at 03:12:35 UTC followed by a new host at
+03:12:36 UTC. The final log activity was 03:15:56 UTC. The last host exit was not
+logged, so the exact trigger for the persistent outage remains unproven. Cloud
+and fleet were not configured in this installation.
+
+Confirmed recovery gaps addressed in this working tree:
+
+- Native port `postMessage` failure now invalidates the failed port instead of
+  leaving it cached as connected; a live request can reconnect immediately.
+- Missing/forbidden native-host registration now triggers a slow 60s probe
+  instead of disabling automatic recovery indefinitely. Explicit Retry remains
+  immediate. Reconnects still use Chrome alarms alongside worker timers.
+- Fresh native stdout no longer excuses indefinitely unanswered control pings.
+  Heartbeat completion is fenced to its original port and epoch.
+- Extension pings answer before workflow storage hydration and use cached browser
+  identity. A stalled Chrome storage read can no longer block the liveness reply.
+  This was a confirmed source-level restart path; the installed logs do not prove
+  it caused this incident.
+- Session close retains its epoch/FIFO until response cleanup finishes, then
+  prunes empty idle sessions. Late tab metadata reads cannot recreate a closed
+  session or overwrite a new binding.
+- Supervisor health retains the last eight disconnected bridge records without
+  counting them as live. Native-host browser-stdin closure now logs its reason.
+- Direct Cloud Actor commands persist acceptance before acknowledgment or
+  dispatch. A supervisor restart turns unfinished receipts into explicit
+  indeterminate results; it does not repeat the action. Receipt writes are
+  cancellation-safe, command identity conflicts fail without dispatch, and
+  receipt health is separate from websocket connectivity. The supervisor takes
+  its singleton lock before starting actors or recovering receipts.
+
+Cloud receipts have bounded retention: 256 records and a 64 MiB file ceiling.
+Unfinished and unexpired records are not evicted to admit new commands. Expired
+unseen commands are rejected. The backend must preserve command IDs, command
+identity, and deadlines on redelivery; lease renewal may change routing only.
+This is not an unlimited exactly-once guarantee. Corrupt/unwritable storage fails
+closed and is retried after a 60s backoff when no command remains in flight.
+
+New production-path chaos cases cover closing/relaunching the same browser
+profile and removing/restoring isolated native-host registration without popup
+wake or CLI heal. A macOS CI job now runs the existing production Chromium
+chaos suite on PR/manual/nightly events alongside the Ubuntu lane. CI execution
+and installed Chrome activation are separate acceptance steps.
+
+The macOS runtime now has a per-user `launchd` owner. Its foreground watcher
+owns the supervisor child, checks that the reported process is its child, and
+restarts it after exit or an unresponsive health probe. Graceful shutdown and
+active-workflow checks protect upgrades; uninstall removes the managed service
+and ownership marker. LaunchAgent stderr is retained in a private owner log;
+installation rotates it to one previous copy when it exceeds 10 MiB.
+The macOS harness `make test-supervisor-owner` passed all eight cases: initial
+and idempotent install, child kill recovery, hung-child replacement, watcher
+kill recovery, CLI shutdown followed by native-host demand restart, refusal to
+upgrade during an active workflow, explicit upgrade, and uninstall. The same
+harness is configured in the macOS CI job; a hosted CI run is not acceptance
+evidence yet.
+
+Receipt recovery is serialized across app-base configurations that point at
+the same journal: the supervisor takes the journal's exclusive lifetime lock
+before actor startup or receipt recovery. A second supervisor cannot recover or
+rewrite that journal concurrently. Receipt writes retain the lock through
+completion even if the calling async task is cancelled, and interrupted
+accepted commands recover as indeterminate rather than being replayed.
+
+Remaining unattended-distribution qualification gates are explicit:
+
+1. Qualify installed Chrome 155 behavior, browser/native-host upgrades,
+   sleep/wake, extended idle, and repeated reconnects. Chromium fixture tests do
+   not establish installed-browser behavior. Windows service ownership remains
+   unimplemented, and Linux service ownership is not qualified.
+2. Validate real backend redelivery against durable local receipts. Browser
+   closure, a disabled extension, logout, and computer sleep must be reported as
+   offline conditions; recovery must not replay uncertain external side effects.
+3. Obtain hosted CI results for the new macOS lane; adding the lane does not
+   establish that a hosted run has passed.
+
+Final local validation: the release build passed in 2m09s; the Rust browser
+suite passed 335 tests with one existing ignored test, all 37 native-host tests
+passed, and the focused launch-gated test passed. The extension checks passed
+148 unit tests and 12 focused browser lifecycle cases. All eight native-host
+chaos cases passed against the final release binaries and production extension
+in 5.8 minutes. The macOS LaunchAgent harness passed 8/8 as detailed above, and
+the installer verification script passed. These are local results, not hosted
+CI or real backend acceptance.
+
+The final release binaries were atomically installed locally after confirming
+the legacy supervisor was idle, cloud/fleet control was unconfigured, and no
+native host was running. The legacy supervisor exited gracefully. The installed
+binary hashes match the tested release binaries; previous copies are retained
+at `/private/tmp/rzn-runtime-before-owner-n2lkyefw`. The per-user LaunchAgent is
+installed and loaded, its owner lock is held, and live status confirms that
+supervisor PID 6120 is the child of watcher PID 6105. No fault was injected into
+the user's installed runtime; crash/hang tests used isolated fixtures.
+
+Production extension build `20261009T044603Z` was copied to the installed Chrome,
+Edge, Chromium, and legacy Chrome paths with test hooks disabled. Installed Chrome
+activation has not been observed; it requires a one-time extension reload.

@@ -4,13 +4,22 @@ use rzn_contracts::browser::{
     ActorHello, ActorReady, BrowserActionResult, Capabilities, CloudCommandAck,
     CloudCommandEnvelope, CloudCommandKind, CloudCommandResult, CLOUD_CONTRACT,
 };
-use rzn_core::secure_files::write_secret_file;
+use rzn_core::runtime_paths::default_app_base_dir;
+use rzn_core::secure_files::{ensure_private_dir, set_secret_file_permissions, write_secret_file};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::net::IpAddr;
-use std::path::Path;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -27,6 +36,11 @@ const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 45_000;
 const DEFAULT_EXTENSION_RPC_GRACE_MS: u64 = 5_000;
 const CONFIG_RELOAD_INTERVAL_MS: u64 = 5_000;
 const MAX_CACHED_COMMAND_RESULTS: usize = 256;
+const COMMAND_RECEIPT_FILE: &str = "cloud_command_receipts.json";
+const COMMAND_RECEIPT_VERSION: u32 = 1;
+const MAX_COMMAND_RECEIPT_FILE_BYTES: u64 = 64 * 1024 * 1024;
+const RECEIPT_REOPEN_BACKOFF: Duration = Duration::from_secs(60);
+static RECEIPT_TMP_SEQ: AtomicU64 = AtomicU64::new(0);
 const MAX_QUEUED_CLOUD_MESSAGES: usize = 256;
 /// Client keepalive: ping cadence and the silence that forces a reconnect.
 const CLOUD_PING_INTERVAL: Duration = Duration::from_secs(20);
@@ -55,6 +69,7 @@ struct CloudActorRuntimeState {
     last_result_at_ms: Option<u64>,
     inflight_command_id: Option<String>,
     dedupe_cache_size: usize,
+    command_receipt_error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -69,8 +84,15 @@ enum CloudActorControlMessage {
 struct CommandResultCache {
     order: Vec<String>,
     entries: HashMap<String, CloudCommandResult>,
+    fingerprints: HashMap<String, String>,
     inflight: HashMap<String, watch::Receiver<Option<CloudCommandResult>>>,
+    inflight_fingerprints: HashMap<String, String>,
     generation: u64,
+    active_scope: Option<String>,
+    receipts: Option<CommandReceiptJournal>,
+    persistence_error: Option<String>,
+    receipt_path: Option<PathBuf>,
+    journal_retry_after: Option<Instant>,
 }
 
 impl CommandResultCache {
@@ -81,19 +103,37 @@ impl CommandResultCache {
     fn clear(&mut self) {
         self.order.clear();
         self.entries.clear();
+        self.fingerprints.clear();
         self.inflight.clear();
+        self.inflight_fingerprints.clear();
         self.generation = self.generation.wrapping_add(1);
+        self.active_scope = None;
     }
 
-    fn insert(&mut self, command_id: String, result: CloudCommandResult) {
+    fn activate_scope(&mut self, scope: String) {
+        if self.active_scope.as_deref() == Some(scope.as_str()) {
+            return;
+        }
+        self.order.clear();
+        self.entries.clear();
+        self.fingerprints.clear();
+        self.inflight.clear();
+        self.inflight_fingerprints.clear();
+        self.generation = self.generation.wrapping_add(1);
+        self.active_scope = Some(scope);
+    }
+
+    fn insert(&mut self, command_id: String, fingerprint: String, result: CloudCommandResult) {
         if !self.entries.contains_key(&command_id) {
             self.order.push(command_id.clone());
         }
         self.entries.insert(command_id.clone(), result);
+        self.fingerprints.insert(command_id.clone(), fingerprint);
 
         while self.order.len() > MAX_CACHED_COMMAND_RESULTS {
             let evicted = self.order.remove(0);
             self.entries.remove(&evicted);
+            self.fingerprints.remove(&evicted);
         }
     }
 
@@ -102,13 +142,480 @@ impl CommandResultCache {
     }
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct CommandReceiptFile {
+    version: u32,
+    entries: Vec<CommandReceipt>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct CommandReceipt {
+    scope: String,
+    command_id: String,
+    fingerprint: String,
+    deadline_ms: u64,
+    identity: ReceiptIdentity,
+    state: CommandReceiptState,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ReceiptIdentity {
+    actor_id: String,
+    run_id: String,
+    session_id: String,
+    command_id: String,
+    lease_id: String,
+    trace_id: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "state", content = "result", rename_all = "snake_case")]
+enum CommandReceiptState {
+    Accepted,
+    Completed(CloudCommandResult),
+}
+
+struct CommandReceiptJournal {
+    path: PathBuf,
+    entries: Vec<CommandReceipt>,
+    lock: Arc<CommandReceiptJournalLock>,
+    #[cfg(test)]
+    persist_test_hook: Option<(Arc<AtomicBool>, Arc<AtomicU64>, Duration)>,
+}
+
+struct CommandReceiptJournalLock {
+    _file: fs::File,
+}
+
+impl CommandReceiptJournal {
+    fn open(path: PathBuf) -> Result<Self> {
+        if let Some(parent) = path.parent() {
+            ensure_private_dir(parent).context("Secure cloud command receipt directory")?;
+        }
+        let lock = acquire_command_receipt_journal_lock(&path)?;
+        let (entries, recovered) = read_command_receipt_entries(&path, true)?;
+        let journal = Self {
+            path,
+            entries,
+            lock,
+            #[cfg(test)]
+            persist_test_hook: None,
+        };
+        if recovered {
+            journal.persist()?;
+        }
+        Ok(journal)
+    }
+
+    async fn reload_async(&mut self) -> Result<()> {
+        let path = self.path.clone();
+        let lock = self.lock.clone();
+        let allow_missing = self.entries.is_empty();
+        let (entries, recovered) = tokio::task::spawn_blocking(move || {
+            let _lock = lock;
+            read_command_receipt_entries(&path, allow_missing)
+        })
+        .await
+        .context("Cloud command receipt reload task failed")??;
+        self.entries = entries;
+        if recovered {
+            self.persist_async().await?;
+        }
+        Ok(())
+    }
+
+    fn find(&self, scope: &str, command_id: &str) -> Option<&CommandReceipt> {
+        self.entries
+            .iter()
+            .find(|entry| entry.scope == scope && entry.command_id == command_id)
+    }
+
+    fn prune_expired_completed(&mut self, now: u64) {
+        // Cloud command_id and deadline_ms are immutable across server retries.
+        // After the deadline, a replay is rejected before admission, so expired
+        // terminal receipts are safe to remove from the bounded local cache.
+        self.entries.retain(|entry| {
+            entry.deadline_ms > now || matches!(entry.state, CommandReceiptState::Accepted)
+        });
+    }
+
+    async fn accept(&mut self, receipt: CommandReceipt) -> Result<()> {
+        self.entries.push(receipt);
+        if let Err(error) = self.persist_async().await {
+            self.entries.pop();
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn complete(
+        &mut self,
+        scope: &str,
+        command_id: &str,
+        result: CloudCommandResult,
+    ) -> Result<()> {
+        let index = self
+            .entries
+            .iter()
+            .position(|entry| entry.scope == scope && entry.command_id == command_id)
+            .context("Accepted cloud command receipt disappeared")?;
+        let previous = std::mem::replace(
+            &mut self.entries[index].state,
+            CommandReceiptState::Completed(result),
+        );
+        if let Err(error) = self.persist_async().await {
+            self.entries[index].state = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    async fn persist_async(&self) -> Result<()> {
+        let path = self.path.clone();
+        let lock = self.lock.clone();
+        let file = CommandReceiptFile {
+            version: COMMAND_RECEIPT_VERSION,
+            entries: self.entries.clone(),
+        };
+        #[cfg(test)]
+        let test_hook = self.persist_test_hook.clone();
+        tokio::task::spawn_blocking(move || {
+            let _lock = lock;
+            #[cfg(test)]
+            if let Some((started, writes, delay)) = test_hook {
+                let write_number = writes.fetch_add(1, Ordering::AcqRel);
+                if write_number == 0 {
+                    started.store(true, Ordering::Release);
+                    std::thread::sleep(delay);
+                }
+            }
+            persist_receipt_file(&path, &file)
+        })
+        .await
+        .context("Cloud command receipt writer task failed")??;
+        Ok(())
+    }
+
+    fn persist(&self) -> Result<()> {
+        let file = CommandReceiptFile {
+            version: COMMAND_RECEIPT_VERSION,
+            entries: self.entries.clone(),
+        };
+        persist_receipt_file(&self.path, &file).with_context(|| {
+            format!(
+                "Persist cloud command receipt journal {}",
+                self.path.display()
+            )
+        })
+    }
+}
+
+// Keep this lock separate from the atomically replaced journal. Locking the
+// journal inode itself would stop protecting the path after rename.
+fn acquire_command_receipt_journal_lock(path: &Path) -> Result<Arc<CommandReceiptJournalLock>> {
+    let lock_path = path.with_extension("lock");
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(false).read(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let file = options
+        .open(&lock_path)
+        .with_context(|| format!("Open cloud command receipt lock {}", lock_path.display()))?;
+    set_secret_file_permissions(&lock_path).context("Secure cloud command receipt lock")?;
+    file.try_lock().map_err(|error| {
+        anyhow!(
+            "Cloud command receipt journal is already owned or cannot be locked ({}): {error}",
+            lock_path.display()
+        )
+    })?;
+    Ok(Arc::new(CommandReceiptJournalLock { _file: file }))
+}
+
+fn read_command_receipt_entries(
+    path: &Path,
+    allow_missing: bool,
+) -> Result<(Vec<CommandReceipt>, bool)> {
+    if let Ok(metadata) = fs::metadata(path) {
+        if metadata.len() > MAX_COMMAND_RECEIPT_FILE_BYTES {
+            bail!("Cloud command receipt journal exceeds its byte limit");
+        }
+    }
+    let mut entries = match fs::read(path) {
+        Ok(bytes) => {
+            set_secret_file_permissions(path)
+                .context("Secure cloud command receipt file permissions")?;
+            let file: CommandReceiptFile =
+                serde_json::from_slice(&bytes).context("Parse cloud command receipt journal")?;
+            if file.version != COMMAND_RECEIPT_VERSION {
+                bail!("Unsupported cloud command receipt journal version");
+            }
+            if file.entries.len() > MAX_CACHED_COMMAND_RESULTS {
+                bail!("Cloud command receipt journal exceeds its capacity");
+            }
+            let mut keys = std::collections::HashSet::new();
+            for entry in &file.entries {
+                if !keys.insert((entry.scope.clone(), entry.command_id.clone())) {
+                    bail!("Cloud command receipt journal contains duplicate keys");
+                }
+            }
+            file.entries
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound && allow_missing => Vec::new(),
+        Err(error) => return Err(error).context("Read cloud command receipt journal"),
+    };
+
+    // Any accepted receipt found at process startup or recovery has no live
+    // dispatcher. Convert it to a terminal result so commands are never replayed.
+    let mut recovered = false;
+    for entry in &mut entries {
+        if matches!(entry.state, CommandReceiptState::Accepted) {
+            entry.state = CommandReceiptState::Completed(indeterminate_receipt_result(
+                &entry.identity,
+                "Supervisor restarted while this command was in flight; its outcome is indeterminate and it was not replayed.",
+            ));
+            recovered = true;
+        }
+    }
+    Ok((entries, recovered))
+}
+
+fn persist_receipt_file(path: &Path, file: &CommandReceiptFile) -> Result<()> {
+    let bytes = serde_json::to_vec(file)?;
+    if bytes.len() as u64 > MAX_COMMAND_RECEIPT_FILE_BYTES {
+        bail!("Cloud command receipt journal exceeds its byte limit");
+    }
+    write_receipt_file_atomic(path, &bytes)
+        .with_context(|| format!("Persist cloud command receipt journal {}", path.display()))
+}
+
+fn open_command_result_cache() -> CommandResultCache {
+    let path = default_app_base_dir()
+        .join("secure")
+        .join(COMMAND_RECEIPT_FILE);
+    match CommandReceiptJournal::open(path) {
+        Ok(receipts) => CommandResultCache {
+            receipt_path: Some(receipts.path.clone()),
+            receipts: Some(receipts),
+            ..CommandResultCache::default()
+        },
+        Err(error) => CommandResultCache {
+            receipt_path: Some(
+                default_app_base_dir()
+                    .join("secure")
+                    .join(COMMAND_RECEIPT_FILE),
+            ),
+            persistence_error: Some(error.to_string()),
+            journal_retry_after: Some(Instant::now() + RECEIPT_REOPEN_BACKOFF),
+            ..CommandResultCache::default()
+        },
+    }
+}
+
+async fn retry_receipt_journal(cache: &mut CommandResultCache) -> bool {
+    if cache.persistence_error.is_none() {
+        return true;
+    }
+    cache
+        .inflight
+        .retain(|_, receiver| receiver.has_changed().is_ok());
+    if !cache.inflight.is_empty() {
+        cache.journal_retry_after = Some(Instant::now() + RECEIPT_REOPEN_BACKOFF);
+        return false;
+    }
+    if cache
+        .journal_retry_after
+        .is_some_and(|retry_after| Instant::now() < retry_after)
+    {
+        return false;
+    }
+    let Some(path) = cache.receipt_path.clone() else {
+        return false;
+    };
+    let retry = if let Some(journal) = cache.receipts.as_mut() {
+        journal.reload_async().await.map(|()| None)
+    } else {
+        tokio::task::spawn_blocking(move || CommandReceiptJournal::open(path))
+            .await
+            .context("Cloud command receipt reopen task failed")
+            .and_then(|result| result)
+            .map(Some)
+    };
+    match retry {
+        Ok(Some(receipts)) => {
+            cache.receipts = Some(receipts);
+            cache.persistence_error = None;
+            cache.journal_retry_after = None;
+            true
+        }
+        Ok(None) => {
+            cache.persistence_error = None;
+            cache.journal_retry_after = None;
+            true
+        }
+        Err(error) => {
+            cache.persistence_error = Some(error.to_string());
+            cache.journal_retry_after = Some(Instant::now() + RECEIPT_REOPEN_BACKOFF);
+            false
+        }
+    }
+}
+
+fn write_receipt_file_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "receipt path has no parent"))?;
+    ensure_private_dir(parent)?;
+    let sequence = RECEIPT_TMP_SEQ.fetch_add(1, Ordering::Relaxed);
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("receipts");
+    let tmp = parent.join(format!(
+        ".{file_name}.{}.{nonce}.{sequence}.tmp",
+        std::process::id()
+    ));
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let write_result = (|| {
+        let mut file = options.open(&tmp)?;
+        file.write_all(bytes)?;
+        file.flush()?;
+        file.sync_all()?;
+        fs::rename(&tmp, path)?;
+        set_secret_file_permissions(path)?;
+        #[cfg(unix)]
+        fs::File::open(parent)?.sync_all()?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    write_result
+}
+
+fn receipt_scope(config: &LocalCloudActorConfig) -> String {
+    let mut digest = Sha256::new();
+    digest.update(b"rzn-cloud-command-receipt-v1\0");
+    digest.update(config.actor_id.as_bytes());
+    digest.update([0]);
+    digest.update(config.workspace_id.as_bytes());
+    digest.update([0]);
+    digest.update(config.server_url.as_bytes());
+    format!("{:x}", digest.finalize())
+}
+
+fn receipt_identity(envelope: &CloudCommandEnvelope) -> ReceiptIdentity {
+    ReceiptIdentity {
+        actor_id: envelope.actor_id.clone(),
+        run_id: envelope.run_id.clone(),
+        session_id: envelope.session_id.clone(),
+        command_id: envelope.command_id.clone(),
+        lease_id: envelope.lease_id.clone(),
+        trace_id: envelope.trace_id.clone(),
+    }
+}
+
+/// A redelivery may carry a new lease, but command identity and effects must
+/// otherwise remain fixed for the lifetime of command_id. Top-level session
+/// affinity is authoritative, so ignore any stale nested payload copy.
+fn command_fingerprint(envelope: &CloudCommandEnvelope) -> String {
+    let mut payload = serde_json::to_value(&envelope.payload).unwrap_or(Value::Null);
+    if let Some(command_payload) = payload
+        .pointer_mut("/command/payload")
+        .and_then(Value::as_object_mut)
+    {
+        command_payload.remove("session_id");
+    }
+    let identity = json!({
+        "version": &envelope.version,
+        "type": &envelope.message_type,
+        "actor_id": &envelope.actor_id,
+        "run_id": &envelope.run_id,
+        "session_id": &envelope.session_id,
+        "command_id": &envelope.command_id,
+        "deadline_ms": envelope.deadline_ms,
+        "trace_id": &envelope.trace_id,
+        "parent_command_id": &envelope.parent_command_id,
+        "planner_step_index": envelope.planner_step_index,
+        "payload": payload,
+    });
+    format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&identity).expect("serialize cloud command identity"))
+    )
+}
+
+fn command_id_conflict_result(envelope: &CloudCommandEnvelope) -> CloudCommandResult {
+    let mut result = error_command_result(
+        envelope,
+        "Cloud command_id was reused with a different command identity; command not dispatched",
+    );
+    if let Some(action) = result.result.as_mut() {
+        action.error_code = Some("COMMAND_ID_CONFLICT".to_string());
+    }
+    result
+}
+
+fn indeterminate_receipt_result(identity: &ReceiptIdentity, error: &str) -> CloudCommandResult {
+    CloudCommandResult {
+        version: CLOUD_CONTRACT.to_string(),
+        message_type: "command.result".to_string(),
+        actor_id: identity.actor_id.clone(),
+        run_id: identity.run_id.clone(),
+        session_id: identity.session_id.clone(),
+        command_id: identity.command_id.clone(),
+        lease_id: identity.lease_id.clone(),
+        trace_id: identity.trace_id.clone(),
+        success: false,
+        finished_at_ms: now_ms(),
+        result: Some(BrowserActionResult {
+            success: false,
+            error_code: Some("COMMAND_INDETERMINATE".to_string()),
+            error: Some(error.to_string()),
+            current_url: None,
+            current_tab_id: None,
+            current_tab_ref: None,
+            dom_hash: None,
+            dom_snapshot: None,
+            capabilities: None,
+            raw: Some(json!({"runtime_owner":"supervisor","error":error})),
+        }),
+        error: Some(error.to_string()),
+    }
+}
+
+fn expired_command_result(envelope: &CloudCommandEnvelope, error: &str) -> CloudCommandResult {
+    let mut result = error_command_result(envelope, error);
+    if let Some(action) = result.result.as_mut() {
+        action.error_code = Some("COMMAND_EXPIRED".to_string());
+    }
+    result
+}
+
 pub(crate) fn spawn_cloud_actor(
     dispatch_tx: mpsc::UnboundedSender<CloudDispatchRequest>,
 ) -> SupervisorCloudActor {
-    let (config, last_error) = match load_local_actor_config() {
+    let (config, mut last_error) = match load_local_actor_config() {
         Ok(config) => (config, None),
         Err(error) => (None, Some(error.to_string())),
     };
+    let result_cache = open_command_result_cache();
+    let command_receipt_error = result_cache.persistence_error.clone();
+    if last_error.is_none() {
+        last_error = result_cache
+            .persistence_error
+            .clone()
+            .map(|error| format!("Cloud command receipt journal unavailable: {error}"));
+    }
     let status = Arc::new(Mutex::new(CloudActorRuntimeState {
         config: config.clone(),
         connected: false,
@@ -119,9 +626,10 @@ pub(crate) fn spawn_cloud_actor(
         last_result_at_ms: None,
         inflight_command_id: None,
         dedupe_cache_size: 0,
+        command_receipt_error,
     }));
     let (control_tx, control_rx) = mpsc::unbounded_channel::<CloudActorControlMessage>();
-    let result_cache = Arc::new(Mutex::new(CommandResultCache::default()));
+    let result_cache = Arc::new(Mutex::new(result_cache));
 
     tokio::spawn(run_cloud_actor_loop(
         config,
@@ -174,7 +682,9 @@ impl SupervisorCloudActor {
             "last_error": state.last_error,
             "spool_depth": usize::from(state.inflight_command_id.is_some()),
             "inflight_command_id": state.inflight_command_id,
-            "dedupe_cache_size": state.dedupe_cache_size
+            "dedupe_cache_size": state.dedupe_cache_size,
+            "command_receipt_journal_healthy": state.command_receipt_error.is_none(),
+            "command_receipt_journal_error": state.command_receipt_error
         })
     }
 
@@ -256,6 +766,17 @@ async fn run_cloud_actor_loop(
             }
             continue;
         };
+
+        match wait_for_receipt_journal_or_control(&result_cache, &status, &mut control_rx).await {
+            ReceiptJournalGateOutcome::Ready => {}
+            ReceiptJournalGateOutcome::RetryLater => continue,
+            ReceiptJournalGateOutcome::Control(control) => {
+                current_config = apply_cloud_control_message(control, &status, &result_cache).await;
+                reconnect_backoff = Duration::from_secs(1);
+                continue;
+            }
+            ReceiptJournalGateOutcome::ControlClosed => return,
+        }
 
         let connect_timeout_ms = config
             .connect_timeout_ms
@@ -346,6 +867,47 @@ async fn run_cloud_actor_loop(
             BackoffOutcome::ControlClosed => return,
             BackoffOutcome::Elapsed => {
                 reconnect_backoff = next_backoff(reconnect_backoff);
+            }
+        }
+    }
+}
+
+enum ReceiptJournalGateOutcome {
+    Ready,
+    RetryLater,
+    Control(CloudActorControlMessage),
+    ControlClosed,
+}
+
+async fn wait_for_receipt_journal_or_control(
+    result_cache: &Arc<Mutex<CommandResultCache>>,
+    status: &Arc<Mutex<CloudActorRuntimeState>>,
+    control_rx: &mut mpsc::UnboundedReceiver<CloudActorControlMessage>,
+) -> ReceiptJournalGateOutcome {
+    let retry_delay = {
+        let cache = result_cache.lock().await;
+        if cache.persistence_error.is_none() {
+            return ReceiptJournalGateOutcome::Ready;
+        }
+        cache
+            .journal_retry_after
+            .map(|retry_after| retry_after.saturating_duration_since(Instant::now()))
+            .unwrap_or(Duration::ZERO)
+    };
+
+    match wait_for_backoff_or_control(retry_delay, control_rx).await {
+        BackoffOutcome::Control(control) => ReceiptJournalGateOutcome::Control(control),
+        BackoffOutcome::ControlClosed => ReceiptJournalGateOutcome::ControlClosed,
+        BackoffOutcome::Elapsed => {
+            let mut cache = result_cache.lock().await;
+            let recovered = retry_receipt_journal(&mut cache).await;
+            let error = cache.persistence_error.clone();
+            drop(cache);
+            status.lock().await.command_receipt_error = error;
+            if recovered {
+                ReceiptJournalGateOutcome::Ready
+            } else {
+                ReceiptJournalGateOutcome::RetryLater
             }
         }
     }
@@ -469,7 +1031,14 @@ where
     socket
         .send(Message::Text(serde_json::to_string(&hello)?))
         .await?;
-    let _ready = wait_for_actor_ready(&mut socket).await?;
+    let ready = wait_for_actor_ready(&mut socket).await?;
+    if ready.actor_id != config.actor_id {
+        bail!("Cloud actor.ready identity does not match the configured actor");
+    }
+    result_cache
+        .lock()
+        .await
+        .activate_scope(receipt_scope(&config));
     mark_cloud_actor_ready(&status).await;
 
     let default_timeout = config
@@ -483,6 +1052,7 @@ where
         command_rx,
         outbound_tx,
         default_timeout,
+        config.clone(),
         dispatch_tx,
         result_cache,
         status,
@@ -555,6 +1125,7 @@ async fn run_cloud_command_worker(
     mut command_rx: mpsc::Receiver<CloudCommandEnvelope>,
     outbound_tx: mpsc::Sender<String>,
     default_timeout: u64,
+    config: LocalCloudActorConfig,
     dispatch_tx: mpsc::UnboundedSender<CloudDispatchRequest>,
     result_cache: Arc<Mutex<CommandResultCache>>,
     status: Arc<Mutex<CloudActorRuntimeState>>,
@@ -562,6 +1133,15 @@ async fn run_cloud_command_worker(
     // Overflow ends the session; a replay joins in-flight work or reads its cached result.
     let queue = |value: String| outbound_tx.try_send(value).is_ok();
     while let Some(envelope) = command_rx.recv().await {
+        if envelope.actor_id != config.actor_id {
+            if !queue(to_json(&error_command_result(
+                &envelope,
+                "Cloud command actor does not match the configured actor",
+            ))) {
+                return;
+            }
+            continue;
+        }
         if envelope.payload.kind != CloudCommandKind::BrowserCommand {
             let result = error_command_result(
                 &envelope,
@@ -572,19 +1152,24 @@ async fn run_cloud_command_worker(
             }
             continue;
         }
-        // Ack first; a duplicate command_id replays its cached result inside
-        // dispatch_command_with_dedupe without reaching the extension.
-        if !queue(to_json(&command_ack(&envelope))) {
-            return;
-        }
-        let result = dispatch_command_with_dedupe(
+        let admission = prepare_cloud_command(
             envelope,
             default_timeout,
+            Some(&config),
             dispatch_tx.clone(),
             result_cache.clone(),
             status.clone(),
         )
         .await;
+        let result = match admission {
+            CommandAdmission::Rejected(result) => result,
+            CommandAdmission::Accepted(prepared) => {
+                if !queue(to_json(&command_ack(&prepared.envelope))) {
+                    return;
+                }
+                wait_for_prepared_command(prepared).await
+            }
+        };
         if !queue(to_json(&result)) {
             return;
         }
@@ -595,6 +1180,7 @@ fn to_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string(value).unwrap_or_default()
 }
 
+#[cfg(test)]
 async fn dispatch_command_with_dedupe(
     envelope: CloudCommandEnvelope,
     default_request_timeout_ms: u64,
@@ -602,92 +1188,325 @@ async fn dispatch_command_with_dedupe(
     result_cache: Arc<Mutex<CommandResultCache>>,
     status: Arc<Mutex<CloudActorRuntimeState>>,
 ) -> CloudCommandResult {
-    let mut result_rx = {
-        let mut cache = result_cache.lock().await;
-        if let Some(cached) = cache.get(&envelope.command_id) {
-            return cached;
-        }
-        if let Some(inflight) = cache.inflight.get(&envelope.command_id) {
-            inflight.clone()
-        } else {
-            if cache.inflight.len() >= MAX_CACHED_COMMAND_RESULTS {
-                return error_command_result(
+    match prepare_cloud_command(
+        envelope,
+        default_request_timeout_ms,
+        None,
+        dispatch_tx,
+        result_cache,
+        status,
+    )
+    .await
+    {
+        CommandAdmission::Rejected(result) => result,
+        CommandAdmission::Accepted(prepared) => wait_for_prepared_command(prepared).await,
+    }
+}
+
+enum CommandAdmission {
+    Accepted(PreparedCommand),
+    Rejected(CloudCommandResult),
+}
+
+enum PreparedOutcome {
+    Cached(CloudCommandResult),
+    Waiting(watch::Receiver<Option<CloudCommandResult>>),
+}
+
+struct PreparedCommand {
+    envelope: CloudCommandEnvelope,
+    outcome: PreparedOutcome,
+}
+
+async fn wait_for_prepared_command(prepared: PreparedCommand) -> CloudCommandResult {
+    let PreparedCommand { envelope, outcome } = prepared;
+    let mut result = match outcome {
+        PreparedOutcome::Cached(result) => result,
+        PreparedOutcome::Waiting(mut result_rx) => loop {
+            if let Some(result) = result_rx.borrow_and_update().clone() {
+                break result;
+            }
+            if result_rx.changed().await.is_err() {
+                break error_command_result(
                     &envelope,
-                    "Cloud command overload: too many in-flight dispatches",
+                    "Cloud command dispatch ended without a result",
                 );
             }
-            let (result_tx, result_rx) = watch::channel(None);
-            cache
-                .inflight
-                .insert(envelope.command_id.clone(), result_rx.clone());
-            let generation = cache.generation;
-            let cache = result_cache.clone();
-            let status = status.clone();
-            let dispatch_envelope = envelope.clone();
-            tokio::spawn(async move {
-                if cache.lock().await.generation != generation {
-                    let _ = result_tx.send(Some(error_command_result(
-                        &dispatch_envelope,
-                        "Cloud actor config changed before dispatch",
-                    )));
-                    return;
+        },
+    };
+    // A server may renew the lease while retrying the same immutable command.
+    // Route the stored outcome to the current lease without replaying effects.
+    result.lease_id = envelope.lease_id;
+    result
+}
+
+async fn prepare_cloud_command(
+    envelope: CloudCommandEnvelope,
+    default_request_timeout_ms: u64,
+    config: Option<&LocalCloudActorConfig>,
+    dispatch_tx: mpsc::UnboundedSender<CloudDispatchRequest>,
+    result_cache: Arc<Mutex<CommandResultCache>>,
+    status: Arc<Mutex<CloudActorRuntimeState>>,
+) -> CommandAdmission {
+    let fallback_envelope = envelope.clone();
+    match tokio::spawn(prepare_cloud_command_inner(
+        envelope,
+        default_request_timeout_ms,
+        config.cloned(),
+        dispatch_tx,
+        result_cache,
+        status,
+    ))
+    .await
+    {
+        Ok(admission) => admission,
+        Err(error) => CommandAdmission::Rejected(error_command_result(
+            &fallback_envelope,
+            format!("Cloud command admission task failed: {error}"),
+        )),
+    }
+}
+
+async fn prepare_cloud_command_inner(
+    envelope: CloudCommandEnvelope,
+    default_request_timeout_ms: u64,
+    config: Option<LocalCloudActorConfig>,
+    dispatch_tx: mpsc::UnboundedSender<CloudDispatchRequest>,
+    result_cache: Arc<Mutex<CommandResultCache>>,
+    status: Arc<Mutex<CloudActorRuntimeState>>,
+) -> CommandAdmission {
+    let scope = config.as_ref().map(receipt_scope);
+    let config = config.as_ref();
+    let fingerprint = command_fingerprint(&envelope);
+    let result_rx;
+    let generation;
+    {
+        let mut cache = result_cache.lock().await;
+        if let Some(scope) = scope.as_deref() {
+            if cache.active_scope.as_deref() != Some(scope) {
+                return CommandAdmission::Rejected(error_command_result(
+                    &envelope,
+                    "Cloud actor config changed before command acceptance",
+                ));
+            }
+        }
+        if let Some(config) = config {
+            if envelope.actor_id != config.actor_id {
+                return CommandAdmission::Rejected(error_command_result(
+                    &envelope,
+                    "Cloud command actor does not match the configured actor",
+                ));
+            }
+        }
+        if let Some(cached) = cache.get(&envelope.command_id) {
+            if cache
+                .fingerprints
+                .get(&envelope.command_id)
+                .is_some_and(|cached_fingerprint| cached_fingerprint != &fingerprint)
+            {
+                return CommandAdmission::Rejected(command_id_conflict_result(&envelope));
+            }
+            return CommandAdmission::Accepted(PreparedCommand {
+                envelope,
+                outcome: PreparedOutcome::Cached(cached),
+            });
+        }
+        if let Some(inflight) = cache.inflight.get(&envelope.command_id) {
+            if cache
+                .inflight_fingerprints
+                .get(&envelope.command_id)
+                .is_some_and(|active_fingerprint| active_fingerprint != &fingerprint)
+            {
+                return CommandAdmission::Rejected(command_id_conflict_result(&envelope));
+            }
+            return CommandAdmission::Accepted(PreparedCommand {
+                envelope,
+                outcome: PreparedOutcome::Waiting(inflight.clone()),
+            });
+        }
+        if cache.persistence_error.is_some() {
+            if !retry_receipt_journal(&mut cache).await {
+                let error = cache
+                    .persistence_error
+                    .clone()
+                    .unwrap_or_else(|| "receipt journal is unavailable".to_string());
+                status.lock().await.command_receipt_error = Some(error.clone());
+                return CommandAdmission::Rejected(error_command_result(
+                    &envelope,
+                    format!(
+                        "Cloud command receipt journal unavailable; command not dispatched: {error}"
+                    ),
+                ));
+            }
+            status.lock().await.command_receipt_error = None;
+        }
+
+        if let (Some(scope), Some(journal)) = (scope.as_deref(), cache.receipts.as_mut()) {
+            if let Some(receipt) = journal.find(scope, &envelope.command_id).cloned() {
+                if receipt.fingerprint != fingerprint {
+                    return CommandAdmission::Rejected(command_id_conflict_result(&envelope));
                 }
+                let result = match receipt.state {
+                    CommandReceiptState::Completed(result) => result,
+                    CommandReceiptState::Accepted => {
+                        let result = indeterminate_receipt_result(
+                            &receipt.identity,
+                            "A prior accepted command has no live dispatcher; its outcome is indeterminate and it was not replayed.",
+                        );
+                        if let Err(error) = journal
+                            .complete(scope, &envelope.command_id, result.clone())
+                            .await
+                        {
+                            let message = error.to_string();
+                            cache.persistence_error = Some(message.clone());
+                            cache.journal_retry_after =
+                                Some(Instant::now() + RECEIPT_REOPEN_BACKOFF);
+                            status.lock().await.command_receipt_error = Some(message);
+                            return CommandAdmission::Rejected(error_command_result(
+                                &envelope,
+                                "Cloud command receipt journal could not record an indeterminate outcome; command not dispatched",
+                            ));
+                        }
+                        result
+                    }
+                };
+                cache.insert(
+                    envelope.command_id.clone(),
+                    fingerprint.clone(),
+                    result.clone(),
+                );
+                return CommandAdmission::Accepted(PreparedCommand {
+                    envelope,
+                    outcome: PreparedOutcome::Cached(result),
+                });
+            }
+        }
+
+        if envelope.deadline_ms <= now_ms() {
+            return CommandAdmission::Rejected(expired_command_result(
+                &envelope,
+                "Cloud command expired before acceptance; command not dispatched",
+            ));
+        }
+        if cache.inflight.len() >= MAX_CACHED_COMMAND_RESULTS {
+            return CommandAdmission::Rejected(error_command_result(
+                &envelope,
+                "Cloud command overload: too many in-flight dispatches",
+            ));
+        }
+
+        if let (Some(scope), Some(journal)) = (scope.as_deref(), cache.receipts.as_mut()) {
+            journal.prune_expired_completed(now_ms());
+            if journal.entries.len() >= MAX_CACHED_COMMAND_RESULTS {
+                return CommandAdmission::Rejected(error_command_result(
+                    &envelope,
+                    "Cloud command receipt capacity reached; command not dispatched",
+                ));
+            }
+            let receipt = CommandReceipt {
+                scope: scope.to_string(),
+                command_id: envelope.command_id.clone(),
+                fingerprint: fingerprint.clone(),
+                deadline_ms: envelope.deadline_ms,
+                identity: receipt_identity(&envelope),
+                state: CommandReceiptState::Accepted,
+            };
+            if let Err(error) = journal.accept(receipt).await {
+                let message = error.to_string();
+                cache.persistence_error = Some(message.clone());
+                cache.journal_retry_after = Some(Instant::now() + RECEIPT_REOPEN_BACKOFF);
+                status.lock().await.command_receipt_error = Some(message);
+                return CommandAdmission::Rejected(error_command_result(
+                    &envelope,
+                    "Cloud command receipt journal could not durably accept command; command not dispatched",
+                ));
+            }
+        }
+
+        let (result_tx, receiver) = watch::channel(None);
+        result_rx = receiver.clone();
+        cache.inflight.insert(envelope.command_id.clone(), receiver);
+        cache
+            .inflight_fingerprints
+            .insert(envelope.command_id.clone(), fingerprint.clone());
+        generation = cache.generation;
+        let cache = result_cache.clone();
+        let status = status.clone();
+        let dispatch_envelope = envelope.clone();
+        let receipt_scope = scope.clone();
+        let dispatch_fingerprint = fingerprint.clone();
+        tokio::spawn(async move {
+            if cache.lock().await.generation == generation {
+                let mut guard = status.lock().await;
+                guard.inflight_command_id = Some(dispatch_envelope.command_id.clone());
+                guard.last_command_id = Some(dispatch_envelope.command_id.clone());
+            }
+            let config_changed = cache.lock().await.generation != generation;
+            let mut result = if config_changed {
+                error_command_result(
+                    &dispatch_envelope,
+                    "Cloud actor config changed before dispatch",
+                )
+            } else if dispatch_envelope.deadline_ms <= now_ms() {
+                expired_command_result(
+                    &dispatch_envelope,
+                    "Cloud command expired before browser dispatch; command not dispatched",
+                )
+            } else {
+                dispatch_command(
+                    dispatch_envelope.clone(),
+                    default_request_timeout_ms,
+                    dispatch_tx,
+                )
+                .await
+            };
+            {
+                let mut cache = cache.lock().await;
+                if let (Some(scope), Some(journal)) =
+                    (receipt_scope.as_deref(), cache.receipts.as_mut())
                 {
-                    let mut guard = status.lock().await;
-                    guard.inflight_command_id = Some(dispatch_envelope.command_id.clone());
-                    guard.last_command_id = Some(dispatch_envelope.command_id.clone());
+                    if let Err(error) = journal
+                        .complete(scope, &dispatch_envelope.command_id, result.clone())
+                        .await
+                    {
+                        let message = error.to_string();
+                        cache.persistence_error = Some(message.clone());
+                        cache.journal_retry_after = Some(Instant::now() + RECEIPT_REOPEN_BACKOFF);
+                        status.lock().await.command_receipt_error = Some(message);
+                        result = indeterminate_receipt_result(
+                            &receipt_identity(&dispatch_envelope),
+                            "Command ran but its result could not be durably recorded; its outcome is indeterminate and it will not be replayed.",
+                        );
+                    }
                 }
-                let config_changed = cache.lock().await.generation != generation;
-                if config_changed {
+                if cache.generation == generation {
+                    cache.inflight.remove(&dispatch_envelope.command_id);
+                    cache
+                        .inflight_fingerprints
+                        .remove(&dispatch_envelope.command_id);
+                    cache.insert(
+                        dispatch_envelope.command_id.clone(),
+                        dispatch_fingerprint,
+                        result.clone(),
+                    );
                     let mut guard = status.lock().await;
                     if guard.inflight_command_id.as_deref()
                         == Some(dispatch_envelope.command_id.as_str())
                     {
                         guard.inflight_command_id = None;
                     }
-                    let _ = result_tx.send(Some(error_command_result(
-                        &dispatch_envelope,
-                        "Cloud actor config changed before dispatch",
-                    )));
-                    return;
+                    guard.last_result_at_ms = Some(now_ms());
+                    guard.dedupe_cache_size = cache.len();
                 }
-                let result = dispatch_command(
-                    dispatch_envelope.clone(),
-                    default_request_timeout_ms,
-                    dispatch_tx,
-                )
-                .await;
-                {
-                    let mut cache = cache.lock().await;
-                    if cache.generation == generation {
-                        cache.inflight.remove(&dispatch_envelope.command_id);
-                        cache.insert(dispatch_envelope.command_id.clone(), result.clone());
-                        let mut guard = status.lock().await;
-                        if guard.inflight_command_id.as_deref()
-                            == Some(dispatch_envelope.command_id.as_str())
-                        {
-                            guard.inflight_command_id = None;
-                        }
-                        guard.last_result_at_ms = Some(now_ms());
-                        guard.dedupe_cache_size = cache.len();
-                    }
-                }
-                let _ = result_tx.send(Some(result));
-            });
-            result_rx
-        }
-    };
-    loop {
-        if let Some(result) = result_rx.borrow_and_update().clone() {
-            return result;
-        }
-        if result_rx.changed().await.is_err() {
-            return error_command_result(
-                &envelope,
-                "Cloud command dispatch ended without a result",
-            );
-        }
+            }
+            let _ = result_tx.send(Some(result));
+        });
     }
+
+    CommandAdmission::Accepted(PreparedCommand {
+        envelope,
+        outcome: PreparedOutcome::Waiting(result_rx),
+    })
 }
 
 async fn dispatch_command(
@@ -1012,6 +1831,16 @@ mod tests {
     use super::*;
     use rzn_contracts::browser::{CloudBrowserCommand, CloudCommandPayload};
 
+    fn receipt_path(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "rzn-cloud-receipts-{name}-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        fs::create_dir_all(&path).expect("create test receipt dir");
+        path.join(COMMAND_RECEIPT_FILE)
+    }
+
     fn sample_envelope(command_id: &str) -> CloudCommandEnvelope {
         CloudCommandEnvelope {
             version: CLOUD_CONTRACT.to_string(),
@@ -1082,6 +1911,662 @@ mod tests {
             connect_timeout_ms: Some(500),
             request_timeout_ms: Some(1_000),
         }
+    }
+
+    #[test]
+    fn fingerprint_allows_new_lease_but_ignores_stale_nested_session() {
+        let first = sample_envelope("same-command");
+        let mut redelivery = first.clone();
+        redelivery.lease_id = "lease-renewed".to_string();
+        redelivery
+            .payload
+            .command
+            .as_mut()
+            .unwrap()
+            .payload
+            .as_mut()
+            .unwrap()["session_id"] = json!("stale-nested-session");
+        assert_eq!(
+            command_fingerprint(&first),
+            command_fingerprint(&redelivery)
+        );
+    }
+
+    async fn activate_test_scope(
+        cache: &Arc<Mutex<CommandResultCache>>,
+        config: &LocalCloudActorConfig,
+    ) {
+        cache.lock().await.activate_scope(receipt_scope(config));
+    }
+
+    #[tokio::test]
+    async fn accepted_receipt_survives_restart_as_indeterminate_without_redispatch() {
+        let path = receipt_path("restart");
+        let config = sample_actor_config();
+        let envelope = sample_envelope("command-crashed");
+        let scope = receipt_scope(&config);
+        {
+            let mut journal = CommandReceiptJournal::open(path.clone()).unwrap();
+            journal
+                .accept(CommandReceipt {
+                    scope: scope.clone(),
+                    command_id: envelope.command_id.clone(),
+                    fingerprint: command_fingerprint(&envelope),
+                    deadline_ms: envelope.deadline_ms,
+                    identity: receipt_identity(&envelope),
+                    state: CommandReceiptState::Accepted,
+                })
+                .await
+                .unwrap();
+        }
+
+        let journal = CommandReceiptJournal::open(path.clone()).unwrap();
+        let Some(CommandReceipt {
+            state: CommandReceiptState::Completed(result),
+            ..
+        }) = journal.find(&scope, &envelope.command_id)
+        else {
+            panic!("restart must durably finish an accepted receipt as indeterminate");
+        };
+        assert_eq!(
+            result.result.as_ref().unwrap().error_code.as_deref(),
+            Some("COMMAND_INDETERMINATE")
+        );
+        assert!(result.error.as_deref().unwrap().contains("not replayed"));
+
+        let cache = Arc::new(Mutex::new(CommandResultCache {
+            receipts: Some(journal),
+            ..CommandResultCache::default()
+        }));
+        activate_test_scope(&cache, &config).await;
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel();
+        let admission = prepare_cloud_command(
+            envelope.clone(),
+            1_000,
+            Some(&config),
+            dispatch_tx,
+            cache,
+            Arc::new(Mutex::new(CloudActorRuntimeState::default())),
+        )
+        .await;
+        let CommandAdmission::Accepted(prepared) = admission else {
+            panic!("replayed receipt should return its stored outcome");
+        };
+        let replay = wait_for_prepared_command(prepared).await;
+        assert_eq!(
+            replay.result.as_ref().unwrap().error_code.as_deref(),
+            Some("COMMAND_INDETERMINATE")
+        );
+        assert!(
+            dispatch_rx.try_recv().is_err(),
+            "restart replay must not dispatch"
+        );
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn completed_receipt_rejects_mutated_payload_after_restart() {
+        let path = receipt_path("completed");
+        let config = sample_actor_config();
+        let envelope = sample_envelope("command-completed");
+        let expected = sample_result(&envelope);
+        let scope = receipt_scope(&config);
+        {
+            let mut journal = CommandReceiptJournal::open(path.clone()).unwrap();
+            journal
+                .accept(CommandReceipt {
+                    scope: scope.clone(),
+                    command_id: envelope.command_id.clone(),
+                    fingerprint: command_fingerprint(&envelope),
+                    deadline_ms: envelope.deadline_ms,
+                    identity: receipt_identity(&envelope),
+                    state: CommandReceiptState::Accepted,
+                })
+                .await
+                .unwrap();
+            journal
+                .complete(&scope, &envelope.command_id, expected.clone())
+                .await
+                .unwrap();
+        }
+        let journal = CommandReceiptJournal::open(path.clone()).unwrap();
+        let cache = Arc::new(Mutex::new(CommandResultCache {
+            receipts: Some(journal),
+            ..CommandResultCache::default()
+        }));
+        activate_test_scope(&cache, &config).await;
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel();
+        let mut replay_envelope = envelope.clone();
+        replay_envelope.lease_id = "lease-renewed".to_string();
+        let replay = prepare_cloud_command(
+            replay_envelope.clone(),
+            1_000,
+            Some(&config),
+            dispatch_tx.clone(),
+            cache.clone(),
+            Arc::new(Mutex::new(CloudActorRuntimeState::default())),
+        )
+        .await;
+        let CommandAdmission::Accepted(prepared) = replay else {
+            panic!("completed receipt should replay unchanged payload");
+        };
+        let replay_result = wait_for_prepared_command(prepared).await;
+        let mut expected_replay = expected.clone();
+        expected_replay.lease_id = replay_envelope.lease_id.clone();
+        assert_eq!(replay_result, expected_replay);
+        assert!(dispatch_rx.try_recv().is_err(), "replay must not dispatch");
+
+        replay_envelope = envelope.clone();
+        replay_envelope.payload.command.as_mut().unwrap().cmd = "close_tab".to_string();
+        let admission = prepare_cloud_command(
+            replay_envelope,
+            1_000,
+            Some(&config),
+            dispatch_tx,
+            cache,
+            Arc::new(Mutex::new(CloudActorRuntimeState::default())),
+        )
+        .await;
+        let CommandAdmission::Rejected(result) = admission else {
+            panic!("reused command id with different payload must be rejected");
+        };
+        assert_eq!(
+            result.result.unwrap().error_code.as_deref(),
+            Some("COMMAND_ID_CONFLICT")
+        );
+        assert!(
+            dispatch_rx.try_recv().is_err(),
+            "conflicting payload must not dispatch"
+        );
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn receipt_journal_lock_excludes_second_supervisor_and_recovers_after_release() {
+        let path = receipt_path("journal-lock");
+        let config = sample_actor_config();
+        let envelope = sample_envelope("command-lock-owner");
+        let scope = receipt_scope(&config);
+        let mut owner = CommandReceiptJournal::open(path.clone()).unwrap();
+        owner
+            .accept(CommandReceipt {
+                scope,
+                command_id: envelope.command_id.clone(),
+                fingerprint: command_fingerprint(&envelope),
+                deadline_ms: envelope.deadline_ms,
+                identity: receipt_identity(&envelope),
+                state: CommandReceiptState::Accepted,
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            CommandReceiptJournal::open(path.clone()).is_err(),
+            "a second supervisor must not open or rewrite the active journal"
+        );
+        let persisted: CommandReceiptFile =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(matches!(
+            persisted.entries[0].state,
+            CommandReceiptState::Accepted
+        ));
+
+        drop(owner);
+        let recovered = CommandReceiptJournal::open(path.clone()).unwrap();
+        let Some(CommandReceipt {
+            state: CommandReceiptState::Completed(result),
+            ..
+        }) = recovered.find(&receipt_scope(&config), &envelope.command_id)
+        else {
+            panic!("new owner must recover the accepted receipt as terminal");
+        };
+        assert_eq!(
+            result.result.as_ref().unwrap().error_code.as_deref(),
+            Some("COMMAND_INDETERMINATE")
+        );
+        drop(recovered);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn canceled_receipt_writer_keeps_journal_lock_until_write_finishes() {
+        let path = receipt_path("journal-lock-cancel");
+        let config = sample_actor_config();
+        let envelope = sample_envelope("command-lock-cancel");
+        let scope = receipt_scope(&config);
+        let started = Arc::new(AtomicBool::new(false));
+        let mut journal = CommandReceiptJournal::open(path.clone()).unwrap();
+        journal.persist_test_hook = Some((
+            started.clone(),
+            Arc::new(AtomicU64::new(0)),
+            Duration::from_millis(250),
+        ));
+        let writer = tokio::spawn(async move {
+            journal
+                .accept(CommandReceipt {
+                    scope,
+                    command_id: envelope.command_id.clone(),
+                    fingerprint: command_fingerprint(&envelope),
+                    deadline_ms: envelope.deadline_ms,
+                    identity: receipt_identity(&envelope),
+                    state: CommandReceiptState::Accepted,
+                })
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !started.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("blocking receipt writer started");
+        writer.abort();
+        assert!(writer
+            .await
+            .err()
+            .expect("journal owner task was cancelled")
+            .is_cancelled());
+
+        assert!(
+            CommandReceiptJournal::open(path.clone()).is_err(),
+            "detached blocking write must retain the exclusive lock"
+        );
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        let recovered = CommandReceiptJournal::open(path.clone()).unwrap();
+        let Some(CommandReceipt {
+            state: CommandReceiptState::Completed(result),
+            ..
+        }) = recovered.find(&receipt_scope(&config), "command-lock-cancel")
+        else {
+            panic!("completed blocking write must be recovered without replay");
+        };
+        assert_eq!(
+            result.result.as_ref().unwrap().error_code.as_deref(),
+            Some("COMMAND_INDETERMINATE")
+        );
+        drop(recovered);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn receipt_write_failure_fails_closed_before_dispatch() {
+        let root = receipt_path("write-failure")
+            .parent()
+            .unwrap()
+            .to_path_buf();
+        let blocker = root.join("not-a-directory");
+        fs::write(&blocker, b"file").unwrap();
+        let config = sample_actor_config();
+        let envelope = sample_envelope("command-no-write");
+        let cache = Arc::new(Mutex::new(CommandResultCache {
+            receipts: Some(CommandReceiptJournal {
+                path: blocker.join(COMMAND_RECEIPT_FILE),
+                entries: Vec::new(),
+                lock: Arc::new(CommandReceiptJournalLock {
+                    _file: fs::File::open(&blocker).unwrap(),
+                }),
+                persist_test_hook: None,
+            }),
+            ..CommandResultCache::default()
+        }));
+        activate_test_scope(&cache, &config).await;
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel();
+        let admission = prepare_cloud_command(
+            envelope,
+            1_000,
+            Some(&config),
+            dispatch_tx,
+            cache,
+            Arc::new(Mutex::new(CloudActorRuntimeState::default())),
+        )
+        .await;
+        let CommandAdmission::Rejected(result) = admission else {
+            panic!("failed receipt write must reject the command");
+        };
+        assert!(result.error.as_deref().unwrap().contains("durably accept"));
+        assert!(dispatch_rx.try_recv().is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn receipt_scope_partitions_actor_workspace_and_server() {
+        let original = sample_actor_config();
+        let mut changed = original.clone();
+        changed.actor_id.push_str("-other");
+        assert_ne!(receipt_scope(&original), receipt_scope(&changed));
+        changed = original.clone();
+        changed.workspace_id.push_str("-other");
+        assert_ne!(receipt_scope(&original), receipt_scope(&changed));
+        changed = original.clone();
+        changed.server_url = "https://other.example.test".to_string();
+        assert_ne!(receipt_scope(&original), receipt_scope(&changed));
+
+        let path = receipt_path("namespace-change");
+        let cache = Arc::new(Mutex::new(CommandResultCache {
+            receipts: Some(CommandReceiptJournal::open(path.clone()).unwrap()),
+            ..CommandResultCache::default()
+        }));
+        activate_test_scope(&cache, &original).await;
+        let status = Arc::new(Mutex::new(CloudActorRuntimeState::default()));
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel();
+        let envelope = sample_envelope("same-command-id");
+        let first = prepare_cloud_command(
+            envelope.clone(),
+            1_000,
+            Some(&original),
+            dispatch_tx.clone(),
+            cache.clone(),
+            status.clone(),
+        )
+        .await;
+        let CommandAdmission::Accepted(first) = first else {
+            panic!("first config should accept command");
+        };
+        let request = dispatch_rx.recv().await.unwrap();
+        request.respond_to.send(sample_result(&envelope)).unwrap();
+        assert!(wait_for_prepared_command(first).await.success);
+
+        cache.lock().await.clear();
+        let mut next_config = original.clone();
+        next_config.actor_id = "actor-2".to_string();
+        next_config.workspace_id = "workspace-2".to_string();
+        activate_test_scope(&cache, &next_config).await;
+        let mut next_envelope = envelope.clone();
+        next_envelope.actor_id = next_config.actor_id.clone();
+        let second = prepare_cloud_command(
+            next_envelope.clone(),
+            1_000,
+            Some(&next_config),
+            dispatch_tx,
+            cache,
+            status,
+        )
+        .await;
+        let CommandAdmission::Accepted(second) = second else {
+            panic!("new namespace should accept the reused command id");
+        };
+        let request = dispatch_rx.recv().await.unwrap();
+        request
+            .respond_to
+            .send(sample_result(&next_envelope))
+            .unwrap();
+        assert!(wait_for_prepared_command(second).await.success);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn expired_command_is_rejected_without_a_receipt_or_dispatch() {
+        let path = receipt_path("expired");
+        let config = sample_actor_config();
+        let mut envelope = sample_envelope("command-expired");
+        envelope.deadline_ms = now_ms().saturating_sub(1);
+        let cache = Arc::new(Mutex::new(CommandResultCache {
+            receipts: Some(CommandReceiptJournal::open(path.clone()).unwrap()),
+            ..CommandResultCache::default()
+        }));
+        activate_test_scope(&cache, &config).await;
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel();
+        let admission = prepare_cloud_command(
+            envelope,
+            1_000,
+            Some(&config),
+            dispatch_tx,
+            cache.clone(),
+            Arc::new(Mutex::new(CloudActorRuntimeState::default())),
+        )
+        .await;
+        let CommandAdmission::Rejected(result) = admission else {
+            panic!("expired command must be rejected");
+        };
+        assert_eq!(
+            result.result.unwrap().error_code.as_deref(),
+            Some("COMMAND_EXPIRED")
+        );
+        assert!(cache
+            .lock()
+            .await
+            .receipts
+            .as_ref()
+            .unwrap()
+            .entries
+            .is_empty());
+        assert!(dispatch_rx.try_recv().is_err());
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn canceled_receipt_admission_keeps_later_snapshot_and_dispatch() {
+        let path = receipt_path("cancel-admission");
+        let config = sample_actor_config();
+        let started = Arc::new(AtomicBool::new(false));
+        let writes = Arc::new(AtomicU64::new(0));
+        let mut journal = CommandReceiptJournal::open(path.clone()).unwrap();
+        journal.persist_test_hook = Some((started.clone(), writes, Duration::from_millis(200)));
+        let cache = Arc::new(Mutex::new(CommandResultCache {
+            receipts: Some(journal),
+            ..CommandResultCache::default()
+        }));
+        activate_test_scope(&cache, &config).await;
+        let status = Arc::new(Mutex::new(CloudActorRuntimeState::default()));
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel();
+        let first_envelope = sample_envelope("command-first");
+        let first = tokio::spawn({
+            let envelope = first_envelope.clone();
+            let config = config.clone();
+            let dispatch_tx = dispatch_tx.clone();
+            let cache = cache.clone();
+            let status = status.clone();
+            async move {
+                prepare_cloud_command(envelope, 1_000, Some(&config), dispatch_tx, cache, status)
+                    .await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !started.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("first atomic receipt write started");
+        first.abort();
+        assert!(first
+            .await
+            .err()
+            .expect("outer admission task was cancelled")
+            .is_cancelled());
+
+        let second_envelope = sample_envelope("command-second");
+        let second = tokio::spawn({
+            let envelope = second_envelope.clone();
+            let config = config.clone();
+            let cache = cache.clone();
+            async move {
+                prepare_cloud_command(envelope, 1_000, Some(&config), dispatch_tx, cache, status)
+                    .await
+            }
+        });
+        let first_request = tokio::time::timeout(Duration::from_secs(2), dispatch_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first_request.envelope.command_id, first_envelope.command_id);
+        first_request
+            .respond_to
+            .send(sample_result(&first_envelope))
+            .unwrap();
+        let second_request = tokio::time::timeout(Duration::from_secs(2), dispatch_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            second_request.envelope.command_id,
+            second_envelope.command_id
+        );
+        second_request
+            .respond_to
+            .send(sample_result(&second_envelope))
+            .unwrap();
+        let CommandAdmission::Accepted(prepared) = second.await.unwrap() else {
+            panic!("second command should be admitted after first write finishes");
+        };
+        assert!(wait_for_prepared_command(prepared).await.success);
+
+        // Inspect the persisted snapshot while the live cache still owns the journal lock.
+        let journal: CommandReceiptFile =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert_eq!(journal.entries.len(), 2);
+        assert!(journal
+            .entries
+            .iter()
+            .all(|receipt| { matches!(receipt.state, CommandReceiptState::Completed(_)) }));
+        assert!(dispatch_rx.try_recv().is_err());
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn receipt_journal_reopens_after_storage_recovers_and_backoff_expires() {
+        let path = receipt_path("reopen");
+        persist_receipt_file(
+            &path,
+            &CommandReceiptFile {
+                version: COMMAND_RECEIPT_VERSION,
+                entries: Vec::new(),
+            },
+        )
+        .unwrap();
+        let config = sample_actor_config();
+        let cache = Arc::new(Mutex::new(CommandResultCache {
+            receipts: Some(CommandReceiptJournal::open(path.clone()).unwrap()),
+            receipt_path: Some(path.clone()),
+            persistence_error: Some("transient disk error".to_string()),
+            journal_retry_after: Some(Instant::now() - Duration::from_secs(1)),
+            ..CommandResultCache::default()
+        }));
+        activate_test_scope(&cache, &config).await;
+        let status = Arc::new(Mutex::new(CloudActorRuntimeState {
+            command_receipt_error: Some("transient disk error".to_string()),
+            ..CloudActorRuntimeState::default()
+        }));
+        let envelope = sample_envelope("command-after-recovery");
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel();
+        let admission = prepare_cloud_command(
+            envelope.clone(),
+            1_000,
+            Some(&config),
+            dispatch_tx,
+            cache.clone(),
+            status.clone(),
+        )
+        .await;
+        let CommandAdmission::Accepted(prepared) = admission else {
+            panic!("recovered journal should admit a new command");
+        };
+        let request = dispatch_rx.recv().await.unwrap();
+        request.respond_to.send(sample_result(&envelope)).unwrap();
+        assert!(wait_for_prepared_command(prepared).await.success);
+        assert!(status.lock().await.command_receipt_error.is_none());
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn cloud_actor_connection_gate_waits_for_journal_owner() {
+        let path = receipt_path("connection-gate");
+        let owner = CommandReceiptJournal::open(path.clone()).unwrap();
+        let error = CommandReceiptJournal::open(path.clone())
+            .err()
+            .expect("competing cloud actor must not acquire the journal")
+            .to_string();
+        let cache = Arc::new(Mutex::new(CommandResultCache {
+            receipt_path: Some(path.clone()),
+            persistence_error: Some(error.clone()),
+            journal_retry_after: Some(Instant::now() - Duration::from_secs(1)),
+            ..CommandResultCache::default()
+        }));
+        let status = Arc::new(Mutex::new(CloudActorRuntimeState {
+            command_receipt_error: Some(error.clone()),
+            ..CloudActorRuntimeState::default()
+        }));
+        let (_control_tx, mut control_rx) = mpsc::unbounded_channel();
+
+        assert!(matches!(
+            wait_for_receipt_journal_or_control(&cache, &status, &mut control_rx).await,
+            ReceiptJournalGateOutcome::RetryLater
+        ));
+        assert_eq!(
+            cache.lock().await.persistence_error.as_deref(),
+            Some(error.as_str())
+        );
+        assert_eq!(
+            status.lock().await.command_receipt_error.as_deref(),
+            Some(error.as_str())
+        );
+
+        drop(owner);
+        cache.lock().await.journal_retry_after = Some(Instant::now() - Duration::from_secs(1));
+        assert!(matches!(
+            wait_for_receipt_journal_or_control(&cache, &status, &mut control_rx).await,
+            ReceiptJournalGateOutcome::Ready
+        ));
+        assert!(cache.lock().await.persistence_error.is_none());
+        assert!(status.lock().await.command_receipt_error.is_none());
+        drop(cache);
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[tokio::test]
+    async fn corrupt_receipt_journal_stays_visible_and_fails_closed() {
+        let path = receipt_path("corrupt");
+        let corrupt = b"{broken";
+        fs::write(&path, corrupt).unwrap();
+        let error = CommandReceiptJournal::open(path.clone())
+            .err()
+            .expect("corrupt journal must not open")
+            .to_string();
+        let config = sample_actor_config();
+        let cache = Arc::new(Mutex::new(CommandResultCache {
+            persistence_error: Some(error.clone()),
+            receipt_path: Some(path.clone()),
+            journal_retry_after: Some(Instant::now() + RECEIPT_REOPEN_BACKOFF),
+            ..CommandResultCache::default()
+        }));
+        activate_test_scope(&cache, &config).await;
+        let status = Arc::new(Mutex::new(CloudActorRuntimeState {
+            command_receipt_error: Some(error.clone()),
+            ..CloudActorRuntimeState::default()
+        }));
+        let (dispatch_tx, mut dispatch_rx) = mpsc::unbounded_channel();
+        let admission = prepare_cloud_command(
+            sample_envelope("command-corrupt-journal"),
+            1_000,
+            Some(&config),
+            dispatch_tx,
+            cache.clone(),
+            status.clone(),
+        )
+        .await;
+        let CommandAdmission::Rejected(result) = admission else {
+            panic!("corrupt journal must reject command acceptance");
+        };
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("journal unavailable"));
+        assert_eq!(
+            cache.lock().await.persistence_error.as_deref(),
+            Some(error.as_str())
+        );
+        assert_eq!(
+            status.lock().await.command_receipt_error.as_deref(),
+            Some(error.as_str())
+        );
+        assert!(dispatch_rx.try_recv().is_err());
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            corrupt,
+            "do not erase corrupt receipts"
+        );
+        let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]
@@ -1315,6 +2800,22 @@ mod tests {
                 .is_err(),
             "duplicate command should not reach extension dispatch"
         );
+
+        let mut conflict = envelope;
+        conflict.payload.command.as_mut().unwrap().cmd = "close_tab".to_string();
+        let conflict = dispatch_command_with_dedupe(
+            conflict,
+            1_000,
+            dispatch_tx,
+            cache,
+            Arc::new(Mutex::new(CloudActorRuntimeState::default())),
+        )
+        .await;
+        assert_eq!(
+            conflict.result.unwrap().error_code.as_deref(),
+            Some("COMMAND_ID_CONFLICT")
+        );
+        assert!(dispatch_rx.try_recv().is_err());
     }
 
     #[tokio::test]
@@ -1374,7 +2875,11 @@ mod tests {
         .await
         .expect("command registered before dispatch");
         first.abort();
-        assert!(first.await.unwrap_err().is_cancelled());
+        assert!(first
+            .await
+            .err()
+            .expect("outer admission task was cancelled")
+            .is_cancelled());
         drop(status_guard);
 
         let replay = tokio::spawn(dispatch_command_with_dedupe(

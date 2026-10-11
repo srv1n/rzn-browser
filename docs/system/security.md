@@ -3,6 +3,9 @@ title: "Security and privacy"
 subject: security
 keywords: [privacy, secrets, browser, side-effects]
 part_of: overview
+kind: doc
+lifecycle: current
+code_conformance: unverified
 read_when: "You handle browser data or workflow side effects."
 skip_when: "You need normal build steps. Open developer-guide."
 ---
@@ -15,9 +18,27 @@ The extension can read and change pages that the signed-in browser can access.
 Treat a workflow as trusted code for that profile. The extension has native
 messaging, tabs, scripting, downloads, debugger, and all-page permissions.
 
-Keep cookies, tokens, credentials, page content, snapshots, and private logs out
-of Git. Use ignored secret files. Read [`SECURITY.md`](../../SECURITY.md) for
-private vulnerability reports.
+Keep cookies, tokens, credentials, page content, snapshots, and private logs
+out of Git. Use ignored secret files. Read
+[`SECURITY.md`](../../SECURITY.md) for private vulnerability reports.
+
+## Trust zones
+
+```mermaid
+flowchart TB
+  subgraph trusted["Trusted"]
+    sup["supervisor + native host"]
+    ext["extension (all permissions)"]
+  end
+  subgraph untrusted["Not trusted"]
+    page["page JavaScript"]
+    llm["LLM endpoint"]
+  end
+  sup --> ext
+  ext --> pb["page bridge<br/>(main world)"]
+  pb -.->|visible to| page
+  ext -.->|bounded page context| llm
+```
 
 ## Side effects
 
@@ -25,9 +46,9 @@ Review the manifest and every action before you run a workflow that posts,
 sends, uploads, votes, follows, or deletes. Use a draft or review step before
 an irreversible action.
 
-Side-effect declarations are policy checks, not a sandbox. `execute_javascript`
-can run arbitrary page code. `same_origin_request` can use a mutating method.
-Do not trust a read-only label without reading the step.
+Side-effect declarations are policy checks, not a sandbox.
+`execute_javascript` can run arbitrary page code. `same_origin_request` can use
+a mutating method. Do not trust a read-only label without reading the step.
 
 Approval behavior can change with environment settings such as
 `RZN_POLICY_AUTO_APPROVE` and `RZN_APPROVAL_MODE=auto_continue`. Treat those

@@ -83,6 +83,14 @@ fi
 if [ "${RZN_TEST_SUPERVISOR_STATUS_FAIL:-0}" = "1" ] && [ "${1:-}" = "supervisor" ] && [ "${2:-}" = "status" ]; then
   exit 1
 fi
+if [ "${1:-}" = "supervisor" ] && [ "${2:-}" = "service" ] && [ "${3:-}" = "status" ]; then
+  if [ -n "${RZN_TEST_SERVICE_STATUS_JSON:-}" ]; then
+    printf '%s\n' "$RZN_TEST_SERVICE_STATUS_JSON"
+  else
+    printf '%s\n' '{"supported":true,"installed":true}'
+  fi
+  exit 0
+fi
 if [ "${1:-}" = "workflow" ] && [ "${2:-}" = "pull" ]; then
   exit 0
 fi
@@ -206,6 +214,7 @@ CODESIGN
       RZN_BUNDLE_INSTALL_ROOT="$install_root" \
       RZN_BUNDLE_GLOBAL_BIN_DIR="$global_bin" \
       RZN_BUNDLE_CHROME_HOST_DIR="$host_dir" \
+      RZN_TEST_BROWSER_LOG="$install_root/browser.log" \
       HOME="$(dirname "$install_root")/home" \
       PATH="$fakebin:$PATH" \
       bash "$bundle_root/install-macos.sh" >/dev/null
@@ -215,6 +224,7 @@ CODESIGN
       RZN_BUNDLE_INSTALL_ROOT="$install_root" \
       RZN_BUNDLE_GLOBAL_BIN_DIR="$global_bin" \
       RZN_BUNDLE_CHROME_HOST_DIR="$host_dir" \
+      RZN_TEST_BROWSER_LOG="$install_root/browser.log" \
       HOME="$(dirname "$install_root")/home" \
       PATH="$fakebin:$PATH" \
       bash "$bundle_root/install-macos.sh" >/dev/null
@@ -280,8 +290,15 @@ write_fake_runtime_bundle "$bundle_root" "0.1.2"
 run_runtime_install "$bundle_root" "$tmp_dir/runtime-verified" "$tmp_dir/global-verified" "$verified_xattr_log" "$verified_codesign_log" 1
 grep -q '"version":"0.1.2"' "$tmp_dir/runtime-verified/extension/dist/chrome/manifest.json" || fail "runtime extension did not update in place"
 [[ ! -e "$tmp_dir/runtime-verified/extension/dist/chrome/stale.js" ]] || fail "runtime extension update retained stale files"
-grep -q '^supervisor shutdown$' "$tmp_dir/runtime-verified/browser.log" || fail "runtime upgrade did not stop the old supervisor"
-grep -q '^supervisor ensure-ready$' "$tmp_dir/runtime-verified/browser.log" || fail "runtime upgrade did not restart the installed supervisor"
+grep -Fq "supervisor service install --app-base $tmp_dir/runtime-verified --restart --json" "$tmp_dir/runtime-verified/browser.log" || fail "runtime upgrade did not install/restart the managed runtime owner"
+
+legacy_upgrade_root="$tmp_dir/runtime-legacy-upgrade"
+run_runtime_install "$bundle_root" "$legacy_upgrade_root" "$tmp_dir/global-legacy-upgrade" "$tmp_dir/legacy-xattr.log" "$tmp_dir/legacy-codesign.log" 1
+printf '\n# legacy-runtime-marker\n' >> "$legacy_upgrade_root/bin/rzn-browser"
+if RZN_TEST_SERVICE_STATUS_JSON='{"ok":true,"supported":true,"installed":false}' run_runtime_install "$bundle_root" "$legacy_upgrade_root" "$tmp_dir/global-legacy-upgrade" "$tmp_dir/legacy-xattr.log" "$tmp_dir/legacy-codesign.log" 1 2>/dev/null; then
+  fail "runtime upgrade replaced binaries while an unmanaged legacy supervisor was running"
+fi
+grep -q '^# legacy-runtime-marker$' "$legacy_upgrade_root/bin/rzn-browser" || fail "legacy runtime preflight replaced the old binary"
 
 blocked_root="$tmp_dir/runtime-blocked"
 run_runtime_install "$bundle_root" "$blocked_root" "$tmp_dir/global-blocked" "$tmp_dir/blocked-xattr.log" "$tmp_dir/blocked-codesign.log" 1
@@ -317,5 +334,11 @@ bundle_verified_codesign_log="$tmp_dir/bundle-verified-codesign.log"
 run_bundle_macos_install "$bundle_macos_root" "$tmp_dir/bundle-runtime-verified" "$tmp_dir/bundle-global-verified" "$tmp_dir/bundle-host-verified" "$bundle_verified_xattr_log" "$bundle_verified_codesign_log" 1
 [[ -s "$bundle_verified_xattr_log" ]] || fail "bundle xattr was not called after checksum verification"
 grep -q -- "--force" "$bundle_verified_codesign_log" || fail "bundle codesign repair was not called after checksum verification"
+grep -Fq "supervisor service install --app-base $tmp_dir/bundle-runtime-verified --restart --json" "$tmp_dir/bundle-runtime-verified/browser.log" || fail "macOS bundle did not install the managed runtime owner"
+printf '\n# legacy-bundle-runtime-marker\n' >> "$tmp_dir/bundle-runtime-verified/bin/rzn-browser"
+if RZN_TEST_SERVICE_STATUS_JSON='{"ok":true,"supported":true,"installed":false}' run_bundle_macos_install "$bundle_macos_root" "$tmp_dir/bundle-runtime-verified" "$tmp_dir/bundle-global-verified" "$tmp_dir/bundle-host-verified" "$bundle_verified_xattr_log" "$bundle_verified_codesign_log" 1 2>/dev/null; then
+  fail "macOS bundle replaced binaries while an unmanaged legacy supervisor was running"
+fi
+grep -q '^# legacy-bundle-runtime-marker$' "$tmp_dir/bundle-runtime-verified/bin/rzn-browser" || fail "macOS bundle legacy preflight replaced the old binary"
 
 echo "[OK] install verification tests passed"

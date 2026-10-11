@@ -65,3 +65,50 @@ jobs:
           name: extension-test-results
           path: extension/test-results
           if-no-files-found: ignore
+
+  macos-native-chaos:
+    name: macOS native-host chaos
+    if: github.event_name != 'push'
+    runs-on: macos-latest
+    timeout-minutes: 35
+    env:
+      RUSTC_WRAPPER: ""
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build runtime binaries for native-host chaos smoke
+        run: make build-rust
+
+      - name: Exercise the macOS runtime owner's crash and hang recovery
+        run: make test-supervisor-owner
+
+      - name: Build production Chromium extension
+        env:
+          RZN_PAGE_TEST_BRIDGE_ENABLED: '0'
+        run: make build-ext-chromium
+
+      - name: Install Playwright Chromium and deps
+        run: make test-ext-e2e-install
+
+      - name: Run Chromium native-host chaos smoke
+        env:
+          RZN_E2E_NATIVE_HOST_SMOKE: '1'
+          RZN_E2E_CHAOS_BROWSER: chromium
+        run: make test-ext-e2e-run ARGS='tests/e2e/native_host_smoke.spec.ts --grep chaos:'
+
+      - name: Upload test results (if failed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-extension-test-results
+          path: extension/test-results
+          if-no-files-found: ignore

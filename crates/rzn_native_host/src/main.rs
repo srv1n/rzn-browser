@@ -57,6 +57,13 @@ const ENDPOINT_POLL_BASE_MS: u64 = 250;
 const ENDPOINT_POLL_CAP_MS: u64 = 5_000;
 const SUPERVISOR_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const SUPERVISOR_RPC_DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
+const SUPERVISOR_LOCK_FILENAME: &str = "rzn-supervisor.lock";
+const SUPERVISOR_OWNER_LOCK_FILENAME: &str = "rzn-supervisor-owner.lock";
+const SUPERVISOR_OWNER_TRANSITION_LOCK_FILENAME: &str = "rzn-supervisor-owner-transition.lock";
+const SUPERVISOR_OWNER_MARKER_FILENAME: &str = "supervisor-owner.json";
+const SUPERVISOR_OWNER_STOP_FILENAME: &str = "rzn-supervisor-owner.stop";
+const SUPERVISOR_LAUNCH_GATED_ENV: &str = "RZN_SUPERVISOR_LAUNCH_GATED";
+const SUPERVISOR_LAUNCHD_LABEL: &str = "com.rzn.browser.runtime-owner";
 const UPSTREAM_WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_INFLIGHT_EXTENSION_CALLS: usize = 128;
 const OVERSIZE_ARTIFACT_MAX_AGE: Duration = Duration::from_secs(24 * 60 * 60);
@@ -370,7 +377,135 @@ fn supervisor_launch_from_executable(native_host_executable: &Path) -> Option<Su
     })
 }
 
-fn spawn_local_supervisor() -> Result<()> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalSupervisorSpawn {
+    Started,
+    AlreadyOwned,
+    RequestedManagedOwner,
+}
+
+#[derive(Debug)]
+struct OwnerTransitionLock(Option<std::fs::File>);
+
+impl Drop for OwnerTransitionLock {
+    fn drop(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let Some(file) = self.0.as_ref() {
+            use std::os::fd::AsRawFd;
+            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        }
+    }
+}
+
+async fn acquire_owner_transition_lock(app_base: &Path) -> Result<OwnerTransitionLock> {
+    let run_dir = app_base.join("run");
+    std::fs::create_dir_all(&run_dir)?;
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::OpenOptionsExt;
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open(run_dir.join(SUPERVISOR_OWNER_TRANSITION_LOCK_FILENAME))?;
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+                return Ok(OwnerTransitionLock(Some(file)));
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                if Instant::now() >= deadline {
+                    return Err(anyhow!(
+                        "timed out waiting for supervisor owner transition lock"
+                    ));
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            } else if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(error).context("acquire supervisor owner transition lock");
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(OwnerTransitionLock(None))
+    }
+}
+
+fn lock_is_held(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let Ok(file) = OpenOptions::new().read(true).write(true).open(path) else {
+            return false;
+        };
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return true;
+        }
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        false
+    }
+    #[cfg(not(unix))]
+    {
+        path.exists()
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ManagedOwnerMarker {
+    schema: u32,
+    kind: String,
+    label: String,
+}
+
+fn managed_owner_label(app_base: &Path) -> Result<Option<String>> {
+    let marker_path = app_base.join("run").join(SUPERVISOR_OWNER_MARKER_FILENAME);
+    let bytes = match std::fs::read(&marker_path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("read managed supervisor marker"),
+    };
+    let marker: ManagedOwnerMarker =
+        serde_json::from_slice(&bytes).context("parse managed supervisor marker")?;
+    if marker.schema != 1
+        || marker.kind != "launchd-agent"
+        || marker.label != SUPERVISOR_LAUNCHD_LABEL
+    {
+        return Err(anyhow!("unsupported managed supervisor marker"));
+    }
+    Ok(Some(marker.label))
+}
+
+fn kickstart_managed_owner(label: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let target = format!("gui/{}/{}", unsafe { libc::getuid() }, label);
+        let output = std::process::Command::new("/bin/launchctl")
+            .arg("kickstart")
+            .arg(target)
+            .output()
+            .context("request managed supervisor LaunchAgent start")?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "managed supervisor LaunchAgent start failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = label;
+        Err(anyhow!(
+            "managed supervisor owner is supported only on macOS"
+        ))
+    }
+}
+
+async fn spawn_local_supervisor() -> Result<LocalSupervisorSpawn> {
     let native_host_executable =
         std::env::current_exe().context("resolve native host executable")?;
     let launch = supervisor_launch_from_executable(&native_host_executable)
@@ -382,9 +517,22 @@ fn spawn_local_supervisor() -> Result<()> {
         ));
     }
 
+    let _transition = acquire_owner_transition_lock(&launch.app_base).await?;
+    let run_dir = launch.app_base.join("run");
+    std::fs::create_dir_all(&run_dir)?;
+    if let Some(label) = managed_owner_label(&launch.app_base)? {
+        let _ = std::fs::remove_file(run_dir.join(SUPERVISOR_OWNER_STOP_FILENAME));
+        kickstart_managed_owner(&label)?;
+        return Ok(LocalSupervisorSpawn::RequestedManagedOwner);
+    }
+    if lock_is_held(&run_dir.join(SUPERVISOR_OWNER_LOCK_FILENAME))
+        || lock_is_held(&run_dir.join(SUPERVISOR_LOCK_FILENAME))
+    {
+        return Ok(LocalSupervisorSpawn::AlreadyOwned);
+    }
+
     let mut command = std::process::Command::new(&launch.executable);
-    let log_dir = launch.app_base.join("run");
-    std::fs::create_dir_all(&log_dir)?;
+    let log_dir = run_dir;
     let log = OpenOptions::new()
         .create(true)
         .append(true)
@@ -394,6 +542,7 @@ fn spawn_local_supervisor() -> Result<()> {
         .arg("serve")
         .arg("--app-base")
         .arg(&launch.app_base)
+        .env(SUPERVISOR_LAUNCH_GATED_ENV, "1")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(log);
@@ -409,7 +558,17 @@ fn spawn_local_supervisor() -> Result<()> {
         Ok(status) => info!("sibling supervisor exited: {:?}", status),
         Err(error) => warn!("failed to reap sibling supervisor: {}", error),
     });
-    Ok(())
+    let lock_path = launch.app_base.join("run").join(SUPERVISOR_LOCK_FILENAME);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < deadline {
+        if lock_is_held(&lock_path) {
+            return Ok(LocalSupervisorSpawn::Started);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    Err(anyhow!(
+        "spawned supervisor did not claim its process lock within 30 seconds"
+    ))
 }
 
 /// Whether a failed connect attempt to a supervisor endpoint indicates a
@@ -736,8 +895,7 @@ fn replace_lone_surrogate_escapes(json: &[u8]) -> Vec<u8> {
             continue;
         }
         let len = match unit_at(i) {
-            Some(0xD800..=0xDBFF)
-                if matches!(unit_at(i + 6), Some(0xDC00..=0xDFFF)) => 12,
+            Some(0xD800..=0xDBFF) if matches!(unit_at(i + 6), Some(0xDC00..=0xDFFF)) => 12,
             Some(0xD800..=0xDFFF) => {
                 out.extend_from_slice(b"\\ufffd");
                 i += 6;
@@ -1587,8 +1745,14 @@ async fn endpoint_manager_loop(
                 .is_none_or(|attempt| attempt.elapsed() >= Duration::from_millis(spawn_cooldown_ms))
         {
             last_supervisor_spawn_attempt = Some(Instant::now());
-            match spawn_local_supervisor() {
-                Ok(()) => info!("Started sibling browser supervisor"),
+            match spawn_local_supervisor().await {
+                Ok(LocalSupervisorSpawn::Started) => info!("Started sibling browser supervisor"),
+                Ok(LocalSupervisorSpawn::AlreadyOwned) => {
+                    info!("Supervisor startup is already owned; waiting for its endpoint")
+                }
+                Ok(LocalSupervisorSpawn::RequestedManagedOwner) => {
+                    info!("Requested the managed LaunchAgent to start the supervisor")
+                }
                 Err(error) => warn!("Failed to start sibling browser supervisor: {}", error),
             }
             spawn_cooldown_ms =
@@ -1838,6 +2002,7 @@ async fn main() -> Result<()> {
     tokio::select! {
         result = &mut native_reader_task => {
             let reason = result.unwrap_or_else(|error| format!("native reader task ended: {}", error));
+            info!(reason = reason, "Shutting down native host");
             let drained = drain_native_pending_with_disconnect_error(&native_pending, &reason).await;
             if drained > 0 {
                 tokio::time::sleep(Duration::from_millis(NATIVE_READER_EXIT_UPSTREAM_FLUSH_GRACE_MS)).await;

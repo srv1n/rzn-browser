@@ -248,6 +248,8 @@ async function withSupervisor<T>(appBase: string, env: NodeJS.ProcessEnv, run: (
 const CHAOS_TEST_TIMEOUT_MS = 150_000;
 const CHAOS_FAIL_BOUND_MS = 15_000;
 const CHAOS_RECOVERY_BOUND_MS = 30_000;
+const NATIVE_REGISTRATION_RETRY_DELAY_MS = 60_000;
+const NATIVE_REGISTRATION_RECOVERY_BOUND_MS = 120_000;
 const LONG_STEP = { type: 'wait_for_timeout', timeout_ms: 25_000 };
 const NAMED_TRANSPORT_ERROR = /\b(NATIVE_HOST_DISCONNECTED|EXTENSION_BRIDGE_TIMEOUT|SUPERVISOR_UNREACHABLE)\b/;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -317,6 +319,40 @@ async function waitForNativeHostPid(appBase: string, env: NodeJS.ProcessEnv, not
     await sleep(500);
   }
   throw new Error(`Timed out waiting for a ${chaosBrowser} native host pid other than ${notPid}. Last: ${String(last)}`);
+}
+
+type NativeHostManifestSnapshot = { path: string; contents: Buffer; mode: number };
+
+async function snapshotNativeHostRegistration(manifestPaths: string[], fixtureRoot: string): Promise<NativeHostManifestSnapshot[]> {
+  const rootPrefix = `${path.resolve(fixtureRoot)}${path.sep}`;
+  return await Promise.all(manifestPaths.map(async (manifestPath) => {
+    const resolvedPath = path.resolve(manifestPath);
+    if (!resolvedPath.startsWith(rootPrefix)) {
+      throw new Error(`refusing to modify native-host manifest outside fixture root: ${resolvedPath}`);
+    }
+    const [contents, stats] = await Promise.all([
+      fs.promises.readFile(resolvedPath),
+      fs.promises.stat(resolvedPath),
+    ]);
+    return { path: resolvedPath, contents, mode: stats.mode & 0o777 };
+  }));
+}
+
+async function removeNativeHostRegistration(snapshots: NativeHostManifestSnapshot[]) {
+  await Promise.all(snapshots.map(({ path: manifestPath }) => fs.promises.unlink(manifestPath)));
+}
+
+async function restoreNativeHostRegistration(snapshots: NativeHostManifestSnapshot[]) {
+  for (const snapshot of snapshots) {
+    const stagedPath = `${snapshot.path}.restore-${process.pid}`;
+    try {
+      await fs.promises.writeFile(stagedPath, snapshot.contents, { mode: snapshot.mode });
+      await fs.promises.rm(snapshot.path, { force: true });
+      await fs.promises.rename(stagedPath, snapshot.path);
+    } finally {
+      await fs.promises.rm(stagedPath, { force: true });
+    }
+  }
 }
 
 async function waitForAutoRespawn(appBase: string, env: NodeJS.ProcessEnv, oldPid: number): Promise<number> {
@@ -550,6 +586,58 @@ async function bootChaosLane(prefix: string, autoRespawn = false) {
     if (cleanupErrors.length) throw new AggregateError(cleanupErrors, `Chaos cleanup ${prefix} failed`);
   };
 
+  const attachBrowserDiagnostics = (browserContext: BrowserContext) => {
+    browserContext.on('console', (message) => {
+      browserConsole.push(`${message.type()}: ${message.text()}`);
+      if (browserConsole.length > 50) browserConsole.shift();
+    });
+    browserContext.on('pageerror', (error) => {
+      browserConsole.push(`pageerror: ${String(error)}`);
+      if (browserConsole.length > 50) browserConsole.shift();
+    });
+  };
+
+  const captureBrowserPid = async (browserContext: BrowserContext) => {
+    const browser = browserContext.browser();
+    if (!browser) throw new Error('persistent context did not expose its browser for owned-PID capture');
+    const browserSession = await browser.newBrowserCDPSession();
+    try {
+      const info = await browserSession.send('SystemInfo.getProcessInfo');
+      const pid = info.processInfo?.find((entry: any) => entry.type === 'browser')?.id;
+      if (typeof pid !== 'number') throw new Error('browser CDP did not report the owned browser PID');
+      browserPid = pid;
+    } finally {
+      await browserSession.detach();
+    }
+    attachBrowserDiagnostics(browserContext);
+  };
+
+  const closeBrowser = async () => {
+    if (!context) throw new Error('fixture browser is already closed');
+    const closingContext = context;
+    const closingPid = browserPid;
+    await closingContext.close();
+    if (typeof closingPid === 'number') {
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        if (!(await commandForPid(closingPid)).includes(`--user-data-dir=${liveProfile}`)) break;
+        await sleep(100);
+      }
+      if ((await commandForPid(closingPid)).includes(`--user-data-dir=${liveProfile}`)) {
+        throw new Error(`fixture browser PID ${closingPid} stayed alive after close`);
+      }
+    }
+    context = undefined;
+    browserPid = undefined;
+  };
+
+  const relaunchBrowser = async () => {
+    if (context) throw new Error('fixture browser must be closed before relaunching its profile');
+    context = await launchWithExtension(target, liveProfile, env);
+    await captureBrowserPid(context);
+    return context;
+  };
+
   try {
     let nativeHostPath = binaryPath('rzn-native-host');
     await fs.promises.mkdir(path.join(appBase, 'bin'), { recursive: true });
@@ -588,25 +676,8 @@ async function bootChaosLane(prefix: string, autoRespawn = false) {
     }
     if (!supervisorReady) throw new Error(`copied fixture supervisor did not become ready: ${fixtureSupervisorPath}`);
     context = await launchWithExtension(target, liveProfile, env);
-    const browser = context.browser();
-    if (!browser) throw new Error('persistent context did not expose its browser for owned-PID capture');
-    const browserSession = await browser.newBrowserCDPSession();
-    try {
-      const info = await browserSession.send('SystemInfo.getProcessInfo');
-      browserPid = info.processInfo?.find((entry: any) => entry.type === 'browser')?.id;
-    } finally {
-      await browserSession.detach();
-    }
-    if (typeof browserPid !== 'number') throw new Error('browser CDP did not report the owned browser PID');
+    await captureBrowserPid(context);
     if (autoRespawn) console.log(`Chaos ${prefix}: owned browser PID ${browserPid}`);
-    context.on('console', (message) => {
-      browserConsole.push(`${message.type()}: ${message.text()}`);
-      if (browserConsole.length > 50) browserConsole.shift();
-    });
-    context.on('pageerror', (error) => {
-      browserConsole.push(`pageerror: ${String(error)}`);
-      if (browserConsole.length > 50) browserConsole.shift();
-    });
     const expectedId = new URL(origin).host;
     const workerReadyBy = Date.now() + 10_000;
     while (Date.now() < workerReadyBy) {
@@ -641,10 +712,15 @@ async function bootChaosLane(prefix: string, autoRespawn = false) {
     server = await startChaosServer();
     await waitForTargets(appBase, env, [target.browser]);
     return {
+      root,
       appBase,
       env,
       context,
       server,
+      manifests,
+      nativeHostPids: () => ownedPids(fixtureHostPath),
+      closeBrowser,
+      relaunchBrowser,
       dumpDoctor: async () => {
         try { console.log(await doctorOutput(target, origin, appBase, env)); }
         catch (cause) { console.error(`Chaos doctor failed: ${String(cause)}`); }
@@ -837,6 +913,135 @@ test.describe('native-host browser smoke', () => {
       await lane.dumpDoctor();
       throw error;
     } finally {
+      await lane.cleanup();
+    }
+  });
+
+  test('chaos: closing and relaunching the browser reconnects the same profile without manual wake', async () => {
+    test.setTimeout(CHAOS_TEST_TIMEOUT_MS);
+    const lane = await bootChaosLane('browser-relaunch-chaos');
+    try {
+      const before = await chaosTargetMetadata(lane.appBase, lane.env);
+      const oldWorkerBootId = before?.extension_worker_boot_id;
+      const oldHostPid = await waitForNativeHostPid(lane.appBase, lane.env);
+      expect(typeof oldWorkerBootId, 'initial extension worker boot id must be reported').toBe('string');
+
+      const receiptPath = path.join(lane.appBase, 'secure', 'cloud_command_receipts.json');
+      const previousReceipt = fs.existsSync(receiptPath)
+        ? { contents: await fs.promises.readFile(receiptPath), mode: (await fs.promises.stat(receiptPath)).mode & 0o777 }
+        : undefined;
+      const acceptedReceipt = Buffer.from(JSON.stringify({
+        version: 1,
+        entries: [{
+          scope: 'singleton-startup-fixture',
+          command_id: 'fixture-command',
+          fingerprint: 'fixture-fingerprint-v1',
+          deadline_ms: Date.now() + 60_000,
+          identity: { actor_id: 'fixture-actor', run_id: 'fixture-run', session_id: 'fixture-session',
+            command_id: 'fixture-command', lease_id: 'fixture-lease', trace_id: null },
+          state: { state: 'accepted' },
+        }],
+      }));
+      await fs.promises.mkdir(path.dirname(receiptPath), { recursive: true, mode: 0o700 });
+      await fs.promises.writeFile(receiptPath, acceptedReceipt, { mode: 0o600 });
+      try {
+        const fixtureSupervisorPath = path.join(lane.appBase, 'bin', path.basename(binaryPath('rzn-browser')));
+        let secondServe: { exitCode: number | null; stdout: string; stderr: string };
+        try {
+          const { stdout, stderr } = await execFileAsync(
+            fixtureSupervisorPath,
+            ['supervisor', 'serve', '--app-base', lane.appBase],
+            { cwd: repoRoot, env: lane.env, timeout: 5_000 }
+          );
+          secondServe = { exitCode: 0, stdout, stderr };
+        } catch (error: any) {
+          secondServe = { exitCode: error?.code ?? null, stdout: String(error?.stdout ?? ''), stderr: String(error?.stderr ?? '') };
+        }
+        expect(secondServe.exitCode, 'competing supervisor must exit nonzero before timeout').toBe(1);
+        expect(`${secondServe.stdout}\n${secondServe.stderr}`).toMatch(/Supervisor already running or starting/i);
+        const receiptAfterLosingStart = await fs.promises.readFile(receiptPath);
+        expect(receiptAfterLosingStart.equals(acceptedReceipt), 'losing supervisor must leave accepted receipts byte-identical').toBe(true);
+      } finally {
+        if (previousReceipt) {
+          await fs.promises.writeFile(receiptPath, previousReceipt.contents, { mode: previousReceipt.mode });
+        } else {
+          await fs.promises.rm(receiptPath, { force: true });
+        }
+      }
+
+      // Closing the whole browser exercises native messaging teardown and extension startup,
+      // not only a service-worker stop inside a still-running browser.
+      await lane.closeBrowser();
+      await lane.relaunchBrowser();
+      await waitForTargets(lane.appBase, lane.env, [chaosBrowser]);
+      const newHostPid = await waitForNativeHostPid(lane.appBase, lane.env, oldHostPid);
+      expect(newHostPid).not.toBe(oldHostPid);
+
+      const after = await chaosTargetMetadata(lane.appBase, lane.env);
+      expect(typeof after?.extension_worker_boot_id, 'relaunch must report an extension worker boot id').toBe('string');
+      expect(after?.extension_worker_boot_id, 'relaunch must start a new extension worker').not.toBe(oldWorkerBootId);
+      const next = await runOnce(lane.appBase, lane.env, `${lane.server.base}/idle`, { type: 'get_current_url' });
+      expect(stepSucceeded(next.json), `next run after browser relaunch failed: ${next.raw}`).toBe(true);
+    } catch (error) {
+      await lane.dumpDoctor();
+      throw error;
+    } finally {
+      await lane.cleanup();
+    }
+  });
+
+  test('chaos: restoring a removed native-host registration reconnects on browser timers', async () => {
+    test.setTimeout(300_000);
+    const lane = await bootChaosLane('native-registration-chaos');
+    let snapshots: NativeHostManifestSnapshot[] = [];
+    let registrationRemoved = false;
+    try {
+      const oldHostPid = await waitForNativeHostPid(lane.appBase, lane.env);
+
+      // Both OS-level and Chromium-profile manifests belong to this fixture. Removing every
+      // registration prevents a second lookup path from making this a false-positive recovery.
+      snapshots = await snapshotNativeHostRegistration(lane.manifests, lane.root);
+      expect(snapshots.length).toBeGreaterThan(0);
+      registrationRemoved = true;
+      await expectNamedFailureAfter(lane.appBase, lane.env, lane.server.base, async () => {
+        await removeNativeHostRegistration(snapshots);
+        process.kill(oldHostPid, 'SIGKILL');
+      });
+
+      await expect.poll(() => lane.nativeHostPids(), {
+        timeout: 15_000,
+      }).toEqual([]);
+      expect(snapshots.every(({ path: manifestPath }) => !fs.existsSync(manifestPath))).toBe(true);
+
+      // Let the production retry interval fire once while registration is still missing. The
+      // restored manifest must be found by a later timer, not by an immediate in-flight retry.
+      await sleep(NATIVE_REGISTRATION_RETRY_DELAY_MS + 5_000);
+      await expect.poll(() => lane.nativeHostPids(), { timeout: 5_000 }).toEqual([]);
+
+      // Restoring the real native-messaging registration is the only intervention. Do not send
+      // RZN_WAKE_NATIVE or call heal; the extension's own retry timer must notice and reconnect.
+      await restoreNativeHostRegistration(snapshots);
+      registrationRemoved = false;
+      const replacementPid = await waitForNativeHostPid(
+        lane.appBase,
+        lane.env,
+        oldHostPid,
+        NATIVE_REGISTRATION_RECOVERY_BOUND_MS
+      );
+      expect(replacementPid).not.toBe(oldHostPid);
+      await waitForTargets(lane.appBase, lane.env, [chaosBrowser]);
+
+      const next = await runOnce(lane.appBase, lane.env, `${lane.server.base}/idle`, { type: 'get_current_url' });
+      expect(stepSucceeded(next.json), `next run after registration restore failed: ${next.raw}`).toBe(true);
+    } catch (error) {
+      if (registrationRemoved) {
+        await restoreNativeHostRegistration(snapshots);
+        registrationRemoved = false;
+      }
+      await lane.dumpDoctor();
+      throw error;
+    } finally {
+      if (registrationRemoved) await restoreNativeHostRegistration(snapshots);
       await lane.cleanup();
     }
   });

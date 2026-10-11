@@ -126,6 +126,16 @@ prepare_supervisor_upgrade() {
   [ -x "$old_cli" ] || return 0
 
   if "$old_cli" supervisor status --json >/dev/null 2>&1; then
+    if [ "$(uname -s)" = "Darwin" ]; then
+      service_status=$("$old_cli" supervisor service status --app-base "$INSTALL_ROOT" --json 2>/dev/null || true)
+      if printf '%s\n' "$service_status" | grep -Eq '"supported"[[:space:]]*:[[:space:]]*true' \
+        && printf '%s\n' "$service_status" | grep -Eq '"installed"[[:space:]]*:[[:space:]]*true'; then
+        return 0
+      fi
+      echo "[ERROR] A legacy supervisor is running without the managed launchd owner; no runtime files were replaced." >&2
+      echo "        Let active workflows finish, run: \"$old_cli\" supervisor shutdown, then rerun the installer." >&2
+      exit 1
+    fi
     PREVIOUS_SUPERVISOR_CLI=$(mktemp "$BIN_DIR/.rzn-browser.previous.XXXXXX")
     cp -p "$old_cli" "$PREVIOUS_SUPERVISOR_CLI"
     SUPERVISOR_WAS_RUNNING=1
@@ -295,7 +305,10 @@ cat > "$MANIFEST_PATH" <<EOF
 }
 EOF
 
-if [ "$SUPERVISOR_WAS_RUNNING" = "1" ]; then
+if [ "$(uname -s)" = "Darwin" ]; then
+  echo "[INFO] Installing the per-user launchd runtime owner"
+  "$BIN_DIR/rzn-browser" supervisor service install --app-base "$INSTALL_ROOT" --restart --json
+elif [ "$SUPERVISOR_WAS_RUNNING" = "1" ]; then
   echo "[INFO] Restarting the supervisor with the installed binary"
   if ! "$BIN_DIR/rzn-browser" supervisor ensure-ready >/dev/null 2>&1; then
     echo "[WARN] Supervisor restarted, but the browser bridge is not ready yet." >&2

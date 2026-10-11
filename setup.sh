@@ -126,6 +126,35 @@ install_file_atomic() {
   mv -f "$tmp" "$dest"
 }
 
+prepare_managed_runtime_upgrade() {
+  local runtime_root="$1"
+  local old_cli="$runtime_root/bin/rzn-browser"
+  [[ -x "$old_cli" ]] || return 0
+
+  if "$old_cli" supervisor status --app-base "$runtime_root" --json >/dev/null 2>&1; then
+    local service_status
+    service_status="$("$old_cli" supervisor service status --app-base "$runtime_root" --json 2>/dev/null || true)"
+    if grep -Eq '"supported"[[:space:]]*:[[:space:]]*true' <<<"$service_status" \
+      && grep -Eq '"installed"[[:space:]]*:[[:space:]]*true' <<<"$service_status"; then
+      return 0
+    fi
+    echo "[ERROR] A legacy supervisor is running without the managed launchd owner; no runtime files were replaced." >&2
+    echo "        Let active workflows finish, run: \"$old_cli\" supervisor shutdown, then rerun setup." >&2
+    exit 1
+  fi
+
+  local lock_path="$runtime_root/run/rzn-supervisor.lock"
+  if [[ -f "$lock_path" ]]; then
+    local lock_pid
+    lock_pid="$(sed -n 's/.*"pid":\([0-9][0-9]*\).*/\1/p' "$lock_path")"
+    if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+      echo "[ERROR] A running supervisor could not authenticate with the installed CLI (pid $lock_pid); no runtime files were replaced." >&2
+      echo "        Stop it cleanly after confirming no workflow is active, then retry setup." >&2
+      exit 1
+    fi
+  fi
+}
+
 if [[ "$PROFILE" != "debug" && "$PROFILE" != "release" ]]; then
   echo "[ERROR] Invalid RZN_SETUP_PROFILE=$PROFILE (expected debug|release)"
   exit 1
@@ -239,9 +268,12 @@ NATIVE_HOST_PATH="$NATIVE_HOST_BUILT_PATH"
 CLI_PATH="$CLI_BUILT_PATH"
 RUNTIME_ROOT_DIR=""
 if [ -n "$NATIVE_HOST_INSTALL_DIR" ]; then
+  RUNTIME_ROOT_DIR="$(dirname "$NATIVE_HOST_INSTALL_DIR")"
+  if [[ "$OSTYPE" == "darwin"* && "$PROFILE" == "release" ]]; then
+    prepare_managed_runtime_upgrade "$RUNTIME_ROOT_DIR"
+  fi
   echo "Installing native host binary to: $NATIVE_HOST_INSTALL_DIR"
   mkdir -p "$NATIVE_HOST_INSTALL_DIR"
-  RUNTIME_ROOT_DIR="$(dirname "$NATIVE_HOST_INSTALL_DIR")"
   NATIVE_HOST_PATH="$NATIVE_HOST_INSTALL_DIR/$(basename "$NATIVE_HOST_BUILT_PATH")"
   install_file_atomic "$NATIVE_HOST_BUILT_PATH" "$NATIVE_HOST_PATH"
   if [[ "$OSTYPE" == "darwin"* && "$PROFILE" == "debug" ]]; then
@@ -272,6 +304,11 @@ if [[ -n "$RUNTIME_ROOT_DIR" ]]; then
 
   echo "Installing bundled workflows and examples into: $BUILTIN_WORKFLOWS_DIR"
   RZN_RUNTIME_DIR="$RUNTIME_ROOT_DIR" "$CLI_PATH" workflow pull --repo-root "$(pwd)"
+
+  if [[ "$OSTYPE" == "darwin"* && "$PROFILE" == "release" ]]; then
+    echo "Installing the per-user launchd runtime owner"
+    "$CLI_PATH" supervisor service install --app-base "$RUNTIME_ROOT_DIR" --restart --json
+  fi
 fi
 
 GLOBAL_BIN_TARGET_DIR=""

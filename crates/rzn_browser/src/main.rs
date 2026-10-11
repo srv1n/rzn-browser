@@ -21,6 +21,7 @@ mod supervisor;
 mod supervisor_cloud;
 mod supervisor_control;
 mod supervisor_fleet;
+mod supervisor_service;
 mod workflow_cache;
 mod workflow_catalog;
 mod workflow_failure_report;
@@ -289,6 +290,13 @@ enum SupervisorCommands {
     /// Run the local browser supervisor until interrupted
     Serve(SupervisorCommonArgs),
 
+    /// Own and recover the supervisor as a foreground managed service
+    Watch(SupervisorCommonArgs),
+
+    /// Install, remove, or inspect the managed local runtime owner
+    #[command(subcommand)]
+    Service(SupervisorServiceCommands),
+
     /// Print supervisor runtime status
     Status(SupervisorCommonArgs),
 
@@ -301,6 +309,28 @@ enum SupervisorCommands {
 
     /// Call a supervisor method with JSON params
     Call(SupervisorCallArgs),
+}
+
+#[derive(Subcommand, Debug)]
+enum SupervisorServiceCommands {
+    /// Install and start the per-user macOS LaunchAgent
+    Install(SupervisorServiceInstallArgs),
+
+    /// Stop and remove the per-user macOS LaunchAgent
+    Uninstall(SupervisorCommonArgs),
+
+    /// Inspect the per-user macOS LaunchAgent
+    Status(SupervisorCommonArgs),
+}
+
+#[derive(Args, Debug)]
+struct SupervisorServiceInstallArgs {
+    #[command(flatten)]
+    common: SupervisorCommonArgs,
+
+    /// Restart an already installed owner after an atomic runtime upgrade
+    #[arg(long)]
+    restart: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -2481,6 +2511,39 @@ async fn handle_supervisor_commands(cmd: SupervisorCommands) -> anyhow::Result<(
             }
             supervisor::serve(config).await?;
         }
+        SupervisorCommands::Watch(args) => {
+            let config = supervisor_config_from_common(&args);
+            if args.json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&json!({
+                        "ok": true,
+                        "owner_pid": std::process::id(),
+                        "app_base": supervisor::SupervisorPaths::for_config(&config).app_base
+                    }))?
+                );
+            } else {
+                println!(
+                    "[SUPERVISOR] managed owner started (pid {})",
+                    std::process::id()
+                );
+            }
+            supervisor::watch_managed(config).await?;
+        }
+        SupervisorCommands::Service(service) => {
+            let (args, operation, restart) = match service {
+                SupervisorServiceCommands::Install(args) => (args.common, "install", args.restart),
+                SupervisorServiceCommands::Uninstall(args) => (args, "uninstall", false),
+                SupervisorServiceCommands::Status(args) => (args, "status", false),
+            };
+            let config = supervisor_config_from_common(&args);
+            let result = match operation {
+                "install" => supervisor_service::install(config, restart).await?,
+                "uninstall" => supervisor_service::uninstall(config).await?,
+                _ => supervisor_service::status(config).await?,
+            };
+            render_supervisor_json_result(&result, args.json)?;
+        }
         SupervisorCommands::Status(args) => {
             let result = supervisor::call(
                 supervisor_config_from_common(&args),
@@ -2502,18 +2565,9 @@ async fn handle_supervisor_commands(cmd: SupervisorCommands) -> anyhow::Result<(
             }
         }
         SupervisorCommands::Shutdown(args) => {
-            if args.force {
-                let result =
-                    supervisor::force_shutdown(supervisor_config_from_common(&args.common)).await?;
-                render_supervisor_json_result(&result, args.common.json)?;
-                return Ok(());
-            }
-            let result = supervisor::call(
-                supervisor_config_from_common(&args.common),
-                "runtime.shutdown",
-                json!({}),
-            )
-            .await?;
+            let result =
+                supervisor::shutdown(supervisor_config_from_common(&args.common), args.force)
+                    .await?;
             render_supervisor_json_result(&result, args.common.json)?;
         }
         SupervisorCommands::Call(args) => {
@@ -3042,14 +3096,14 @@ async fn handle_heal(args: HealArgs) -> anyhow::Result<()> {
     // 2. Supervisor. A wedged supervisor holds its lock but never answers; kill and respawn it.
     if args.restart {
         log("restarting supervisor (--restart)");
-        supervisor::force_shutdown(config.clone()).await?;
+        supervisor::restart(config.clone()).await?;
         actions.push("restarted supervisor (--restart)".to_string());
     }
     if let Err(err) = supervisor::ensure_running(config.clone()).await {
         log(&format!(
             "supervisor is not answering ({err}); force-restarting"
         ));
-        supervisor::force_shutdown(config.clone()).await?;
+        supervisor::restart(config.clone()).await?;
         supervisor::ensure_running(config.clone()).await?;
         actions.push("force-restarted unresponsive supervisor".to_string());
     }
@@ -3061,7 +3115,7 @@ async fn handle_heal(args: HealArgs) -> anyhow::Result<()> {
             log(&format!(
                 "bridge heal failed ({err}); restarting supervisor and retrying"
             ));
-            supervisor::force_shutdown(config.clone()).await?;
+            supervisor::restart(config.clone()).await?;
             supervisor::ensure_running(config.clone()).await?;
             actions.push("force-restarted supervisor after failed bridge heal".to_string());
             supervisor::call(config.clone(), "runtime.heal", json!({})).await?

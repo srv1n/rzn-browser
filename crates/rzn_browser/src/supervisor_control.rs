@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
+pub const SUPERVISOR_SHUTTING_DOWN_RUN_ID: &str = "supervisor-shutting-down";
+
 #[derive(Debug, Clone, Serialize)]
 pub struct RunningRun {
     pub run_id: String,
@@ -45,6 +47,7 @@ pub struct SupervisorControl {
     path: PathBuf,
     paused: AtomicBool,
     cancel: AtomicBool,
+    quiesced: AtomicBool,
     running: Mutex<Option<RunningRun>>,
     snapshot_cache: Mutex<(Vec<crate::run_store::RunRecord>, usize)>,
     pub logs: LogBuffer,
@@ -60,6 +63,7 @@ impl SupervisorControl {
             path,
             paused: AtomicBool::new(paused),
             cancel: AtomicBool::new(false),
+            quiesced: AtomicBool::new(false),
             running: Mutex::new(None),
             snapshot_cache: Mutex::new((Vec::new(), 0)),
             logs: LogBuffer::new(2000),
@@ -123,6 +127,17 @@ impl SupervisorControl {
         owner_pid: Option<u32>,
     ) -> std::result::Result<(), RunningRun> {
         let mut running = self.running.lock().unwrap();
+        if self.quiesced.load(Ordering::SeqCst) {
+            return Err(RunningRun {
+                run_id: SUPERVISOR_SHUTTING_DOWN_RUN_ID.into(),
+                workflow_id: "supervisor-shutdown".into(),
+                origin: "maintenance".into(),
+                step_index: 0,
+                step_total: 0,
+                owner_pid: None,
+                started: Instant::now(),
+            });
+        }
         if let Some(current) = running.as_ref() {
             if !current.owner_pid.is_some_and(|pid| !owner_is_live(pid)) {
                 return Err(current.clone());
@@ -143,6 +158,18 @@ impl SupervisorControl {
             owner_pid,
             started: Instant::now(),
         });
+        Ok(())
+    }
+    /// Atomically stop new run claims if no workflow currently owns the slot.
+    pub fn quiesce_if_idle(&self) -> std::result::Result<(), RunningRun> {
+        let mut running = self.running.lock().unwrap();
+        if let Some(current) = running.as_ref() {
+            if !current.owner_pid.is_some_and(|pid| !owner_is_live(pid)) {
+                return Err(current.clone());
+            }
+            *running = None;
+        }
+        self.quiesced.store(true, Ordering::SeqCst);
         Ok(())
     }
     pub fn begin_run(&self, run_id: String, workflow_id: String, origin: String, total: usize) {
@@ -330,6 +357,25 @@ mod tests {
         assert!(control
             .try_begin_run("run-2".into(), "wf".into(), "local_cli".into(), 1)
             .is_ok());
+    }
+
+    #[test]
+    fn idle_shutdown_quiesces_run_claims_atomically() {
+        let control = SupervisorControl::open(&temp());
+        control
+            .try_begin_run("active-run".into(), "wf".into(), "cli".into(), 1)
+            .unwrap();
+        assert_eq!(control.quiesce_if_idle().unwrap_err().run_id, "active-run");
+
+        control.end_run();
+        control.quiesce_if_idle().unwrap();
+        assert_eq!(
+            control
+                .try_begin_run("late-run".into(), "wf".into(), "cli".into(), 1)
+                .unwrap_err()
+                .run_id,
+            SUPERVISOR_SHUTTING_DOWN_RUN_ID
+        );
     }
 
     #[cfg(unix)]

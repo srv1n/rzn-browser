@@ -146,6 +146,11 @@ test-setup-ext-sync:
 	@echo "🧪 Verifying runtime extension install sync..."
 	bash scripts/test_install_extension_runtime.sh
 
+# Real launchd crash/hang recovery in a temporary profile; requires a clean macOS login.
+.PHONY: test-supervisor-owner
+test-supervisor-owner:
+	python3 scripts/test_supervisor_owner_macos.py
+
 test-release-extension:
 	@if [ -z "$(VERSION)" ]; then \
 		echo "Usage: make test-release-extension VERSION=1.2.3"; \

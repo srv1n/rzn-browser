@@ -1483,9 +1483,18 @@ fn persist_screenshot(dir: &Path, step_id: &str, response: &Value) -> Result<Val
     std::fs::create_dir_all(dir).with_context(|| format!("create {}", dir.display()))?;
     let safe_step: String = step_id
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
-    let path = dir.join(format!("{safe_step}.{}", if format == "jpeg" { "jpg" } else { format }));
+    let path = dir.join(format!(
+        "{safe_step}.{}",
+        if format == "jpeg" { "jpg" } else { format }
+    ));
     std::fs::write(&path, &bytes).with_context(|| format!("write {}", path.display()))?;
     Ok(json!({
         "type": "screenshot",

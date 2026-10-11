@@ -3,6 +3,9 @@ title: "Installation and operations"
 subject: installation-operations
 keywords: [install, runtime, doctor, paths]
 part_of: developer-guide
+kind: doc
+lifecycle: current
+code_conformance: unverified
 read_when: "You install the product or diagnose local wiring."
 skip_when: "You only need a source build. Open developer-guide."
 ---
@@ -24,7 +27,8 @@ and its PowerShell counterpart.
 
 ## Runtime roots
 
-Default roots are selected by [`runtime_paths.rs`](../../crates/rzn_core/src/runtime_paths.rs):
+Default roots are selected by
+[`runtime_paths.rs`](../../crates/rzn_core/src/runtime_paths.rs):
 
 | System | Default root |
 | --- | --- |
@@ -32,8 +36,8 @@ Default roots are selected by [`runtime_paths.rs`](../../crates/rzn_core/src/run
 | Linux | `~/.local/share/RZN` |
 | Windows packaged install | `%LOCALAPPDATA%\\RZN` |
 
-The root can contain binaries, extension files, workflows, private tokens,
-and saved runs. User workflows are separate from built-in workflows.
+The root can contain binaries, extension files, workflows, private tokens, and
+saved runs. User workflows are separate from built-in workflows.
 
 ## Native host
 
@@ -52,12 +56,14 @@ manifest by hand unless you are debugging the installer.
 
 Use this order:
 
-1. Find the exact extension directory loaded by the browser.
-2. Run `native-host doctor` with `--extension-dir` for that directory.
-3. Run `supervisor status`.
-4. Run `browser targets`.
-5. Run `supervisor ensure-ready`.
-6. Run one read-only workflow.
+```mermaid
+flowchart TD
+  ext["1. Find the exact extension dir<br/>loaded by the browser"] --> doctor["2. native-host doctor<br/>--extension-dir"]
+  doctor --> status["3. supervisor status"]
+  status --> targets["4. browser targets"]
+  targets --> ready["5. supervisor ensure-ready"]
+  ready --> smoke["6. one read-only workflow"]
+```
 
 ```sh
 rzn-browser native-host doctor --browser chrome --json \

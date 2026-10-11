@@ -1,6 +1,7 @@
 # RZN Browser
 
 [![CI](https://github.com/srv1n/rzn-browser/actions/workflows/ci.yml/badge.svg)](https://github.com/srv1n/rzn-browser/actions/workflows/ci.yml)
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 
 **Zero-token browser automation.**
 
@@ -97,11 +98,22 @@ Meta Ad Library and Google Ads Transparency emit a shared ad manifest shape, so 
 
 ## How It Works
 
-- First path: use the extension and page actions.
-- Second path: use CDP for the cases the first path cannot handle.
+```mermaid
+flowchart LR
+  agent["Agent or human<br/>(CLI / MCP)"] --> cli["rzn-browser"]
+  cli --> sup["supervisor<br/>(local daemon)"]
+  sup --> nh["rzn-native-host"]
+  nh -->|native messaging| ext["Chrome extension"]
+  ext --> cs["content script"]
+  ext -.->|fallback| cdp["CDP"]
+  cs --> page["web page in your<br/>signed-in profile"]
+  cdp --> page
+```
 
-- Use fixed workflows when the task is known.
-- Use `llm-auto` when the task is still fuzzy.
+- One local chain: CLI -> supervisor -> native host -> extension -> page.
+- First path: extension and page actions. Second path: CDP for the cases the first path cannot handle.
+- Use fixed workflows when the task is known. Use `llm-auto` when the task is still fuzzy.
+- `fleet` and `cloud` are optional coordination layers for machines you own; every run still ends in this local chain.
 
 ## Get Started in 10 Seconds
 
@@ -436,6 +448,12 @@ If you are building from source, you need:
 - Google Chrome for loading the unpacked extension
 
 For deeper setup and architecture details, see [developer guide](docs/system/developer-guide.md), [architecture](docs/system/architecture.md), and the [documentation index](docs/system/INDEX.md).
+
+## Documentation
+
+- [System overview](docs/system/00-overview.md) — the map of the product.
+- [docs/system/](docs/system/INDEX.md) — the current rules: architecture, CLI, bridge, contracts, workflows, testing, release, security.
+- [workflows/README.md](workflows/README.md) — the workflow catalog contract.
 
 ## License
 

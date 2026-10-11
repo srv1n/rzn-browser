@@ -870,6 +870,13 @@ impl FleetJobExecutor for InProcessJobExecutor {
             "fleet".into(),
             workflow.steps.len(),
         ) {
+            if current.run_id == crate::supervisor_control::SUPERVISOR_SHUTTING_DOWN_RUN_ID {
+                return failed_result(
+                    &run_id,
+                    &assignment.workflow_id,
+                    "supervisor is shutting down for maintenance".to_string(),
+                );
+            }
             return failed_result(
                 &run_id,
                 &assignment.workflow_id,

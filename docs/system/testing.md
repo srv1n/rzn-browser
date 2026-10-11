@@ -3,6 +3,9 @@ title: "Testing"
 subject: testing
 keywords: [tests, validation, smoke, proof]
 part_of: overview
+kind: doc
+lifecycle: current
+code_conformance: unverified
 read_when: "You need to select a check or report proof."
 skip_when: "You need to change behavior. Open architecture first."
 ---
@@ -23,18 +26,44 @@ skip_when: "You need to change behavior. Open architecture first."
 Use the smallest check that can fail if the change breaks. Then run the wider
 check that the change can affect.
 
-## Runtime proof
+## What each check proves
 
-Build and load the exact extension bundle before a browser smoke. Check the
-native host. Run a read-only workflow before a write workflow.
+```mermaid
+flowchart LR
+  a["focused source check"] --> b["full source check"]
+  b --> c["installed artifact check"]
+  c --> d["live browser check"]
+  d --> e["human acceptance"]
+```
+
+Each level proves more and assumes the level before it. Do not claim a level
+you did not run.
 
 `make test` does not prove Chrome, the native host, a signed-in site, or an
 installed artifact. `make doctor` checks local files and registration; it does
 not perform a browser action. Playwright uses local test pages. Native-host
 smoke is opt-in. The fleet smoke script is not a substitute for browser proof.
 
+## Layers
+
+- Rust unit and integration tests run through `cargo` via `make test` and
+  `make rust ARGS='test -p <crate>'`.
+- Extension unit tests use Vitest under Bun: `make test-ext-unit`.
+- Playwright end-to-end suites live in `extension/tests/e2e/` and run through
+  `make test-ext-e2e`. They drive a persistent Chromium context against local
+  fixtures in `extension/tests/fixtures/` and cover frame routing, content
+  actions, DOM snapshots, extraction, and multi-workflow concurrency.
+- `workflows/<system>/*.test.mjs` harnesses exercise selector robustness and
+  state transitions for a pack.
+
+## Runtime proof
+
+Build and load the exact extension bundle before a browser smoke. Check the
+native host. Run a read-only workflow before a write workflow.
+
 Record the exact command, exit status, and useful error text. State whether a
-failure is in changed code, host setup, browser state, or an unrelated baseline.
+failure is in changed code, host setup, browser state, or an unrelated
+baseline.
 
 ## Proof boundary
 

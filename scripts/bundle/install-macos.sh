@@ -99,7 +99,33 @@ install_file_atomic() {
   mv -f "$tmp" "$dest"
 }
 
-mkdir -p "$BIN_DIR" "$CHROME_HOST_DIR" "$GLOBAL_BIN_DIR"
+prepare_runtime_upgrade() {
+  local old_cli="${BIN_DIR}/rzn-browser"
+  [[ -x "$old_cli" ]] || return 0
+
+  if "$old_cli" supervisor status --app-base "$INSTALL_ROOT" --json >/dev/null 2>&1; then
+    local service_status
+    service_status="$("$old_cli" supervisor service status --app-base "$INSTALL_ROOT" --json 2>/dev/null || true)"
+    if grep -Eq '"supported"[[:space:]]*:[[:space:]]*true' <<<"$service_status" \
+      && grep -Eq '"installed"[[:space:]]*:[[:space:]]*true' <<<"$service_status"; then
+      return 0
+    fi
+    echo "[ERROR] A legacy supervisor is running without the managed launchd owner; no runtime files were replaced." >&2
+    echo "        Let active workflows finish, run: \"$old_cli\" supervisor shutdown, then rerun the installer." >&2
+    exit 1
+  fi
+
+  local lock_path="${INSTALL_ROOT}/run/rzn-supervisor.lock"
+  if [[ -f "$lock_path" ]]; then
+    local lock_pid
+    lock_pid="$(sed -n 's/.*"pid":\([0-9][0-9]*\).*/\1/p' "$lock_path")"
+    if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
+      echo "[ERROR] A running supervisor could not authenticate with the installed CLI (pid ${lock_pid}); no runtime files were replaced." >&2
+      echo "        Stop it cleanly after confirming no workflow is active, then retry." >&2
+      exit 1
+    fi
+  fi
+}
 
 for required in \
   "${SCRIPT_DIR}/bin/rzn-browser" \
@@ -111,6 +137,9 @@ do
     exit 1
   fi
 done
+
+prepare_runtime_upgrade
+mkdir -p "$BIN_DIR" "$CHROME_HOST_DIR" "$GLOBAL_BIN_DIR"
 
 echo "[INFO] Installing binaries to: ${BIN_DIR}"
 install_file_atomic "${SCRIPT_DIR}/bin/rzn-browser" "${BIN_DIR}/rzn-browser"
@@ -146,6 +175,9 @@ cat > "${MANIFEST_PATH}" << EOF
   ]
 }
 EOF
+
+echo "[INFO] Installing the per-user launchd runtime owner"
+"${BIN_DIR}/rzn-browser" supervisor service install --app-base "${INSTALL_ROOT}" --restart --json
 
 echo ""
 echo "[OK] Installed:"

@@ -3,6 +3,9 @@ title: "Release"
 subject: release
 keywords: [release, package, install, checksum]
 part_of: overview
+kind: doc
+lifecycle: current
+code_conformance: unverified
 read_when: "You need to build or publish an installable package."
 skip_when: "You only need a local debug build. Open developer-guide."
 ---
@@ -21,8 +24,10 @@ The artifact builder stages:
 - shell and PowerShell installers;
 - release metadata and checksum sidecars.
 
-The implementation is [`build_release_artifacts.py`](../../scripts/release/build_release_artifacts.py).
-The packaged installer is [`install-runtime.sh`](../../scripts/release/install-runtime.sh).
+The implementation is
+[`build_release_artifacts.py`](../../scripts/release/build_release_artifacts.py).
+The packaged installer is
+[`install-runtime.sh`](../../scripts/release/install-runtime.sh).
 
 The release installer registers Chrome. Source setup supports Chrome, Edge, and
 Chromium. Do not describe the packaged artifact as an Edge or Chromium bundle.
@@ -40,9 +45,8 @@ make schema-check
 ```
 
 There is no `release-artifacts` Make target. Use the artifact builder from the
-release workflow when you need an archive.
-Run the installer verification scripts, then run `native-host doctor` against
-the installed files.
+release workflow when you need an archive. Run the installer verification
+scripts, then run `native-host doctor` against the installed files.
 
 ## Publish
 
@@ -62,11 +66,13 @@ Do not document them as working publish commands.
 
 Report these gates separately:
 
-1. Source build and tests.
-2. Archive contents, metadata, and checksums.
-3. Installer result on the target system.
-4. Native-host and extension readiness.
-5. A read-only workflow in the installed browser.
-6. Human acceptance for a write or signed-in workflow.
+```mermaid
+flowchart LR
+  a["1. source build + tests"] --> b["2. archive contents,<br/>metadata, checksums"]
+  b --> c["3. installer result<br/>on target system"]
+  c --> d["4. native-host +<br/>extension readiness"]
+  d --> e["5. read-only workflow<br/>in installed browser"]
+  e --> f["6. human acceptance for<br/>write or signed-in workflow"]
+```
 
 A green source build is not installed-release or human-acceptance proof.

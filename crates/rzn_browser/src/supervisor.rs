@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use interprocess::local_socket::{
     tokio::Stream as LocalSocketStream,
     traits::tokio::{Listener as _, Stream as _},
@@ -21,7 +21,7 @@ use rzn_core::secure_files::{ensure_private_dir, set_secret_file_permissions, wr
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::OpenOptions;
 use std::io::Write as _;
 #[cfg(unix)]
@@ -45,6 +45,23 @@ use crate::workflow_runner::{
 
 pub(crate) const RZN_LOCAL_PROTOCOL: &str = "rzn.local";
 const SUPERVISOR_LOCK_FILENAME: &str = "rzn-supervisor.lock";
+pub(crate) const SUPERVISOR_OWNER_LOCK_FILENAME: &str = "rzn-supervisor-owner.lock";
+pub(crate) const SUPERVISOR_OWNER_STATE_FILENAME: &str = "rzn-supervisor-owner.json";
+pub(crate) const SUPERVISOR_OWNER_TRANSITION_LOCK_FILENAME: &str =
+    "rzn-supervisor-owner-transition.lock";
+pub(crate) const SUPERVISOR_OWNER_MARKER_FILENAME: &str = "supervisor-owner.json";
+pub(crate) const SUPERVISOR_OWNER_STOP_FILENAME: &str = "rzn-supervisor-owner.stop";
+pub(crate) const SUPERVISOR_LAUNCHD_LABEL: &str = "com.rzn.browser.runtime-owner";
+const SUPERVISOR_WATCH_CHILD_ENV: &str = "RZN_SUPERVISOR_WATCH_CHILD";
+const SUPERVISOR_WATCH_CHILD_GENERATION_ENV: &str = "RZN_SUPERVISOR_WATCH_CHILD_GENERATION";
+const SUPERVISOR_LAUNCH_GATED_ENV: &str = "RZN_SUPERVISOR_LAUNCH_GATED";
+const SUPERVISOR_WATCH_STARTUP_GRACE: Duration = Duration::from_secs(30);
+const SUPERVISOR_WATCH_RESUME_GRACE: Duration = Duration::from_secs(30);
+const SUPERVISOR_WATCH_PROBE_INTERVAL: Duration = Duration::from_secs(3);
+const SUPERVISOR_WATCH_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+const SUPERVISOR_WATCH_FAILURE_THRESHOLD: u32 = 3;
+const SUPERVISOR_WATCH_MAX_BACKOFF: Duration = Duration::from_secs(30);
+const SUPERVISOR_OWNER_TRANSITION_TIMEOUT: Duration = Duration::from_secs(30);
 const HANDSHAKE_TIMEOUT_MS: u64 = 2_000;
 const REQUEST_TIMEOUT_MS: u64 = 30_000;
 const REQUEST_TIMEOUT_GRACE_MS: u64 = 5_000;
@@ -63,6 +80,7 @@ const HEAL_STABILITY_DELAY_MS: u64 = 1_500;
 const LOCAL_RUN_DEADLINE: Duration = Duration::from_secs(30 * 60);
 const HEAL_STABILITY_BRIDGE_WAIT_MS: u64 = 2_500;
 const TOOL_DISPATCH_RECOVERY_WAIT_MS: u64 = 2_500;
+const RECENT_NATIVE_BRIDGE_DISCONNECT_LIMIT: usize = 8;
 const REQUIRED_EXTENSION_KEEPALIVE_CAPABILITY: &str = "content_keepalive_port";
 const EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT: u64 = 9;
 const REQUIRED_EXTENSION_BRIDGE_CAPABILITIES: &[&str] = &[
@@ -123,6 +141,11 @@ pub(crate) struct SupervisorPaths {
     pub socket_path: PathBuf,
     pub token_path: PathBuf,
     pub lock_path: PathBuf,
+    pub owner_lock_path: PathBuf,
+    pub owner_state_path: PathBuf,
+    pub owner_transition_lock_path: PathBuf,
+    pub owner_marker_path: PathBuf,
+    owner_stop_path: PathBuf,
 }
 
 impl SupervisorPaths {
@@ -136,6 +159,11 @@ impl SupervisorPaths {
             socket_path,
             token_path,
             lock_path: run_dir.join(SUPERVISOR_LOCK_FILENAME),
+            owner_lock_path: run_dir.join(SUPERVISOR_OWNER_LOCK_FILENAME),
+            owner_state_path: run_dir.join(SUPERVISOR_OWNER_STATE_FILENAME),
+            owner_transition_lock_path: run_dir.join(SUPERVISOR_OWNER_TRANSITION_LOCK_FILENAME),
+            owner_marker_path: run_dir.join(SUPERVISOR_OWNER_MARKER_FILENAME),
+            owner_stop_path: run_dir.join(SUPERVISOR_OWNER_STOP_FILENAME),
             secure_dir,
             run_dir,
         }
@@ -168,6 +196,7 @@ pub(crate) struct SupervisorState {
     native_bridges: Mutex<HashMap<String, NativeHostBridge>>,
     native_bridge_pending: Mutex<HashMap<String, PendingNativeCall>>,
     native_bridge_health: Mutex<HashMap<String, NativeBridgeHealth>>,
+    recent_native_bridge_disconnects: Mutex<VecDeque<RecentNativeBridgeDisconnect>>,
     last_registered_bridge_id: Mutex<Option<String>>,
     cloud_actor: Option<SupervisorCloudActor>,
     sessions: Arc<Mutex<HashMap<String, BrowserSessionRecord>>>,
@@ -1450,6 +1479,26 @@ impl NativeBridgeHealth {
     }
 }
 
+#[derive(Clone, Debug)]
+struct RecentNativeBridgeDisconnect {
+    bridge_id: String,
+    disconnected_at_ms: u64,
+    disconnect_reason: String,
+    health: NativeBridgeHealth,
+}
+
+impl RecentNativeBridgeDisconnect {
+    fn to_json(&self) -> Value {
+        let mut value = self.health.to_json();
+        value["bridge_id"] = json!(self.bridge_id.clone());
+        value["connected"] = json!(false);
+        value["retired"] = json!(true);
+        value["disconnected_at_ms"] = json!(self.disconnected_at_ms);
+        value["disconnect_reason"] = json!(self.disconnect_reason.clone());
+        value
+    }
+}
+
 impl SupervisorState {
     async fn mcp_request_cancelled(&self, params: &Value) -> bool {
         let Some(id) = params.get("mcp_request_id").and_then(Value::as_str) else {
@@ -1471,6 +1520,7 @@ impl SupervisorState {
             native_bridges: Mutex::new(HashMap::new()),
             native_bridge_pending: Mutex::new(HashMap::new()),
             native_bridge_health: Mutex::new(HashMap::new()),
+            recent_native_bridge_disconnects: Mutex::new(VecDeque::new()),
             last_registered_bridge_id: Mutex::new(None),
             cloud_actor: None,
             sessions: Arc::new(Mutex::new(HashMap::new())),
@@ -1607,6 +1657,9 @@ impl SupervisorState {
             "local_cli".into(),
             total,
         ) {
+            if current.run_id == crate::supervisor_control::SUPERVISOR_SHUTTING_DOWN_RUN_ID {
+                return Err(anyhow!("supervisor is shutting down for maintenance"));
+            }
             return Err(anyhow!(
                 "a run is already in progress: {} ({}ms elapsed); cancel with `rzn-browser supervisor call runs.cancel --params '{{\"run_id\":\"{}\"}}'`",
                 current.run_id,
@@ -2245,12 +2298,18 @@ impl SupervisorState {
                         owner_pid,
                     )
                     .map_err(|current| {
-                        anyhow!(
-                            "a run is already in progress: {} ({}); cancel with `rzn-browser supervisor call runs.cancel --params '{{\"run_id\":\"{}\"}}'`",
-                            current.run_id,
-                            current.origin,
-                            current.run_id
-                        )
+                        if current.run_id
+                            == crate::supervisor_control::SUPERVISOR_SHUTTING_DOWN_RUN_ID
+                        {
+                            anyhow!("supervisor is shutting down for maintenance")
+                        } else {
+                            anyhow!(
+                                "a run is already in progress: {} ({}); cancel with `rzn-browser supervisor call runs.cancel --params '{{\"run_id\":\"{}\"}}'`",
+                                current.run_id,
+                                current.origin,
+                                current.run_id
+                            )
+                        }
                     })?;
                 Ok(json!({"ok": true, "run_id": run_id}))
             }
@@ -2421,10 +2480,8 @@ impl SupervisorState {
                     cached_workflow_list_entries(&self.paths.app_base.join("workflow_cache"))?;
                 Ok(json!({"workflows": merge_workflow_list(local, cached, health)}))
             }
-            "runtime.shutdown" => {
-                self.shutdown.store(true, Ordering::SeqCst);
-                Ok(json!({ "ok": true, "shutdown": true }))
-            }
+            "runtime.shutdown" => self.shutdown_if_idle(),
+            "runtime.shutdown_if_idle" => self.shutdown_if_idle(),
             "tools/call" => {
                 let name = params
                     .get("name")
@@ -2436,6 +2493,18 @@ impl SupervisorState {
             name if is_browser_tool(name) => self.dispatch_tool(name, params).await,
             _ => Err(anyhow!("Unknown supervisor method: {}", method)),
         }
+    }
+
+    fn shutdown_if_idle(&self) -> Result<Value> {
+        self.control.quiesce_if_idle().map_err(|current| {
+            anyhow!(
+                "cannot shut down while workflow {} ({}) is active",
+                current.run_id,
+                current.origin
+            )
+        })?;
+        self.shutdown.store(true, Ordering::SeqCst);
+        Ok(json!({ "ok": true, "shutdown": true, "idle": true }))
     }
 
     async fn dispatch_tool(&self, name: &str, params: Value) -> Result<Value> {
@@ -2769,6 +2838,7 @@ impl SupervisorState {
         let bridges = self.native_bridges.lock().await.clone();
         let last_registered_bridge_id = self.last_registered_bridge_id.lock().await.clone();
         let mut health_by_bridge = self.native_bridge_health.lock().await.clone();
+        let recent_disconnects = self.recent_native_bridge_disconnects.lock().await.clone();
         for (bridge_id, bridge) in bridges.iter() {
             health_by_bridge
                 .entry(bridge_id.clone())
@@ -2800,7 +2870,7 @@ impl SupervisorState {
             }
         }
 
-        let mut bridge_ids = health_by_bridge.keys().cloned().collect::<Vec<_>>();
+        let mut bridge_ids = bridges.keys().cloned().collect::<Vec<_>>();
         bridge_ids.sort();
         let bridges_json = bridge_ids
             .iter()
@@ -2810,7 +2880,7 @@ impl SupervisorState {
                     .cloned()
                     .unwrap_or_default()
                     .to_json();
-                value["connected"] = json!(bridges.contains_key(bridge_id));
+                value["connected"] = json!(true);
                 value["is_last_registered"] =
                     json!(last_registered_bridge_id.as_deref() == Some(bridge_id));
                 (bridge_id.clone(), value)
@@ -2837,17 +2907,14 @@ impl SupervisorState {
                     .unwrap_or(false)
             })
             .count() as u64;
-        let current_health = if bridges.len() == 1 {
-            bridges
+        let current_health = match bridges.len() {
+            1 => bridges
                 .keys()
                 .next()
-                .and_then(|bridge_id| health_by_bridge.get(bridge_id).cloned())
-        } else {
-            None
-        }
-        .or_else(|| {
-            health_by_bridge
-                .values()
+                .and_then(|bridge_id| health_by_bridge.get(bridge_id).cloned()),
+            count if count > 1 => bridges
+                .keys()
+                .filter_map(|bridge_id| health_by_bridge.get(bridge_id))
                 .max_by_key(|health| {
                     [
                         health.last_successful_ping_at_ms,
@@ -2859,8 +2926,11 @@ impl SupervisorState {
                     .max()
                     .unwrap_or(0)
                 })
-                .cloned()
-        });
+                .cloned(),
+            _ => recent_disconnects
+                .back()
+                .map(|record| record.health.clone()),
+        };
         let mut summary = current_health
             .unwrap_or_else(|| NativeBridgeHealth {
                 supervisor_boot_id: Some(self.supervisor_boot_id.clone()),
@@ -2872,6 +2942,20 @@ impl SupervisorState {
         summary["ambiguous_default_target"] = json!(connected_bridge_count > 1);
         summary["bridge_ids"] = json!(bridge_ids);
         summary["bridges"] = Value::Object(bridges_json);
+        summary["recent_disconnects"] = json!(recent_disconnects
+            .iter()
+            .rev()
+            .map(RecentNativeBridgeDisconnect::to_json)
+            .collect::<Vec<_>>());
+        if bridges.is_empty() {
+            summary["current_supervisor_bridge_epoch"] = Value::Null;
+            summary["current_bridge_registered_at_ms"] = Value::Null;
+            summary["current_bridge_metadata"] = Value::Null;
+            summary["active_request_count"] = json!(0);
+            summary["active_request_id"] = Value::Null;
+            summary["active_method"] = Value::Null;
+            summary["active_deadline_at_ms"] = Value::Null;
+        }
         summary["current_bridge_id"] = if bridges.len() == 1 {
             bridges
                 .keys()
@@ -3967,9 +4051,41 @@ impl SupervisorState {
 
         self.drain_native_bridge_pending(id).await;
         self.mark_sessions_for_disconnected_bridge(id).await;
-        if let Some(mut health) = self.native_bridge_health.lock().await.remove(id) {
+        let disconnected_health = self.native_bridge_health.lock().await.remove(id);
+        if let Some(mut health) = disconnected_health {
             health.bridge_unregistration_count =
                 health.bridge_unregistration_count.saturating_add(1);
+            health.active_request_count = 0;
+            health.active_request_id = None;
+            health.active_method = None;
+            health.active_deadline_at_ms = None;
+
+            let disconnect_reason = health
+                .last_restart_reason
+                .clone()
+                .or_else(|| {
+                    let failure_is_latest = health.last_failure_at_ms.is_some_and(|failure_at| {
+                        health
+                            .last_successful_ping_at_ms
+                            .is_none_or(|success_at| failure_at >= success_at)
+                    });
+                    failure_is_latest
+                        .then(|| health.last_failure_error.clone())
+                        .flatten()
+                })
+                .unwrap_or_else(|| {
+                    "native-host bridge disconnected without a recorded failure".to_string()
+                });
+            let mut recent = self.recent_native_bridge_disconnects.lock().await;
+            recent.push_back(RecentNativeBridgeDisconnect {
+                bridge_id: id.to_string(),
+                disconnected_at_ms: now_ms(),
+                disconnect_reason,
+                health,
+            });
+            while recent.len() > RECENT_NATIVE_BRIDGE_DISCONNECT_LIMIT {
+                recent.pop_front();
+            }
         }
         log::info!(
             target: "rzn_browser::supervisor",
@@ -5438,6 +5554,343 @@ impl Drop for SupervisorProcessLock {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct SupervisorOwnerTransitionLock {
+    file: Option<std::fs::File>,
+}
+
+impl Drop for SupervisorOwnerTransitionLock {
+    fn drop(&mut self) {
+        #[cfg(target_os = "macos")]
+        if let Some(file) = self.file.as_ref() {
+            use std::os::fd::AsRawFd;
+            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        }
+    }
+}
+
+/// Serialize installer marker changes with CLI/native-host startup routing.
+/// The installer calls this through the Rust service command, so independent
+/// file descriptions can use the same BSD `flock` primitive as the owner lock.
+pub(crate) async fn acquire_owner_transition_lock(
+    paths: &SupervisorPaths,
+) -> Result<SupervisorOwnerTransitionLock> {
+    std::fs::create_dir_all(&paths.run_dir)?;
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::fd::AsRawFd;
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .open(&paths.owner_transition_lock_path)
+            .with_context(|| {
+                format!(
+                    "Open supervisor owner transition lock {}",
+                    paths.owner_transition_lock_path.display()
+                )
+            })?;
+        let deadline = tokio::time::Instant::now() + SUPERVISOR_OWNER_TRANSITION_TIMEOUT;
+        loop {
+            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if result == 0 {
+                return Ok(SupervisorOwnerTransitionLock { file: Some(file) });
+            }
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                if tokio::time::Instant::now() >= deadline {
+                    bail!(
+                        "timed out waiting for supervisor owner transition lock {}",
+                        paths.owner_transition_lock_path.display()
+                    );
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            } else if error.kind() != std::io::ErrorKind::Interrupted {
+                return Err(error).context("Acquire supervisor owner transition lock");
+            }
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(SupervisorOwnerTransitionLock { file: None })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SupervisorOwnerMarker {
+    schema: u32,
+    kind: String,
+    label: String,
+}
+
+pub(crate) fn managed_owner_label(paths: &SupervisorPaths) -> Result<Option<String>> {
+    let marker = match std::fs::read(&paths.owner_marker_path) {
+        Ok(bytes) => {
+            serde_json::from_slice::<SupervisorOwnerMarker>(&bytes).with_context(|| {
+                format!(
+                    "Parse managed supervisor marker {}",
+                    paths.owner_marker_path.display()
+                )
+            })?
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Read managed supervisor marker {}",
+                    paths.owner_marker_path.display()
+                )
+            })
+        }
+    };
+    if marker.schema != 1
+        || marker.kind != "launchd-agent"
+        || marker.label != SUPERVISOR_LAUNCHD_LABEL
+    {
+        return Err(anyhow!(
+            "Unsupported managed supervisor marker at {}",
+            paths.owner_marker_path.display()
+        ));
+    }
+    Ok(Some(marker.label))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SupervisorOwnerState {
+    pid: u32,
+    started_at_ms: u64,
+    generation: String,
+    child_pid: Option<u32>,
+    #[serde(default)]
+    child_generation: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SupervisorOwnerStopRequest {
+    owner_pid: u32,
+    owner_started_at_ms: u64,
+    owner_generation: String,
+    child_pid: u32,
+    #[serde(default)]
+    child_generation: Option<String>,
+    #[serde(default)]
+    force: bool,
+    #[serde(default)]
+    restart: bool,
+    requested_at_ms: u64,
+}
+
+#[derive(Debug)]
+struct SupervisorOwnerLock {
+    file: std::fs::File,
+    state_path: PathBuf,
+    state: SupervisorOwnerState,
+}
+
+impl SupervisorOwnerLock {
+    fn update_child(
+        &mut self,
+        child_pid: Option<u32>,
+        child_generation: Option<String>,
+    ) -> Result<()> {
+        self.state.child_pid = child_pid;
+        self.state.child_generation = child_generation;
+        write_owner_state(&self.state_path, &self.state)
+    }
+}
+
+impl Drop for SupervisorOwnerLock {
+    fn drop(&mut self) {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            unsafe { libc::flock(self.file.as_raw_fd(), libc::LOCK_UN) };
+        }
+    }
+}
+
+pub(crate) fn owner_lock_is_held(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let Ok(file) = OpenOptions::new().read(true).write(true).open(path) else {
+            return false;
+        };
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return true;
+        }
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_UN) };
+        false
+    }
+    #[cfg(not(unix))]
+    {
+        path.exists()
+    }
+}
+
+fn try_acquire_owner_lock(paths: &SupervisorPaths) -> Result<Option<SupervisorOwnerLock>> {
+    std::fs::create_dir_all(&paths.run_dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        let file = options.open(&paths.owner_lock_path)?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::WouldBlock {
+                return Ok(None);
+            }
+            return Err(error).context("Acquire supervisor owner lock");
+        }
+        let state = SupervisorOwnerState {
+            pid: std::process::id(),
+            started_at_ms: now_ms(),
+            generation: Uuid::new_v4().to_string(),
+            child_pid: None,
+            child_generation: None,
+        };
+        write_owner_state(&paths.owner_state_path, &state)?;
+        Ok(Some(SupervisorOwnerLock {
+            file,
+            state_path: paths.owner_state_path.clone(),
+            state,
+        }))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = paths;
+        bail!("supervisor watch is currently supported only on Unix")
+    }
+}
+
+fn write_owner_state(path: &Path, state: &SupervisorOwnerState) -> Result<()> {
+    let temporary = path.with_extension(format!(
+        "json.{}.{}.tmp",
+        std::process::id(),
+        Uuid::new_v4()
+    ));
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&temporary)?;
+    file.write_all(serde_json::to_string(state)?.as_bytes())?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    std::fs::rename(&temporary, path)?;
+    Ok(())
+}
+
+fn read_owner_stop_request(paths: &SupervisorPaths) -> Option<SupervisorOwnerStopRequest> {
+    let bytes = std::fs::read(&paths.owner_stop_path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn write_owner_stop_request(
+    paths: &SupervisorPaths,
+    request: &SupervisorOwnerStopRequest,
+) -> Result<()> {
+    let temporary = paths
+        .owner_stop_path
+        .with_extension(format!("stop.{}.tmp", std::process::id()));
+    let mut options = OpenOptions::new();
+    options.create(true).truncate(true).write(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    let mut file = options.open(&temporary)?;
+    file.write_all(serde_json::to_string(request)?.as_bytes())?;
+    file.write_all(b"\n")?;
+    file.sync_all()?;
+    std::fs::rename(temporary, &paths.owner_stop_path)?;
+    Ok(())
+}
+
+pub(crate) fn clear_owner_stop_request(paths: &SupervisorPaths) {
+    let _ = std::fs::remove_file(&paths.owner_stop_path);
+}
+
+fn owner_stop_request_for_child(
+    paths: &SupervisorPaths,
+    owner: &SupervisorOwnerState,
+    child_pid: u32,
+    child_generation: &str,
+) -> Option<SupervisorOwnerStopRequest> {
+    read_owner_stop_request(paths).filter(|request| {
+        request.owner_pid == owner.pid
+            && request.owner_started_at_ms == owner.started_at_ms
+            && request.owner_generation == owner.generation
+            && request.child_pid == child_pid
+            && request.child_generation.as_deref() == Some(child_generation)
+    })
+}
+
+fn owned_child_exit_should_restart(stop_request: Option<&SupervisorOwnerStopRequest>) -> bool {
+    stop_request.is_none_or(|request| request.restart)
+}
+
+pub(crate) fn request_managed_owner_stop(paths: &SupervisorPaths, child_pid: u32) -> Result<bool> {
+    request_managed_owner_stop_with_action(paths, child_pid, false, false)
+}
+
+pub(crate) fn request_managed_owner_force_stop(
+    paths: &SupervisorPaths,
+    child_pid: u32,
+) -> Result<bool> {
+    request_managed_owner_stop_with_action(paths, child_pid, true, false)
+}
+
+pub(crate) fn request_managed_owner_restart(
+    paths: &SupervisorPaths,
+    child_pid: u32,
+) -> Result<bool> {
+    request_managed_owner_stop_with_action(paths, child_pid, true, true)
+}
+
+fn request_managed_owner_stop_with_action(
+    paths: &SupervisorPaths,
+    child_pid: u32,
+    force: bool,
+    restart: bool,
+) -> Result<bool> {
+    if !owner_lock_is_held(&paths.owner_lock_path) {
+        return Ok(false);
+    }
+    let bytes = std::fs::read(&paths.owner_state_path).with_context(|| {
+        format!(
+            "Read supervisor owner state {}",
+            paths.owner_state_path.display()
+        )
+    })?;
+    let owner: SupervisorOwnerState =
+        serde_json::from_slice(&bytes).context("Parse supervisor owner state")?;
+    if owner.child_pid != Some(child_pid) || !process_is_live(owner.pid) {
+        bail!("Supervisor owner does not own child pid {child_pid}");
+    }
+    let child_generation = owner
+        .child_generation
+        .clone()
+        .ok_or_else(|| anyhow!("Supervisor owner state has no child generation"))?;
+    write_owner_stop_request(
+        paths,
+        &SupervisorOwnerStopRequest {
+            owner_pid: owner.pid,
+            owner_started_at_ms: owner.started_at_ms,
+            owner_generation: owner.generation,
+            child_pid,
+            child_generation: Some(child_generation),
+            force,
+            restart,
+            requested_at_ms: now_ms(),
+        },
+    )?;
+    Ok(true)
+}
+
 fn acquire_supervisor_process_lock(paths: &SupervisorPaths) -> Result<SupervisorProcessLock> {
     #[cfg(unix)]
     {
@@ -5565,13 +6018,61 @@ fn process_is_live(pid: u32) -> bool {
 }
 
 pub(crate) async fn serve(config: SupervisorConfig) -> Result<SupervisorServeReport> {
+    // Own this app base before recovering durable command receipts or starting
+    // any actor. A losing concurrent launch must not mutate the owner's state.
+    let paths = SupervisorPaths::for_config(&config);
+    let is_watcher_child = std::env::var_os(SUPERVISOR_WATCH_CHILD_ENV).is_some();
+    let launch_gate_held = std::env::var_os(SUPERVISOR_LAUNCH_GATED_ENV).is_some();
+    // Serialize the marker check with installation and other launch paths. The
+    // watcher child skips this gate because service install holds it while
+    // waiting for the new child to claim the supervisor lock.
+    let transition = if is_watcher_child || launch_gate_held {
+        None
+    } else {
+        Some(acquire_owner_transition_lock(&paths).await?)
+    };
+    if !is_watcher_child && managed_owner_label(&paths)?.is_some() {
+        bail!(
+            "a managed LaunchAgent owns this runtime; use `rzn-browser supervisor ensure-ready` instead of launching `serve` directly"
+        );
+    }
+    std::fs::create_dir_all(&paths.run_dir)?;
+    let _process_lock = acquire_supervisor_process_lock(&paths)?;
+    drop(transition);
     let (cloud_dispatch_tx, cloud_dispatch_rx) = mpsc::unbounded_channel::<CloudDispatchRequest>();
     let cloud_actor = supervisor_cloud::spawn_cloud_actor(cloud_dispatch_tx);
     let state = Arc::new(SupervisorState::with_cloud_actor(config, cloud_actor));
-    // Take the process lock before touching the token: two supervisors racing on a fresh install
-    // must not each create a token, or the survivor caches one that no longer matches the file.
-    std::fs::create_dir_all(&state.paths.run_dir)?;
-    let _process_lock = acquire_supervisor_process_lock(&state.paths)?;
+    if std::env::var_os(SUPERVISOR_WATCH_CHILD_ENV).is_some() {
+        let state = state.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut input = tokio::io::stdin();
+            let mut byte = [0u8; 1];
+            if matches!(input.read(&mut byte).await, Ok(0) | Err(_)) {
+                let mut reported_active_run: Option<(String, String)> = None;
+                loop {
+                    match state.control.quiesce_if_idle() {
+                        Ok(()) => {
+                            state.shutdown.store(true, Ordering::SeqCst);
+                            break;
+                        }
+                        Err(current) => {
+                            let identity = (current.run_id.clone(), current.origin.clone());
+                            if reported_active_run.as_ref() != Some(&identity) {
+                                log::warn!(
+                                    "owner pipe closed while workflow {} ({}) is active; waiting for it to finish before shutdown",
+                                    current.run_id,
+                                    current.origin
+                                );
+                                reported_active_run = Some(identity);
+                            }
+                            tokio::time::sleep(Duration::from_millis(250)).await;
+                        }
+                    }
+                }
+            }
+        });
+    }
     prepare_paths(&state.paths)?;
     let token = read_token(&state.paths.token_path)?;
     let _ = state.token.set(token);
@@ -5757,39 +6258,381 @@ pub(crate) async fn call(config: SupervisorConfig, method: &str, params: Value) 
     client.call(method, params).await
 }
 
+struct WatchedSupervisor {
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+    pid: u32,
+    generation: String,
+}
+
+fn spawn_watched_supervisor(
+    config: &SupervisorConfig,
+    paths: &SupervisorPaths,
+) -> Result<WatchedSupervisor> {
+    let exe = std::env::current_exe().context("Resolve current executable")?;
+    std::fs::create_dir_all(&paths.run_dir)?;
+    let log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(paths.run_dir.join("supervisor.log"))?;
+    let mut command = std::process::Command::new(exe);
+    let generation = Uuid::new_v4().to_string();
+    command
+        .arg("supervisor")
+        .arg("serve")
+        .arg("--app-base")
+        .arg(&paths.app_base)
+        .env(SUPERVISOR_WATCH_CHILD_ENV, "1")
+        .env(SUPERVISOR_WATCH_CHILD_GENERATION_ENV, &generation)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(log);
+    // Keep the child in the launchd job's process group so launchd cleans up
+    // both processes if the owner itself is terminated unexpectedly.
+    let mut child = command.spawn().context("Spawn owned supervisor")?;
+    let pid = child.id();
+    let stdin = child.stdin.take();
+    Ok(WatchedSupervisor {
+        child,
+        stdin,
+        pid,
+        generation,
+    })
+}
+
+fn watch_stop_request_for_owner(paths: &SupervisorPaths, owner: &SupervisorOwnerState) -> bool {
+    read_owner_stop_request(paths).is_some_and(|request| {
+        request.owner_pid == owner.pid
+            && request.owner_started_at_ms == owner.started_at_ms
+            && request.owner_generation == owner.generation
+    })
+}
+
+async fn stop_watched_child_if_idle(
+    config: &SupervisorConfig,
+    watched: &mut WatchedSupervisor,
+) -> Result<bool> {
+    let status = match timeout(
+        SUPERVISOR_WATCH_PROBE_TIMEOUT,
+        call(config.clone(), "runtime.status", json!({})),
+    )
+    .await
+    {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => return Err(error).context("Verify owned supervisor before stop"),
+        Err(_) => return Err(anyhow!("Timed out verifying owned supervisor before stop")),
+    };
+    if status.get("pid").and_then(Value::as_u64) != Some(watched.pid as u64) {
+        bail!(
+            "Refusing to stop supervisor pid {}; status belongs to another process",
+            watched.pid
+        );
+    }
+    match timeout(
+        SUPERVISOR_WATCH_PROBE_TIMEOUT,
+        call(config.clone(), "runtime.shutdown_if_idle", json!({})),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(error))
+            if error
+                .to_string()
+                .contains("cannot shut down while workflow") =>
+        {
+            return Ok(false)
+        }
+        Ok(Err(error)) => return Err(error).context("Request owned supervisor shutdown"),
+        Err(_) => return Err(anyhow!("Timed out requesting owned supervisor shutdown")),
+    }
+
+    watched.stdin.take();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if watched.child.try_wait()?.is_some() {
+            return Ok(true);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            // Child::kill targets the process created and retained by this owner.
+            let _ = watched.child.kill();
+            let _ = watched.child.wait();
+            return Ok(true);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+fn next_watch_backoff(current: Duration) -> Duration {
+    current.saturating_mul(2).min(SUPERVISOR_WATCH_MAX_BACKOFF)
+}
+
+/// Foreground owner used by the installed macOS LaunchAgent. It never adopts
+/// or signals a process from a pid file; every restart targets its own Child.
+pub(crate) async fn watch_managed(config: SupervisorConfig) -> Result<()> {
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = config;
+        bail!("supervisor watch is currently reserved for the managed macOS LaunchAgent")
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let paths = SupervisorPaths::for_config(&config);
+        if managed_owner_label(&paths)?.is_none() {
+            bail!("supervisor watch requires the installed LaunchAgent owner marker");
+        }
+        let mut owner_lock = loop {
+            if let Some(lock) = try_acquire_owner_lock(&paths)? {
+                break lock;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        };
+        clear_owner_stop_request(&paths);
+        let owner_identity = owner_lock.state.clone();
+        let mut watched: Option<WatchedSupervisor> = None;
+        let mut start_after = tokio::time::Instant::now();
+        let mut restart_backoff = Duration::from_secs(1);
+        let mut consecutive_probe_failures = 0u32;
+        let mut startup_grace_until = tokio::time::Instant::now();
+        let mut resume_grace_until = tokio::time::Instant::now();
+        let mut next_probe = tokio::time::Instant::now();
+        let mut last_probe_mono = Instant::now();
+        let mut last_probe_wall = SystemTime::now();
+        let mut shutdown_requested = false;
+        let mut last_shutdown_attempt = tokio::time::Instant::now()
+            .checked_sub(Duration::from_secs(5))
+            .unwrap_or_else(tokio::time::Instant::now);
+        #[cfg(unix)]
+        let mut terminate_signal =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        let ctrl_c = tokio::signal::ctrl_c();
+        tokio::pin!(ctrl_c);
+
+        loop {
+            if managed_owner_label(&paths)?.is_none() {
+                shutdown_requested = true;
+            }
+            if !shutdown_requested {
+                tokio::select! {
+                    _ = &mut ctrl_c => shutdown_requested = true,
+                    _ = terminate_signal.recv() => shutdown_requested = true,
+                    _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+                }
+            } else {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+
+            if let Some(active) = watched.as_mut() {
+                let stop_request = owner_stop_request_for_child(
+                    &paths,
+                    &owner_identity,
+                    active.pid,
+                    &active.generation,
+                );
+                if stop_request.as_ref().is_some_and(|request| request.force) {
+                    let restart = stop_request.as_ref().is_some_and(|request| request.restart);
+                    active.stdin.take();
+                    let _ = active.child.kill();
+                    let _ = active.child.wait();
+                    watched = None;
+                    owner_lock.update_child(None, None)?;
+                    if restart {
+                        clear_owner_stop_request(&paths);
+                        start_after = tokio::time::Instant::now() + restart_backoff;
+                        restart_backoff = next_watch_backoff(restart_backoff);
+                    }
+                    continue;
+                }
+                if let Some(status) = active.child.try_wait()? {
+                    // Normal stop requests are only an exit policy; the
+                    // caller performs the idle-atomic shutdown RPC. Keep the
+                    // parent pipe open so a rejected RPC cannot be preceded
+                    // by an EOF-triggered shutdown.
+                    let stop_request = owner_stop_request_for_child(
+                        &paths,
+                        &owner_identity,
+                        active.pid,
+                        &active.generation,
+                    );
+                    let should_restart = owned_child_exit_should_restart(stop_request.as_ref());
+                    log::warn!(
+                        "owned supervisor {} exited with {}; restarting={}",
+                        active.pid,
+                        status,
+                        should_restart
+                    );
+                    watched = None;
+                    owner_lock.update_child(None, None)?;
+                    consecutive_probe_failures = 0;
+                    if should_restart {
+                        if stop_request.is_some() {
+                            clear_owner_stop_request(&paths);
+                        }
+                        start_after = tokio::time::Instant::now() + restart_backoff;
+                        restart_backoff = next_watch_backoff(restart_backoff);
+                    } else {
+                        continue;
+                    }
+                    continue;
+                }
+
+                if shutdown_requested
+                    && tokio::time::Instant::now().duration_since(last_shutdown_attempt)
+                        >= Duration::from_secs(2)
+                {
+                    last_shutdown_attempt = tokio::time::Instant::now();
+                    match stop_watched_child_if_idle(&config, active).await {
+                        Ok(true) => {
+                            let _ = active.child.wait();
+                            watched = None;
+                            owner_lock.update_child(None, None)?;
+                            return Ok(());
+                        }
+                        Ok(false) => log::info!(
+                            "deferring owner shutdown until the active workflow finishes"
+                        ),
+                        Err(error) => {
+                            log::warn!("could not gracefully stop owned supervisor: {error:#}")
+                        }
+                    }
+                }
+
+                let now_mono = Instant::now();
+                let now_wall = SystemTime::now();
+                let wall_elapsed = now_wall.duration_since(last_probe_wall).unwrap_or_default();
+                let monotonic_elapsed = now_mono.duration_since(last_probe_mono);
+                if wall_elapsed > monotonic_elapsed + Duration::from_secs(10) {
+                    // Suspend/wake must not count the missed sleep interval as a hung runtime.
+                    consecutive_probe_failures = 0;
+                    resume_grace_until =
+                        tokio::time::Instant::now() + SUPERVISOR_WATCH_RESUME_GRACE;
+                }
+                if tokio::time::Instant::now() >= next_probe {
+                    last_probe_mono = now_mono;
+                    last_probe_wall = now_wall;
+                    next_probe = tokio::time::Instant::now() + SUPERVISOR_WATCH_PROBE_INTERVAL;
+                    let probe = timeout(
+                        SUPERVISOR_WATCH_PROBE_TIMEOUT,
+                        call(config.clone(), "runtime.status", json!({})),
+                    )
+                    .await;
+                    let healthy = matches!(
+                        &probe,
+                        Ok(Ok(value)) if value.get("pid").and_then(Value::as_u64) == Some(active.pid as u64)
+                    );
+                    if healthy {
+                        consecutive_probe_failures = 0;
+                        restart_backoff = Duration::from_secs(1);
+                    } else if tokio::time::Instant::now() >= startup_grace_until
+                        && tokio::time::Instant::now() >= resume_grace_until
+                    {
+                        consecutive_probe_failures = consecutive_probe_failures.saturating_add(1);
+                        log::warn!(
+                            "owned supervisor {} failed health probe {}/{}: {:?}",
+                            active.pid,
+                            consecutive_probe_failures,
+                            SUPERVISOR_WATCH_FAILURE_THRESHOLD,
+                            probe
+                        );
+                    }
+                    if consecutive_probe_failures >= SUPERVISOR_WATCH_FAILURE_THRESHOLD {
+                        log::error!(
+                            "owned supervisor {} is unresponsive; killing only the retained Child",
+                            active.pid
+                        );
+                        active.stdin.take();
+                        let _ = active.child.kill();
+                        let _ = active.child.wait();
+                        watched = None;
+                        owner_lock.update_child(None, None)?;
+                        consecutive_probe_failures = 0;
+                        start_after = tokio::time::Instant::now() + restart_backoff;
+                        restart_backoff = next_watch_backoff(restart_backoff);
+                    }
+                }
+                continue;
+            }
+
+            if shutdown_requested {
+                return Ok(());
+            }
+            if watch_stop_request_for_owner(&paths, &owner_identity) {
+                continue;
+            }
+            if tokio::time::Instant::now() < start_after {
+                continue;
+            }
+            // A legacy/direct supervisor may still be serving active work. Wait
+            // for its own lock to release; never adopt or terminate that PID.
+            if supervisor_lock_is_held(&paths.lock_path) {
+                continue;
+            }
+            match spawn_watched_supervisor(&config, &paths) {
+                Ok(child) => {
+                    log::info!("started owned supervisor child pid {}", child.pid);
+                    owner_lock.update_child(Some(child.pid), Some(child.generation.clone()))?;
+                    watched = Some(child);
+                    startup_grace_until =
+                        tokio::time::Instant::now() + SUPERVISOR_WATCH_STARTUP_GRACE;
+                    resume_grace_until = tokio::time::Instant::now();
+                    next_probe = tokio::time::Instant::now();
+                    last_probe_mono = Instant::now();
+                    last_probe_wall = SystemTime::now();
+                }
+                Err(error) => {
+                    log::error!("failed to start owned supervisor: {error:#}");
+                    start_after = tokio::time::Instant::now() + restart_backoff;
+                    restart_backoff = next_watch_backoff(restart_backoff);
+                }
+            }
+        }
+    }
+}
+
 pub(crate) async fn ensure_running(config: SupervisorConfig) -> Result<SupervisorClientStatus> {
+    let paths = SupervisorPaths::for_config(&config);
+    // The installer holds this same gate through marker changes and launchd
+    // bootstrap. Keep it until the selected owner has claimed its process lock.
+    let _transition = acquire_owner_transition_lock(&paths).await?;
+    let managed_label = managed_owner_label(&paths)?;
+    if managed_label.is_some() {
+        clear_owner_stop_request(&paths);
+    }
     match call(config.clone(), "runtime.status", json!({})).await {
-        Ok(result) => Ok(SupervisorClientStatus { ok: true, result }),
+        Ok(result) => return Ok(SupervisorClientStatus { ok: true, result }),
         Err(first_err) => {
-            let paths = SupervisorPaths::for_config(&config);
-            // A held lock can also mean a supervisor that is still starting (it locks before it
-            // binds the socket), so wait for readiness before calling it unresponsive.
-            let lock_held = supervisor_lock_is_held(&paths.lock_path);
-            if !lock_held {
+            if let Some(label) = managed_label.as_deref() {
+                kickstart_managed_owner(label)?;
+            } else if !owner_lock_is_held(&paths.owner_lock_path)
+                && !supervisor_lock_is_held(&paths.lock_path)
+            {
                 spawn_supervisor(&config).await?;
             }
-            let deadline = tokio::time::Instant::now() + Duration::from_millis(5_000);
+
+            let deadline = tokio::time::Instant::now() + SUPERVISOR_WATCH_STARTUP_GRACE;
             loop {
                 match call(config.clone(), "runtime.status", json!({})).await {
                     Ok(result) => return Ok(SupervisorClientStatus { ok: true, result }),
-                    Err(err) if tokio::time::Instant::now() < deadline => {
-                        let _ = err;
+                    Err(error) if tokio::time::Instant::now() < deadline => {
+                        let _ = error;
                         tokio::time::sleep(Duration::from_millis(150)).await;
                     }
-                    Err(_) if lock_held => {
-                        let pid = read_supervisor_lock_pid(&paths.lock_path)
-                            .map_or_else(|| "unknown".to_string(), |pid| pid.to_string());
+                    Err(error) => {
+                        let owner = if managed_label.is_some() {
+                            "managed LaunchAgent"
+                        } else if owner_lock_is_held(&paths.owner_lock_path) {
+                            "supervisor owner"
+                        } else if supervisor_lock_is_held(&paths.lock_path) {
+                            "supervisor process"
+                        } else {
+                            "spawned supervisor"
+                        };
                         return Err(anyhow!(
-                            "supervisor pid {} unresponsive — run `rzn-browser supervisor shutdown --force`",
-                            pid
-                        ));
-                    }
-                    Err(err) => {
-                        return Err(anyhow!(
-                            "Supervisor did not become ready after spawn: {}; first error: {}",
-                            err,
+                            "{} did not become ready within {} seconds: {}; first error: {}",
+                            owner,
+                            SUPERVISOR_WATCH_STARTUP_GRACE.as_secs(),
+                            error,
                             first_err
-                        ))
+                        ));
                     }
                 }
             }
@@ -5797,8 +6640,123 @@ pub(crate) async fn ensure_running(config: SupervisorConfig) -> Result<Superviso
     }
 }
 
+pub(crate) async fn shutdown(config: SupervisorConfig, force: bool) -> Result<Value> {
+    let paths = SupervisorPaths::for_config(&config);
+    let _transition = acquire_owner_transition_lock(&paths).await?;
+    let managed = managed_owner_label(&paths)?.is_some();
+    if managed {
+        if force {
+            let child_pid = read_supervisor_lock_pid(&paths.lock_path)
+                .ok_or_else(|| anyhow!("managed supervisor has no readable child pid"))?;
+            if !request_managed_owner_force_stop(&paths, child_pid)? {
+                bail!("managed supervisor owner is not holding its child; refusing PID-based force shutdown");
+            }
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            while supervisor_lock_is_held(&paths.lock_path)
+                && tokio::time::Instant::now() < deadline
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            if supervisor_lock_is_held(&paths.lock_path) {
+                bail!("managed owner did not reap its supervisor child within 5 seconds");
+            }
+            return Ok(json!({"ok":true,"stopped":true,"pid":child_pid,"owner_managed":true}));
+        }
+        let child_pid = call(config.clone(), "runtime.status", json!({}))
+            .await?
+            .get("pid")
+            .and_then(Value::as_u64)
+            .and_then(|pid| u32::try_from(pid).ok());
+        if let Some(child_pid) = child_pid {
+            let _ = request_managed_owner_stop(&paths, child_pid)?;
+        }
+    }
+    match call(config, "runtime.shutdown_if_idle", json!({})).await {
+        Ok(result) => Ok(result),
+        Err(error) => {
+            if managed {
+                clear_owner_stop_request(&paths);
+            }
+            Err(error)
+        }
+    }
+}
+
+pub(crate) async fn restart(config: SupervisorConfig) -> Result<Value> {
+    let paths = SupervisorPaths::for_config(&config);
+    let _transition = acquire_owner_transition_lock(&paths).await?;
+    if let Some(label) = managed_owner_label(&paths)? {
+        let child_pid = if owner_lock_is_held(&paths.owner_lock_path) {
+            std::fs::read(&paths.owner_state_path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<SupervisorOwnerState>(&bytes).ok())
+                .and_then(|state| state.child_pid)
+        } else {
+            None
+        };
+        if let Some(child_pid) = child_pid {
+            if !request_managed_owner_restart(&paths, child_pid)? {
+                bail!("managed supervisor owner no longer owns child pid {child_pid}");
+            }
+            let stop_deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+            while supervisor_lock_is_held(&paths.lock_path)
+                && tokio::time::Instant::now() < stop_deadline
+            {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            if supervisor_lock_is_held(&paths.lock_path) {
+                bail!("managed owner did not release its old child within 5 seconds");
+            }
+        } else {
+            clear_owner_stop_request(&paths);
+            kickstart_managed_owner(&label)?;
+        }
+
+        let deadline = tokio::time::Instant::now() + SUPERVISOR_WATCH_STARTUP_GRACE;
+        loop {
+            match call(config.clone(), "runtime.status", json!({})).await {
+                Ok(status) => return Ok(json!({"ok":true,"restarted":true,"status":status})),
+                Err(error) if tokio::time::Instant::now() < deadline => {
+                    let _ = error;
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                }
+                Err(error) => {
+                    return Err(error).context("managed supervisor did not return after restart")
+                }
+            }
+        }
+    }
+
+    force_shutdown(config).await
+}
+
+fn kickstart_managed_owner(label: &str) -> Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        let target = format!("gui/{}/{}", unsafe { libc::getuid() }, label);
+        let output = std::process::Command::new("/bin/launchctl")
+            .arg("kickstart")
+            .arg(target)
+            .output()
+            .context("Request managed supervisor LaunchAgent start")?;
+        if !output.status.success() {
+            bail!(
+                "managed supervisor LaunchAgent could not be started ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = label;
+        bail!("managed supervisor owner is supported only on macOS")
+    }
+}
+
 #[cfg(unix)]
-fn supervisor_lock_is_held(path: &Path) -> bool {
+pub(crate) fn supervisor_lock_is_held(path: &Path) -> bool {
     use std::os::fd::AsRawFd;
     let Ok(file) = OpenOptions::new().read(true).write(true).open(path) else {
         return false;
@@ -5843,6 +6801,7 @@ async fn spawn_supervisor(config: &SupervisorConfig) -> Result<()> {
     let exe = std::env::current_exe().context("Resolve current executable")?;
     let mut command = std::process::Command::new(exe);
     command.arg("supervisor").arg("serve");
+    command.env(SUPERVISOR_LAUNCH_GATED_ENV, "1");
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -6822,6 +7781,185 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    #[tokio::test]
+    async fn launch_gated_serve_child_claims_lock_before_parent_releases_gate() {
+        struct ChildGuard(std::process::Child);
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        const CHILD_APP_BASE_ENV: &str = "RZN_SUPERVISOR_GATE_TEST_APP_BASE";
+        if let Some(app_base) = std::env::var_os(CHILD_APP_BASE_ENV).map(PathBuf::from) {
+            serve(SupervisorConfig {
+                app_base: Some(app_base),
+            })
+            .await
+            .unwrap();
+            return;
+        }
+
+        // macOS's per-user TMPDIR can exceed the Unix-domain socket path limit.
+        let app_base = PathBuf::from("/tmp").join(format!("rzn-launch-gate-{}", Uuid::new_v4()));
+        let config = SupervisorConfig {
+            app_base: Some(app_base.clone()),
+        };
+        let paths = SupervisorPaths::for_config(&config);
+        std::fs::create_dir_all(&paths.run_dir).unwrap();
+        let _transition = acquire_owner_transition_lock(&paths).await.unwrap();
+        let mut child = ChildGuard(std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "supervisor::tests::launch_gated_serve_child_claims_lock_before_parent_releases_gate",
+                "--nocapture",
+            ])
+            .env(CHILD_APP_BASE_ENV, &app_base)
+            .env("RZN_APP_BASE_DIR", &app_base)
+            .env("HOME", &app_base)
+            .env_remove("RZN_CLOUD_CONFIG_PATH")
+            .env(SUPERVISOR_LAUNCH_GATED_ENV, "1")
+            .spawn()
+            .unwrap());
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+        while !supervisor_lock_is_held(&paths.lock_path) && tokio::time::Instant::now() < deadline {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                panic!("launch-gated child exited before claiming supervisor lock: {status}");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        if !supervisor_lock_is_held(&paths.lock_path) {
+            let _ = child.0.kill();
+            let _ = child.0.wait();
+            panic!("launch-gated child waited on the parent's transition lock");
+        }
+        let ready_deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+        let status = loop {
+            match call(config.clone(), "runtime.status", json!({})).await {
+                Ok(status) => break status,
+                Err(error) if tokio::time::Instant::now() < ready_deadline => {
+                    let _ = error;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                Err(error) => panic!("launch-gated child never became ready: {error:#}"),
+            }
+        };
+        assert_eq!(
+            status.get("pid").and_then(Value::as_u64),
+            Some(child.0.id() as u64)
+        );
+        call(config, "runtime.shutdown_if_idle", json!({}))
+            .await
+            .unwrap();
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+        loop {
+            if let Some(status) = child.0.try_wait().unwrap() {
+                assert!(status.success(), "launch-gated child exited with {status}");
+                break;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                let _ = child.0.kill();
+                let _ = child.0.wait();
+                panic!("launch-gated child did not exit after idle shutdown");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        std::fs::remove_dir_all(app_base).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owner_state_snapshot_is_separate_from_stable_lock_file() {
+        let app_base = std::env::temp_dir().join(format!("rzn-owner-state-{}", Uuid::new_v4()));
+        let config = SupervisorConfig {
+            app_base: Some(app_base.clone()),
+        };
+        let paths = SupervisorPaths::for_config(&config);
+        std::fs::create_dir_all(&paths.run_dir).unwrap();
+        let mut owner = try_acquire_owner_lock(&paths).unwrap().unwrap();
+
+        owner
+            .update_child(Some(4242), Some("child-generation-a".into()))
+            .unwrap();
+        let state: SupervisorOwnerState =
+            serde_json::from_slice(&std::fs::read(&paths.owner_state_path).unwrap()).unwrap();
+        assert_eq!(state.child_pid, Some(4242));
+        assert_eq!(
+            state.child_generation.as_deref(),
+            Some("child-generation-a")
+        );
+        assert_eq!(std::fs::metadata(&paths.owner_lock_path).unwrap().len(), 0);
+
+        owner.update_child(None, None).unwrap();
+        let state: SupervisorOwnerState =
+            serde_json::from_slice(&std::fs::read(&paths.owner_state_path).unwrap()).unwrap();
+        assert_eq!(state.child_pid, None);
+        assert_eq!(state.child_generation, None);
+        drop(owner);
+        std::fs::remove_dir_all(app_base).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_stop_request_cannot_target_reused_child_pid() {
+        let app_base = std::env::temp_dir().join(format!("rzn-owner-stop-{}", Uuid::new_v4()));
+        let config = SupervisorConfig {
+            app_base: Some(app_base.clone()),
+        };
+        let paths = SupervisorPaths::for_config(&config);
+        std::fs::create_dir_all(&paths.run_dir).unwrap();
+        let owner = SupervisorOwnerState {
+            pid: 100,
+            started_at_ms: 200,
+            generation: "owner-generation".into(),
+            child_pid: Some(4242),
+            child_generation: Some("child-generation-b".into()),
+        };
+        let request = SupervisorOwnerStopRequest {
+            owner_pid: owner.pid,
+            owner_started_at_ms: owner.started_at_ms,
+            owner_generation: owner.generation.clone(),
+            child_pid: 4242,
+            child_generation: Some("child-generation-a".into()),
+            force: true,
+            restart: false,
+            requested_at_ms: 300,
+        };
+        write_owner_stop_request(&paths, &request).unwrap();
+
+        assert!(owner_stop_request_for_child(&paths, &owner, 4242, "child-generation-b").is_none());
+
+        let mut current_request = request;
+        current_request.child_generation = Some("child-generation-b".into());
+        write_owner_stop_request(&paths, &current_request).unwrap();
+        assert!(owner_stop_request_for_child(&paths, &owner, 4242, "child-generation-b").is_some());
+        std::fs::remove_dir_all(app_base).unwrap();
+    }
+
+    #[test]
+    fn restart_intent_restarts_child_even_if_it_exits_before_owner_handles_request() {
+        let request = SupervisorOwnerStopRequest {
+            owner_pid: 10,
+            owner_started_at_ms: 20,
+            owner_generation: "owner".into(),
+            child_pid: 30,
+            child_generation: Some("child".into()),
+            force: true,
+            restart: true,
+            requested_at_ms: 40,
+        };
+        assert!(owned_child_exit_should_restart(Some(&request)));
+
+        let mut stop_request = request;
+        stop_request.restart = false;
+        assert!(!owned_child_exit_should_restart(Some(&stop_request)));
+        assert!(owned_child_exit_should_restart(None));
+    }
+
     fn workflow_list_fixture(id: &str, source: &str, hash: &str) -> WorkflowListEntry {
         WorkflowListEntry {
             workflow_id: id.into(),
@@ -7637,6 +8775,151 @@ mod tests {
         assert_eq!(
             status.pointer("/native_host_bridge/health/last_successful_extension_build_signature"),
             Some(&json!("chrome-build"))
+        );
+    }
+
+    #[tokio::test]
+    async fn disconnected_bridge_health_retains_restart_diagnostics() {
+        let state = SupervisorState::new(test_config());
+        let (bridge_tx, _bridge_rx) = mpsc::unbounded_channel::<Vec<u8>>();
+        let metadata = NativeHostBridgeMetadata::from_hello_params(
+            &json!({
+                "caller_origin": "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/",
+                "native_host_pid": 12345,
+                "native_host_boot_id": "native-host-boot"
+            }),
+            false,
+        )
+        .unwrap();
+        let bridge_epoch = state
+            .register_native_bridge_with_metadata(
+                "diagnostic-bridge".to_string(),
+                bridge_tx,
+                metadata,
+            )
+            .await;
+        state
+            .record_native_bridge_ping_success(
+                "diagnostic-bridge",
+                &json!({
+                    "result": {
+                        "extension_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                        "browser_instance_id": "browser-instance-diagnostic",
+                        "extension_target": "chrome",
+                        "extension_build_signature": "diagnostic-build"
+                    }
+                }),
+                12,
+            )
+            .await;
+        state
+            .record_native_bridge_failure(
+                Some("diagnostic-bridge"),
+                READINESS_CAUSE_ZOMBIE_NATIVE_HOST,
+                "extension call 'ping' timed out after 2000ms",
+                false,
+            )
+            .await;
+
+        state
+            .request_native_bridge_restart(
+                "diagnostic-bridge",
+                bridge_epoch,
+                "extension call 'ping' timed out after 2000ms",
+            )
+            .await;
+
+        let status = state.runtime_status().await;
+        let health = status
+            .pointer("/native_host_bridge/health")
+            .expect("native bridge health");
+        assert_eq!(
+            health
+                .pointer("/connected_bridge_count")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(
+            health
+                .pointer("/healthy_bridge_count")
+                .and_then(Value::as_u64),
+            Some(0)
+        );
+        assert_eq!(health.pointer("/bridge_ids"), Some(&json!([])));
+        assert_eq!(health.pointer("/bridges"), Some(&json!({})));
+        assert_eq!(health.pointer("/current_bridge_id"), Some(&Value::Null));
+        assert_eq!(
+            health.pointer("/current_supervisor_bridge_epoch"),
+            Some(&Value::Null)
+        );
+        assert_eq!(
+            health.pointer("/current_bridge_metadata"),
+            Some(&Value::Null)
+        );
+
+        let retired = health
+            .pointer("/recent_disconnects/0")
+            .expect("recent disconnect diagnostic");
+        assert_eq!(
+            retired.get("bridge_id").and_then(Value::as_str),
+            Some("diagnostic-bridge")
+        );
+        assert_eq!(
+            retired.get("connected").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(retired.get("retired").and_then(Value::as_bool), Some(true));
+        assert!(retired
+            .get("disconnected_at_ms")
+            .and_then(Value::as_u64)
+            .is_some());
+        assert_eq!(
+            retired.get("disconnect_reason").and_then(Value::as_str),
+            Some("extension call 'ping' timed out after 2000ms")
+        );
+        assert_eq!(
+            retired
+                .get("current_supervisor_bridge_epoch")
+                .and_then(Value::as_u64),
+            Some(bridge_epoch)
+        );
+        assert_eq!(
+            retired
+                .pointer("/current_bridge_metadata/native_host_pid")
+                .and_then(Value::as_u64),
+            Some(12345)
+        );
+        assert_eq!(
+            retired
+                .pointer("/current_bridge_metadata/browser_instance_id")
+                .and_then(Value::as_str),
+            Some("browser-instance-diagnostic")
+        );
+        assert_eq!(
+            retired
+                .get("native_host_restart_count")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            retired
+                .get("bridge_unregistration_count")
+                .and_then(Value::as_u64),
+            Some(1)
+        );
+        assert_eq!(
+            retired.get("last_failure_error").and_then(Value::as_str),
+            Some("extension call 'ping' timed out after 2000ms")
+        );
+        assert_eq!(
+            health.get("last_failure_error").and_then(Value::as_str),
+            Some("extension call 'ping' timed out after 2000ms")
+        );
+        assert_eq!(
+            health
+                .get("native_host_restart_count")
+                .and_then(Value::as_u64),
+            Some(1)
         );
     }
 
