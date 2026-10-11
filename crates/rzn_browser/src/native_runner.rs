@@ -433,6 +433,10 @@ impl StepTransport for CliStepTransport {
             } else if let Some(tab_ref) = ["/current_tab_ref", "/result/current_tab_ref"]
                 .iter()
                 .find_map(|path| value.pointer(path).and_then(Value::as_str))
+                // Only a step that worked used the tab. The on-error snapshot
+                // also names a tab, and counting it would block the
+                // fresh-tab retry after a parked tab was closed.
+                .filter(|_| method == "browser.execute_step" && response_success(value))
             {
                 *self.seen_tab.lock().unwrap() = Some(tab_ref.to_string());
             }
