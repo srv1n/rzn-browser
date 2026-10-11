@@ -514,6 +514,14 @@ test.describe('Multi-workflow concurrency e2e', () => {
         const sessionId = 'session-close-late-refresh';
         const oldTab = await chrome.tabs.create({ url: 'about:blank', active: false });
         const newTab = await chrome.tabs.create({ url: 'about:blank', active: false });
+        // Let both tabs finish loading first. A late real onUpdated for the new
+        // tab would otherwise overwrite the stubbed URL with about:blank.
+        for (const id of [oldTab.id!, newTab.id!]) {
+          for (let i = 0; i < 100 && (await chrome.tabs.get(id)).status !== 'complete'; i += 1) {
+            await new Promise(resolve => setTimeout(resolve, 20));
+          }
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
         let resolveOldLookup: ((tab: any) => void) | undefined;
         chrome.tabs.get = ((tabId: number) => {
           if (tabId === oldTab.id) {
