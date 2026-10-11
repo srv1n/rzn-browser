@@ -1,6 +1,7 @@
 // Runnable check for the chatgpt/send model-picker steps (s6/s9/s12).
-// The fake DOM reproduces the composer picker captured live on 2026-08-31:
+// The fake DOM reproduces the composer picker captured live on 2026-10-11:
 // one flat panel holding a model radio per model and a five-stop effort slider.
+// ChatGPT dropped every data-testid from the panel; it is found by data attributes.
 // Run: node workflows/chatgpt/chatgpt_send_picker.test.mjs
 import assert from 'node:assert';
 import fs from 'node:fs';
@@ -71,16 +72,14 @@ function matches(node, sel) {
 }
 
 // ---- the simulated picker ---------------------------------------------------
-// Ground truth, captured 2026-08-31 from the live composer:
+// Ground truth, captured 2026-10-11 from the live composer:
 //   button[aria-haspopup=menu]                              pill, text = current tier
-//   [data-testid=composer-intelligence-picker-content]      the panel
-//     div[role=menuitem][aria-label="Select model"]         text is the TIER, not a model
-//     [data-testid=composer-model-picker-slider-simple-view]
-//         "Pro, 5 of 5.Use Left and Right arrow keys to adjust power."
-//       div[role=menuitem][aria-label=Power] tabindex=0     arrow keys land here
-//         span[role=slider] aria-valuenow/min/max           0..4, NO aria-valuetext
-//     [data-testid=composer-model-picker-slider-advanced-view]
-//       div[role=menuitemradio] aria-checked  per model
+//   [role=menu][data-state=open]                            the panel (no data-testid)
+//     div[role=menuitem][data-model-picker-view-toggle]     aria-label "Select model"; text is the TIER
+//     span[role=status]  "Pro, 5 of 5."                     the only place the tier label appears
+//     div[role=menuitem][data-reasoning-slider][aria-label=Power]   arrow keys land here
+//       span[role=slider] aria-valuenow/min/max             0..4, NO aria-valuetext
+//     div[role=menuitemradio] aria-checked  per model       span = name, optional second span = note
 //
 // commitModel=false simulates the page dropping a model click on the floor.
 // sliderDead=true simulates a slider that ignores arrow keys.
@@ -100,13 +99,13 @@ function buildPage({ models, efforts, model, effort, commitModel = true, sliderD
   };
 
   const buildPanel = () => {
-    const panel = new El('div', { 'data-testid': 'composer-intelligence-picker-content' });
-    const header = new El('div', { role: 'menuitem', 'aria-label': 'Select model' }, state.effort);
+    const panel = new El('div', {});
+    const header = new El('div', { role: 'menuitem', 'aria-label': 'Select model', 'data-model-picker-view-toggle': 'true' }, state.effort);
 
-    const simple = new El('div', { 'data-testid': 'composer-model-picker-slider-simple-view' });
+    const simple = new El('div', {});
     const index = () => efforts.indexOf(state.effort);
-    const caption = new El('span', {}, '');
-    const power = new El('div', { role: 'menuitem', 'aria-label': 'Power', tabindex: '0' });
+    const caption = new El('span', { role: 'status' }, '');
+    const power = new El('div', { role: 'menuitem', 'aria-label': 'Power', 'data-reasoning-slider': 'true', tabindex: '-1' });
     const slider = new El('span', {
       role: 'slider',
       'aria-valuemin': '0',
@@ -116,7 +115,7 @@ function buildPage({ models, efforts, model, effort, commitModel = true, sliderD
     // the live page prints the tier only in this caption, never as aria-valuetext
     const paint = () => {
       const i = Number(slider.getAttribute('aria-valuenow'));
-      caption.text = `${efforts[i]}, ${i + 1} of ${efforts.length}.Use Left and Right arrow keys to adjust power.`;
+      caption.text = `${efforts[i]}, ${i + 1} of ${efforts.length}.`;
       state.effort = efforts[i];
       header.text = state.effort;
     };
@@ -137,11 +136,15 @@ function buildPage({ models, efforts, model, effort, commitModel = true, sliderD
     };
     paint();
 
-    const advanced = new El('div', { 'data-testid': 'composer-model-picker-slider-advanced-view' });
+    const advanced = new El('div', {});
     const paintModels = () => {
       advanced.clear();
       advanced.append(...models.map((o) => {
-        const el = new El('div', { role: 'menuitemradio', 'aria-checked': String(o === state.model) }, o);
+        const el = new El('div', { role: 'menuitemradio', 'aria-checked': String(o === state.model) });
+        const row = new El('div', { 'data-menu-row-content': 'true' });
+        row.append(new El('span', {}, o));
+        if (NOTES[o]) row.append(new El('span', {}, NOTES[o]));
+        el.append(row);
         el.onclick = () => { if (commitModel) state.model = o; paintModels(); if (collapseModelsOnCommit) advanced.attrs.inert = ''; };
         return el;
       }));
@@ -180,7 +183,9 @@ async function run(stepId, page, args = []) {
 }
 
 // ---- checks -----------------------------------------------------------------
-const MODELS = ['Latest', 'GPT-5.6 Sol', 'GPT-5.5'];
+const MODELS = ['GPT-6', 'GPT-5.6 Sol', 'GPT-5.5'];
+// a second line under the name, as on the live page; textContent becomes "GPT-5.5Leaving on October 14"
+const NOTES = { 'GPT-5.5': 'Leaving on October 14' };
 const EFFORTS = ['Instant', 'Medium', 'High', 'Extra High', 'Pro'];
 const newPage = (over = {}) => {
   const p = buildPage({ models: MODELS, efforts: EFFORTS, model: 'GPT-5.5', effort: 'Instant', ...over });
@@ -276,7 +281,7 @@ const newPage = (over = {}) => {
   const page = newPage({ commitModel: false });
   await assert.rejects(
     () => run('s6', page, ['GPT-5.6 Sol', 'High', 'true']),
-    (e) => /model_commit_failed: clicked GPT-5\.6 Sol/.test(e.message) && /"text":"GPT-5\.5"/.test(e.message),
+    (e) => /model_commit_failed: clicked GPT-5\.6 Sol/.test(e.message) && /"text":"GPT-5\.5/.test(e.message),
     'a click the page ignores must fail loudly at the step that made it',
   );
 }
@@ -287,7 +292,7 @@ const newPage = (over = {}) => {
   await run('s9', page);
   page.state.model = 'GPT-5.5'; // the page silently reverts behind our back
   await assert.rejects(() => run('s12', page, ['none']),
-    /model_selection_verify_failed.*model_row="Latest \| GPT-5\.6 Sol \| GPT-5\.5"/s);
+    /model_selection_verify_failed.*model_row="GPT-6 \| GPT-5\.6 Sol \| GPT-5\.5"/s);
 }
 
 { // menu labels are free-form: a row that drops the "GPT-" prefix is the same model
@@ -332,10 +337,21 @@ for (const effort of EFFORTS) {
   await run('s6', page, ['Latest', effort, 'true']);
   await run('s9', page);
   const result = await run('s12', page, ['none']);
-  assert.equal(result.model_observed, `Latest / ${effort}`);
+  // no row is labelled Latest any more, so Latest resolves to the newest (top) model
+  assert.equal(result.model_observed, `GPT-6 / ${effort}`);
   assert.equal(result.model_selection.applied, true);
 }
-{ // Latest is an exact alias, never the first row or an older model fallback.
+{ // an exact Latest row still wins over the top row
+  const page = newPage({ models: ['GPT-6', 'Latest'], model: 'GPT-6' });
+  const s6 = await run('s6', page, ['Latest', 'Medium', 'true']);
+  assert.equal(s6.target_text, 'Latest');
+}
+{ // a note under the model name does not stop an exact match
+  const page = newPage();
+  const s6 = await run('s6', page, ['GPT-5.5', 'Medium', 'true']);
+  assert.equal(s6.target_text, 'GPT-5.5');
+}
+{ // Latest never guesses when a row only starts with Latest.
   const page = newPage({ models: ['Latest Preview', 'GPT-5.6 Sol'] });
   await assert.rejects(() => run('s6', page, ['Latest', 'Pro', 'true']), /model_not_found/);
 }
