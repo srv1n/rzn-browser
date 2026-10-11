@@ -2170,8 +2170,18 @@ mod tests {
             CommandReceiptJournal::open(path.clone()).is_err(),
             "detached blocking write must retain the exclusive lock"
         );
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        let recovered = CommandReceiptJournal::open(path.clone()).unwrap();
+        // The detached write holds the lock for ~250ms; poll instead of a fixed
+        // sleep so a slow CI runner does not race the release.
+        let recovered = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(journal) = CommandReceiptJournal::open(path.clone()) {
+                    return journal;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("detached write released the journal lock");
         let Some(CommandReceipt {
             state: CommandReceiptState::Completed(result),
             ..

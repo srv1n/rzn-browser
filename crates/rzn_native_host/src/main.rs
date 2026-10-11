@@ -59,6 +59,7 @@ const SUPERVISOR_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const SUPERVISOR_RPC_DEFAULT_TIMEOUT: Duration = Duration::from_secs(10);
 const SUPERVISOR_LOCK_FILENAME: &str = "rzn-supervisor.lock";
 const SUPERVISOR_OWNER_LOCK_FILENAME: &str = "rzn-supervisor-owner.lock";
+#[cfg(target_os = "macos")]
 const SUPERVISOR_OWNER_TRANSITION_LOCK_FILENAME: &str = "rzn-supervisor-owner-transition.lock";
 const SUPERVISOR_OWNER_MARKER_FILENAME: &str = "supervisor-owner.json";
 const SUPERVISOR_OWNER_STOP_FILENAME: &str = "rzn-supervisor-owner.stop";
@@ -385,7 +386,10 @@ enum LocalSupervisorSpawn {
 }
 
 #[derive(Debug)]
-struct OwnerTransitionLock(Option<std::fs::File>);
+// Only the macOS flock path reads the file; elsewhere the lock is a no-op.
+struct OwnerTransitionLock(
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] Option<std::fs::File>,
+);
 
 impl Drop for OwnerTransitionLock {
     fn drop(&mut self) {
