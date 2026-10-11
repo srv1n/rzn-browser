@@ -217,6 +217,10 @@ test.describe('Multi-workflow concurrency e2e', () => {
       });
       const worker = await waitForBackgroundHelper(context, '__rznTestStartBlockedStorageInitialization');
       const result = await worker.evaluate(async () => {
+        // Let the worker's own startup reads finish first. Otherwise the stub
+        // below captures one of them, nothing ever resolves it, and the
+        // evaluation hangs until the test times out.
+        await (globalThis as any).__rznTestFinishBlockedStorageInitialization();
         const pendingReads = new Map<string, (value: any) => void>();
         const originalGet = chrome.storage.local.get;
         const originalSet = chrome.storage.local.set;

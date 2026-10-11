@@ -6598,7 +6598,7 @@ pub(crate) async fn ensure_running(config: SupervisorConfig) -> Result<Superviso
         clear_owner_stop_request(&paths);
     }
     match call(config.clone(), "runtime.status", json!({})).await {
-        Ok(result) => return Ok(SupervisorClientStatus { ok: true, result }),
+        Ok(result) => Ok(SupervisorClientStatus { ok: true, result }),
         Err(first_err) => {
             if let Some(label) = managed_label.as_deref() {
                 kickstart_managed_owner(label)?;

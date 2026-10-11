@@ -2163,8 +2163,7 @@ mod tests {
         writer.abort();
         assert!(writer
             .await
-            .err()
-            .expect("journal owner task was cancelled")
+            .expect_err("journal owner task was cancelled")
             .is_cancelled());
 
         assert!(
@@ -2877,8 +2876,7 @@ mod tests {
         first.abort();
         assert!(first
             .await
-            .err()
-            .expect("outer admission task was cancelled")
+            .expect_err("outer admission task was cancelled")
             .is_cancelled());
         drop(status_guard);
 
