@@ -96,6 +96,33 @@ pub async fn run_supervisor_workflow(mut config: SupervisorRunConfig) -> Result<
     outcome
 }
 
+/// The supervisor drives one run at a time. A run that finds the slot taken
+/// waits for it, so parallel CLI calls for different sites queue instead of
+/// failing with "a run is already in progress".
+async fn claim_run_slot<F, Fut>(mut claim: F) -> Result<Value>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<Value>>,
+{
+    let mut announced = false;
+    loop {
+        match claim().await {
+            Err(e) if format!("{e:#}").contains("a run is already in progress") => {
+                if !announced {
+                    eprintln!(
+                        "[queue] the browser is busy with another run; this run waits its turn"
+                    );
+                    announced = true;
+                }
+                tokio::time::sleep(RUN_SLOT_POLL).await;
+            }
+            other => return other,
+        }
+    }
+}
+
+const RUN_SLOT_POLL: Duration = Duration::from_millis(500);
+
 /// Error code + bridge message of a failed run, for marker matching.
 fn failure_text(error: &anyhow::Error) -> String {
     match error.downcast_ref::<WorkflowRunFailure>() {
@@ -137,18 +164,15 @@ async fn run_once(
         .map(PathBuf::from)
         .unwrap_or_else(rzn_core::runtime_paths::default_app_base_dir);
     let run_id = format!("local-{}", Uuid::new_v4());
-    supervisor::call(
-        supervisor_config.clone(),
-        "runs.claim",
-        json!({
-            "run_id": run_id,
-            "workflow_id": workflow_id,
-            "origin": "cli",
-            "step_total": workflow.steps.len(),
-            "pid": std::process::id()
-        }),
-    )
-    .await?;
+    let claim = json!({
+        "run_id": run_id,
+        "workflow_id": workflow_id,
+        "origin": "cli",
+        "step_total": workflow.steps.len(),
+        "pid": std::process::id()
+    });
+    claim_run_slot(|| supervisor::call(supervisor_config.clone(), "runs.claim", claim.clone()))
+        .await?;
     let transport = CliStepTransport {
         config: supervisor_config.clone(),
         session_id: Arc::new(Mutex::new(None)),
@@ -748,10 +772,27 @@ fn emit_runtime_status(message: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_supervisor_run_ready, should_auto_heal_run_readiness};
+    use super::{claim_run_slot, ensure_supervisor_run_ready, should_auto_heal_run_readiness};
+    use anyhow::anyhow;
     use serde_json::{json, Value};
     use std::collections::VecDeque;
     use std::future;
+
+    #[tokio::test]
+    async fn busy_run_slot_waits_instead_of_failing() {
+        let mut replies = VecDeque::from([
+            Err(anyhow!(
+                "Supervisor error: a run is already in progress: local-1 (cli)"
+            )),
+            Ok(json!({"ok": true})),
+        ]);
+        let claimed = claim_run_slot(|| future::ready(replies.pop_front().unwrap())).await;
+        assert_eq!(claimed.unwrap(), json!({"ok": true}));
+        assert!(replies.is_empty());
+
+        let paused = claim_run_slot(|| future::ready(Err(anyhow!("automation is paused")))).await;
+        assert!(paused.is_err(), "other claim errors still fail");
+    }
 
     #[tokio::test]
     async fn run_preflight_heals_connected_unresponsive_bridge() {

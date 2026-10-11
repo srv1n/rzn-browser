@@ -57,6 +57,9 @@ log.
 The CLI queues every manifest run by its `system`. Runs for one site execute one
 at a time across processes, and each starts as soon as the previous one ends.
 Eight parallel `capterra search` calls run one after another, not at once.
+The supervisor drives one run at a time across all sites, so a run that finds
+the browser busy with another site waits for it too (`[queue] the browser is
+busy ...`) instead of failing.
 
 - Each run reuses the site's parked tab, which stays open between runs and
   comes to the front when the run starts. The exceptions are workflows with `requires_existing_session` (they bind the
