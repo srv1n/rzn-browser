@@ -1,0 +1,204 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "sci/judgements-by-date",
+  "name": "Supreme Court of India: Judgments by Date",
+  "version": "1.0.0",
+  "system": "sci",
+  "capability": "sci.judgements_by_date",
+  "summary": "Answer the CAPTCHA on a form left open by sci/judgements-open, search, and read every result page.",
+  "description": "Second half of a judgment-date search. Runs in the tab sci/judgements-open left on the filled form: types captcha_answer, presses Search, waits for results, reads each row, clicks the site pagination links for further pages, and returns rows plus the raw HTML of each result page. status is ok, empty, captcha_wrong or error; complete is false when paging ran out of time. Driven in bulk by scripts/sci/sci-listing.sh.",
+  "params": {
+    "properties": {
+      "captcha_answer": {
+        "kind": "string",
+        "required": true,
+        "description": "Answer to the CAPTCHA shown by sci/judgements-open."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "sci.gov.in"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "sci.gov.in"
+      ]
+    },
+    {
+      "class": "file_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "local_output"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 240000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "name": "Check the filled form is still open",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#sciapi-services-judgements-judgement-date #siwp_captcha_value_0"
+        }
+      },
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s2",
+      "name": "Type the CAPTCHA answer",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{captcha_answer}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#siwp_captcha_value_0"
+        }
+      }
+    },
+    {
+      "id": "s3",
+      "name": "Press Search",
+      "action": {
+        "kind": "click_element",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#sciapi-services-judgements-judgement-date input[type=submit]"
+        }
+      }
+    },
+    {
+      "id": "s4",
+      "name": "Wait for results",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#cnrResults table, #cnrResults .notfound"
+        }
+      },
+      "timeout_ms": 90000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Settle the rendered results",
+      "timeout_ms": 1500
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "script": "const sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst norm = (s) => String(s || '').replace(/\\s+/g, ' ').trim();\nconst box = () => document.querySelector('#cnrResults');\nconst isoDate = (s) => { const m = String(s || '').match(/(\\d{2})[-./](\\d{2})[-./](\\d{4})/); return m ? m[3] + '-' + m[2] + '-' + m[1] : ''; };\nconst PDF_RE = /\\.pdf($|[?#])|view-pdf|get-pdf/i;\n\nconst readPage = (page) => {\n  const root = box();\n  const table = root && root.querySelector('table');\n  const heads = table ? Array.from(table.querySelectorAll('thead th')).map((th) => norm(th.textContent)) : [];\n  const rows = [];\n  if (table) {\n    for (const tr of table.querySelectorAll('tbody > tr')) {\n      const tds = Array.from(tr.children).filter((c) => c.tagName === 'TD');\n      if (!tds.length || (tds.length === 1 && tds[0].colSpan > 1)) continue;\n      const cells = {};\n      tds.forEach((td, i) => { cells[heads[i] || td.getAttribute('data-th') || 'col' + i] = norm(td.innerText); });\n      const pick = (re) => { const k = Object.keys(cells).find((h) => re.test(h)); return k ? cells[k] : ''; };\n      const anchors = Array.from(tr.querySelectorAll('a[href]'));\n      const links = anchors.map((a) => a.getAttribute('href'));\n      // Judgment cell: English PDF, regional PDFs, then INSC citation links to /pdfdate/. Prefer the English PDF.\n      const pdfs = anchors.filter((a) => PDF_RE.test(a.getAttribute('href')) && !/pdfdate/i.test(a.getAttribute('href')));\n      const pdf = pdfs.find((a) => /\\(English\\)/i.test(a.textContent)) || pdfs[0];\n      const parties = pick(/petitioner|part(y|ies)|title|cause/i);\n      const split = parties.split(/\\s+(?:vs\\.?|versus|v\\/s)\\s+/i);\n      rows.push({\n        pdf_url: pdf ? pdf.getAttribute('href') : '',\n        petitioner: split.length > 1 ? split[0] : parties,\n        respondent: pick(/^(?!.*petitioner).*respondent/i) || (split.length > 1 ? split.slice(1).join(' Vs ') : ''),\n        case_number: pick(/case\\s*(no|num)/i),\n        diary_number: pick(/diary/i),\n        decision_date: isoDate(pick(/date/i) || pick(/^judg(e)?ments?$/i)),\n        listed_text: norm(tr.innerText),\n        cells_json: JSON.stringify(cells),\n        all_links: links.join(' '),\n        page: page\n      });\n    }\n  }\n  const pager = document.querySelector('#paginationHtml');\n  return { rows, html: (root ? root.outerHTML : '') + '\\n' + (pager ? pager.outerHTML : '') };\n};\n\nconst s = window.__sci_listing || (window.__sci_listing = { page: 1, rows: [], pages_html: [], status: '', message: '' });\nif (!s.status) {\n  const root = box();\n  const nf = root && root.querySelector('.notfound');\n  if (nf && !root.querySelector('table')) {\n    const msg = norm(nf.textContent);\n    s.message = msg;\n    s.status = /captcha/i.test(msg) ? 'captcha_wrong'\n      : /no\\s+(record|data|result|judg)|nothing found|not found/i.test(msg) ? 'empty'\n      : 'error';\n    if (s.status === 'empty') s.pages_html.push(root.outerHTML);\n    s.done = true;\n  } else {\n    const first = readPage(1);\n    s.rows.push(...first.rows);\n    s.pages_html.push(first.html);\n    s.status = 'ok';\n  }\n}\n\n// Page through the site's own pagination links until none is left or the eval budget runs out.\nconst deadline = Date.now() + 95000;\nwhile (!s.done && Date.now() < deadline) {\n  const next = document.querySelector('#paginationHtml .pagination a[data-page-id=\"' + (s.page + 1) + '\"]');\n  if (!next) { s.done = true; break; }\n  const before = box().innerHTML;\n  next.click();\n  const waitUntil = Date.now() + 30000;\n  while (Date.now() < waitUntil && box().innerHTML === before) await sleep(300);\n  await sleep(500);\n  if (box().innerHTML === before) { s.status = 'error'; s.message = 'page ' + (s.page + 1) + ' did not load'; s.done = true; break; }\n  const nf = box().querySelector('.notfound');\n  if (nf && !box().querySelector('table')) { s.status = 'error'; s.message = 'page ' + (s.page + 1) + ': ' + norm(nf.textContent); s.done = true; break; }\n  s.page += 1;\n  const p = readPage(s.page);\n  s.rows.push(...p.rows);\n  s.pages_html.push(p.html);\n}\n\nreturn {\n  status: s.status,\n  message: s.message,\n  complete: !!s.done,\n  page_count: s.pages_html.length,\n  row_count: s.rows.length,\n  // A JSON string, because the result serializer cuts arrays to 50 items (background.ts serialize).\n  rows_json: JSON.stringify(s.rows),\n  pages_html: s.pages_html\n};\n"
+        },
+        "side_effects": [
+          "read_only",
+          "browser_state"
+        ]
+      },
+      "name": "Read every result page through the site pagination",
+      "timeout_ms": 115000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "page_count": {
+          "type": "integer"
+        },
+        "row_count": {
+          "type": "integer"
+        },
+        "pages_html": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rows_json": {
+          "type": "string",
+          "description": "JSON array of rows: [{ pdf_url, petitioner, respondent, case_number, diary_number, decision_date, listed_text, cells_json, all_links, page }]. A string because the result serializer cuts arrays to 50 items."
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s8",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Answer the CAPTCHA, search and read every result page. Run after sci/judgements-open.",
+    "parameters": {
+      "captcha_answer": "Answer to the CAPTCHA image from sci/judgements-open."
+    },
+    "examples": [
+      {
+        "description": "Search the window opened by sci/judgements-open",
+        "command": "rzn-browser run sci judgements-by-date --param captcha_answer=7"
+      }
+    ],
+    "returns": [
+      "Object: { status, message, complete, page_count, row_count, rows_json, pages_html: [string] }. rows_json is a JSON array string of { pdf_url, petitioner, respondent, case_number, diary_number, decision_date, listed_text, cells_json, all_links, page }."
+    ],
+    "notes": [
+      "Must run in the tab sci/judgements-open left open; the site keeps one parked tab per system.",
+      "Each new search needs a new CAPTCHA. Paging reuses the site pagination nonce, so it needs none.",
+      "Use scripts/sci/sci-listing.sh for the 2014-to-today backlog and the weekly window."
+    ]
+  }
+}

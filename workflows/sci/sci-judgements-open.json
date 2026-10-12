@@ -1,0 +1,182 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "sci/judgements-open",
+  "name": "Supreme Court of India: Open the judgment-date search",
+  "version": "1.0.0",
+  "system": "sci",
+  "capability": "sci.judgements_open",
+  "summary": "Open the judgment-date search, fill a date window and return the CAPTCHA image as a PNG data URL. Pair with sci/judgements-by-date in the same tab.",
+  "description": "First half of a judgment-date search. Opens https://www.sci.gov.in/judgements-judgement-date/, fills from_date and to_date (dd-mm-yyyy, at most 30 days apart), waits for the page to load its CAPTCHA image, and returns that image as a PNG data URL. The tab stays parked on the filled form; sci/judgements-by-date then types the answer, searches and reads the results.",
+  "params": {
+    "properties": {
+      "from_date": {
+        "kind": "string",
+        "required": true,
+        "description": "Window start, dd-mm-yyyy."
+      },
+      "to_date": {
+        "kind": "string",
+        "required": true,
+        "description": "Window end, dd-mm-yyyy. The site allows at most 30 days after from_date."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "sci.gov.in"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "sci.gov.in"
+      ]
+    },
+    {
+      "class": "file_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "local_output"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 120000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.sci.gov.in/judgements-judgement-date/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the judgment-date search page",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#sciapi-services-judgements-judgement-date #siwp_captcha_value_0"
+        }
+      },
+      "name": "Wait for the search form (fails on a block or error page)",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{from_date}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#from_date"
+        }
+      },
+      "name": "Fill From Date"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{to_date}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "#to_date"
+        }
+      },
+      "name": "Fill To Date"
+    },
+    {
+      "id": "s5",
+      "name": "Return the CAPTCHA image as a PNG",
+      "action": {
+        "kind": "execute_javascript",
+        "side_effects": [
+          "read_only"
+        ],
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "script": "const sleep=(ms)=>new Promise(r=>setTimeout(r,ms));\nawait sleep(3500);\nconst img=document.querySelector(\"#siwp_captcha_image_0\")||document.querySelector(\"img[id^=siwp_captcha_image]\");\nif(!img) return {stop_workflow:true, stop_reason:\"captcha image not found\"};\nconst until=Date.now()+10000;\nwhile(Date.now()<until&&!(img.complete&&img.naturalWidth>0)) await sleep(200);\nconst c=document.createElement(\"canvas\");c.width=img.naturalWidth;c.height=img.naturalHeight;\nc.getContext(\"2d\").drawImage(img,0,0);\nreturn {image:c.toDataURL(\"image/png\"),width:c.width,height:c.height};"
+        }
+      },
+      "timeout_ms": 20000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string"
+        },
+        "width": {
+          "type": "integer"
+        },
+        "height": {
+          "type": "integer"
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s5",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Open the judgment-date form for a window and return the CAPTCHA image.",
+    "parameters": {
+      "from_date": "Window start, dd-mm-yyyy.",
+      "to_date": "Window end, dd-mm-yyyy, at most 30 days after from_date."
+    },
+    "examples": [
+      {
+        "description": "Open January 2019",
+        "command": "rzn-browser run sci judgements-open --param from_date=01-01-2019 --param to_date=31-01-2019"
+      }
+    ],
+    "returns": [
+      "Object: { image: data:image/png;base64,..., width, height }."
+    ],
+    "notes": [
+      "The page reloads its CAPTCHA 2 seconds after load; the step waits for that before reading the image.",
+      "Run sci/judgements-by-date next, in the same tab, with the answer."
+    ]
+  }
+}
