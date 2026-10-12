@@ -31,6 +31,14 @@ ymd() { TZ=UTC date -j -r "$1" +%Y-%m-%d; }
 plus_days() { ymd $(($(epoch "$1") + $2 * 86400)); }
 dmy() { TZ=UTC date -j -r "$(epoch "$1")" +%d-%m-%Y; }
 done_already() { grep -qF "\"window\":\"$1..$2\"" "$OUT/windows.jsonl"; }
+# insc: the English "YYYY INSC N" in the row. pdf_language: "en", or the regional PDF's language code.
+ENRICH='. + {insc: (first(.listed_text | capture("(?<i>[0-9]{4} INSC [0-9]+) ?\\(English\\)").i) // ""),
+  pdf_language: (if .pdf_url == "" then ""
+    elif (.pdf_url | test("supremecourt_vernacular")) then
+      (.pdf_url | capture("_(?<l>[A-Z]+)\\.pdf").l // "") as $l
+      | {HIN:"hi",BEN:"bn",ASM:"as",TEL:"te",TAM:"ta",KAN:"kn",MAL:"ml",MAR:"mr",GUJ:"gu",ORI:"or",ODI:"or",PUN:"pa",PAN:"pa",URD:"ur",NEP:"ne",KHA:"kha",GAR:"grt"}[$l] // ($l | ascii_downcase)
+    else "en" end)}'
+SHIP="${SCI_SHIP-srv@192.168.2.226:rzn-producers/listing/rows.jsonl}" # empty = do not ship
 
 rzn() {
   if ! rzn-browser run "$@" >"$OUT/last-run.log" 2>&1; then
@@ -83,12 +91,17 @@ run_window() {
   done
   # ponytail: a crash between these two appends duplicates the window's rows on rerun; consumers dedupe on pdf_url.
   jq -c --arg w "$from..$to" --arg at "$at" '.result.rows_json | fromjson | .[]
-    | {pdf_url, petitioner, respondent, case_number, diary_number, decision_date, listed_text, window: $w, captured_at: $at}' \
+    | {pdf_url, petitioner, respondent, case_number, diary_number, decision_date, listed_text, window: $w, captured_at: $at}
+    | '"$ENRICH" \
     "$res" >>"$OUT/rows.jsonl"
   jq -c --arg w "$from..$to" --arg at "$at" \
     '{window: $w, status: .result.status, row_count: .result.row_count, page_count: .result.page_count, finished_at: $at}' \
     "$res" >>"$OUT/windows.jsonl"
   echo "[$(date +%H:%M:%S)] $from..$to: $rows rows saved" >&2
+  # The producer dedupes, so ship the whole file; a failed rsync is caught up after the next window.
+  if [[ -n "$SHIP" ]] && ! rsync -a "$OUT/rows.jsonl" "$SHIP" >>"$OUT/rsync.log" 2>&1; then
+    echo "[$(date +%H:%M:%S)] rsync failed; see $OUT/rsync.log" >&2
+  fi
   rm -f "$res"
 }
 
