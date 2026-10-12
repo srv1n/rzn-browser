@@ -49,11 +49,16 @@ rzn() {
 
 # Run one window, solving the CAPTCHA with a model. Returns 0 when saved, 2 when it must be split.
 run_window() {
-  local from=$1 to=$2 res status try answer
+  local from=$1 to=$2 res status="" try answer
   res="$(mktemp)"
   for try in 1 2 3; do
     rzn "$WF_OPEN" --param from_date="$(dmy "$from")" --param to_date="$(dmy "$to")" --output-file "$res"
-    jq -r '.result.image' "$res" | sed 's#^data:image/png;base64,##' | base64 -D >"$OUT/captcha.png"
+    if ! jq -r '.result.image' "$res" | sed 's#^data:image/png;base64,##' | base64 -D >"$OUT/captcha.png" 2>/dev/null ||
+      [[ ! -s "$OUT/captcha.png" ]]; then
+      echo "[$(date +%H:%M:%S)] $from..$to: the CAPTCHA image had not loaded (try $try)" >&2
+      sleep "$GAP"
+      continue
+    fi
     if ! answer="$("$HERE/solve-captcha.sh" "$OUT/captcha.png")"; then
       notify "SC listing stopped" "The solver failed on $from to $to."
       exit 1
@@ -66,8 +71,19 @@ run_window() {
       *) notify "SC listing stopped" "$from to $to: $(jq -r '.result.message' "$res")"; exit 1 ;;
     esac
   done
+  if [[ -z "$status" ]]; then
+    notify "SC listing stopped" "The CAPTCHA image did not load on $from to $to."
+    exit 1
+  fi
   if [[ "$status" == captcha_wrong ]]; then
     notify "SC listing stopped" "Three wrong CAPTCHA answers on $from to $to. See $OUT/captcha.png"
+    exit 1
+  fi
+  # Judgments come out every week outside court breaks, and the site answers "No records found" when it
+  # quietly refuses a search. So an empty week or longer is treated as a failed search. A real empty
+  # window over a break stops the run too; check it by hand and rerun.
+  if [[ "$status" == empty ]] && (($(epoch "$to") - $(epoch "$from") >= 6 * 86400)); then
+    notify "SC listing stopped" "$from to $to: the site said '$(jq -r '.result.message' "$res")' for a week or more."
     exit 1
   fi
   if [[ "$(jq '(.result.rows_json | fromjson | length) == .result.row_count and (.result.pages_html | length) == .result.page_count' "$res")" != true ]]; then
