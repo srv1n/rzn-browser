@@ -130,6 +130,15 @@ drain() {
   done
 }
 
+# One driver at a time, so the weekly run never searches alongside the backfill.
+lock="$OUT/run.pid"
+if [[ -e "$lock" ]] && kill -0 "$(cat "$lock")" 2>/dev/null; then
+  notify "SC listing not started" "Another run (pid $(cat "$lock")) is still going."
+  exit 75
+fi
+echo $$ >"$lock"
+trap 'rm -f "$lock"' EXIT
+
 today="$(date +%Y-%m-%d)"
 case "${1:-}" in
   backfill)
@@ -146,7 +155,9 @@ case "${1:-}" in
     ;;
   weekly)
     q="$OUT/weekly-queue.txt"
-    [[ -s "$q" ]] || echo "$(plus_days "$today" -13) $today" >"$q"
+    # A stopped earlier week stays queued ahead of this one.
+    w="$(plus_days "$today" -13) $today"
+    grep -qxF "$w" "$q" 2>/dev/null || echo "$w" >>"$q"
     ;;
   window)
     [[ $# -eq 3 ]] || { echo "usage: $0 window FROM TO" >&2; exit 64; }
