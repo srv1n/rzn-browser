@@ -198,13 +198,13 @@ function serializeForBridge(value: any, depth = 0, seen = new WeakSet<object>())
     return '[Object]';
   }
   if (Array.isArray(value)) {
-    return value.slice(0, 50).map(item => serializeForBridge(item, depth + 1, seen));
+    return value.map(item => serializeForBridge(item, depth + 1, seen));
   }
   if (typeof value === 'object') {
     if (seen.has(value)) return '[Circular]';
     seen.add(value);
     const out: Record<string, any> = {};
-    for (const [key, child] of Object.entries(value).slice(0, 50)) {
+    for (const [key, child] of Object.entries(value)) {
       out[key] = serializeForBridge(child, depth + 1, seen);
     }
     return out;
