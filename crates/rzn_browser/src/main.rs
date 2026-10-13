@@ -58,7 +58,8 @@ use rzn_sdk::native_host::{
     normalize_extension_origin, normalize_extension_origins, read_manifest,
     resolve_native_host_executable_path, uninstall_rzn_native_host_for_browser, BrowserKind,
     NativeHostInstallReport, NativeHostUninstallReport, NativeMessagingHostManifest,
-    RZN_DEV_EXTENSION_ID, RZN_DEV_EXTENSION_ORIGIN, RZN_NATIVE_HOST_NAME,
+    RZN_DEV_EXTENSION_ID, RZN_DEV_EXTENSION_ORIGIN, RZN_NATIVE_HOST_NAME, RZN_STORE_EXTENSION_ID,
+    RZN_STORE_EXTENSION_ORIGIN,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json, Value};
@@ -1511,6 +1512,7 @@ async fn handle_native_host_doctor(args: NativeHostDoctorArgs) -> anyhow::Result
         .browser
         .parse::<BrowserKind>()
         .map_err(|err| anyhow::anyhow!("invalid browser target `{}`: {}", args.browser, err))?;
+    let explicit_origin = args.extension_origin.is_some();
     let extension_origin = normalize_extension_origin(
         args.extension_origin
             .as_deref()
@@ -1524,7 +1526,13 @@ async fn handle_native_host_doctor(args: NativeHostDoctorArgs) -> anyhow::Result
         .extension_dir
         .unwrap_or_else(|| default_extension_bundle_path_for_browser(browser, &config));
     let output =
-        build_native_host_doctor_report(browser, extension_origin, extension_bundle_path, &config)
+        build_native_host_doctor_report(
+            browser,
+            extension_origin,
+            explicit_origin,
+            extension_bundle_path,
+            &config,
+        )
             .await;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -1539,7 +1547,8 @@ async fn handle_native_host_doctor(args: NativeHostDoctorArgs) -> anyhow::Result
 
 async fn build_native_host_doctor_report(
     browser: BrowserKind,
-    extension_origin: String,
+    mut extension_origin: String,
+    origin_explicit: bool,
     extension_bundle_path: PathBuf,
     config: &supervisor::SupervisorConfig,
 ) -> NativeHostDoctorOutput {
@@ -1586,6 +1595,14 @@ async fn build_native_host_doctor_report(
         )),
     }
 
+    let targets_result = supervisor::call(config.clone(), "browser.targets", json!({})).await;
+    if !origin_explicit {
+        if let Some(manifest) = manifest.as_ref() {
+            let connected = targets_result.as_ref().ok();
+            extension_origin = pick_default_doctor_origin(manifest, browser, connected);
+        }
+    }
+
     if let Some(manifest) = manifest.as_ref() {
         checks.extend(native_host_doctor_manifest_checks(
             manifest,
@@ -1626,7 +1643,7 @@ async fn build_native_host_doctor_report(
         },
     ));
 
-    match supervisor::call(config.clone(), "browser.targets", json!({})).await {
+    match targets_result {
         Ok(targets) => {
             checks.extend(native_host_doctor_bridge_checks(
                 &targets,
@@ -1652,6 +1669,29 @@ async fn build_native_host_doctor_report(
         load_unpacked_path: extension_bundle_path,
         checks,
     }
+}
+
+/// With no explicit origin, judge the origin the user actually runs: a connected bridge's
+/// origin if the manifest allows it, else the first allowed of store, dev.
+fn pick_default_doctor_origin(
+    manifest: &NativeMessagingHostManifest,
+    browser: BrowserKind,
+    targets: Option<&Value>,
+) -> String {
+    let allowed = |o: &str| manifest.allowed_origins.iter().any(|a| a == o);
+    let connected = targets
+        .and_then(|t| t.get("targets"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|t| t.get("browser").and_then(Value::as_str) == Some(browser.slug()))
+        .filter_map(|t| t.get("caller_origin").and_then(Value::as_str));
+    for origin in connected.chain([RZN_STORE_EXTENSION_ORIGIN, RZN_DEV_EXTENSION_ORIGIN]) {
+        if allowed(origin) {
+            return origin.to_string();
+        }
+    }
+    RZN_DEV_EXTENSION_ORIGIN.to_string()
 }
 
 fn native_host_doctor_manifest_checks(
@@ -1766,7 +1806,9 @@ fn extension_bundle_manifest_key_check(
         Ok(extension_id) => {
             let derived_origin = format!("chrome-extension://{extension_id}/");
             let status =
-                if extension_id == RZN_DEV_EXTENSION_ID && derived_origin == extension_origin {
+                if (extension_id == RZN_DEV_EXTENSION_ID || extension_id == RZN_STORE_EXTENSION_ID)
+                    && derived_origin == extension_origin
+                {
                     DoctorCheckStatus::Pass
                 } else {
                     DoctorCheckStatus::Fail
@@ -1775,7 +1817,7 @@ fn extension_bundle_manifest_key_check(
                 "extension_bundle_manifest_key",
                 status,
                 format!(
-                    "manifest key derives extension id {extension_id}; expected {RZN_DEV_EXTENSION_ID}"
+                    "manifest key derives extension id {extension_id}; expected {RZN_DEV_EXTENSION_ID} (dev) or {RZN_STORE_EXTENSION_ID} (store)"
                 ),
             )
         }
@@ -2323,7 +2365,10 @@ fn native_host_allowed_origins(
         .map(String::as_str)
         .collect::<Vec<_>>();
     if raw.is_empty() {
-        return Ok(vec![RZN_DEV_EXTENSION_ORIGIN.to_string()]);
+        return Ok(vec![
+            RZN_STORE_EXTENSION_ORIGIN.to_string(),
+            RZN_DEV_EXTENSION_ORIGIN.to_string(),
+        ]);
     }
 
     normalize_extension_origins(raw).map_err(|err| {
@@ -2386,12 +2431,13 @@ fn render_native_host_install_output(output: &NativeHostInstallOutput) {
             for origin in &first_report.allowed_origins {
                 println!("  - {origin}");
             }
-            if first_report
-                .allowed_origins
-                .iter()
-                .any(|origin| origin == RZN_DEV_EXTENSION_ORIGIN)
-            {
-                println!("Default dev extension ID: {RZN_DEV_EXTENSION_ID}");
+            for (label, id, origin) in [
+                ("store", RZN_STORE_EXTENSION_ID, RZN_STORE_EXTENSION_ORIGIN),
+                ("dev", RZN_DEV_EXTENSION_ID, RZN_DEV_EXTENSION_ORIGIN),
+            ] {
+                if first_report.allowed_origins.iter().any(|o| o == origin) {
+                    println!("Default {label} extension ID: {id}");
+                }
             }
         }
         println!("Installed registrations:");
@@ -3076,6 +3122,7 @@ async fn handle_heal(args: HealArgs) -> anyhow::Result<()> {
     let before = build_native_host_doctor_report(
         browser,
         RZN_DEV_EXTENSION_ORIGIN.to_string(),
+        false,
         bundle_path.clone(),
         &config,
     )
@@ -3087,7 +3134,7 @@ async fn handle_heal(args: HealArgs) -> anyhow::Result<()> {
         install_rzn_native_host_for_browser_with_origins(
             browser,
             &host_path,
-            [RZN_DEV_EXTENSION_ORIGIN],
+            [RZN_STORE_EXTENSION_ORIGIN, RZN_DEV_EXTENSION_ORIGIN],
         )
         .map_err(|err| anyhow::anyhow!("native-host re-register failed: {err}"))?;
         actions.push(format!("re-registered native host for {}", browser.slug()));
@@ -3131,6 +3178,7 @@ async fn handle_heal(args: HealArgs) -> anyhow::Result<()> {
     let after = build_native_host_doctor_report(
         browser,
         RZN_DEV_EXTENSION_ORIGIN.to_string(),
+        false,
         bundle_path,
         &config,
     )
@@ -8419,9 +8467,53 @@ mod tests {
     }
 
     #[test]
-    fn native_host_allowed_origins_defaults_to_dev_extension_origin() {
-        let origins = native_host_allowed_origins(&[], &[]).expect("default dev origin");
-        assert_eq!(origins, vec![RZN_DEV_EXTENSION_ORIGIN.to_string()]);
+    fn doctor_manifest_key_check_accepts_store_or_dev_id() {
+        let manifest = json!({ "key": dev_manifest_key() });
+        let ok = extension_bundle_manifest_key_check(&manifest, RZN_DEV_EXTENSION_ORIGIN);
+        assert_eq!(ok.status, DoctorCheckStatus::Pass);
+        // The store id is accepted by the same check (derived id/origin mismatch still fails).
+        let bad = extension_bundle_manifest_key_check(&manifest, RZN_STORE_EXTENSION_ORIGIN);
+        assert_eq!(bad.status, DoctorCheckStatus::Fail);
+    }
+
+    #[test]
+    fn default_doctor_origin_follows_manifest() {
+        let mk = |o: &[&str]| NativeMessagingHostManifest {
+            name: RZN_NATIVE_HOST_NAME.to_string(),
+            description: String::new(),
+            path: String::new(),
+            manifest_type: "stdio".to_string(),
+            allowed_origins: o.iter().map(|s| s.to_string()).collect(),
+        };
+        let store_only = mk(&[RZN_STORE_EXTENSION_ORIGIN]);
+        assert_eq!(
+            pick_default_doctor_origin(&store_only, BrowserKind::Chrome, None),
+            RZN_STORE_EXTENSION_ORIGIN
+        );
+        let dev_only = mk(&[RZN_DEV_EXTENSION_ORIGIN]);
+        assert_eq!(
+            pick_default_doctor_origin(&dev_only, BrowserKind::Chrome, None),
+            RZN_DEV_EXTENSION_ORIGIN
+        );
+        let both = mk(&[RZN_STORE_EXTENSION_ORIGIN, RZN_DEV_EXTENSION_ORIGIN]);
+        let dev_connected = json!({"targets":[{"browser":"chrome","caller_origin":RZN_DEV_EXTENSION_ORIGIN}]});
+        assert_eq!(
+            pick_default_doctor_origin(&both, BrowserKind::Chrome, Some(&dev_connected)),
+            RZN_DEV_EXTENSION_ORIGIN
+        );
+    }
+
+    #[test]
+    fn native_host_allowed_origins_defaults_to_store_then_dev_origin() {
+        let origins = native_host_allowed_origins(&[], &[]).expect("default origins");
+        assert_eq!(
+            origins,
+            vec![
+                RZN_STORE_EXTENSION_ORIGIN.to_string(),
+                RZN_DEV_EXTENSION_ORIGIN.to_string()
+            ]
+        );
+        assert_eq!(RZN_STORE_EXTENSION_ID, "bifolknhnioahnjonpoceneflpmkakip");
         assert_eq!(RZN_DEV_EXTENSION_ID, "bogjdnehdficgkhklinmnbgiiofbamji");
     }
 

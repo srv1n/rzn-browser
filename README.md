@@ -240,7 +240,7 @@ Use these stable paths:
 - Linux Chrome: `~/.local/share/RZN/extension/dist/chrome`
 - Windows Chrome: `%LOCALAPPDATA%\\RZN\\extension\\dist\\chrome`
 
-The expected dev extension ID is `bogjdnehdficgkhklinmnbgiiofbamji`. After the first load, restart the browser once.
+The expected dev extension ID is `bogjdnehdficgkhklinmnbgiiofbamji`. The Chrome Web Store build (`bifolknhnioahnjonpoceneflpmkakip`) is trusted by default too. After the first load, restart the browser once.
 
 Use `rzn-browser browser targets` to list connected Chrome, Edge, and Chromium bridges. No-flag commands use the only connected bridge, or your saved default from `rzn-browser browser set chrome`, `rzn-browser browser set chromium`, or `rzn-browser browser set edge`. If multiple bridges are connected and no saved or explicit target resolves, the command fails with target choices instead of guessing. Explicit `--bridge`, `--browser-instance`, and `--browser` flags still override the saved default.
 

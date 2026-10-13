@@ -171,6 +171,7 @@ cat > "${MANIFEST_PATH}" << EOF
   "path": "${BIN_DIR}/rzn-native-host",
   "type": "stdio",
   "allowed_origins": [
+    "chrome-extension://bifolknhnioahnjonpoceneflpmkakip/",
     "chrome-extension://${EXTENSION_ID}/"
   ]
 }

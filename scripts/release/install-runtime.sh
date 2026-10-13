@@ -5,6 +5,7 @@ SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 
 HOST_NAME=${RZN_NATIVE_HOST_NAME:-com.rzn.browser.broker}
 EXTENSION_ID=${RZN_CHROME_EXTENSION_ID:-bogjdnehdficgkhklinmnbgiiofbamji}
+STORE_EXTENSION_ID=bifolknhnioahnjonpoceneflpmkakip
 
 path_contains_dir() {
   case ":$PATH:" in
@@ -300,6 +301,7 @@ cat > "$MANIFEST_PATH" <<EOF
   "path": "$BIN_DIR/rzn-native-host",
   "type": "stdio",
   "allowed_origins": [
+    "chrome-extension://$STORE_EXTENSION_ID/",
     "chrome-extension://$EXTENSION_ID/"
   ]
 }

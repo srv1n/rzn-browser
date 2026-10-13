@@ -9,6 +9,12 @@ pub const RZN_NATIVE_HOST_NAME: &str = "com.rzn.browser.broker";
 /// Deterministic unpacked extension ID derived from `extension/src/manifest.base.json` `key`.
 pub const RZN_DEV_EXTENSION_ID: &str = "bogjdnehdficgkhklinmnbgiiofbamji";
 
+/// Chrome Web Store extension ID.
+pub const RZN_STORE_EXTENSION_ID: &str = "bifolknhnioahnjonpoceneflpmkakip";
+
+/// Chrome Web Store native-messaging allowed origin.
+pub const RZN_STORE_EXTENSION_ORIGIN: &str = "chrome-extension://bifolknhnioahnjonpoceneflpmkakip/";
+
 /// Default development native-messaging allowed origin.
 pub const RZN_DEV_EXTENSION_ORIGIN: &str = "chrome-extension://bogjdnehdficgkhklinmnbgiiofbamji/";
 

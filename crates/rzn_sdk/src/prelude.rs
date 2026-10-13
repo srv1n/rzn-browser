@@ -26,7 +26,8 @@ pub use crate::native_host::{
     read_installed_rzn_native_host_manifest_for_browser, resolve_native_host_executable_path,
     uninstall_rzn_native_host_for_browser, BrowserKind, BrowserManifestDirectoryIdentity,
     BrowserTargetMetadata, NativeHostInstallReport, NativeHostUninstallReport,
-    NativeMessagingHostManifest, RZN_DEV_EXTENSION_ID, RZN_DEV_EXTENSION_ORIGIN,
+    NativeMessagingHostManifest, RZN_DEV_EXTENSION_ID, RZN_DEV_EXTENSION_ORIGIN, RZN_STORE_EXTENSION_ID,
+    RZN_STORE_EXTENSION_ORIGIN,
     RZN_NATIVE_HOST_NAME,
 };
 

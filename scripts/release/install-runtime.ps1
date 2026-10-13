@@ -59,7 +59,7 @@ $manifestPayload = @{
   description = "RZN Browser Host"
   path = (Join-Path $binDir "rzn-native-host.exe")
   type = "stdio"
-  allowed_origins = @("chrome-extension://$extensionId/")
+  allowed_origins = @("chrome-extension://bifolknhnioahnjonpoceneflpmkakip/", "chrome-extension://$extensionId/")
 }
 $manifestPayload | ConvertTo-Json -Depth 4 | Set-Content -NoNewline -Encoding utf8 $manifestPath
 
