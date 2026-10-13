@@ -13,12 +13,19 @@ The two runs share the site's parked tab. Nothing calls `admin-ajax.php` directl
 ```sh
 scripts/sci/sci-listing.sh window 2019-01-01 2019-01-31   # one window
 scripts/sci/sci-listing.sh backfill                       # 2014-01-01 .. today, month windows, resumable
+SCI_START=1950-01-01 SCI_END=2013-12-31 scripts/sci/sci-listing.sh backfill   # any range
 scripts/sci/sci-listing.sh weekly                         # the last 14 days
 ```
 
 `scripts/sci/solve-captcha.sh` reads each CAPTCHA with `claude -p --model haiku` (default) or
 `codex exec -m gpt-6-luna` (`SCI_SOLVER=codex`). After three wrong answers on one window the driver stops and
 sends a desktop notification. It also stops on any site message it does not recognise.
+
+The site also answers "No records found" when it quietly refuses a search. A window that comes back empty is
+searched once more before it is recorded empty. In weekly mode an empty window of a week or more stops the run.
+In a backfill, `SCI_EMPTY_STREAK` (default 6) empty windows in a row trigger a control search of January 2019:
+if it finds rows the empty windows stand, otherwise the run stops and requeues them. Only one driver runs at a
+time; the weekly run waits up to 24 hours for a running backfill.
 
 Output goes to `~/rzn-sc-listing/` (`SCI_LISTING_DIR`): `rows.jsonl`, `windows.jsonl` and
 `pages/<from>_<to>_<page>.html`. `SCI_GAP` (default 30) sets the seconds between searches. A window that

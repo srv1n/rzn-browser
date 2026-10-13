@@ -3,17 +3,20 @@
 # solve-captcha.sh reads each CAPTCHA with a model CLI (SCI_SOLVER=claude|codex). After three wrong
 # answers on one window the script stops and notifies.
 #
-#   scripts/sci/sci-listing.sh backfill            # SCI_START (2014-01-01) .. today, month windows
+#   scripts/sci/sci-listing.sh backfill            # SCI_START (2014-01-01) .. SCI_END (today), month windows
 #   scripts/sci/sci-listing.sh weekly              # the last 14 days
 #   scripts/sci/sci-listing.sh window FROM TO      # one window, YYYY-MM-DD (the Step 0 probe)
 #
 # Output in $SCI_LISTING_DIR (default ~/rzn-sc-listing): rows.jsonl, windows.jsonl,
 # pages/<from>_<to>_<page>.html. Each mode keeps its queue on disk and resumes at the
 # first unfinished window; a window already in windows.jsonl is never run again.
+# A window the site answers "No records found" for is searched once more before it is recorded empty.
 set -euo pipefail
 
 OUT="${SCI_LISTING_DIR:-$HOME/rzn-sc-listing}"
 START="${SCI_START:-2014-01-01}"
+END="${SCI_END:-$(date +%Y-%m-%d)}"
+EMPTY_STREAK="${SCI_EMPTY_STREAK:-6}" # stop after this many empty windows in a row; the site may be refusing
 MAX_ROWS="${SCI_MAX_ROWS:-0}" # row count that signals a truncated window; 0 = no known cap
 GAP="${SCI_GAP:-30}"          # seconds between searches
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -49,9 +52,10 @@ rzn() {
 
 # Run one window, solving the CAPTCHA with a model. Returns 0 when saved, 2 when it must be split.
 run_window() {
-  local from=$1 to=$2 res status="" try answer
+  local from=$1 to=$2 res status="" try=0 wrong=0 empties=0 answer
   res="$(mktemp)"
-  for try in 1 2 3; do
+  while ((wrong < 3 && try < 5)); do
+    try=$((try + 1))
     rzn "$WF_OPEN" --param from_date="$(dmy "$from")" --param to_date="$(dmy "$to")" --output-file "$res"
     if ! jq -r '.result.image' "$res" | sed 's#^data:image/png;base64,##' | base64 -D >"$OUT/captcha.png" 2>/dev/null ||
       [[ ! -s "$OUT/captcha.png" ]]; then
@@ -66,12 +70,20 @@ run_window() {
     rzn "$WF_SEARCH" --param captcha_answer="$answer" --output-file "$res"
     status="$(jq -r '.result.status' "$res")"
     case "$status" in
-      ok | empty) break ;;
-      captcha_wrong) echo "[$(date +%H:%M:%S)] $from..$to: answer $answer rejected (try $try)" >&2; sleep "$GAP" ;;
+      ok) break ;;
+      empty)
+        empties=$((empties + 1))
+        ((empties >= 2)) && break
+        echo "[$(date +%H:%M:%S)] $from..$to: no records; searching once more" >&2
+        sleep "$GAP" ;;
+      captcha_wrong)
+        wrong=$((wrong + 1))
+        echo "[$(date +%H:%M:%S)] $from..$to: answer $answer rejected ($wrong of 3)" >&2
+        sleep "$GAP" ;;
       *) notify "SC listing stopped" "$from to $to: $(jq -r '.result.message' "$res")"; exit 1 ;;
     esac
   done
-  if [[ -z "$status" ]]; then
+  if [[ -z "$status" || ( "$status" == empty && empties < 2 ) ]]; then
     notify "SC listing stopped" "The CAPTCHA image did not load on $from to $to."
     exit 1
   fi
@@ -79,12 +91,36 @@ run_window() {
     notify "SC listing stopped" "Three wrong CAPTCHA answers on $from to $to. See $OUT/captcha.png"
     exit 1
   fi
-  # Judgments come out every week outside court breaks, and the site answers "No records found" when it
-  # quietly refuses a search. So an empty week or longer is treated as a failed search. A real empty
-  # window over a break stops the run too; check it by hand and rerun.
-  if [[ "$status" == empty ]] && (($(epoch "$to") - $(epoch "$from") >= 6 * 86400)); then
-    notify "SC listing stopped" "$from to $to: the site said '$(jq -r '.result.message' "$res")' for a week or more."
-    exit 1
+  # The site also answers "No records found" when it quietly refuses a search. Weekly windows are recent
+  # and should never be empty, so there an empty week stops the run. In a backfill, early months can be
+  # truly empty, so a run of EMPTY_STREAK empty months stops it and those months are rerun next time.
+  if [[ "$status" == empty ]]; then
+    if [[ "$MODE" == weekly ]] && (($(epoch "$to") - $(epoch "$from") >= 6 * 86400)); then
+      notify "SC listing stopped" "$from to $to: the site said '$(jq -r '.result.message' "$res")' twice for a week or more."
+      exit 1
+    fi
+    streak+=("$from $to")
+    if ((${#streak[@]} >= EMPTY_STREAK)); then
+      # Search a month known to have rows. If it finds them, the empty months are real.
+      local ctl
+      ctl="$(mktemp -d)"
+      sleep "$GAP"
+      if SCI_LISTING_DIR="$ctl" SCI_SHIP= "$HERE/sci-listing.sh" window 2019-01-01 2019-01-31 2>>"$OUT/control.log" &&
+        jq -e 'select(.row_count > 0)' "$ctl/windows.jsonl" >/dev/null; then
+        echo "[$(date +%H:%M:%S)] ${#streak[@]} empty windows in a row; a control search found rows, so they stand" >&2
+        streak=()
+        rm -rf "$ctl"
+      else
+      # Forget the streak's windows and queue them again; the current one is still at the queue head.
+      grep -vF -f <(printf '"window":"%s..%s"\n' ${streak[@]}) "$OUT/windows.jsonl" >"$OUT/windows.tmp" || true
+      mv "$OUT/windows.tmp" "$OUT/windows.jsonl"
+      { printf '%s\n' "${streak[@]:0:${#streak[@]}-1}"; cat "$q"; } >"$q.tmp" && mv "$q.tmp" "$q"
+      notify "SC listing stopped" "$EMPTY_STREAK empty windows in a row up to $from to $to, and a control search found nothing; the site may be refusing. They will be searched again."
+      exit 1
+      fi
+    fi
+  else
+    streak=()
   fi
   if [[ "$(jq '(.result.rows_json | fromjson | length) == .result.row_count and (.result.pages_html | length) == .result.page_count' "$res")" != true ]]; then
     notify "SC listing stopped" "$from to $to: the result lost rows or pages in transfer."
@@ -121,6 +157,8 @@ run_window() {
   rm -f "$res"
 }
 
+streak=() # "FROM TO" of the current run of empty windows
+
 # Drain a queue file of "FROM TO" lines, oldest first.
 drain() {
   local q=$1 from to rc mid
@@ -147,23 +185,30 @@ drain() {
 }
 
 # One driver at a time, so the weekly run never searches alongside the backfill.
+# The weekly run waits up to 24 hours for the other run to finish; other modes give up at once.
+MODE="${1:-}"
 lock="$OUT/run.pid"
-if [[ -e "$lock" ]] && kill -0 "$(cat "$lock")" 2>/dev/null; then
-  notify "SC listing not started" "Another run (pid $(cat "$lock")) is still going."
-  exit 75
-fi
+for ((waited = 0; ; waited++)); do
+  [[ -e "$lock" ]] && kill -0 "$(cat "$lock")" 2>/dev/null || break
+  if [[ "$MODE" != weekly ]] || ((waited >= 288)); then
+    notify "SC listing not started" "Another run (pid $(cat "$lock")) is still going."
+    exit 75
+  fi
+  ((waited == 0)) && echo "[$(date +%H:%M:%S)] waiting for run $(cat "$lock") to finish" >&2
+  sleep 300
+done
 echo $$ >"$lock"
 trap 'rm -f "$lock"' EXIT
 
 today="$(date +%Y-%m-%d)"
-case "${1:-}" in
+case "$MODE" in
   backfill)
-    q="$OUT/queue.txt"
+    q="$OUT/queue_${START}_${END}.txt"
     if [[ ! -e "$q" ]]; then
       d="$START"
-      while [[ ! "$d" > "$today" ]]; do
+      while [[ ! "$d" > "$END" ]]; do
         end="$(date -j -v+1m -v-1d -f %Y-%m-%d "$d" +%Y-%m-%d)"
-        [[ "$end" > "$today" ]] && end="$today"
+        [[ "$end" > "$END" ]] && end="$END"
         echo "$d $end"
         d="$(plus_days "$end" 1)"
       done >"$q"
