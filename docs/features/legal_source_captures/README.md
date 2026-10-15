@@ -79,6 +79,19 @@ Field names and routes below come from plain-HTTP probes on 2026-10-15. Anything
 - Keep only appeals from India, judged by the origin stated in the judgment, not by party names.
 - BAILII judgments are often HTML, not PDF. If so, save the page as a PDF and write `pdf_file`.
 
+### 9. `rbi`: RBI circulars and master directions (PDF download only)
+
+- The backend lists these already (`scripts/producers/sources/rbi.py`). Only the download is blocked.
+- Listings: https://www.rbi.org.in/Scripts/NotificationUser.aspx (archive year, then All Months) and https://www.rbi.org.in/Scripts/BS_ViewMasterDirections.aspx.
+- Each PDF link on `rbidocs.rbi.org.in` returns an HTML CAPTCHA page ("What code is in the image?", input `answer` id `ans`, submit id `jar`) instead of the PDF.
+- Find out whether one solved CAPTCHA unlocks later downloads in the same session. If it does, the cheapest flow is: solve once, then download a batch and write `pdf_file` rows.
+
+### 10. `sebi`: SEBI orders and circulars, pages after the first
+
+- The backend mirrors page 1 of each listing. Paging POSTs to `/sebiweb/ajax/home/getnewslistinfo.jsp`, which returns HTTP 530 BLOCKED to scripts. No CAPTCHA was seen.
+- Orders: https://www.sebi.gov.in/sebiweb/home/HomeAction.do?doListing=yes&sid=2&ssid=9&smid=0 (31,003 listed). Circulars: the same route with `sid=1&ssid=7&smid=0` (2,806 listed).
+- Rows show the date and a linked title. The detail page URL ends `_<article id>.html`; use `order:<id>` or `circular:<id>` as the row `id`. The detail page embeds the PDF as `https://www.sebi.gov.in/sebi_data/attachdocs/...pdf`, which a plain GET can fetch.
+
 ## Partial sources the backend already covers
 
 - `nclat` (NCLAT): the backend mirrors the homepage's latest orders. Full history needs https://nclat.nic.in/display-board/judgement_details (an AJAX search with no CAPTCHA seen). This one is low priority.
