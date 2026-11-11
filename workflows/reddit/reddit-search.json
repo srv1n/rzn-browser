@@ -2,7 +2,7 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "reddit/search",
   "name": "Reddit: Search",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "system": "reddit",
   "capability": "reddit.search",
   "summary": "Search Reddit via direct URL and return the top result rows.",
@@ -89,6 +89,12 @@
       },
       "name": "Navigate directly to old.reddit.com search results (avoids homepage consent banner intercepting a search-box click)",
       "timeout_ms": 5000
+    },
+    {
+      "id": "s2b",
+      "action": { "kind": "wait_for_timeout", "inputs": {}, "side_effects": ["read_only"] },
+      "name": "Let the s2 navigation land before s3 waits on the results page (otherwise s3 fails with NAVIGATED_DURING_STEP)",
+      "timeout_ms": 2500
     },
     {
       "id": "s3",
