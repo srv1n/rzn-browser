@@ -5,7 +5,7 @@
   "version": "1.0.0",
   "system": "reddit",
   "capability": "reddit.listing.read",
-  "summary": "List posts from a subreddit feed (top, hot, new, rising) as structured JSON.",
+  "summary": "List posts from a subreddit feed (top or hot) as structured JSON.",
   "description": "Opens old.reddit.com in the user's Chrome session and fetches /r/<subreddit>/<sort>.json same-origin, following 'after' cursors until limit posts are collected. Works where API clients are IP-blocked.",
   "params": {
     "properties": {
@@ -17,12 +17,10 @@
       "sort": {
         "kind": "string",
         "required": false,
-        "description": "Feed to read.",
+        "description": "Feed to read. new/rising are omitted: their .json listings return HTTP 403 even in a signed-in session (2026-11-11).",
         "enum_values": [
           "top",
-          "hot",
-          "new",
-          "rising"
+          "hot"
         ],
         "default": "top"
       },
@@ -100,7 +98,7 @@
             "{time}",
             "{limit}"
           ],
-          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sub = cleanArg(arg0).replace(/^\\/?r\\//i, '').replace(/\\/$/, ''); if (!/^[A-Za-z0-9_]{2,32}$/.test(sub)) throw new Error('subreddit is required (name without r/)'); const sort = (cleanArg(arg1) || 'top').toLowerCase(); if (!['top','hot','new','rising'].includes(sort)) throw new Error('bad sort ' + sort); const time = (cleanArg(arg2) || 'all').toLowerCase(); const limit = Math.max(1, Math.min(500, parseInt(cleanArg(arg3) || '25', 10) || 25)); const posts = []; let after = ''; let pages = 0; while (posts.length < limit && pages < 10) { pages += 1; const q = new URLSearchParams({ limit: String(Math.min(100, limit - posts.length)), raw_json: '1' }); if (sort === 'top') q.set('t', time); if (after) q.set('after', after); const url = '/r/' + sub + '/' + sort + '.json?' + q.toString(); const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('reddit returned HTTP ' + res.status + ' for ' + url); const data = await res.json(); const kids = (data && data.data && data.data.children) || []; for (const c of kids) { const d = c.data || {}; posts.push({ id: d.id, title: d.title || null, subreddit: d.subreddit || sub, author: d.author || null, score: typeof d.score === 'number' ? d.score : null, num_comments: d.num_comments == null ? null : d.num_comments, created_utc: d.created_utc || null, permalink: d.permalink ? 'https://www.reddit.com' + d.permalink : null, url: d.url || null, is_self: !!d.is_self, over_18: !!d.over_18, stickied: !!d.stickied }); } after = data && data.data && data.data.after; if (!after || !kids.length) break; } return JSON.stringify({ subreddit: sub, sort: sort, time: sort === 'top' ? time : null, count: Math.min(posts.length, limit), posts: posts.slice(0, limit) });"
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sub = cleanArg(arg0).replace(/^\\/?r\\//i, '').replace(/\\/$/, ''); if (!/^[A-Za-z0-9_]{2,32}$/.test(sub)) throw new Error('subreddit is required (name without r/)'); const sort = (cleanArg(arg1) || 'top').toLowerCase(); if (!['top','hot'].includes(sort)) throw new Error('bad sort ' + sort); const time = (cleanArg(arg2) || 'all').toLowerCase(); const limit = Math.max(1, Math.min(500, parseInt(cleanArg(arg3) || '25', 10) || 25)); const posts = []; let after = ''; let pages = 0; while (posts.length < limit && pages < 10) { pages += 1; const q = new URLSearchParams({ limit: String(Math.min(100, limit - posts.length)), raw_json: '1' }); if (sort === 'top') q.set('t', time); if (after) q.set('after', after); const url = '/r/' + sub + (sort === 'hot' ? '' : '/' + sort) + '.json?' + q.toString(); const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('reddit returned HTTP ' + res.status + ' for ' + url); const data = await res.json(); const kids = (data && data.data && data.data.children) || []; for (const c of kids) { const d = c.data || {}; posts.push({ id: d.id, title: d.title || null, subreddit: d.subreddit || sub, author: d.author || null, score: typeof d.score === 'number' ? d.score : null, num_comments: d.num_comments == null ? null : d.num_comments, created_utc: d.created_utc || null, permalink: d.permalink ? 'https://www.reddit.com' + d.permalink : null, url: d.url || null, is_self: !!d.is_self, over_18: !!d.over_18, stickied: !!d.stickied }); } after = data && data.data && data.data.after; if (!after || !kids.length) break; } return JSON.stringify({ subreddit: sub, sort: sort, time: sort === 'top' ? time : null, count: Math.min(posts.length, limit), posts: posts.slice(0, limit) });"
         },
         "side_effects": [
           "read_only"
@@ -144,7 +142,7 @@
     "summary": "List posts from a subreddit feed as structured JSON.",
     "parameters": {
       "subreddit": "Subreddit name without r/.",
-      "sort": "top (default), hot, new or rising.",
+      "sort": "top (default) or hot.",
       "time": "For top: hour, day, week, month, year or all (default).",
       "limit": "Posts to return (1-500, default 25)."
     },
