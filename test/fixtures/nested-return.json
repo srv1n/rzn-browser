@@ -1,0 +1,95 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "test/nested-return",
+  "name": "Nested return",
+  "version": "1.0.0",
+  "system": "test",
+  "capability": "test.nested.read",
+  "summary": "Returns an object nested 8 levels deep; regression check for result serialization depth.",
+  "description": "Returns an object nested 8 levels deep; regression check for result serialization depth.",
+  "params": {
+    "properties": {},
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "example.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "example.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 30000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://example.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open any page",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "script": "let value = { deepest: 'intact' }; for (let i = 0; i < 8; i++) value = { child: value }; return value;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Return deeply nested data",
+      "timeout_ms": 45000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object"
+    },
+    "output_selector": {
+      "step_id": "s2",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Returns an object nested 8 levels deep; regression check for result serialization depth.",
+    "parameters": {},
+    "examples": [
+      {
+        "description": "Run",
+        "command": "rzn-browser run test/fixtures/nested-return.json"
+      }
+    ],
+    "returns": [
+      "{child:{child:...{deepest:\"intact\"}}}"
+    ],
+    "notes": []
+  }
+}

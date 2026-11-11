@@ -785,7 +785,16 @@ fn ensure_same_app_base(arguments: &[String], app_base: &Path) -> Result<()> {
         .find(|pair| pair[0] == "--app-base")
         .map(|pair| Path::new(&pair[1]))
         .ok_or_else(|| anyhow!("existing launch agent has no --app-base argument"))?;
-    if old_app_base != app_base {
+    // The app base dir is "rzn" in older installs and "RZN" now; on a case-insensitive
+    // filesystem those are the same directory, so compare file identity, not strings.
+    let same_dir = |a: &Path, b: &Path| {
+        use std::os::unix::fs::MetadataExt;
+        match (std::fs::metadata(a), std::fs::metadata(b)) {
+            (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+            _ => a == b,
+        }
+    };
+    if !same_dir(old_app_base, app_base) {
         bail!(
             "launchd label {LAUNCH_AGENT_LABEL} already belongs to app base {}; uninstall that runtime owner before installing {}",
             old_app_base.display(),

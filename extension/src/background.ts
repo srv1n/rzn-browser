@@ -3111,12 +3111,16 @@ async function injectedRznScriptingEval(
     if (value instanceof Error) {
       return { name: value.name, message: value.message, stack: value.stack };
     }
-    if (depth >= 4) {
+    if (depth >= 64) {
       if (Array.isArray(value)) return `[Array(${value.length})]`;
       return '[Object]';
     }
     if (Array.isArray(value)) {
-      return value.map((item) => serialize(item, depth + 1, seen));
+      if (seen.has(value)) return '[Circular]';
+      seen.add(value);
+      const out = value.map((item) => serialize(item, depth + 1, seen));
+      seen.delete(value);
+      return out;
     }
     if (typeof value === 'object') {
       if (seen.has(value)) return '[Circular]';
@@ -3125,6 +3129,7 @@ async function injectedRznScriptingEval(
       for (const [key, child] of Object.entries(value)) {
         out[key] = serialize(child, depth + 1, seen);
       }
+      seen.delete(value);
       return out;
     }
     return String(value);
