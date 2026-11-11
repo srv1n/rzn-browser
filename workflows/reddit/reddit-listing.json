@@ -1,0 +1,169 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "reddit/listing",
+  "name": "Reddit: Subreddit listing",
+  "version": "1.0.0",
+  "system": "reddit",
+  "capability": "reddit.listing.read",
+  "summary": "List posts from a subreddit feed (top, hot, new, rising) as structured JSON.",
+  "description": "Opens old.reddit.com in the user's Chrome session and fetches /r/<subreddit>/<sort>.json same-origin, following 'after' cursors until limit posts are collected. Works where API clients are IP-blocked.",
+  "params": {
+    "properties": {
+      "subreddit": {
+        "kind": "string",
+        "required": true,
+        "description": "Subreddit name without r/, e.g. NewParents."
+      },
+      "sort": {
+        "kind": "string",
+        "required": false,
+        "description": "Feed to read.",
+        "enum_values": [
+          "top",
+          "hot",
+          "new",
+          "rising"
+        ],
+        "default": "top"
+      },
+      "time": {
+        "kind": "string",
+        "required": false,
+        "description": "Time window for sort=top.",
+        "enum_values": [
+          "hour",
+          "day",
+          "week",
+          "month",
+          "year",
+          "all"
+        ],
+        "default": "all"
+      },
+      "limit": {
+        "kind": "integer",
+        "required": false,
+        "description": "Posts to return. Defaults to 25. Clamped to [1, 500].",
+        "default": 25
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "old.reddit.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "old.reddit.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://old.reddit.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open old.reddit.com so the fetch below is same-origin and carries the session cookies",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{subreddit}",
+            "{sort}",
+            "{time}",
+            "{limit}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sub = cleanArg(arg0).replace(/^\\/?r\\//i, '').replace(/\\/$/, ''); if (!/^[A-Za-z0-9_]{2,32}$/.test(sub)) throw new Error('subreddit is required (name without r/)'); const sort = (cleanArg(arg1) || 'top').toLowerCase(); if (!['top','hot','new','rising'].includes(sort)) throw new Error('bad sort ' + sort); const time = (cleanArg(arg2) || 'all').toLowerCase(); const limit = Math.max(1, Math.min(500, parseInt(cleanArg(arg3) || '25', 10) || 25)); const posts = []; let after = ''; let pages = 0; while (posts.length < limit && pages < 10) { pages += 1; const q = new URLSearchParams({ limit: String(Math.min(100, limit - posts.length)), raw_json: '1' }); if (sort === 'top') q.set('t', time); if (after) q.set('after', after); const url = '/r/' + sub + '/' + sort + '.json?' + q.toString(); const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('reddit returned HTTP ' + res.status + ' for ' + url); const data = await res.json(); const kids = (data && data.data && data.data.children) || []; for (const c of kids) { const d = c.data || {}; posts.push({ id: d.id, title: d.title || null, subreddit: d.subreddit || sub, author: d.author || null, score: typeof d.score === 'number' ? d.score : null, num_comments: d.num_comments == null ? null : d.num_comments, created_utc: d.created_utc || null, permalink: d.permalink ? 'https://www.reddit.com' + d.permalink : null, url: d.url || null, is_self: !!d.is_self, over_18: !!d.over_18, stickied: !!d.stickied }); } after = data && data.data && data.data.after; if (!after || !kids.length) break; } return { subreddit: sub, sort: sort, time: sort === 'top' ? time : null, count: Math.min(posts.length, limit), posts: posts.slice(0, limit) };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Fetch listing pages same-origin and flatten posts",
+      "timeout_ms": 60000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "subreddit": {
+          "type": "string"
+        },
+        "sort": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "posts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s2",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "List posts from a subreddit feed as structured JSON.",
+    "parameters": {
+      "subreddit": "Subreddit name without r/.",
+      "sort": "top (default), hot, new or rising.",
+      "time": "For top: hour, day, week, month, year or all (default).",
+      "limit": "Posts to return (1-500, default 25)."
+    },
+    "examples": [
+      {
+        "description": "All-time top 50 posts",
+        "command": "rzn-browser run reddit listing --param subreddit=NewParents --param limit=50"
+      },
+      {
+        "description": "Hot posts",
+        "command": "rzn-browser run reddit listing --param subreddit=beyondthebump --param sort=hot"
+      }
+    ],
+    "returns": [
+      "JSON { subreddit, sort, time, count, posts[] } where each post has id, title, subreddit, author, score, num_comments, created_utc, permalink, url, is_self, over_18, stickied."
+    ],
+    "notes": [
+      "Uses the signed-in Chrome session, so it works when Reddit blocks API clients by IP.",
+      "Pair with reddit/thread to read each post's comments."
+    ]
+  }
+}
