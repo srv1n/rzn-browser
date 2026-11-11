@@ -1,0 +1,120 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "reddit/thread",
+  "name": "Reddit: Thread",
+  "version": "1.0.0",
+  "system": "reddit",
+  "capability": "reddit.thread.read",
+  "summary": "Read one Reddit post and its comment tree as structured JSON.",
+  "description": "Opens old.reddit.com in the user's Chrome session, then fetches the post's .json listing same-origin (cookies included) and returns the post plus a nested comment tree. Works where API clients are IP-blocked; no page navigation race and no text truncation.",
+  "params": {
+    "properties": {
+      "post": {
+        "kind": "string",
+        "required": true,
+        "description": "Reddit post URL (any reddit.com host, including /s/ share links resolved by the caller) or bare post id such as 1c3ij2e."
+      },
+      "limit": {
+        "kind": "integer",
+        "required": false,
+        "description": "Max comments Reddit returns in the first listing page. Defaults to 500. Clamped to [1, 500].",
+        "default": 500
+      },
+      "sort": {
+        "kind": "string",
+        "required": false,
+        "description": "Comment sort order.",
+        "enum_values": ["best", "top", "new", "controversial", "old", "qa"],
+        "default": "best"
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["old.reddit.com"]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": ["old.reddit.com"]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 90000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": { "url": "https://old.reddit.com/" },
+        "side_effects": ["browser_state"]
+      },
+      "name": "Open old.reddit.com so the fetch below is same-origin and carries the session cookies",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": ["{post}", "{limit}", "{sort}"],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const raw = cleanArg(arg0); if (!raw) throw new Error('post is required'); const m = raw.match(/\\/comments\\/([a-z0-9]+)/i); const id = m ? m[1] : (/^[a-z0-9]{4,12}$/i.test(raw) ? raw : ''); if (!id) throw new Error('could not find a post id in: ' + raw); const limit = Math.max(1, Math.min(500, parseInt(cleanArg(arg1) || '500', 10) || 500)); const sortIn = (cleanArg(arg2) || 'best').toLowerCase(); const sort = sortIn === 'best' ? 'confidence' : sortIn; const url = '/comments/' + id + '.json?limit=' + limit + '&sort=' + encodeURIComponent(sort) + '&raw_json=1'; const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('reddit returned HTTP ' + res.status + ' for ' + url); const data = await res.json(); if (!Array.isArray(data) || data.length < 2) throw new Error('unexpected listing shape'); const p = (data[0].data.children[0] || {}).data || {}; let omitted = 0; let count = 0; const walk = (children) => { const out = []; for (const c of (children || [])) { if (c.kind === 'more') { omitted += (c.data && c.data.count) || 0; continue; } if (c.kind !== 't1') continue; const d = c.data || {}; count += 1; out.push({ id: d.id, author: d.author || null, body: d.body || '', score: typeof d.score === 'number' ? d.score : null, created_utc: d.created_utc || null, permalink: d.permalink ? 'https://www.reddit.com' + d.permalink : null, replies: d.replies && d.replies.data ? walk(d.replies.data.children) : [] }); } return out; }; const comments = walk(data[1].data.children); return { post: { id: p.id || id, title: p.title || null, subreddit: p.subreddit || null, author: p.author || null, selftext: p.selftext || '', url: p.url || null, permalink: p.permalink ? 'https://www.reddit.com' + p.permalink : null, score: typeof p.score === 'number' ? p.score : null, num_comments: p.num_comments == null ? null : p.num_comments, created_utc: p.created_utc || null, over_18: !!p.over_18 }, comments: comments, comment_count: count, more_omitted: omitted, source_url: 'https://old.reddit.com' + url };"
+        },
+        "side_effects": ["read_only"]
+      },
+      "name": "Fetch the thread JSON same-origin and flatten it into post + nested comments",
+      "timeout_ms": 45000
+    }
+  ],
+  "result": {
+    "artifact_policy": { "prefer_downloads": false },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "post": { "type": "object" },
+        "comments": { "type": "array", "items": { "type": "object" } },
+        "comment_count": { "type": "integer" },
+        "more_omitted": { "type": "integer" },
+        "source_url": { "type": "string" }
+      }
+    },
+    "output_selector": { "step_id": "s2", "path": "$" }
+  },
+  "help": {
+    "summary": "Read one Reddit post and its comment tree as structured JSON.",
+    "parameters": {
+      "post": "Reddit post URL or bare post id.",
+      "limit": "Max comments in the first listing page (1-500, default 500).",
+      "sort": "best (default), top, new, controversial, old or qa."
+    },
+    "examples": [
+      {
+        "description": "Read a thread with up to 500 comments",
+        "command": "rzn-browser run reddit thread --param post=\"https://www.reddit.com/r/beyondthebump/comments/1c3ij2e/\""
+      },
+      {
+        "description": "Top 50 comments by score",
+        "command": "rzn-browser run reddit thread --param post=1c3ij2e --param limit=50 --param sort=top"
+      }
+    ],
+    "returns": [
+      "JSON { post, comments[], comment_count, more_omitted, source_url }. Each comment has id, author, body, score, created_utc, permalink and nested replies[].",
+      "more_omitted counts comments Reddit collapsed behind 'load more' links; they are not fetched."
+    ],
+    "notes": [
+      "Uses the signed-in Chrome session, so it works when Reddit blocks API clients by IP.",
+      "Fetches JSON in-page instead of navigating to it, which avoids the navigation race that makes reddit/search flaky and the 12k-character cap of innerText readers."
+    ]
+  }
+}
