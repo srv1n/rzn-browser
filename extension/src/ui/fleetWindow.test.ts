@@ -29,6 +29,15 @@ describe('fleet window isolation', () => {
     expect(tabsCreate).toHaveBeenCalledWith({ url: 'https://two.example', active: true, windowId: 71 });
   });
 
+  it('opens a background window when Chrome has no window open', async () => {
+    tabsCreate.mockRejectedValue(new Error('No current window'));
+    windowsCreate.mockResolvedValue({ id: 9, tabs: [{ id: 90 }] });
+    const windows = new FleetWindowRegistry();
+
+    await expect(windows.createTab('local-2', { url: 'https://old.reddit.com/', active: true })).resolves.toEqual({ id: 90 });
+    expect(windowsCreate).toHaveBeenCalledWith({ url: 'https://old.reddit.com/', focused: false });
+  });
+
   it('leaves local runs on the existing tab-create path', async () => {
     tabsCreate.mockResolvedValue({ id: 42 });
     const windows = new FleetWindowRegistry();

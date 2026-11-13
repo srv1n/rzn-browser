@@ -672,6 +672,7 @@ async function callNativeHostControl(
 let reconnectTimer: number | null = null;
 let reconnectAttempts = 0;
 let nativeConnectInFlight = false;
+let nativeConnectStartedAtMs = 0;
 let nativeReconnectSlowMode = false;
 const RECONNECT_BASE_DELAY_MS = 1000;
 const RECONNECT_MAX_DELAY_MS = 15000;
@@ -4258,8 +4259,11 @@ function connectToNative(): void {
   // MV3 service worker lifecycle + multiple startup hooks can otherwise race and collide on
   // broker IPC sockets (e.g. /tmp/rzn.sock "address in use").
   if (nativePort) return;
-  if (nativeConnectInFlight) return;
+  // connectNative is synchronous, so a flag still set after a few seconds is left over from
+  // a path that threw or was torn down mid-connect. Never let it block reconnects forever.
+  if (nativeConnectInFlight && Date.now() - nativeConnectStartedAtMs < 5_000) return;
   nativeConnectInFlight = true;
+  nativeConnectStartedAtMs = Date.now();
 
   try {
     const host = BROKER_HOST_CANDIDATES[Math.min(brokerHostIndex, BROKER_HOST_CANDIDATES.length - 1)];
@@ -4959,28 +4963,11 @@ async function handleBrokerMessage(
           );
         } else {
           console.log('Creating dedicated workflow tab');
-          let newTab: chrome.tabs.Tab;
-          try {
-            newTab = await guardedBrokerSideEffect(
-              brokerLease,
-              'chrome.tabs.create dedicated workflow tab',
-              () => createWorkflowTab(workflowSessionId, { url: 'https://www.example.com', active: true })
-            );
-          } catch (err: any) {
-            // chrome.tabs.create fails with "No current window" when no Chrome
-            // window exists. Open a window first, then use its tab.
-            const msg = err?.message || String(err);
-            if (!/No current window|No window with id/i.test(msg)) throw err;
-            console.log('No current window — creating one for the workflow');
-            const newWindow = await guardedBrokerSideEffect(
-              brokerLease,
-              'chrome.windows.create workflow window',
-              () => chrome.windows.create({ url: 'https://www.example.com', focused: true })
-            );
-            const firstTab = newWindow.tabs?.[0];
-            if (!firstTab?.id) throw new Error(`Created window but no tab available: ${msg}`);
-            newTab = firstTab;
-          }
+          const newTab = await guardedBrokerSideEffect(
+            brokerLease,
+            'chrome.tabs.create dedicated workflow tab',
+            () => createWorkflowTab(workflowSessionId, { url: 'https://www.example.com', active: true })
+          );
           tabId = newTab.id!;
           commitWorkflowTabIdForLease(
             brokerLease,
@@ -6682,6 +6669,9 @@ if (chrome.runtime?.onInstalled?.addListener) {
   console.warn('[RZN] chrome.runtime.onInstalled not available in this context');
 }
 
+// Every service-worker start (not only onStartup/onInstalled) re-arms the 30 s keepalive.
+ensureNativeKeepaliveAlarm();
+
 // Initialize CDP integration with safe defaults
 cdpIntegration.initialize();
 initializeCdpLeaseDurability();
@@ -6727,8 +6717,12 @@ if (chrome.alarms?.onAlarm?.addListener) {
 
     if (alarm?.name === NATIVE_KEEPALIVE_ALARM_NAME) {
       if (nativePort) return;
-      console.log('[NativeKeepalive] Alarm fired; native port missing, attempting reconnect');
-      scheduleReconnect();
+      // Connect now. scheduleReconnect() would return early if an earlier backoff timer is
+      // still recorded, and a native port that stays down for minutes (seen 2026-11-11, 18 min)
+      // fails every unattended run in that window.
+      console.log('[NativeKeepalive] Alarm fired; native port missing, connecting now');
+      clearReconnectTimer();
+      connectToNative();
       return;
     }
 

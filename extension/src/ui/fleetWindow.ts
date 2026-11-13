@@ -12,6 +12,26 @@ export type FleetWindowCloseResult = {
 };
 
 /**
+ * chrome.tabs.create throws "No current window" when Chrome is running with every
+ * window closed (normal on macOS). Open a background window and use its tab instead,
+ * so unattended runs do not fail on an empty browser.
+ */
+export async function createTabOrWindow(
+  properties: chrome.tabs.CreateProperties,
+): Promise<chrome.tabs.Tab> {
+  try {
+    return await chrome.tabs.create(properties);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!/No current window|No window with id/i.test(msg)) throw err;
+    const window = await chrome.windows.create({ url: properties.url || 'about:blank', focused: false });
+    const firstTab = window.tabs?.find((tab) => typeof tab.id === 'number');
+    if (!firstTab) throw new Error(`Created window but no tab available: ${msg}`);
+    return firstTab;
+  }
+}
+
+/**
  * Keeps fleet windows tied to the run that owns them. Local sessions are never
  * recorded here, so their tab creation path stays exactly as it was.
  */
@@ -33,7 +53,7 @@ export class FleetWindowRegistry {
     properties: chrome.tabs.CreateProperties,
   ): Promise<chrome.tabs.Tab> {
     const session = this.sessions.get(sessionId);
-    if (!session) return await chrome.tabs.create(properties);
+    if (!session) return await createTabOrWindow(properties);
 
     const windowId = this.windows.get(session.key);
     if (windowId !== undefined) {

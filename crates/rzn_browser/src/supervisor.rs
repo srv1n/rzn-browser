@@ -79,7 +79,11 @@ const HEAL_READINESS_PROBE_COUNT: u64 = 3;
 const HEAL_STABILITY_DELAY_MS: u64 = 1_500;
 const LOCAL_RUN_DEADLINE: Duration = Duration::from_secs(30 * 60);
 const HEAL_STABILITY_BRIDGE_WAIT_MS: u64 = 2_500;
-const TOOL_DISPATCH_RECOVERY_WAIT_MS: u64 = 2_500;
+// How long a browser tool call waits for the extension to (re)connect before failing with
+// extension_disconnected. The extension's keepalive alarm fires every 30 s, so a dropped
+// native port is normally back inside this window. Returns as soon as the bridge is up.
+// Override with RZN_TOOL_DISPATCH_BRIDGE_WAIT_MS.
+const TOOL_DISPATCH_RECOVERY_WAIT_MS: u64 = 35_000;
 const RECENT_NATIVE_BRIDGE_DISCONNECT_LIMIT: usize = 8;
 const REQUIRED_EXTENSION_KEEPALIVE_CAPABILITY: &str = "content_keepalive_port";
 const EXPECTED_EXTENSION_BRIDGE_BROWSER_CONTRACT: u64 = 9;
@@ -2524,7 +2528,8 @@ impl SupervisorState {
                     Ok(value)
                 } else {
                     let mut readiness_params = json!({
-                        "bridge_wait_ms": TOOL_DISPATCH_RECOVERY_WAIT_MS,
+                        "bridge_wait_ms": env_u64("RZN_TOOL_DISPATCH_BRIDGE_WAIT_MS")
+                            .unwrap_or(TOOL_DISPATCH_RECOVERY_WAIT_MS),
                         "bridge_probe_timeout_ms": DEFAULT_BRIDGE_PROBE_TIMEOUT_MS
                     });
                     inherit_browser_target_params(&params, &mut readiness_params);
