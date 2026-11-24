@@ -11,6 +11,7 @@ pub enum ErrorClass {
     Timeout,
     Navigation,
     AuthWall,
+    SiteChallenge,
     PopupBlocked,
     EngineError,
     Cancelled,
@@ -24,6 +25,7 @@ impl ErrorClass {
             Self::Timeout => "timeout",
             Self::Navigation => "navigation",
             Self::AuthWall => "auth_wall",
+            Self::SiteChallenge => "site_challenge",
             Self::PopupBlocked => "popup_blocked",
             Self::EngineError => "engine_error",
             Self::Cancelled => "cancelled",
@@ -34,7 +36,11 @@ impl ErrorClass {
 
 pub fn classify_error(code: &str, message: &str) -> ErrorClass {
     let text = format!("{code} {message}").to_ascii_lowercase();
-    if text.contains("selector") && (text.contains("not found") || text.contains("missing")) {
+    // A workflow marks a bot challenge with `site_queue::CHALLENGE_MARKER` in its message;
+    // the page text around it may mention navigation or timeouts, so it is read first.
+    if text.contains(rzn_browser::site_queue::CHALLENGE_MARKER) {
+        ErrorClass::SiteChallenge
+    } else if text.contains("selector") && (text.contains("not found") || text.contains("missing")) {
         ErrorClass::SelectorNotFound
     } else if text.contains("timeout") || text.contains("timed out") || text.contains("deadline") {
         ErrorClass::Timeout
@@ -211,6 +217,10 @@ mod tests {
             ErrorClass::SelectorNotFound
         );
         assert_eq!(classify_error("odd", "wat"), ErrorClass::Unknown);
+        assert_eq!(
+            classify_error("", "site_challenge: navigation timed out on a verification page"),
+            ErrorClass::SiteChallenge
+        );
         let rows = vec![
             row("1", "failed", Some("x"), 1),
             row("2", "failed", Some("x"), 2),

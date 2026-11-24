@@ -41,6 +41,8 @@ fn assignment(job_id: &str) -> FleetJobAssignment {
         single_delivery: true,
         execution_deadline_seconds: 30,
         lease_expires_at_ms: 0,
+        lane: "mine".to_string(),
+        contract: None,
     }
 }
 
@@ -50,6 +52,8 @@ fn poll_active_empty() -> FleetPollResponse {
         cancellations: Vec::new(),
         poll_interval_seconds: 0,
         device_status: FleetDeviceStatus::Active,
+        catalog_changed: false,
+        sites_paused: Vec::new(),
     }
 }
 
@@ -837,6 +841,8 @@ async fn http_poll_and_result_round_trip() {
         },
         active_job_ids: Vec::new(),
         max_jobs: 1,
+        catalog_hash: None,
+        sites_cleared: Vec::new(),
     };
     let resp = api.poll(&req).await.expect("poll ok");
     assert_eq!(resp.jobs.len(), 1);
@@ -882,6 +888,8 @@ async fn http_poll_403_revoked_maps_to_stop() {
         },
         active_job_ids: Vec::new(),
         max_jobs: 1,
+        catalog_hash: None,
+        sites_cleared: Vec::new(),
     };
     match api.poll(&req).await {
         Err(FleetCallError::Stop { code, .. }) => {

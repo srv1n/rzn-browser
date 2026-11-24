@@ -33,6 +33,13 @@ pub mod error_codes {
     pub const ENROLLMENT_CODE_INVALID: &str = "enrollment_code_invalid";
 }
 
+/// The lane a job runs in when the server names none.
+pub const DEFAULT_LANE: &str = "mine";
+
+fn default_lane() -> String {
+    DEFAULT_LANE.to_string()
+}
+
 // ---------------------------------------------------------------------------
 // Enrollment
 // ---------------------------------------------------------------------------
@@ -95,6 +102,12 @@ pub struct FleetPollRequest {
     pub active_job_ids: Vec<String>,
     #[serde(default)]
     pub max_jobs: u32,
+    /// Hash of the catalog the device holds; `None` when it holds none.
+    #[serde(default)]
+    pub catalog_hash: Option<String>,
+    /// Sites (`system`) whose login wall the user reports cleared since the last check-in.
+    #[serde(default)]
+    pub sites_cleared: Vec<String>,
 }
 
 /// A single job the control plane assigns to a device in a `POST /fleet/poll` response.
@@ -112,6 +125,13 @@ pub struct FleetJobAssignment {
     pub execution_deadline_seconds: u64,
     #[serde(default)]
     pub lease_expires_at_ms: i64,
+    /// Whose job it is: `mine`, `team` or `pool`.
+    #[serde(default = "default_lane")]
+    pub lane: String,
+    /// The workflow version's `result.contract`, so the device can check its output before
+    /// posting; `None` when the manifest names none.
+    #[serde(default)]
+    pub contract: Option<String>,
 }
 
 /// Response body for `POST /fleet/poll` (assignments, cancellations, device status).
@@ -124,6 +144,24 @@ pub struct FleetPollResponse {
     #[serde(default)]
     pub poll_interval_seconds: u64,
     pub device_status: FleetDeviceStatus,
+    /// True when the device's `catalog_hash` differs from the server's: fetch the catalog.
+    #[serde(default)]
+    pub catalog_changed: bool,
+    /// Sites paused on this device; the device takes no local run for them until `until_ms`.
+    #[serde(default)]
+    pub sites_paused: Vec<FleetSitePause>,
+}
+
+/// A site paused on one device, carried in [`FleetPollResponse::sites_paused`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FleetSitePause {
+    pub system: String,
+    /// End of the pause; `None` for a login wall, which lasts until the device reports it
+    /// cleared in `sites_cleared`.
+    #[serde(default)]
+    pub until_ms: Option<i64>,
+    /// `site_challenge` or `auth_wall`.
+    pub reason: String,
 }
 
 /// Lifecycle status of a device, carried in poll responses and self views.
@@ -357,6 +395,8 @@ mod tests {
             },
             active_job_ids: vec!["job_1".to_string(), "job_2".to_string()],
             max_jobs: 2,
+            catalog_hash: Some("abc".to_string()),
+            sites_cleared: vec!["x".to_string()],
         };
         round_trip(&value);
         assert_snapshot(
@@ -372,7 +412,9 @@ mod tests {
                     "running_job_ids": []
                 },
                 "active_job_ids": ["job_1", "job_2"],
-                "max_jobs": 2
+                "max_jobs": 2,
+                "catalog_hash": "abc",
+                "sites_cleared": ["x"]
             }),
         );
     }
@@ -388,6 +430,8 @@ mod tests {
             single_delivery: true,
             execution_deadline_seconds: 300,
             lease_expires_at_ms: 1_720_000_300_000,
+            lane: "mine".to_string(),
+            contract: Some("rzn.items/v2".to_string()),
         };
         round_trip(&value);
         assert_snapshot(
@@ -400,7 +444,9 @@ mod tests {
                 "priority": 5,
                 "single_delivery": true,
                 "execution_deadline_seconds": 300,
-                "lease_expires_at_ms": 1_720_000_300_000i64
+                "lease_expires_at_ms": 1_720_000_300_000i64,
+                "lane": "mine",
+                "contract": "rzn.items/v2"
             }),
         );
     }
@@ -417,10 +463,18 @@ mod tests {
                 single_delivery: false,
                 execution_deadline_seconds: 120,
                 lease_expires_at_ms: 1_720_000_300_000,
+                lane: "mine".to_string(),
+                contract: None,
             }],
             cancellations: vec!["job_9".to_string()],
             poll_interval_seconds: 15,
             device_status: FleetDeviceStatus::Active,
+            catalog_changed: true,
+            sites_paused: vec![FleetSitePause {
+                system: "x".to_string(),
+                until_ms: None,
+                reason: "auth_wall".to_string(),
+            }],
         };
         round_trip(&value);
         assert_snapshot(
@@ -434,11 +488,15 @@ mod tests {
                     "priority": 0,
                     "single_delivery": false,
                     "execution_deadline_seconds": 120,
-                    "lease_expires_at_ms": 1_720_000_300_000i64
+                    "lease_expires_at_ms": 1_720_000_300_000i64,
+                    "lane": "mine",
+                    "contract": null
                 }],
                 "cancellations": ["job_9"],
                 "poll_interval_seconds": 15,
-                "device_status": "active"
+                "device_status": "active",
+                "catalog_changed": true,
+                "sites_paused": [{"system": "x", "until_ms": null, "reason": "auth_wall"}]
             }),
         );
     }
@@ -589,5 +647,23 @@ mod tests {
                 running_job_ids: Vec::new(),
             }
         );
+    }
+
+    #[test]
+    fn old_peers_omit_the_check_in_additions() {
+        let req: FleetPollRequest =
+            serde_json::from_value(json!({ "health": { "cli_version": "0.4.1" } })).unwrap();
+        assert_eq!(req.catalog_hash, None);
+        assert!(req.sites_cleared.is_empty());
+        let job: FleetJobAssignment = serde_json::from_value(json!({
+            "job_id": "j", "workflow_id": "w", "workflow_hash": "h", "params": {}
+        }))
+        .unwrap();
+        assert_eq!(job.lane, "mine");
+        assert_eq!(job.contract, None);
+        let resp: FleetPollResponse =
+            serde_json::from_value(json!({ "device_status": "active" })).unwrap();
+        assert!(!resp.catalog_changed);
+        assert!(resp.sites_paused.is_empty());
     }
 }

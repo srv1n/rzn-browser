@@ -1053,6 +1053,11 @@ impl FleetLoop {
                 health,
                 active_job_ids: active_ids.clone(),
                 max_jobs: 1,
+                // Catalog sync and login-wall reporting are not built in the supervisor yet:
+                // the server answers `catalog_changed: true` and the device fetches each job's
+                // version on demand.
+                catalog_hash: None,
+                sites_cleared: Vec::new(),
             };
             self.shared.set_last_poll(now_ms());
 
