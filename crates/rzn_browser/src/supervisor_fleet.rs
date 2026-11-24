@@ -839,11 +839,19 @@ impl FleetJobExecutor for InProcessJobExecutor {
                 format!("workflow cache/fetch failed: {err}"),
             );
         }
-        let path = self
+        let path = match self
             .cache
-            .root()
-            .join(&assignment.workflow_id)
-            .join(format!("{content_hash}.json"));
+            .manifest_path(&assignment.workflow_id, &content_hash)
+        {
+            Ok(path) => path,
+            Err(err) => {
+                return failed_result(
+                    &run_id,
+                    &assignment.workflow_id,
+                    format!("workflow cache/fetch failed: {err}"),
+                )
+            }
+        };
 
         let params = params_to_string_map(&assignment.params);
         let workflow = match load_workflow_for_run(&path.to_string_lossy(), &params) {

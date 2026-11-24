@@ -181,9 +181,11 @@ impl WorkflowCache {
         Self { root }
     }
 
-    /// The cache root directory.
-    pub fn root(&self) -> &Path {
-        &self.root
+    /// Where `(workflow_id, content_hash)` is stored, once `get` has put it there.
+    pub fn manifest_path(&self, workflow_id: &str, content_hash: &str) -> Result<PathBuf, CacheError> {
+        let id = sanitize_workflow_id(workflow_id)?;
+        let hash = validate_content_hash(content_hash)?;
+        Ok(self.path_for(&id, &hash))
     }
 
     /// Resolve `(workflow_id, content_hash)` to a manifest value.
@@ -790,7 +792,9 @@ mod tests {
         let got = cache.get("x/profile_posts", &hash, &fetcher).await.unwrap();
         assert_eq!(got, manifest);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        assert!(root.join("x%2Fprofile_posts").join(format!("{hash}.json")).exists());
+        let stored = root.join("x%2Fprofile_posts").join(format!("{hash}.json"));
+        assert!(stored.exists());
+        assert_eq!(cache.manifest_path("x/profile_posts", &hash).unwrap(), stored);
         cache.get("x/profile_posts", &hash, &fetcher).await.unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 1, "second get is a cache hit");
 
