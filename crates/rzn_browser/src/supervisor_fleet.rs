@@ -24,20 +24,21 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::task::JoinHandle;
 
 use crate::run_store::{AppendRun, RunStore};
 use rzn_contracts::fleet::{
-    error_codes, DeviceHealth, FleetDeviceStatus, FleetJobAssignment, FleetJobTerminalStatus,
-    FleetPollRequest, FleetPollResponse, FleetResultAck, FleetResultPost,
+    error_codes, DeviceHealth, FleetCatalog, FleetDeviceStatus, FleetJobAssignment,
+    FleetJobTerminalStatus, FleetPollRequest, FleetPollResponse, FleetResultAck, FleetResultPost,
 };
 use rzn_contracts::workflow::{RunError, RunResult, RunStatus, RUN_RESULT_CONTRACT};
 use rzn_core::runtime_paths::{default_app_base_dir, env_trimmed};
 
+use crate::fleet_catalog::{self, HeldCatalog, HELD_CATALOG_FILENAME};
 use crate::supervisor::SupervisorState;
-use crate::workflow_cache::{HttpManifestFetcher, WorkflowCache};
+use crate::workflow_cache::{HttpManifestFetcher, ManifestFetcher, WorkflowCache};
 use crate::workflow_runner::{
     execute_workflow, load_workflow_for_run, RunEventSink, RunOptions, SessionSpec, SnapshotMode,
     StepTransport, TransportError,
@@ -100,6 +101,30 @@ pub(crate) fn fleet_status_rpc() -> Value {
 pub(crate) fn fleet_disable_rpc() -> Value {
     stop_fleet_loop("disabled via fleet.disable");
     json!({ "ok": true })
+}
+
+/// `fleet.site_cleared` RPC (`{"system": "x"}`): the user reports the site's login wall
+/// cleared. The next check-in, sent at once, names it in `sites_cleared`.
+pub(crate) fn fleet_site_cleared_rpc(params: &Value) -> Value {
+    let Some(system) = params
+        .get("system")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return json!({ "ok": false, "error": "system is required" });
+    };
+    match FLEET_RUNTIME
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .as_ref()
+    {
+        Some(runtime) => {
+            runtime.shared.report_cleared(system);
+            json!({ "ok": true, "system": system })
+        }
+        None => json!({ "ok": false, "error": "fleet not enrolled" }),
+    }
 }
 
 /// Signal the running loop (if any) to stop; status flips immediately. The
@@ -200,6 +225,12 @@ fn start_fleet_loop(state: Arc<SupervisorState>) -> bool {
         config.server_url.clone(),
         config.device_token.clone(),
     ));
+    let catalog_sync = CatalogSync {
+        cache: cache.clone(),
+        fetcher: fetcher.clone(),
+        held_path: base.join(HELD_CATALOG_FILENAME),
+        workflows_dir: crate::workflow_catalog::fleet_workflows_dir(),
+    };
     let api: Arc<dyn FleetApi> = Arc::new(HttpFleetApi::new(
         config.server_url.clone(),
         config.device_token.clone(),
@@ -228,6 +259,8 @@ fn start_fleet_loop(state: Arc<SupervisorState>) -> bool {
         started_at_ms: now_ms(),
         cli_version: env!("CARGO_PKG_VERSION").to_string(),
         state,
+        app_base: base,
+        catalog_sync: Some(catalog_sync),
     };
 
     tracing::info!(
@@ -318,6 +351,8 @@ struct FleetLoopStatus {
     last_poll_ms: Option<i64>,
     active_job_id: Option<String>,
     journal_tail: Vec<JournalTailEntry>,
+    /// Sites whose login wall the server holds for this device (shown in the extension).
+    login_walls: Vec<String>,
 }
 
 /// Loop-owned shared state: the published status plus the disable/cancel signals.
@@ -326,8 +361,11 @@ struct FleetShared {
     disabled: AtomicBool,
     cancel_current: Mutex<Option<Arc<AtomicBool>>>,
     steps_seen: AtomicU64,
-    /// Cuts the poll/backoff sleep short so a stop takes effect promptly.
+    /// Cuts the poll/backoff sleep short: a stop, a finished job (its result posts at
+    /// once), or a login wall the user reports cleared.
     wake: tokio::sync::Notify,
+    /// Login walls reported cleared, sent in `sites_cleared` until a check-in carries them.
+    cleared: Mutex<Vec<String>>,
 }
 
 impl FleetShared {
@@ -339,12 +377,46 @@ impl FleetShared {
                 last_poll_ms: None,
                 active_job_id: None,
                 journal_tail: Vec::new(),
+                login_walls: Vec::new(),
             }),
             disabled: AtomicBool::new(false),
             cancel_current: Mutex::new(None),
             steps_seen: AtomicU64::new(0),
             wake: tokio::sync::Notify::new(),
+            cleared: Mutex::new(Vec::new()),
         }
+    }
+
+    fn report_cleared(&self, system: &str) {
+        {
+            let mut cleared = self.cleared.lock().unwrap_or_else(PoisonError::into_inner);
+            if !cleared.iter().any(|s| s == system) {
+                cleared.push(system.to_string());
+            }
+        }
+        self.wake.notify_one();
+    }
+
+    fn pending_cleared(&self) -> Vec<String> {
+        self.cleared
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Drop the sites a successful check-in carried.
+    fn sent_cleared(&self, sent: &[String]) {
+        self.cleared
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|s| !sent.contains(s));
+    }
+
+    fn set_login_walls(&self, walls: Vec<String>) {
+        self.status
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .login_walls = walls;
     }
 
     fn request_disable(&self) {
@@ -423,6 +495,7 @@ impl FleetShared {
         if let Some(job) = &status.active_job_id {
             map.insert("active_job_id".to_string(), json!(job));
         }
+        map.insert("login_walls".to_string(), json!(status.login_walls));
         map.insert(
             "journal_tail".to_string(),
             serde_json::to_value(&status.journal_tail).unwrap_or_else(|_| json!([])),
@@ -652,6 +725,10 @@ trait FleetApi: Send + Sync {
         job_id: &str,
         post: &FleetResultPost,
     ) -> Result<FleetResultAck, FleetCallError>;
+    /// `GET /v1/fleet/catalog`.
+    async fn catalog(&self) -> Result<FleetCatalog, FleetCallError> {
+        Err(FleetCallError::Network("catalog not available".to_string()))
+    }
 }
 
 /// Real reqwest-backed fleet API. The device token is only ever sent as a bearer
@@ -743,6 +820,28 @@ impl FleetApi for HttpFleetApi {
             .await
             .map_err(|err| FleetCallError::Network(format!("result ack decode failed: {err}")))
     }
+
+    async fn catalog(&self) -> Result<FleetCatalog, FleetCallError> {
+        let url = format!("{}/v1/fleet/catalog", self.server_url);
+        let response = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.device_token)
+            .send()
+            .await
+            .map_err(|err| FleetCallError::Network(format!("catalog request failed: {err}")))?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await.unwrap_or_default();
+            return Err(FleetCallError::Network(format!(
+                "catalog status {status}: {body}"
+            )));
+        }
+        response
+            .json::<FleetCatalog>()
+            .await
+            .map_err(|err| FleetCallError::Network(format!("catalog decode failed: {err}")))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -786,7 +885,9 @@ impl HealthProbe for StateHealthProbe {
             } else {
                 Some("bridge_down".to_string())
             },
-            extension_version: find_string_field(&status, "extension_version"),
+            // The extension reports no version field; its build signature names the build.
+            extension_version: find_string_field(&status, "extension_version")
+                .or_else(|| find_string_field(&status, "extension_build_signature")),
         }
     }
 }
@@ -1008,6 +1109,18 @@ struct FleetLoop {
     started_at_ms: i64,
     cli_version: String,
     state: Arc<SupervisorState>,
+    /// Runtime dir: site-queue pauses live under it.
+    app_base: PathBuf,
+    /// `None` in tests that do not exercise the catalog: the device then sends no hash.
+    catalog_sync: Option<CatalogSync>,
+}
+
+/// What the loop needs to sync the catalog (see `fleet_catalog`).
+struct CatalogSync {
+    cache: Arc<WorkflowCache>,
+    fetcher: Arc<dyn ManifestFetcher>,
+    held_path: PathBuf,
+    workflows_dir: PathBuf,
 }
 
 impl FleetLoop {
@@ -1021,6 +1134,10 @@ impl FleetLoop {
         let mut failures: u32 = 0;
         let mut server_interval: Option<u64> = None;
         let mut current: Option<RunningJob> = None;
+        let mut catalog_hash: Option<String> = self
+            .catalog_sync
+            .as_ref()
+            .and_then(|sync| HeldCatalog::load(&sync.held_path).catalog_hash);
 
         loop {
             if self.shared.disabled.load(Ordering::SeqCst) {
@@ -1057,15 +1174,13 @@ impl FleetLoop {
             self.shared.set_active_job(active_ids.first().cloned());
 
             let health = self.build_health(&active_ids).await;
+            let sites_cleared = self.shared.pending_cleared();
             let request = FleetPollRequest {
                 health,
                 active_job_ids: active_ids.clone(),
                 max_jobs: 1,
-                // Catalog sync and login-wall reporting are not built in the supervisor yet:
-                // the server answers `catalog_changed: true` and the device fetches each job's
-                // version on demand.
-                catalog_hash: None,
-                sites_cleared: Vec::new(),
+                catalog_hash: catalog_hash.clone(),
+                sites_cleared: sites_cleared.clone(),
             };
             self.shared.set_last_poll(now_ms());
 
@@ -1074,6 +1189,7 @@ impl FleetLoop {
                     failures = 0;
                     server_interval = (response.poll_interval_seconds > 0)
                         .then_some(response.poll_interval_seconds);
+                    self.shared.sent_cleared(&sites_cleared);
 
                     match response.device_status {
                         FleetDeviceStatus::Revoked => {
@@ -1098,6 +1214,17 @@ impl FleetLoop {
                         }
                         FleetDeviceStatus::Active => {}
                     }
+
+                    if response.catalog_changed {
+                        if let Some(hash) = self.sync_catalog().await {
+                            catalog_hash = Some(hash);
+                        }
+                    }
+                    self.shared
+                        .set_login_walls(fleet_catalog::apply_site_pauses(
+                            &self.app_base,
+                            &response.sites_paused,
+                        ));
 
                     // Cooperative cancellation of the running job.
                     if let Some(job) = current.as_ref() {
@@ -1165,6 +1292,35 @@ impl FleetLoop {
             self.flush_pending().await;
         }
         self.shared.refresh_tail(&self.journal);
+    }
+
+    /// Sync the catalog; the hash now held, or `None` when the sync did not complete (the next
+    /// check-in sends the old hash, is told the catalog changed, and retries).
+    async fn sync_catalog(&self) -> Option<String> {
+        let sync = self.catalog_sync.as_ref()?;
+        let catalog = match self.api.catalog().await {
+            Ok(catalog) => catalog,
+            Err(err) => {
+                tracing::warn!("fleet catalog: {err:?}");
+                return None;
+            }
+        };
+        let report = fleet_catalog::sync(
+            catalog,
+            &sync.held_path,
+            &sync.workflows_dir,
+            &sync.cache,
+            &*sync.fetcher,
+        )
+        .await;
+        tracing::info!(
+            fetched = ?report.fetched,
+            written = ?report.written,
+            removed = ?report.removed,
+            failed = ?report.failed,
+            "fleet catalog synced"
+        );
+        HeldCatalog::load(&sync.held_path).catalog_hash
     }
 
     async fn build_health(&self, active_ids: &[String]) -> DeviceHealth {
@@ -1302,6 +1458,8 @@ impl FleetLoop {
                 Some(terminal),
             ));
             shared.refresh_tail(&journal);
+            // Wake the loop so the result posts now, not at the next check-in tick.
+            shared.wake.notify_one();
         });
 
         Some(RunningJob {

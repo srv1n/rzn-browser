@@ -183,6 +183,12 @@ async fn install_macos(
             }
             return Err(err).context("load the RZN runtime owner with launchd");
         }
+        // RunAtLoad does not start a job bootstrapped right after its bootout: launchd held the
+        // owner until something kickstarted it (seen on every `make install`, ~60 s, BFL-T-0021).
+        // Start it now; kickstart without -k leaves a running owner alone.
+        if let Err(err) = launchctl_ok(&["kickstart".to_string(), job_target.clone()]) {
+            log::warn!("kickstart of the RZN runtime owner failed: {err:#}");
+        }
     }
 
     if let Err(ready_error) = wait_for_owner_ready(&config, &paths).await {

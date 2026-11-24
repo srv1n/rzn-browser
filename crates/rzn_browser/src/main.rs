@@ -10,6 +10,7 @@
 
 mod agent_output;
 mod cloud;
+mod fleet_catalog;
 mod fleet_cli;
 mod log_buffer;
 mod mcp_browser;
@@ -3786,6 +3787,9 @@ async fn handle_supervisor_run(args: SupervisorRunArgs) -> anyhow::Result<()> {
     println!("[LIST] RZN BROWSER RUN");
     println!("   ├─ Workflow: {}", workflow_ref);
     println!("   ├─ Resolved: {}", resolved_workflow.display());
+    if let Some(note) = fleet_catalog::paused_note(&resolved_workflow) {
+        println!("   ├─ {note}");
+    }
     println!("   ├─ Backend: supervisor");
     println!("   └─ Snapshot: {}", args.snapshot);
     println!();

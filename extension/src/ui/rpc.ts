@@ -78,6 +78,7 @@ const schemas: Record<string, z.ZodTypeAny> = {
     }).optional(),
   }).passthrough()) }).passthrough(),
   'fleet.status': z.object({ state: z.string() }).passthrough(),
+  'fleet.site_cleared': z.object({ ok: z.boolean() }).passthrough(),
   'fleet.enroll': z.record(z.unknown()),
   'fleet.unenroll': z.record(z.unknown()),
   'settings.get': settings,

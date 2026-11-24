@@ -60,20 +60,42 @@ pub fn policy_for_workflow(path: &str) -> Option<SitePolicy> {
     policy_for_manifest(&manifest)
 }
 
-fn policy_for_manifest(manifest: &Value) -> Option<SitePolicy> {
-    let site = manifest
-        .get("system")?
-        .as_str()?
-        .trim()
-        .to_ascii_lowercase();
+/// The site key for a `system`: lowercase, and safe as a file name.
+fn site_key(system: &str) -> Option<String> {
+    let site = system.trim().to_ascii_lowercase();
     let valid = !site.is_empty()
         && !site.starts_with('.')
         && site
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'));
-    if !valid {
-        return None;
+    valid.then_some(site)
+}
+
+/// Pause local runs of `system` until `until_ms` (a pause the fleet server holds for this
+/// device). Keeps a later pause already recorded. Returns whether the state file changed.
+pub fn pause_site_until(app_base: &Path, system: &str, until_ms: u64) -> Result<bool> {
+    let Some(site) = site_key(system) else {
+        bail!("not a site name: {system:?}");
+    };
+    let dir = app_base.join("site-queue");
+    fs::create_dir_all(&dir).with_context(|| format!("create {}", dir.display()))?;
+    let state_path = dir.join(format!("{site}.json"));
+    let mut state: SiteState = fs::read(&state_path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or_default();
+    if state.blocked_until_ms >= until_ms {
+        return Ok(false);
     }
+    state.blocked_until_ms = until_ms;
+    let tmp = state_path.with_extension("json.pause.tmp");
+    fs::write(&tmp, serde_json::to_vec(&state)?)?;
+    fs::rename(&tmp, &state_path)?;
+    Ok(true)
+}
+
+fn policy_for_manifest(manifest: &Value) -> Option<SitePolicy> {
+    let site = site_key(manifest.get("system")?.as_str()?)?;
     let uses_active_tab = manifest
         .pointer("/runtime/requires_existing_session")
         .and_then(Value::as_bool)
@@ -239,5 +261,30 @@ mod tests {
         let blocked = SiteGate::acquire(&dir, policy).await;
         assert!(blocked.err().unwrap().to_string().contains("bot challenge"));
         let _ = fs::remove_dir_all(dir);
+    }
+
+    #[tokio::test]
+    async fn a_fleet_pause_blocks_local_runs_until_it_ends() {
+        let dir = std::env::temp_dir().join(format!("rzn-site-pause-{}", std::process::id()));
+        let policy = SitePolicy {
+            site: "example".into(),
+            park_tab: true,
+        };
+        let until = now_ms() + 60_000;
+        assert!(pause_site_until(&dir, "Example", until).unwrap());
+        assert!(
+            !pause_site_until(&dir, "example", until - 1).unwrap(),
+            "keeps the later pause"
+        );
+        let blocked = SiteGate::acquire(&dir, policy.clone()).await;
+        assert!(blocked.err().unwrap().to_string().contains("paused"));
+        assert!(pause_site_until(&dir, "../etc", until).is_err());
+
+        let ended =
+            std::env::temp_dir().join(format!("rzn-site-pause-ended-{}", std::process::id()));
+        pause_site_until(&ended, "example", now_ms() - 1).unwrap();
+        assert!(SiteGate::acquire(&ended, policy).await.is_ok());
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(ended);
     }
 }

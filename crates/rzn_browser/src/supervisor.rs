@@ -1633,6 +1633,9 @@ impl SupervisorState {
             return Err(anyhow!(AUTOMATION_PAUSED_MESSAGE));
         }
         let path = self.resolve_local_workflow(workflow_id)?;
+        if let Some(note) = crate::fleet_catalog::paused_note(&path) {
+            tracing::warn!("{note}");
+        }
         let params: HashMap<String, String> = raw_params
             .as_object()
             .into_iter()
@@ -2334,6 +2337,7 @@ impl SupervisorState {
             // FLA-T-0003: fleet poll-loop local RPCs (read-only status + disable).
             "fleet.status" => Ok(crate::supervisor_fleet::fleet_status_rpc()),
             "fleet.disable" => Ok(crate::supervisor_fleet::fleet_disable_rpc()),
+            "fleet.site_cleared" => Ok(crate::supervisor_fleet::fleet_site_cleared_rpc(&params)),
             "fleet.start" => Ok(
                 json!({"ok": true, "loop_started": crate::supervisor_fleet::restart_fleet_loop().await}),
             ),
@@ -4830,6 +4834,7 @@ fn native_host_rpc_allowed(method: &str) -> bool {
             | "browser.targets"
             | "fleet.status"
             | "fleet.disable"
+            | "fleet.site_cleared"
             | "fleet.enroll"
             | "fleet.unenroll"
             | "runs.list"

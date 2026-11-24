@@ -196,6 +196,13 @@ pub fn default_user_workflows_dir() -> PathBuf {
     workflow_roots().user_dir
 }
 
+/// Where the supervisor writes the fleet catalog's current version of each workflow
+/// (`<id>.json`, the id's `/` as a directory). Local runs read it after the user's own
+/// workflows and a repo checkout, before the bundled builtin copies.
+pub fn fleet_workflows_dir() -> PathBuf {
+    workflow_roots().runtime_dir.join("workflows").join("fleet")
+}
+
 pub fn install_builtin_catalog_from_repo_root(
     repo_root: &Path,
 ) -> Result<BuiltinCatalogInstallSummary> {
@@ -761,6 +768,7 @@ fn collect_all_workflow_entries() -> Result<Vec<WorkflowEntry>> {
     if let Some(repo_workflows_dir) = repo_local_workflows_dir() {
         collect_entries_from_root("repo", &repo_workflows_dir, &mut entries)?;
     }
+    collect_entries_from_root("fleet", &fleet_workflows_dir(), &mut entries)?;
     collect_entries_from_root("builtin", &roots.builtin_dir, &mut entries)?;
     Ok(entries)
 }
@@ -1034,6 +1042,12 @@ fn collect_capability_manifest_records(
     collect_capability_manifest_records_from_root(
         "user",
         &roots.user_dir,
+        &mut records,
+        include_fixtures,
+    )?;
+    collect_capability_manifest_records_from_root(
+        "fleet",
+        &fleet_workflows_dir(),
         &mut records,
         include_fixtures,
     )?;
@@ -1333,8 +1347,9 @@ fn source_rank(source: &str) -> usize {
     match source {
         "repo" => 0,
         "user" => 1,
-        "builtin" => 2,
-        _ => 3,
+        "fleet" => 2,
+        "builtin" => 3,
+        _ => 4,
     }
 }
 

@@ -174,6 +174,33 @@ pub enum FleetDeviceStatus {
 }
 
 // ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+/// Response body for `GET /fleet/catalog`: the tenant's workflows, each at its current version.
+/// The server sends more (each workflow's params, contract, side effects, and the families);
+/// the device reads only what it syncs by.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FleetCatalog {
+    pub catalog_hash: String,
+    #[serde(default)]
+    pub workflows: Vec<FleetCatalogEntry>,
+}
+
+/// One workflow of [`FleetCatalog`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct FleetCatalogEntry {
+    pub workflow_id: String,
+    pub content_hash: String,
+    /// `active`, `paused` or `retired`.
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paused_reason: Option<String>,
+    #[serde(default)]
+    pub system: String,
+}
+
+// ---------------------------------------------------------------------------
 // Workflow fetch
 // ---------------------------------------------------------------------------
 
@@ -665,5 +692,23 @@ mod tests {
             serde_json::from_value(json!({ "device_status": "active" })).unwrap();
         assert!(!resp.catalog_changed);
         assert!(resp.sites_paused.is_empty());
+    }
+
+    #[test]
+    fn catalog_reads_the_server_body_and_ignores_what_it_does_not_sync_by() {
+        let catalog: FleetCatalog = serde_json::from_value(json!({
+            "catalog_hash": "h",
+            "workflows": [{"workflow_id": "x/profile_posts", "content_hash": "c", "status": "paused",
+                           "paused_reason": "broken", "system": "x", "contract": "rzn.items/v2",
+                           "params": null, "side_effect_classes": []}],
+            "families": [{"connector": "x-browser", "describe": {}}]
+        }))
+        .unwrap();
+        assert_eq!(catalog.catalog_hash, "h");
+        assert_eq!(catalog.workflows[0].workflow_id, "x/profile_posts");
+        assert_eq!(
+            catalog.workflows[0].paused_reason.as_deref(),
+            Some("broken")
+        );
     }
 }

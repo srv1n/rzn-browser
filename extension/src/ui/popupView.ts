@@ -4,7 +4,7 @@ type Run = { run_id:string; workflow_id:string; origin:string; status:string; st
 export type Snapshot = {
   supervisor_version:string; native_host_connected:boolean; extension_connected:boolean; paused:boolean;
   now_running:(Record<string, unknown> & { run_id?:string; workflow_id?:string; origin?:string; step_index?:number; step_total?:number; started_at?:number })|null;
-  fleet:(Record<string, unknown> & { device_name?:string; device_id?:string; tenant_id?:string; status?:string; state?:string; last_poll_ms?:number })|null;
+  fleet:(Record<string, unknown> & { device_name?:string; device_id?:string; tenant_id?:string; status?:string; state?:string; last_poll_ms?:number; login_walls?:string[] })|null;
   recent_runs:Run[]; flagged_workflows:number;
 };
 
@@ -19,14 +19,18 @@ export function popupHtml(snapshot:Snapshot,now=Date.now()):string {
   return `<header><b>RZN Browser</b><a href="dashboard.html#runs" target="_blank">Open dashboard</a></header>
 <section class="health"><span class="${snapshot.extension_connected?'ok':'bad'}">● Extension</span><span class="${snapshot.native_host_connected?'ok':'bad'}">● Native</span><span class="ok">● Supervisor</span>${cloud}</section>
 ${running?`<section class="now-running"><small>NOW RUNNING <span class="origin origin-${originLabel(running.origin)}">${originLabel(running.origin)}</span></small><h2>${esc(running.workflow_id)}</h2><p>Step ${running.step_index??0} of ${running.step_total??0} · ${elapsed(running.started_at,now)}</p><button id="stop" class="danger">Stop</button></section>`:`<section><h2>${snapshot.paused?'Automation paused':'Ready'}</h2><p>${snapshot.paused?'No new workflows will start.':'Waiting for work.'}</p></section>`}
-<label class="toggle"><input id="pause" type="checkbox" ${snapshot.paused?'checked':''}> Pause automation</label>
+${loginWalls(snapshot)}<label class="toggle"><input id="pause" type="checkbox" ${snapshot.paused?'checked':''}> Pause automation</label>
 <section><h3>Recent runs</h3>${recent.length?recent.map(run=>`<a class="run" href="dashboard.html#runs/${encodeURIComponent(run.run_id)}" target="_blank"><span class="${statusClass(run.status)}">●</span>${esc(run.workflow_id)}<span class="origin origin-${originLabel(run.origin)}">${originLabel(run.origin)}</span><small>${esc(run.status)}</small></a>`).join(''):'<p class="muted">No runs yet</p>'}</section>
 <footer>${snapshot.fleet?`${esc(snapshot.fleet.device_name||snapshot.fleet.device_id)} · ${esc(snapshot.fleet.tenant_id||snapshot.fleet.status||snapshot.fleet.state||'enrolled')}`:'<a href="dashboard.html#fleet" target="_blank">Connect to a server</a>'}</footer>`;
 }
 
+// A site the fleet paused for a login wall: log in, then report it so the server resumes it.
+function loginWalls(snapshot:Snapshot):string{const walls=snapshot.fleet?.login_walls??[];return walls.map(site=>`<section class="login-wall"><h3>Log in to ${esc(site)}</h3><p>Fleet jobs for ${esc(site)} wait until you log in.</p><button data-cleared="${esc(site)}">I've logged in</button></section>`).join('');}
+
 export const unreachableHtml = '<section class="offline"><h2>Supervisor unreachable</h2><p>Check the native host, then retry.</p><button id="retry">Retry</button></section>';
 
 export function bindPopupActions(root:ParentNode,snapshot:Snapshot,refresh:()=>void|Promise<void>,call=rpc):void {
+  root.querySelectorAll?.('[data-cleared]').forEach(button=>button.addEventListener('click',()=>{void call('fleet.site_cleared',{system:(button as HTMLElement).dataset.cleared}).then(refresh);}));
   root.querySelector('#stop')?.addEventListener('click',()=>{void call('runs.cancel',{run_id:snapshot.now_running?.run_id}).then(refresh);});
   root.querySelector('#pause')?.addEventListener('change',async event=>{const paused=(event.target as HTMLInputElement).checked;let cancel_current=false;if(paused&&snapshot.now_running)cancel_current=confirm('Cancel the current run too?');await call(paused?'automation.pause':'automation.resume',{cancel_current});await refresh();});
 }

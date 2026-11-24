@@ -122,6 +122,8 @@ struct MockInner {
     poll_count: usize,
     ack_deduped: bool,
     fail_next_posts: usize,
+    requests: Vec<FleetPollRequest>,
+    catalog: Option<FleetCatalog>,
 }
 
 struct MockApi {
@@ -138,6 +140,8 @@ impl MockApi {
                 poll_count: 0,
                 ack_deduped: false,
                 fail_next_posts: 0,
+                requests: Vec::new(),
+                catalog: None,
             }),
         }
     }
@@ -152,6 +156,15 @@ impl MockApi {
         self
     }
 
+    fn with_catalog(self, catalog: FleetCatalog) -> Self {
+        self.inner.lock().unwrap().catalog = Some(catalog);
+        self
+    }
+
+    fn requests(&self) -> Vec<FleetPollRequest> {
+        self.inner.lock().unwrap().requests.clone()
+    }
+
     fn posts(&self) -> Vec<FleetResultPost> {
         self.inner.lock().unwrap().posts.clone()
     }
@@ -163,9 +176,10 @@ impl MockApi {
 
 #[async_trait]
 impl FleetApi for MockApi {
-    async fn poll(&self, _req: &FleetPollRequest) -> Result<FleetPollResponse, FleetCallError> {
+    async fn poll(&self, req: &FleetPollRequest) -> Result<FleetPollResponse, FleetCallError> {
         let mut inner = self.inner.lock().unwrap();
         inner.poll_count += 1;
+        inner.requests.push(req.clone());
         match inner.script.pop_front() {
             Some(MockPoll::Ok(resp)) => Ok(resp),
             Some(MockPoll::Stop(code)) => Err(FleetCallError::Stop {
@@ -194,6 +208,15 @@ impl FleetApi for MockApi {
             job_status: "accepted".to_string(),
             deduped,
         })
+    }
+
+    async fn catalog(&self) -> Result<FleetCatalog, FleetCallError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .catalog
+            .clone()
+            .ok_or_else(|| FleetCallError::Network("no catalog".to_string()))
     }
 }
 
@@ -292,6 +315,8 @@ fn build_loop(
                 app_base: Some(dir.to_path_buf()),
             },
         )),
+        app_base: dir.to_path_buf(),
+        catalog_sync: None,
     }
 }
 
@@ -990,5 +1015,88 @@ async fn stop_wakes_sleeping_loop_and_status_stays_disabled() {
     assert_eq!(status["state"], json!("disabled"));
     assert_eq!(status["reason"], json!("fleet unenrolled"));
     assert_eq!(api.poll_count(), 1, "no poll after stop");
+    let _ = fs::remove_dir_all(dir);
+}
+
+// ---------------------------------------------------------------------------
+// BFL-T-0021: results post at once; catalog hash, site pauses, cleared login walls
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn result_posts_when_the_run_ends_not_at_the_next_check_in() {
+    let dir = temp_dir("post-now");
+    let journal = Arc::new(Journal::open(dir.join("j.jsonl")).unwrap());
+    let shared = Arc::new(FleetShared::new());
+    let api = Arc::new(MockApi::new(
+        vec![MockPoll::Ok(poll_with_job(assignment("job_now")))],
+        poll_active_empty(),
+    ));
+    let executor = Arc::new(MockExecutor::new(ExecBehavior::Succeed));
+    let mut fleet = build_loop(&dir, api.clone(), executor, shared.clone(), journal);
+    // The next tick is at least 40 s away; wait_until gives up after 5 s.
+    fleet.interval_ms_override = Some(60_000);
+    let handle = tokio::spawn(fleet.run());
+    wait_until(|| !api.posts().is_empty(), "result posted as the run ended").await;
+    shared.request_disable();
+    handle.await.unwrap();
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[tokio::test]
+async fn check_in_carries_the_held_catalog_hash_pauses_and_cleared_walls() {
+    let dir = temp_dir("catalog");
+    let journal = Arc::new(Journal::open(dir.join("j.jsonl")).unwrap());
+    let shared = Arc::new(FleetShared::new());
+    let until = now_ms() + 60_000;
+    let first = FleetPollResponse {
+        catalog_changed: true,
+        sites_paused: vec![
+            rzn_contracts::fleet::FleetSitePause {
+                system: "s".to_string(),
+                until_ms: Some(until),
+                reason: "site_challenge".to_string(),
+            },
+            rzn_contracts::fleet::FleetSitePause {
+                system: "t".to_string(),
+                until_ms: None,
+                reason: "auth_wall".to_string(),
+            },
+        ],
+        ..poll_active_empty()
+    };
+    let api = Arc::new(MockApi::new(Vec::new(), first).with_catalog(FleetCatalog {
+        catalog_hash: "h1".to_string(),
+        workflows: Vec::new(),
+    }));
+    let executor = Arc::new(MockExecutor::new(ExecBehavior::Succeed));
+    let mut fleet = build_loop(&dir, api.clone(), executor, shared.clone(), journal);
+    fleet.catalog_sync = Some(CatalogSync {
+        cache: Arc::new(WorkflowCache::new(dir.join("cache"))),
+        fetcher: Arc::new(HttpManifestFetcher::new("http://127.0.0.1:9", "unused")),
+        held_path: dir.join(HELD_CATALOG_FILENAME),
+        workflows_dir: dir.join("fleet"),
+    });
+    shared.report_cleared("t");
+    let handle = tokio::spawn(fleet.run());
+    wait_until(
+        || {
+            api.requests()
+                .iter()
+                .any(|r| r.catalog_hash.as_deref() == Some("h1"))
+        },
+        "a check-in after the sync sends the held hash",
+    )
+    .await;
+    assert_eq!(shared.status_json()["login_walls"], json!(["t"]));
+    shared.request_disable();
+    handle.await.unwrap();
+
+    let requests = api.requests();
+    assert_eq!(requests[0].catalog_hash, None, "nothing held at first");
+    assert_eq!(requests[0].sites_cleared, vec!["t".to_string()]);
+    assert!(requests[1].sites_cleared.is_empty(), "sent once");
+    let pause: Value =
+        serde_json::from_slice(&fs::read(dir.join("site-queue/s.json")).unwrap()).unwrap();
+    assert_eq!(pause["blocked_until_ms"], json!(until));
     let _ = fs::remove_dir_all(dir);
 }

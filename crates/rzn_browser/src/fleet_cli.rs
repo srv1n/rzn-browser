@@ -55,6 +55,14 @@ pub enum FleetCommands {
     Status(FleetStatusArgs),
     /// Remove this device's local fleet enrollment.
     Disable(FleetDisableArgs),
+    /// Report that you logged in to a site the fleet paused for a login wall.
+    Cleared(FleetClearedArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct FleetClearedArgs {
+    /// The site (`system`) shown under the login walls in `fleet status`.
+    pub site: String,
 }
 
 #[derive(Args, Debug)]
@@ -92,6 +100,7 @@ pub async fn handle_fleet_commands(cmd: FleetCommands) -> Result<()> {
         FleetCommands::Enroll(args) => run_enroll(args).await,
         FleetCommands::Status(args) => run_status(args).await,
         FleetCommands::Disable(args) => run_disable(args).await,
+        FleetCommands::Cleared(args) => run_cleared(args).await,
     }
 }
 
@@ -414,6 +423,15 @@ fn render_status_human(report: &FleetStatusReport) {
         })
         .unwrap_or_else(|| report.loop_state.to_string());
     println!("  loop:      {loop_summary}");
+    if let Some(walls) = report
+        .loop_state
+        .get("login_walls")
+        .and_then(Value::as_array)
+    {
+        for site in walls.iter().filter_map(Value::as_str) {
+            println!("  log in to: {site} (then run `rzn-browser fleet cleared {site}`)");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -485,6 +503,29 @@ async fn notify_supervisor_start() -> bool {
     )
 }
 
+async fn run_cleared(args: FleetClearedArgs) -> Result<()> {
+    let config = crate::supervisor::SupervisorConfig { app_base: None };
+    let future =
+        crate::supervisor::call(config, "fleet.site_cleared", json!({ "system": args.site }));
+    let value = tokio::time::timeout(SUPERVISOR_PROBE_TIMEOUT, future)
+        .await
+        .context("supervisor did not respond")??;
+    if value.get("ok").and_then(Value::as_bool) != Some(true) {
+        bail!(
+            "{}",
+            value
+                .get("error")
+                .and_then(Value::as_str)
+                .unwrap_or("supervisor refused")
+        );
+    }
+    println!(
+        "reported {} cleared; the fleet server hears it now",
+        args.site
+    );
+    Ok(())
+}
+
 async fn notify_supervisor_disable() {
     let config = crate::supervisor::SupervisorConfig { app_base: None };
     let future = crate::supervisor::call(config, "fleet.disable", json!({}));
@@ -496,7 +537,9 @@ async fn detect_extension_version() -> String {
     let config = crate::supervisor::SupervisorConfig { app_base: None };
     let future = crate::supervisor::call(config, "runtime.status", json!({}));
     match tokio::time::timeout(SUPERVISOR_PROBE_TIMEOUT, future).await {
-        Ok(Ok(value)) => find_string_field(&value, "extension_version").unwrap_or_default(),
+        Ok(Ok(value)) => find_string_field(&value, "extension_version")
+            .or_else(|| find_string_field(&value, "extension_build_signature"))
+            .unwrap_or_default(),
         _ => String::new(),
     }
 }
