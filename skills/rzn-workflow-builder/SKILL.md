@@ -44,8 +44,10 @@ fixes never reach it.
 1. Keep the edit as a user fork: copy the installed manifest into
    `~/Library/Application Support/RZN/workflows/user/<system>/` (same `id`) and
    edit only the copy.
-2. Record what broke from the failed run's `failure_summary`: `error_class`,
-   `fingerprint`, `failing_step_index` and `message` (in `rzn-browser run … --json`).
+2. Record what broke from the failed run's failure fingerprint: `error_class`,
+   `fingerprint`, `failing_step_index` and `error_message`. Every run is recorded
+   in `~/Library/Application Support/RZN/runs/index.jsonl`; take the newest
+   failed line for the workflow id.
 3. Run the contract lint, `rzn-browser workflow validate <fork> --strict --json`,
    then a live run of the fork, `rzn-browser run <fork> --param …`. An item
    workflow's last run must succeed: its output is checked against the contract.
