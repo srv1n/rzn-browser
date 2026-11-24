@@ -734,6 +734,7 @@ async fn a2_finished_not_posted_reposts_stored_result() {
         error: None,
         started_at_ms: 1,
         finished_at_ms: 2,
+        lease_expires_at_ms: None,
     };
     persist_result(&dir.join("results"), "job_stored", &stored).unwrap();
 
@@ -779,6 +780,7 @@ async fn a2_already_completed_redelivery_is_deduped_not_reexecuted() {
         error: None,
         started_at_ms: 1,
         finished_at_ms: 2,
+        lease_expires_at_ms: None,
     };
     persist_result(&dir.join("results"), "job_done", &stored).unwrap();
 
@@ -830,6 +832,7 @@ async fn a2_result_reposts_after_failed_post() {
         error: None,
         started_at_ms: 1,
         finished_at_ms: 2,
+        lease_expires_at_ms: None,
     };
     persist_result(&dir.join("results"), "job_retry", &stored).unwrap();
 
@@ -1018,6 +1021,7 @@ async fn http_poll_and_result_round_trip() {
         error: None,
         started_at_ms: 1,
         finished_at_ms: 2,
+        lease_expires_at_ms: None,
     };
     let ack = api.post_result("job_http", &post).await.expect("result ok");
     assert!(ack.ok);
@@ -1213,6 +1217,12 @@ async fn check_in_carries_the_held_catalog_hash_pauses_and_cleared_walls() {
         fetcher: Arc::new(HttpManifestFetcher::new("http://127.0.0.1:9", "unused")),
         held_path: dir.join(HELD_CATALOG_FILENAME),
         workflows_dir: dir.join("fleet"),
+        forks: crate::fleet_cli::repair::Dirs {
+            user: dir.join("user"),
+            fleet: dir.join("fleet"),
+            builtin: dir.join("builtin"),
+            trash: dir.join("trash"),
+        },
     });
     shared.report_cleared("t");
     let handle = tokio::spawn(fleet.run());

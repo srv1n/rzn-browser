@@ -17,6 +17,7 @@ browser state.
 | Find a workflow | `rzn-browser workflow list <system>`; list everything only if the system is unknown. |
 | No suitable workflow | Consider bounded `llm-auto` with a configured provider. |
 | Create or repair workflow JSON | Read [workflow authoring](references/workflow-authoring.md). |
+| Fix a broken installed workflow | Follow "Repairing a workflow" in the `rzn-workflow-builder` skill: fork, prove, `rzn-browser fleet propose`. |
 | Connection or installation failure | Read [runtime troubleshooting](references/runtime-troubleshooting.md). |
 
 ```bash
@@ -42,6 +43,9 @@ catalog imports, or autonomous-mode flags. Read only what the task needs.
 - `llm-auto` can act on the page and call a paid provider. Include the user's
   constraints in its instruction and bound the steps. Dummy mode is a local
   smoke check, not proof of real discovery or provider behavior.
+- A broken installed workflow is fixed as a user fork and proposed with
+  `rzn-browser fleet propose <id> --reason "…"`; never leave a silent local
+  override. `rzn-browser fleet forks` lists forks that shadow the catalog.
 - Inspect an ambiguous write before retrying; it may already have taken effect.
   Diagnose a broken bridge without silently switching profiles.
 

@@ -228,6 +228,12 @@ pub struct FleetResultPost {
     pub started_at_ms: i64,
     #[serde(default)]
     pub finished_at_ms: i64,
+    /// The lease of the claim this result is for ([`FleetJobAssignment::lease_expires_at_ms`]).
+    /// The server refuses a post whose lease is not the job's current one, so a late result of
+    /// an expired claim never counts for the next attempt. `None` (an older device) matches by
+    /// job id alone.
+    #[serde(default)]
+    pub lease_expires_at_ms: Option<i64>,
 }
 
 /// Terminal outcome of a fleet job, carried in `POST /fleet/results`.
@@ -249,6 +255,94 @@ pub struct FleetResultAck {
     pub job_status: String,
     #[serde(default)]
     pub deduped: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Repair candidates
+// ---------------------------------------------------------------------------
+
+/// Request body for `POST /fleet/candidates`: a local fix of a catalog workflow, proposed as a
+/// repair candidate (`rzn-browser fleet propose <id>`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FleetRepairCandidate {
+    /// The catalog id (the manifest's `id`).
+    pub workflow_id: String,
+    /// The fork's whole manifest.
+    pub manifest: Value,
+    /// Content hash of the version the fork was made from (the fleet or builtin copy it
+    /// shadows); `None` when nothing is shadowed.
+    #[serde(default)]
+    pub base_hash: Option<String>,
+    /// What broke and what changed.
+    pub reason: String,
+    /// The last local run of the fork, if any.
+    #[serde(default)]
+    pub last_run: Option<crate::workflow::RunResult>,
+}
+
+/// Response body for `POST /fleet/candidates`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FleetRepairCandidateAck {
+    pub candidate_id: String,
+    pub content_hash: String,
+    /// The same manifest was already a candidate for this workflow.
+    #[serde(default)]
+    pub deduped: bool,
+}
+
+/// What changed between two manifests, one line per changed JSON path:
+/// `~ path: before -> after`, `+ path: value`, `- path: value`. Values are compact JSON cut at
+/// 160 characters. Both the server (candidate review) and the device (fork listing) use it.
+pub fn manifest_diff(before: &Value, after: &Value) -> Vec<String> {
+    let mut out = Vec::new();
+    diff_at("", before, after, &mut out);
+    out
+}
+
+fn diff_at(path: &str, before: &Value, after: &Value, out: &mut Vec<String>) {
+    let child = |key: &str| {
+        if path.is_empty() {
+            key.to_string()
+        } else {
+            format!("{path}.{key}")
+        }
+    };
+    match (before, after) {
+        (Value::Object(a), Value::Object(b)) => {
+            let mut keys: Vec<&String> = a.keys().chain(b.keys()).collect();
+            keys.sort();
+            keys.dedup();
+            for key in keys {
+                match (a.get(key), b.get(key)) {
+                    (Some(x), Some(y)) => diff_at(&child(key), x, y, out),
+                    (Some(x), None) => out.push(format!("- {}: {}", child(key), short(x))),
+                    (None, Some(y)) => out.push(format!("+ {}: {}", child(key), short(y))),
+                    (None, None) => {}
+                }
+            }
+        }
+        (Value::Array(a), Value::Array(b)) => {
+            for i in 0..a.len().max(b.len()) {
+                let at = format!("{path}[{i}]");
+                match (a.get(i), b.get(i)) {
+                    (Some(x), Some(y)) => diff_at(&at, x, y, out),
+                    (Some(x), None) => out.push(format!("- {at}: {}", short(x))),
+                    (None, Some(y)) => out.push(format!("+ {at}: {}", short(y))),
+                    (None, None) => {}
+                }
+            }
+        }
+        (a, b) if a != b => out.push(format!("~ {path}: {} -> {}", short(a), short(b))),
+        _ => {}
+    }
+}
+
+fn short(value: &Value) -> String {
+    let text = value.to_string();
+    match text.char_indices().nth(160) {
+        Some((cut, _)) => format!("{}…", &text[..cut]),
+        None => text,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -567,6 +661,7 @@ mod tests {
             error: Some("deadline exceeded".to_string()),
             started_at_ms: 1_720_000_000_000,
             finished_at_ms: 1_720_000_300_000,
+            lease_expires_at_ms: Some(1_720_000_300_000),
         };
         round_trip(&value);
         assert_snapshot(
@@ -582,9 +677,56 @@ mod tests {
                 },
                 "error": "deadline exceeded",
                 "started_at_ms": 1_720_000_000_000i64,
-                "finished_at_ms": 1_720_000_300_000i64
+                "finished_at_ms": 1_720_000_300_000i64,
+                "lease_expires_at_ms": 1_720_000_300_000i64
             }),
         );
+        // An older device sends no lease.
+        let old: FleetResultPost = serde_json::from_value(json!({
+            "job_id": "job_1", "status": "failed",
+            "run_result": {"version": "rzn.run_result", "run_id": "r", "workflow_id": "w",
+                           "status": "failed"}
+        }))
+        .unwrap();
+        assert_eq!(old.lease_expires_at_ms, None);
+    }
+
+    #[test]
+    fn repair_candidate_round_trip_and_manifest_diff() {
+        let value = FleetRepairCandidate {
+            workflow_id: "x/screenshot".to_string(),
+            manifest: json!({"id": "x/screenshot", "steps": [{"selector": "a"}]}),
+            base_hash: Some("abc".to_string()),
+            reason: "selector moved".to_string(),
+            last_run: Some(sample_run_result()),
+        };
+        round_trip(&value);
+        let minimal: FleetRepairCandidate = serde_json::from_value(json!({
+            "workflow_id": "x/a", "manifest": {}, "reason": "r"
+        }))
+        .unwrap();
+        assert_eq!((minimal.base_hash, minimal.last_run), (None, None));
+        round_trip(&FleetRepairCandidateAck {
+            candidate_id: "c1".to_string(),
+            content_hash: "h".to_string(),
+            deduped: true,
+        });
+
+        let before = json!({"id": "x/a", "version": "1", "steps": [{"selector": "a"}, {"t": 1}],
+                            "old": true});
+        let after = json!({"id": "x/a", "version": "2", "steps": [{"selector": "b"}],
+                           "new": "y"});
+        assert_eq!(
+            manifest_diff(&before, &after),
+            [
+                "+ new: \"y\"",
+                "- old: true",
+                "~ steps[0].selector: \"a\" -> \"b\"",
+                "- steps[1]: {\"t\":1}",
+                "~ version: \"1\" -> \"2\"",
+            ]
+        );
+        assert!(manifest_diff(&before, &before).is_empty());
     }
 
     #[test]

@@ -43,6 +43,8 @@ const FLEET_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 /// Cap on best-effort local supervisor RPC probes so the CLI never hangs.
 const SUPERVISOR_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
+pub(crate) mod repair;
+
 // ---------------------------------------------------------------------------
 // CLI surface
 // ---------------------------------------------------------------------------
@@ -57,6 +59,20 @@ pub enum FleetCommands {
     Disable(FleetDisableArgs),
     /// Report that you logged in to a site the fleet paused for a login wall.
     Cleared(FleetClearedArgs),
+    /// Send your fixed copy of a workflow (a user fork) to the fleet as a repair candidate.
+    Propose(FleetProposeArgs),
+    /// List user workflows that shadow a fleet or builtin version, with their diffs; moves a
+    /// fork the catalog already carries to the trash.
+    Forks(FleetStatusArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct FleetProposeArgs {
+    /// The workflow id (the manifest's `id`, e.g. `x/screenshot`).
+    pub workflow_id: String,
+    /// What broke (the failure fingerprint, class and step) and what the fork changed.
+    #[arg(long)]
+    pub reason: String,
 }
 
 #[derive(Args, Debug)]
@@ -101,6 +117,8 @@ pub async fn handle_fleet_commands(cmd: FleetCommands) -> Result<()> {
         FleetCommands::Status(args) => run_status(args).await,
         FleetCommands::Disable(args) => run_disable(args).await,
         FleetCommands::Cleared(args) => run_cleared(args).await,
+        FleetCommands::Propose(args) => repair::run_propose(&args.workflow_id, &args.reason).await,
+        FleetCommands::Forks(args) => repair::run_forks(args.json),
     }
 }
 
@@ -163,6 +181,11 @@ fn read_fleet_config(path: &Path) -> Result<Option<FleetDeviceConfig>> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err).with_context(|| format!("read fleet config {}", path.display())),
     }
+}
+
+/// `(server_url, device_token)` of this device's enrollment, `None` when not enrolled.
+fn device_credentials() -> Result<Option<(String, String)>> {
+    Ok(read_fleet_config(&fleet_config_path())?.map(|c| (c.server_url, c.device_token)))
 }
 
 /// Delete the config; returns whether a file was actually removed (idempotent).

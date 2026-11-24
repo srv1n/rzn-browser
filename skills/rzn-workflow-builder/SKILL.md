@@ -35,6 +35,29 @@ CLI does not export a workflow; translate observations into JSON explicitly.
   Read [troubleshooting](references/troubleshooting.md) for runtime failures.
   Install only when repair or setup is part of the requested task.
 
+## Repairing a workflow
+
+A fix to an installed workflow is a repair candidate for the fleet catalog, not a
+private override. A local copy silently outranks the catalog forever and later
+fixes never reach it.
+
+1. Keep the edit as a user fork: copy the installed manifest into
+   `~/Library/Application Support/RZN/workflows/user/<system>/` (same `id`) and
+   edit only the copy.
+2. Record what broke from the failed run's `failure_summary`: `error_class`,
+   `fingerprint`, `failing_step_index` and `message` (in `rzn-browser run … --json`).
+3. Run the contract lint, `rzn-browser workflow validate <fork> --strict --json`,
+   then a live run of the fork, `rzn-browser run <fork> --param …`. An item
+   workflow's last run must succeed: its output is checked against the contract.
+4. Submit it: `rzn-browser fleet propose <id> --reason "<error_class> at step
+   <failing_step_index> (<fingerprint>): <what broke>; <what changed>"`. It sends
+   the fork, the hash it was made from, the reason and the last run; offline it
+   queues and the supervisor sends it after its next check-in.
+
+Once the catalog releases it, the next catalog pull moves the fork to
+`workflows/trash/`. `rzn-browser fleet forks` lists every remaining fork with
+its diff and propose command.
+
 ## Completion
 
 Validate the changed file, inspect its contract, and run an authorized browser

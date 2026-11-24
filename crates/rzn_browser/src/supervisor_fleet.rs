@@ -232,6 +232,7 @@ fn start_fleet_loop(state: Arc<SupervisorState>) -> bool {
         fetcher: fetcher.clone(),
         held_path: base.join(HELD_CATALOG_FILENAME),
         workflows_dir: crate::workflow_catalog::fleet_workflows_dir(),
+        forks: crate::fleet_cli::repair::Dirs::installed(),
     };
     let api: Arc<dyn FleetApi> = Arc::new(HttpFleetApi::new(
         config.server_url.clone(),
@@ -830,6 +831,25 @@ impl FleetApi for HttpFleetApi {
             .await
             .map_err(|err| FleetCallError::Network(format!("result post failed: {err}")))?;
         let status = response.status();
+        if status.as_u16() == 409 {
+            let body = response.text().await.unwrap_or_default();
+            let code = serde_json::from_str::<rzn_contracts::fleet::FleetError>(&body)
+                .map(|e| e.code)
+                .unwrap_or_default();
+            if code == error_codes::JOB_NOT_CLAIMED_BY_DEVICE {
+                // The claim ended (its lease expired, or another attempt holds the job): the
+                // server will never take this result, so stop retrying it.
+                tracing::warn!(job_id, "fleet result refused: the claim is gone; dropped");
+                return Ok(FleetResultAck {
+                    ok: false,
+                    job_status: "not_claimed".to_string(),
+                    deduped: false,
+                });
+            }
+            return Err(FleetCallError::Network(format!(
+                "result post status {status}: {body}"
+            )));
+        }
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             return Err(FleetCallError::Network(format!(
@@ -1189,6 +1209,8 @@ struct CatalogSync {
     fetcher: Arc<dyn ManifestFetcher>,
     held_path: PathBuf,
     workflows_dir: PathBuf,
+    /// Where user forks are tidied after a pull (`fleet_cli::repair`).
+    forks: crate::fleet_cli::repair::Dirs,
 }
 
 impl FleetLoop {
@@ -1264,6 +1286,9 @@ impl FleetLoop {
                     server_interval = (response.poll_interval_seconds > 0)
                         .then_some(response.poll_interval_seconds);
                     self.shared.sent_cleared(&sites_cleared);
+                    for err in crate::fleet_cli::repair::send_queued(&self.app_base).await {
+                        tracing::debug!("fleet repair proposal still queued: {err}");
+                    }
 
                     match response.device_status {
                         FleetDeviceStatus::Revoked => {
@@ -1394,6 +1419,7 @@ impl FleetLoop {
             failed = ?report.failed,
             "fleet catalog synced"
         );
+        crate::fleet_cli::repair::tidy_after_pull(&sync.forks, &self.app_base);
         HeldCatalog::load(&sync.held_path).catalog_hash
     }
 
@@ -1524,6 +1550,7 @@ impl FleetLoop {
                 error,
                 started_at_ms,
                 finished_at_ms,
+                lease_expires_at_ms: lease_of(assignment_task.lease_expires_at_ms),
             };
             // Persist BEFORE journaling finished so a crash never loses the result.
             let _ = persist_result(&results_dir, &assignment_task.job_id, &post);
@@ -1556,7 +1583,8 @@ impl FleetLoop {
         ) {
             return;
         }
-        let post = aborted_post_with(job_id, workflow_id, code, message);
+        let lease = latest.as_ref().map_or(0, |e| e.lease_expires_at_ms);
+        let post = aborted_post_with(job_id, workflow_id, lease, code, message);
         let _ = persist_result(&self.results_dir, job_id, &post);
         let entry = match &latest {
             Some(prev) => JournalEntry::carry(
@@ -1639,7 +1667,7 @@ impl FleetLoop {
                             continue;
                         }
                     }
-                    let post = aborted_post(&entry.job_id, &entry.workflow_id);
+                    let post = aborted_post(&entry);
                     let _ = persist_result(&self.results_dir, &entry.job_id, &post);
                     let _ = self.journal.append(JournalEntry::carry(
                         &entry,
@@ -1649,7 +1677,7 @@ impl FleetLoop {
                 }
                 JournalState::Finished => {
                     if !result_path.exists() {
-                        let post = aborted_post(&entry.job_id, &entry.workflow_id);
+                        let post = aborted_post(&entry);
                         let _ = persist_result(&self.results_dir, &entry.job_id, &post);
                     }
                 }
@@ -1747,10 +1775,11 @@ fn strip_hash_prefix(hash: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn aborted_post(job_id: &str, workflow_id: &str) -> FleetResultPost {
+fn aborted_post(entry: &JournalEntry) -> FleetResultPost {
     aborted_post_with(
-        job_id,
-        workflow_id,
+        &entry.job_id,
+        &entry.workflow_id,
+        entry.lease_expires_at_ms,
         "supervisor_restarted",
         "supervisor restarted mid-run",
     )
@@ -1759,6 +1788,7 @@ fn aborted_post(job_id: &str, workflow_id: &str) -> FleetResultPost {
 fn aborted_post_with(
     job_id: &str,
     workflow_id: &str,
+    lease_expires_at_ms: i64,
     code: &str,
     message: &str,
 ) -> FleetResultPost {
@@ -1787,7 +1817,13 @@ fn aborted_post_with(
         error: Some(message.to_string()),
         started_at_ms: now,
         finished_at_ms: now,
+        lease_expires_at_ms: lease_of(lease_expires_at_ms),
     }
+}
+
+/// The claim's lease for a result post; 0 (a marker written without an assignment) is none.
+fn lease_of(lease_expires_at_ms: i64) -> Option<i64> {
+    (lease_expires_at_ms > 0).then_some(lease_expires_at_ms)
 }
 
 fn failed_result(run_id: &str, workflow_id: &str, message: String) -> RunResult {
