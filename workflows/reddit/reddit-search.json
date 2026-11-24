@@ -178,7 +178,7 @@
     },
     "output_selector": {
       "step_id": "s4",
-      "path": "$"
+      "path": "$.result"
     }
   },
   "help": {

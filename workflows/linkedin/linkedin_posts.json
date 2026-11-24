@@ -92,7 +92,7 @@
     },
     "output_selector": {
       "step_id": "s6",
-      "path": "$"
+      "path": "$.result"
     }
   },
   "help": {

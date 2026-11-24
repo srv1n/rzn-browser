@@ -170,7 +170,7 @@
     },
     "output_selector": {
       "step_id": "s3",
-      "path": "$"
+      "path": "$.result"
     }
   },
   "help": {
