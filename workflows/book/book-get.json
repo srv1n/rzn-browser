@@ -1,0 +1,598 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "book/get",
+  "name": "Local Book Get",
+  "version": "1.1.0",
+  "system": "book",
+  "capability": "book.get",
+  "summary": "Local Book Search: find a book on an online mirror and resolve its download URL. Use --download-dir to save it.",
+  "description": "Search LibGen or Anna’s Archive with publication-year ordering. Select an exact file, navigate its download page, prefer slow partner downloads, and wait for the actual file link. Use --agent-output for bounded retries.",
+  "params": {
+    "properties": {
+      "query": {
+        "kind": "string",
+        "required": true,
+        "description": "Book to find: title, author, or both (e.g. 'Brave New World Huxley'). Searches all columns."
+      },
+      "base_url": {
+        "kind": "string",
+        "required": false,
+        "default": "https://libgen.li/",
+        "description": "Optional book source base URL. Include the trailing slash."
+      },
+      "format": {
+        "kind": "string",
+        "required": false,
+        "default": "epub",
+        "description": "Desired file extension, matched exactly against the Ext. column. Defaults to epub. Common: epub, pdf, mobi, azw3, djvu."
+      },
+      "language": {
+        "kind": "string",
+        "required": false,
+        "default": "",
+        "description": "Optional language preference (e.g. English). When set and at least one matching-format row has that language, selection is restricted to it; otherwise ignored."
+      },
+      "result_index": {
+        "kind": "integer",
+        "required": false,
+        "default": 0,
+        "min": 0,
+        "max": 99,
+        "description": "Which matching candidate to pick (0 = first/best). Use book/search first to inspect candidates, then pick a different index here."
+      },
+      "selected_md5": {
+        "kind": "string",
+        "required": false,
+        "default": "",
+        "description": "Exact file selector supplied internally when retrieving a search result ID. Never substitutes another file."
+      },
+      "sort": {
+        "kind": "string",
+        "required": false,
+        "default": "relevance",
+        "enum_values": [
+          "relevance",
+          "year_desc",
+          "year_asc"
+        ],
+        "description": "Publication year: year_desc (newest), year_asc (oldest), or relevance. Unknown years sort last. LibGen sorts the loaded page; Anna uses server sorting."
+      },
+      "mirror_urls": {
+        "kind": "string",
+        "required": false,
+        "default": "https://annas-archive.gl/",
+        "description": "Comma-separated fallback source base URLs, tried in order with --agent-output; maximum three total attempts."
+      },
+      "max_attempts": {
+        "kind": "integer",
+        "required": false,
+        "default": 3,
+        "min": 1,
+        "max": 3,
+        "description": "Maximum attempts with --agent-output, including the first source. Get advances slow partner servers between attempts."
+      },
+      "mirror_index": {
+        "kind": "integer",
+        "required": false,
+        "default": 0,
+        "min": 0,
+        "max": 15,
+        "description": "Slow partner link index, starting at zero. Agent output increments this on retries."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li",
+        "annas-archive.gl",
+        "configured book sources"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li",
+        "annas-archive.gl",
+        "configured book sources"
+      ]
+    },
+    {
+      "class": "external_read",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li",
+        "annas-archive.gl",
+        "configured book sources"
+      ]
+    },
+    {
+      "class": "network_access",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li",
+        "annas-archive.gl",
+        "configured book sources"
+      ]
+    },
+    {
+      "class": "download",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li",
+        "annas-archive.gl",
+        "configured book sources"
+      ]
+    },
+    {
+      "class": "file_write",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": []
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 300000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{base_url}",
+          "script": ""
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to the book search homepage",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {
+          "script": ""
+        },
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "input[name='req'], input[name='q'][type='search'], #ddg-captcha"
+        }
+      },
+      "name": "Wait for the search box",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "check_verification",
+      "name": "Stop for manual browser verification",
+      "timeout_ms": 10000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "if (document.querySelector('#ddg-captcha')) throw new Error('site_challenge: complete manual verification in the browser'); return {ready: true};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      }
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {
+          "script": ""
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{query}",
+          "script": ""
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[name='req'], input[name='q'][type='search']"
+        }
+      },
+      "name": "Type the query into the search box"
+    },
+    {
+      "id": "sort",
+      "name": "Set publication-year search order",
+      "timeout_ms": 30000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "const p = window.__rzn_params || {};\nconst input = document.querySelector(\"input[name='req'], input[name='q'][type='search']\");\nconst form = input?.form;\nif (!form) throw new Error('No search form');\nconst sort = p.sort || 'relevance';\nif (input.name === 'q' && sort !== 'relevance') {\n  let control = form.querySelector('[name=\"sort\"]');\n  if (!control) { control = document.createElement('input'); control.type = 'hidden'; control.name = 'sort'; form.appendChild(control); }\n  control.value = sort === 'year_desc' ? 'newest' : 'oldest';\n}\nreturn { sort: sort };"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      }
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {
+          "script": ""
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[name='req'], input[name='q'][type='search']",
+          "text": "{query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s5_navigation",
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*?*q=*",
+          "script": ""
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the search results navigation",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {
+          "script": ""
+        },
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#tablelibgen, .nav-tabs .nav-link.active, main a.js-vim-focus[href^=\"/md5/\"], main h1, main .js-aarecord-list-outer, #ddg-captcha"
+        }
+      },
+      "name": "Wait for file results or the empty-result counter",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {
+          "script": ""
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the table settle",
+      "timeout_ms": 800
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "if (document.querySelector('#ddg-captcha')) throw new Error('site_challenge: complete manual verification in the browser');\nconst p = window.__rzn_params || {};\nconst norm = (s) => String(s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim();\nconst fmt = norm(p.format).toLowerCase();\nconst abs = (h) => { try { const u = new URL(h, location.href); return /^https?:$/.test(u.protocol) ? u.href : ''; } catch { return ''; } };\nconst t = document.querySelector('#tablelibgen');\nconst cands = [];\nif (t) {\n  for (const r of t.querySelectorAll('tbody tr')) {\n    const c = r.children;\n    if (c.length < 9) continue;\n    const titleA = c[0].querySelector('a[href*=\"edition.php\"], a[href*=\"file.php\"]') || c[0].querySelector('a');\n    const title = norm(titleA ? titleA.textContent : c[0].textContent);\n    if (!title) continue;\n    const md5A = Array.from(c[8].querySelectorAll('a')).find(a => /md5=([a-f0-9]{32})/i.test(a.getAttribute('href') || ''));\n    const md5 = ((md5A?.getAttribute('href') || '').match(/md5=([a-f0-9]{32})/i) || [])[1] || '';\n    cands.push({title, author: norm(c[1].textContent), publisher: norm(c[2].textContent), year: norm(c[3].textContent), language: norm(c[4].textContent), pages: norm(c[5].textContent), size: norm(c[6].textContent), ext: norm(c[7].textContent).toLowerCase(), md5: md5.toLowerCase(), edition_url: abs(titleA?.getAttribute('href') || ''), file_url: abs(c[6].querySelector('a[href*=\"file.php\"]')?.getAttribute('href') || '')});\n  }\n} else {\n  // Restrict to title links in main: the header ticker also contains /md5/ links.\n  for (const a of document.querySelectorAll('main a.js-vim-focus[href^=\"/md5/\"]')) {\n    const card = a.parentElement.parentElement;\n    const meta = Array.from(card.children).find(e => e.classList.contains('font-semibold'));\n    const parts = norm(meta?.textContent || meta?.childNodes[0]?.textContent).split(' · ').map(norm);\n    const extension = parts.find(x => /^(epub|pdf|mobi|azw3|azw|lit|fb2|djvu|djv|cbr|cbz|zip|txt|rtf|doc|docx|html)$/i.test(x)) || '';\n    const size = parts.find(x => /^\\d+(?:[.,]\\d+)?\\s*[KMGT]?i?B$/i.test(x)) || '';\n    const language = parts[0] === extension || parts[0] === size || /^\\d{4}$/.test(parts[0]) ? '' : (parts[0] || '').replace(/\\s*\\[[^\\]]+\\]$/, '');\n    const links = Array.from(a.parentElement.querySelectorAll('a[href^=\"/search?\"]'));\n    const md5 = (a.getAttribute('href').match(/\\/md5\\/([a-f0-9]{32})/i) || [])[1];\n    if (!md5 || !norm(a.textContent)) continue;\n    cands.push({title: norm(a.textContent), author: norm(links[0]?.textContent), publisher: norm(links[1]?.textContent), year: parts.find(x => /^\\d{4}$/.test(x)) || '', language, pages: '', size, ext: extension.toLowerCase(), md5: md5.toLowerCase(), edition_url: abs(a.getAttribute('href')), file_url: abs(a.getAttribute('href'))});\n  }\n}\nconst empty = /^Files\\s*0$/.test(norm(document.querySelector('.nav-tabs .nav-link.active')?.textContent)) || /no (?:files|results) found/i.test(document.querySelector('main')?.textContent || '');\nconst layout_ok = !!t || cands.length > 0 || empty;\nif (!['relevance', 'year_desc', 'year_asc'].includes(p.sort || 'relevance')) throw new Error('Invalid sort');\nif (p.sort === 'year_desc' || p.sort === 'year_asc') {\n  const year = x => { const m = x.year.match(/\\b(\\d{4})\\b/); return m ? Number(m[1]) : null; };\n  cands.sort((a,b) => { const ay = year(a), by = year(b); return ay === null ? (by === null ? 0 : 1) : by === null ? -1 : (p.sort === 'year_asc' ? ay-by : by-ay); });\n}\nconst key = '__rzn_book_selection';\nconst fail = (status) => { const result = {found: false, status, attachment_urls: [], stop_workflow: true}; sessionStorage.setItem(key, JSON.stringify(result)); return result; };\nif (!layout_ok) return fail('no_table');\nconst selected = norm(p.selected_md5).toLowerCase();\nlet pool = cands.filter(x => x.ext === fmt && x.md5 && (!selected || x.md5 === selected));\nif (!pool.length) return fail('no_format_match');\nconst lang = norm(p.language).toLowerCase();\nconst byLang = pool.filter(x => x.language.toLowerCase() === lang);\nif (lang && byLang.length) pool = byLang;\nconst chosen = pool[Number(p.result_index) || 0];\nif (!chosen) return fail('no_format_match');\nsessionStorage.setItem(key, JSON.stringify({chosen, found: false, status: 'resolving', attachment_urls: []}));\nconst href = t ? '/ads.php?md5=' + chosen.md5 : chosen.file_url;\nlocation.assign(abs(href));\nreturn {status: 'resolving'};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Select the exact file and open its download page",
+      "timeout_ms": 45000
+    },
+    {
+      "id": "detail_settle",
+      "name": "Allow navigation and automatic browser verification to settle",
+      "timeout_ms": 8000,
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {
+          "script": ""
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      }
+    },
+    {
+      "id": "slow",
+      "name": "Choose a slow partner server or keep the direct mirror page",
+      "timeout_ms": 60000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "if (document.querySelector('#ddg-captcha')) throw new Error('site_challenge: complete manual verification in the browser');\nconst state = JSON.parse(sessionStorage.getItem('__rzn_book_selection') || 'null');\nif (!state || state.status !== 'resolving') return state || {found: false, status: 'no_download_link'};\nconst inspect = () => {\n  \n  if (Array.from(document.querySelectorAll('a[href]')).some(a => /^GET$/i.test(a.textContent.trim()) || /get\\.php\\?/i.test(a.getAttribute('href')))) return {status: 'ready'};\n  const links = Array.from(document.querySelectorAll('a[href*=\"/slow_download/\"]')).filter(a => new URL(a.href).origin === location.origin && new URL(a.href).pathname.startsWith('/slow_download/' + state.chosen.md5 + '/') && /Slow Partner Server/i.test(a.textContent));\n  const unique = Array.from(new Map(links.map(a => [a.href, a])).values()).sort((a,b) => Number(/no waitlist/i.test(b.parentElement?.textContent || '')) - Number(/no waitlist/i.test(a.parentElement?.textContent || '')));\n  if (unique.length) {\n    const link = unique[Number((window.__rzn_params || {}).mirror_index) || 0];\n    if (!link) { state.status = 'mirror_unavailable'; sessionStorage.setItem('__rzn_book_selection', JSON.stringify(state)); return state; }\n    location.assign(link.href); return {status: 'waiting_for_download'};\n  }\n  if (/DDoS-Guard|Just a moment|verify you are human/i.test(document.title)) return {status: 'verification_wait'};\n  return null;\n};\nconst ready = inspect();\nif (ready) return ready;\nreturn {status: 'waiting_for_download'};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      }
+    },
+    {
+      "id": "slow_settle",
+      "name": "Allow navigation and automatic browser verification to settle",
+      "timeout_ms": 8000,
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {
+          "script": ""
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      }
+    },
+    {
+      "id": "download_probe_0",
+      "name": "Read the actual file link when the partner is ready",
+      "timeout_ms": 10000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "if (document.querySelector('#ddg-captcha')) throw new Error('site_challenge: complete manual verification in the browser');\nconst key = '__rzn_book_selection';\nconst state = JSON.parse(sessionStorage.getItem(key) || 'null');\nif (!state || state.status !== 'resolving') return {...(state || {found: false, status: 'no_download_link', attachment_urls: []}), stop_workflow: true};\nconst finalProbe = false;\nif (/DDoS-Guard|Just a moment|verify you are human/i.test(document.title)) {\n  if (finalProbe) throw new Error('site_challenge: complete verification in the browser');\n  return {found: false, status: 'verification_wait', attachment_urls: []};\n}\nconst onSlowPage = location.pathname.startsWith('/slow_download/' + state.chosen.md5 + '/');\nconst links = Array.from(document.querySelectorAll('a[href]'));\n// A delayed detail navigation may have outlived the earlier phase. Follow the\n// observed partner link here as well; later runner probes survive redirects.\nif (!onSlowPage && location.pathname === '/md5/' + state.chosen.md5) {\n  const partners = Array.from(new Map(links.filter(a => new URL(a.href).origin === location.origin && new URL(a.href).pathname.startsWith('/slow_download/' + state.chosen.md5 + '/') && /Slow Partner Server/i.test(a.textContent)).map(a => [a.href,a])).values()).sort((a,b) => Number(/no waitlist/i.test(b.parentElement?.textContent || '')) - Number(/no waitlist/i.test(a.parentElement?.textContent || '')));\n  const partner = partners[Number((window.__rzn_params || {}).mirror_index) || 0];\n  if (partner) { location.assign(partner.href); return {found: false, status: 'waiting_for_download', attachment_urls: []}; }\n}\nconst link = onSlowPage ? links.find(a => /download now/i.test(a.textContent) && /^https?:$/.test(new URL(a.href).protocol) && new URL(a.href).origin !== location.origin) : links.find(a => (/^GET$/i.test(a.textContent.trim()) || /get\\.php\\?/i.test(a.getAttribute('href'))) && /^https?:$/.test(new URL(a.href).protocol));\nif (!link) return {found: false, status: finalProbe ? 'download_wait_timeout' : 'waiting_for_download', attachment_urls: []};\nconst filename = (state.chosen.title || 'book').replace(/[\\\\/:*?\"<>|]+/g, ' ').replace(/\\s+/g, ' ').trim().slice(0,120) + '.' + state.chosen.ext;\nsessionStorage.removeItem(key);\nreturn {found: true, status: 'ok', chosen: state.chosen, download_url: link.href, attachment_urls: [{url: link.href, filename}], stop_workflow: true};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      }
+    },
+    {
+      "id": "countdown_wait_1",
+      "name": "Wait for partner countdown or redirect",
+      "timeout_ms": 15000,
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {
+          "script": ""
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      }
+    },
+    {
+      "id": "download_probe_1",
+      "name": "Read the actual file link when the partner is ready",
+      "timeout_ms": 10000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "if (document.querySelector('#ddg-captcha')) throw new Error('site_challenge: complete manual verification in the browser');\nconst key = '__rzn_book_selection';\nconst state = JSON.parse(sessionStorage.getItem(key) || 'null');\nif (!state || state.status !== 'resolving') return {...(state || {found: false, status: 'no_download_link', attachment_urls: []}), stop_workflow: true};\nconst finalProbe = false;\nif (/DDoS-Guard|Just a moment|verify you are human/i.test(document.title)) {\n  if (finalProbe) throw new Error('site_challenge: complete verification in the browser');\n  return {found: false, status: 'verification_wait', attachment_urls: []};\n}\nconst onSlowPage = location.pathname.startsWith('/slow_download/' + state.chosen.md5 + '/');\nconst links = Array.from(document.querySelectorAll('a[href]'));\n// A delayed detail navigation may have outlived the earlier phase. Follow the\n// observed partner link here as well; later runner probes survive redirects.\nif (!onSlowPage && location.pathname === '/md5/' + state.chosen.md5) {\n  const partners = Array.from(new Map(links.filter(a => new URL(a.href).origin === location.origin && new URL(a.href).pathname.startsWith('/slow_download/' + state.chosen.md5 + '/') && /Slow Partner Server/i.test(a.textContent)).map(a => [a.href,a])).values()).sort((a,b) => Number(/no waitlist/i.test(b.parentElement?.textContent || '')) - Number(/no waitlist/i.test(a.parentElement?.textContent || '')));\n  const partner = partners[Number((window.__rzn_params || {}).mirror_index) || 0];\n  if (partner) { location.assign(partner.href); return {found: false, status: 'waiting_for_download', attachment_urls: []}; }\n}\nconst link = onSlowPage ? links.find(a => /download now/i.test(a.textContent) && /^https?:$/.test(new URL(a.href).protocol) && new URL(a.href).origin !== location.origin) : links.find(a => (/^GET$/i.test(a.textContent.trim()) || /get\\.php\\?/i.test(a.getAttribute('href'))) && /^https?:$/.test(new URL(a.href).protocol));\nif (!link) return {found: false, status: finalProbe ? 'download_wait_timeout' : 'waiting_for_download', attachment_urls: []};\nconst filename = (state.chosen.title || 'book').replace(/[\\\\/:*?\"<>|]+/g, ' ').replace(/\\s+/g, ' ').trim().slice(0,120) + '.' + state.chosen.ext;\nsessionStorage.removeItem(key);\nreturn {found: true, status: 'ok', chosen: state.chosen, download_url: link.href, attachment_urls: [{url: link.href, filename}], stop_workflow: true};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      }
+    },
+    {
+      "id": "countdown_wait_2",
+      "name": "Wait for partner countdown or redirect",
+      "timeout_ms": 15000,
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {
+          "script": ""
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      }
+    },
+    {
+      "id": "download_probe_2",
+      "name": "Read the actual file link when the partner is ready",
+      "timeout_ms": 10000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "if (document.querySelector('#ddg-captcha')) throw new Error('site_challenge: complete manual verification in the browser');\nconst key = '__rzn_book_selection';\nconst state = JSON.parse(sessionStorage.getItem(key) || 'null');\nif (!state || state.status !== 'resolving') return {...(state || {found: false, status: 'no_download_link', attachment_urls: []}), stop_workflow: true};\nconst finalProbe = false;\nif (/DDoS-Guard|Just a moment|verify you are human/i.test(document.title)) {\n  if (finalProbe) throw new Error('site_challenge: complete verification in the browser');\n  return {found: false, status: 'verification_wait', attachment_urls: []};\n}\nconst onSlowPage = location.pathname.startsWith('/slow_download/' + state.chosen.md5 + '/');\nconst links = Array.from(document.querySelectorAll('a[href]'));\n// A delayed detail navigation may have outlived the earlier phase. Follow the\n// observed partner link here as well; later runner probes survive redirects.\nif (!onSlowPage && location.pathname === '/md5/' + state.chosen.md5) {\n  const partners = Array.from(new Map(links.filter(a => new URL(a.href).origin === location.origin && new URL(a.href).pathname.startsWith('/slow_download/' + state.chosen.md5 + '/') && /Slow Partner Server/i.test(a.textContent)).map(a => [a.href,a])).values()).sort((a,b) => Number(/no waitlist/i.test(b.parentElement?.textContent || '')) - Number(/no waitlist/i.test(a.parentElement?.textContent || '')));\n  const partner = partners[Number((window.__rzn_params || {}).mirror_index) || 0];\n  if (partner) { location.assign(partner.href); return {found: false, status: 'waiting_for_download', attachment_urls: []}; }\n}\nconst link = onSlowPage ? links.find(a => /download now/i.test(a.textContent) && /^https?:$/.test(new URL(a.href).protocol) && new URL(a.href).origin !== location.origin) : links.find(a => (/^GET$/i.test(a.textContent.trim()) || /get\\.php\\?/i.test(a.getAttribute('href'))) && /^https?:$/.test(new URL(a.href).protocol));\nif (!link) return {found: false, status: finalProbe ? 'download_wait_timeout' : 'waiting_for_download', attachment_urls: []};\nconst filename = (state.chosen.title || 'book').replace(/[\\\\/:*?\"<>|]+/g, ' ').replace(/\\s+/g, ' ').trim().slice(0,120) + '.' + state.chosen.ext;\nsessionStorage.removeItem(key);\nreturn {found: true, status: 'ok', chosen: state.chosen, download_url: link.href, attachment_urls: [{url: link.href, filename}], stop_workflow: true};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      }
+    },
+    {
+      "id": "countdown_wait_3",
+      "name": "Wait for partner countdown or redirect",
+      "timeout_ms": 15000,
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {
+          "script": ""
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      }
+    },
+    {
+      "id": "resolve",
+      "name": "Read the actual file link when the partner is ready",
+      "timeout_ms": 10000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "if (document.querySelector('#ddg-captcha')) throw new Error('site_challenge: complete manual verification in the browser');\nconst key = '__rzn_book_selection';\nconst state = JSON.parse(sessionStorage.getItem(key) || 'null');\nif (!state || state.status !== 'resolving') return {...(state || {found: false, status: 'no_download_link', attachment_urls: []}), stop_workflow: true};\nconst finalProbe = true;\nif (/DDoS-Guard|Just a moment|verify you are human/i.test(document.title)) {\n  if (finalProbe) throw new Error('site_challenge: complete verification in the browser');\n  return {found: false, status: 'verification_wait', attachment_urls: []};\n}\nconst onSlowPage = location.pathname.startsWith('/slow_download/' + state.chosen.md5 + '/');\nconst links = Array.from(document.querySelectorAll('a[href]'));\n// A delayed detail navigation may have outlived the earlier phase. Follow the\n// observed partner link here as well; later runner probes survive redirects.\nif (!onSlowPage && location.pathname === '/md5/' + state.chosen.md5) {\n  const partners = Array.from(new Map(links.filter(a => new URL(a.href).origin === location.origin && new URL(a.href).pathname.startsWith('/slow_download/' + state.chosen.md5 + '/') && /Slow Partner Server/i.test(a.textContent)).map(a => [a.href,a])).values()).sort((a,b) => Number(/no waitlist/i.test(b.parentElement?.textContent || '')) - Number(/no waitlist/i.test(a.parentElement?.textContent || '')));\n  const partner = partners[Number((window.__rzn_params || {}).mirror_index) || 0];\n  if (partner) { location.assign(partner.href); return {found: false, status: 'waiting_for_download', attachment_urls: []}; }\n}\nconst link = onSlowPage ? links.find(a => /download now/i.test(a.textContent) && /^https?:$/.test(new URL(a.href).protocol) && new URL(a.href).origin !== location.origin) : links.find(a => (/^GET$/i.test(a.textContent.trim()) || /get\\.php\\?/i.test(a.getAttribute('href'))) && /^https?:$/.test(new URL(a.href).protocol));\nif (!link) return {found: false, status: finalProbe ? 'download_wait_timeout' : 'waiting_for_download', attachment_urls: []};\nconst filename = (state.chosen.title || 'book').replace(/[\\\\/:*?\"<>|]+/g, ' ').replace(/\\s+/g, ' ').trim().slice(0,120) + '.' + state.chosen.ext;\nsessionStorage.removeItem(key);\nreturn {found: true, status: 'ok', chosen: state.chosen, download_url: link.href, attachment_urls: [{url: link.href, filename}], stop_workflow: true};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      }
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": true
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "found": {
+          "type": "boolean"
+        },
+        "status": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        },
+        "available_formats": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "download_url": {
+          "type": "string"
+        },
+        "chosen": {
+          "type": "object",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "author": {
+              "type": "string"
+            },
+            "publisher": {
+              "type": "string"
+            },
+            "year": {
+              "type": "string"
+            },
+            "language": {
+              "type": "string"
+            },
+            "size": {
+              "type": "string"
+            },
+            "ext": {
+              "type": "string"
+            },
+            "md5": {
+              "type": "string"
+            }
+          }
+        },
+        "attachment_urls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "filename": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "resolve",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Local Book Search: find a book on an online mirror and resolve its download URL. Use --download-dir to save it.",
+    "parameters": {
+      "query": "Title and/or author.",
+      "base_url": "Optional book source base URL. Include the trailing slash.",
+      "format": "Desired extension (default epub).",
+      "language": "Optional language preference.",
+      "result_index": "Which matching candidate to pick (0 = first).",
+      "selected_md5": "Internal exact file selector; agent callers use id instead.",
+      "sort": "Publication year: year_desc (newest), year_asc (oldest), or relevance. Unknown years sort last. LibGen sorts the loaded page; Anna uses server sorting.",
+      "mirror_urls": "Comma-separated fallback source base URLs, tried in order with --agent-output; maximum three total attempts.",
+      "max_attempts": "Maximum attempts with --agent-output, including the first source. Get advances slow partner servers between attempts.",
+      "mirror_index": "Get: slow partner link index, starting at zero. Agent output increments this on retries."
+    },
+    "examples": [
+      {
+        "description": "Download an epub into ~/Books/bnw/",
+        "command": "rzn-browser run book get --param query=\"Brave New World Huxley\" --download-dir ~/Books/bnw"
+      },
+      {
+        "description": "Prefer a PDF in English",
+        "command": "rzn-browser run book get --param query=\"Pride and Prejudice Austen\" --param format=pdf --param language=English --download-dir ~/Books/austen"
+      },
+      {
+        "description": "Pick the 2nd matching candidate",
+        "command": "rzn-browser run book get --param query=\"Dune Herbert\" --param result_index=1 --download-dir ~/Books/dune"
+      }
+    ],
+    "returns": [
+      "Object: { found, status, chosen{title,author,...,md5}, download_url, attachment_urls:[{url,filename}] }. Run with --download-dir <folder> to save the file to <folder>/attachments/.",
+      "found=false carries status (no_table | no_format_match | no_download_link) and error; no_format_match also lists available_formats so you can retry with a different format. no_table usually means the book source layout is unsupported — try another base_url."
+    ],
+    "notes": [
+      "Supports the LibGen table layout and Anna’s Archive result cards.",
+      "Anna’s Archive uses native publication-year sorting; LibGen sorts all loaded rows before applying limit.",
+      "Get navigates through source pages and only slow partner links; persistent verification needs human input.",
+      "Use --agent-output for at most three attempts; ordinary mode exposes mirror_index and base_url for explicit retries."
+    ]
+  }
+}

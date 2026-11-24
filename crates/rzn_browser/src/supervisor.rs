@@ -2294,12 +2294,13 @@ impl SupervisorState {
                     .and_then(Value::as_u64)
                     .map(|pid| pid as u32);
                 self.control
-                    .try_begin_run_owned(
+                    .try_begin_run_in_lane(
                         run_id.into(),
                         workflow_id.into(),
                         origin.into(),
                         total,
                         owner_pid,
+                        params.get("lane").and_then(Value::as_str).filter(|lane| !lane.is_empty()).map(str::to_string),
                     )
                     .map_err(|current| {
                         if current.run_id
@@ -2318,8 +2319,11 @@ impl SupervisorState {
                 Ok(json!({"ok": true, "run_id": run_id}))
             }
             "runs.release" => {
-                self.control
-                    .end_run_if(params.get("run_id").and_then(Value::as_str));
+                let run_id = params
+                    .get("run_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("runs.release missing params.run_id"))?;
+                self.control.end_run_if(Some(run_id));
                 Ok(json!({"ok": true}))
             }
             "runtime.ensure_ready" => self.ensure_ready(params).await,
@@ -2349,7 +2353,7 @@ impl SupervisorState {
                         Ok(json!({ "ok": true, "record": record, "result": result }))
                     }
                     None => {
-                        let running = self.control.now_running();
+                        let running = self.control.running_run(run_id);
                         if running.get("run_id").and_then(Value::as_str) == Some(run_id) {
                             Ok(json!({"ok":true,"record":{
                                 "run_id":run_id,

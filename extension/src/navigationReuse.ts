@@ -81,6 +81,8 @@ export interface PageFacts {
 // Elements that only appear on bot-check pages. Turnstile and hCaptcha widgets
 // are left out on purpose: sites embed them in ordinary login forms.
 export const CHALLENGE_SELECTORS: Record<string, string> = {
+  '#ddg-l10n-title': 'ddos_guard',
+  '#ddg-captcha': 'ddos_guard',
   "iframe[src*='captcha-delivery.com']": 'datadome',
   '#challenge-form': 'cloudflare',
   '#challenge-running': 'cloudflare',
@@ -108,6 +110,7 @@ export function siteChallengeKind(page: PageFacts): string | null {
     // Not a URL: fall through to title and text.
   }
   const short = page.bodyLength < 4000;
+  if (short && /^DDoS-Guard$/i.test(page.title.trim())) return 'ddos_guard';
   if (CHALLENGE_TITLE.test(page.title.trim())) return 'challenge';
   if (short && /^access denied$/i.test(page.title.trim())) return 'blocked';
   if (short && CHALLENGE_TEXT.test(page.bodyText)) return 'challenge';

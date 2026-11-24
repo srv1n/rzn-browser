@@ -719,6 +719,7 @@ type BrokerRequestLease = {
   deadlineAtMs: number;
   cancelled: boolean;
   cancelReason?: string;
+  lastOperation?: string;
   abortController: AbortController;
   watchdogTimedOut: boolean;
 };
@@ -1565,6 +1566,7 @@ async function guardedBrokerSideEffect<T>(
   operation: () => Promise<T>
 ): Promise<T> {
   assertBrokerLeaseCurrent(lease, `before ${where}`);
+  if (lease) lease.lastOperation = where;
   const operationPromise = operation();
   const abortRace = createBrokerLeaseAbortRace<T>(lease, where);
   if (!abortRace) {
@@ -2666,7 +2668,7 @@ async function sendMessageTopFrame<T = any>(tabId: number, message: any): Promis
     const messageText = primaryErr?.message || String(primaryErr);
     // Chrome: "...the message channel closed before a response was received" or
     // "The message port closed before a response was received."
-    if (/message (channel|port) closed/i.test(messageText)) {
+    if (/message (channel|port) (?:is )?closed|back\/forward cache/i.test(messageText)) {
       const tab = await chrome.tabs.get(tabId).catch(() => undefined);
       throw new Error(`NAVIGATED_DURING_STEP: message channel closed at ${tab?.url || tab?.pendingUrl || 'unknown URL'}`);
     }
@@ -2743,7 +2745,7 @@ async function createSystemNotification(title: string, message: string): Promise
 async function sendMessageTopFrameWithRetry<T = any>(
   tabId: number,
   message: any,
-  opts?: { injectPath?: string; attempts?: number; timeoutMs?: number }
+  opts?: { injectPath?: string; attempts?: number; timeoutMs?: number; signal?: AbortSignal }
 ): Promise<T> {
   const attempts = Math.max(1, opts?.attempts ?? 3);
   const injectPath = opts?.injectPath ?? 'contentScript.js';
@@ -2751,6 +2753,7 @@ async function sendMessageTopFrameWithRetry<T = any>(
 
   let lastErr: any;
   for (let i = 0; i < attempts; i++) {
+    opts?.signal?.throwIfAborted();
     try {
       return await withMessageTimeout(
         sendMessageTopFrame<T>(tabId, message),
@@ -2771,6 +2774,7 @@ async function sendMessageTopFrameWithRetry<T = any>(
         `[sendMessageTopFrameWithRetry] Retrying after transient error (attempt ${i + 1}/${attempts}): ${msg}`
       );
       await new Promise(r => setTimeout(r, 200));
+      opts?.signal?.throwIfAborted();
       await ensureContentReady(tabId, injectPath, timeoutMs).catch(() => {});
     }
   }
@@ -2967,6 +2971,8 @@ function isContentScriptDisconnectError(error: unknown): boolean {
       ? error
       : (error as any)?.message || (error as any)?.toString?.() || String(error);
   return (
+    msg.includes('NAVIGATED_DURING_STEP:') ||
+    /back\/forward cache/i.test(msg) ||
     msg.includes('Receiving end does not exist') ||
     msg.includes('Could not establish connection') ||
     msg.includes('No tab with id') ||
@@ -4075,13 +4081,16 @@ async function handleBrokerMessageWithWatchdog(
         return;
       }
       const requestId = message.req_id || message.task_id;
-      console.error('[NativeReconnect] Broker handler watchdog timeout', {
+      console.error('[NativeReconnect] Broker handler watchdog timeout ' + JSON.stringify({
         cmd: message.cmd || message.action,
         req_id: requestId,
         session_id: workflowSessionId,
         native_port_epoch: lease?.nativePortEpoch ?? nativePortEpoch,
         watchdog_ms: watchdogMs,
-      });
+        elapsed_ms: Date.now() - (lease?.startedAtMs ?? Date.now()),
+        step_type: message.payload?.step?.type,
+        last_operation: lease?.lastOperation,
+      }));
       if (lease) {
         lease.watchdogTimedOut = true;
       }
@@ -5589,7 +5598,7 @@ async function handleBrokerMessage(
                     lease_id: brokerLease?.leaseId,
                     payload: { options: { maxElements, highlightElements: false } },
                   },
-                  { attempts: 2, timeoutMs: 8000 }
+                  { attempts: 2, timeoutMs: 8000, signal: brokerLease?.abortController.signal }
                 )
               );
               const domSnapshot = domResp?.dom_snapshot;
@@ -5697,10 +5706,12 @@ async function handleBrokerMessage(
           () => sendMessageTopFrameWithRetry(tabId, attachBrokerLeaseToMessage(message, brokerLease), {
             attempts: 3,
             timeoutMs: messageTimeoutForStep(step),
+            signal: brokerLease?.abortController.signal,
           })
         );
         sendResponseToBroker(response, { lease: brokerLease });
       } catch (error: any) {
+        if (brokerLease?.cancelled) return;
         const log = isContentScriptDisconnectError(error) ? console.warn : console.error;
         log('Failed to send message to content script:', error);
         sendResponseToBroker({
@@ -5712,6 +5723,7 @@ async function handleBrokerMessage(
         });
       }
     } catch (error) {
+      if (brokerLease?.cancelled) return;
       console.error('Error forwarding to content script:', error);
       sendResponseToBroker({
         req_id: isOrchestratorFormat ? undefined : requestId,
@@ -5824,6 +5836,7 @@ async function handleBrokerMessage(
         () => sendMessageTopFrameWithRetry(tabId, attachBrokerLeaseToMessage(message, brokerLease), {
           attempts: 3,
           timeoutMs: 8000,
+          signal: brokerLease?.abortController.signal,
         })
       );
       // Ensure DOM snapshot and hash are properly forwarded
@@ -5843,6 +5856,7 @@ async function handleBrokerMessage(
       }
       sendResponseToBroker(response);
     } catch (error) {
+      if (brokerLease?.cancelled) return;
       if (isContentScriptDisconnectError(error)) {
         const errorMessage = (error as Error)?.message || String(error);
         console.warn(`DOM request could not reach content script: ${errorMessage}`);
@@ -7973,7 +7987,7 @@ async function executeWorkflow(
                     },
                     brokerLease
                   ),
-                  { attempts: 2, timeoutMs: 8000 }
+                  { attempts: 2, timeoutMs: 8000, signal: brokerLease?.abortController.signal }
                 )
               );
               const domSnapshot = domResp?.dom_snapshot;
@@ -8078,7 +8092,7 @@ async function executeWorkflow(
         const response = await guardedBrokerSideEffect(
           brokerLease,
           'sendMessageTopFrameWithRetry workflow content-script dispatch',
-          () => sendMessageTopFrameWithRetry(tabId, stepMessage, { attempts: 3, timeoutMs: messageTimeoutForStep(step) })
+          () => sendMessageTopFrameWithRetry(tabId, stepMessage, { attempts: 3, timeoutMs: messageTimeoutForStep(step), signal: brokerLease?.abortController.signal })
         );
         if (!response.success) {
           // Step failed, stop workflow. Keep the response compact by default; snapshots are optional.
@@ -8158,6 +8172,7 @@ async function executeWorkflow(
           console.warn('Post-step navigation settle failed (continuing):', e);
         }
       } catch (error) {
+        if (brokerLease?.cancelled) return;
         console.error(`Error executing step ${i + 1}:`, error);
         sendWorkflowResponse({
           req_id: isOrchestratorFormat ? undefined : requestId,
@@ -8226,6 +8241,7 @@ async function executeWorkflow(
     sendWorkflowResponse(response);
 
   } catch (error) {
+    if (brokerLease?.cancelled) return;
     console.error('Workflow execution error:', error);
     sendWorkflowResponse({
       req_id: isOrchestratorFormat ? undefined : requestId,

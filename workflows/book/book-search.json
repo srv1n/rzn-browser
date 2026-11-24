@@ -1,0 +1,367 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "book/search",
+  "name": "Local Book Search",
+  "version": "1.1.0",
+  "system": "book",
+  "capability": "book.search",
+  "summary": "Local Book Search: find books on online mirrors by title, author, or ISBN.",
+  "description": "Search LibGen or Anna’s Archive with publication-year ordering. Returns metadata for the loaded results page; use --agent-output for fallback sources and opaque book IDs.",
+  "params": {
+    "properties": {
+      "query": {
+        "kind": "string",
+        "required": true,
+        "description": "Search text: book title, author, or ISBN. Searches all columns (title, author, series, year, publisher, isbn), so 'title author' works well."
+      },
+      "base_url": {
+        "kind": "string",
+        "required": false,
+        "default": "https://libgen.li/",
+        "description": "Optional book source base URL. Include the trailing slash."
+      },
+      "format": {
+        "kind": "string",
+        "required": false,
+        "default": "",
+        "description": "Optional extension filter, lowercased and matched exactly against the Ext. column (e.g. epub, pdf, mobi, azw3, djvu). Empty (default) returns all formats."
+      },
+      "limit": {
+        "kind": "integer",
+        "required": false,
+        "default": 25,
+        "min": 1,
+        "max": 100,
+        "description": "Maximum number of rows to return. Defaults to 25 (one results page). Hard cap 100."
+      },
+      "sort": {
+        "kind": "string",
+        "required": false,
+        "default": "relevance",
+        "enum_values": [
+          "relevance",
+          "year_desc",
+          "year_asc"
+        ],
+        "description": "Publication year: year_desc (newest), year_asc (oldest), or relevance. Unknown years sort last. LibGen sorts the loaded page; Anna uses server sorting."
+      },
+      "mirror_urls": {
+        "kind": "string",
+        "required": false,
+        "default": "https://annas-archive.gl/",
+        "description": "Comma-separated fallback source base URLs, tried in order with --agent-output; maximum three total attempts."
+      },
+      "max_attempts": {
+        "kind": "integer",
+        "required": false,
+        "default": 3,
+        "min": 1,
+        "max": 3,
+        "description": "Maximum attempts with --agent-output, including the first source. Get advances slow partner servers between attempts."
+      },
+      "mirror_index": {
+        "kind": "integer",
+        "required": false,
+        "default": 0,
+        "min": 0,
+        "max": 15,
+        "description": "Get: slow partner link index, starting at zero. Agent output increments this on retries."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li",
+        "annas-archive.gl",
+        "configured book sources"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "libgen.li",
+        "annas-archive.gl",
+        "configured book sources"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": false,
+    "timeout_ms": 150000
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "{base_url}"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Navigate to the book search homepage",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "input[name='req'], input[name='q'][type='search'], #ddg-captcha"
+        }
+      },
+      "name": "Wait for the search box",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "check_verification",
+      "name": "Stop for manual browser verification",
+      "timeout_ms": 10000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "if (document.querySelector('#ddg-captcha')) throw new Error('site_challenge: complete manual verification in the browser'); return {ready: true};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      }
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "fill_input_field",
+        "inputs": {
+          "clear_first": true,
+          "value": "{query}"
+        },
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[name='req'], input[name='q'][type='search']"
+        }
+      },
+      "name": "Type the query into the search box"
+    },
+    {
+      "id": "sort",
+      "name": "Set publication-year search order",
+      "timeout_ms": 30000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "const p = window.__rzn_params || {};\nconst input = document.querySelector(\"input[name='req'], input[name='q'][type='search']\");\nconst form = input?.form;\nif (!form) throw new Error('No search form');\nconst sort = p.sort || 'relevance';\nif (input.name === 'q' && sort !== 'relevance') {\n  let control = form.querySelector('[name=\"sort\"]');\n  if (!control) { control = document.createElement('input'); control.type = 'hidden'; control.name = 'sort'; form.appendChild(control); }\n  control.value = sort === 'year_desc' ? 'newest' : 'oldest';\n}\nreturn { sort: sort };"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      }
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "submit_input",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ],
+        "target": {
+          "selector": "input[name='req'], input[name='q'][type='search']",
+          "text": "{query}"
+        }
+      },
+      "name": "Submit the search form"
+    },
+    {
+      "id": "s5_navigation",
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*?*q=*"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the search results navigation",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#tablelibgen, .nav-tabs .nav-link.active, main a.js-vim-focus[href^=\"/md5/\"], main h1, main .js-aarecord-list-outer, #ddg-captcha"
+        }
+      },
+      "name": "Wait for file results or the empty-result counter",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s7",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Let the table settle",
+      "timeout_ms": 800
+    },
+    {
+      "id": "s8",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "return_value": true,
+          "args": [],
+          "script": "if (document.querySelector('#ddg-captcha')) throw new Error('site_challenge: complete manual verification in the browser');\nconst p = window.__rzn_params || {};\nconst norm = (s) => String(s || '').replace(/\\u00a0/g, ' ').replace(/\\s+/g, ' ').trim();\nconst fmt = norm(p.format).toLowerCase();\nconst abs = (h) => { try { const u = new URL(h, location.href); return /^https?:$/.test(u.protocol) ? u.href : ''; } catch { return ''; } };\nconst t = document.querySelector('#tablelibgen');\nconst cands = [];\nif (t) {\n  for (const r of t.querySelectorAll('tbody tr')) {\n    const c = r.children;\n    if (c.length < 9) continue;\n    const titleA = c[0].querySelector('a[href*=\"edition.php\"], a[href*=\"file.php\"]') || c[0].querySelector('a');\n    const title = norm(titleA ? titleA.textContent : c[0].textContent);\n    if (!title) continue;\n    const md5A = Array.from(c[8].querySelectorAll('a')).find(a => /md5=([a-f0-9]{32})/i.test(a.getAttribute('href') || ''));\n    const md5 = ((md5A?.getAttribute('href') || '').match(/md5=([a-f0-9]{32})/i) || [])[1] || '';\n    cands.push({title, author: norm(c[1].textContent), publisher: norm(c[2].textContent), year: norm(c[3].textContent), language: norm(c[4].textContent), pages: norm(c[5].textContent), size: norm(c[6].textContent), ext: norm(c[7].textContent).toLowerCase(), md5: md5.toLowerCase(), edition_url: abs(titleA?.getAttribute('href') || ''), file_url: abs(c[6].querySelector('a[href*=\"file.php\"]')?.getAttribute('href') || '')});\n  }\n} else {\n  // Restrict to title links in main: the header ticker also contains /md5/ links.\n  for (const a of document.querySelectorAll('main a.js-vim-focus[href^=\"/md5/\"]')) {\n    const card = a.parentElement.parentElement;\n    const meta = Array.from(card.children).find(e => e.classList.contains('font-semibold'));\n    const parts = norm(meta?.textContent || meta?.childNodes[0]?.textContent).split(' · ').map(norm);\n    const extension = parts.find(x => /^(epub|pdf|mobi|azw3|azw|lit|fb2|djvu|djv|cbr|cbz|zip|txt|rtf|doc|docx|html)$/i.test(x)) || '';\n    const size = parts.find(x => /^\\d+(?:[.,]\\d+)?\\s*[KMGT]?i?B$/i.test(x)) || '';\n    const language = parts[0] === extension || parts[0] === size || /^\\d{4}$/.test(parts[0]) ? '' : (parts[0] || '').replace(/\\s*\\[[^\\]]+\\]$/, '');\n    const links = Array.from(a.parentElement.querySelectorAll('a[href^=\"/search?\"]'));\n    const md5 = (a.getAttribute('href').match(/\\/md5\\/([a-f0-9]{32})/i) || [])[1];\n    if (!md5 || !norm(a.textContent)) continue;\n    cands.push({title: norm(a.textContent), author: norm(links[0]?.textContent), publisher: norm(links[1]?.textContent), year: parts.find(x => /^\\d{4}$/.test(x)) || '', language, pages: '', size, ext: extension.toLowerCase(), md5: md5.toLowerCase(), edition_url: abs(a.getAttribute('href')), file_url: abs(a.getAttribute('href'))});\n  }\n}\nconst empty = /^Files\\s*0$/.test(norm(document.querySelector('.nav-tabs .nav-link.active')?.textContent)) || /no (?:files|results) found/i.test(document.querySelector('main')?.textContent || '');\nconst layout_ok = !!t || cands.length > 0 || empty;\nif (!['relevance', 'year_desc', 'year_asc'].includes(p.sort || 'relevance')) throw new Error('Invalid sort');\nif (p.sort === 'year_desc' || p.sort === 'year_asc') {\n  const year = x => { const m = x.year.match(/\\b(\\d{4})\\b/); return m ? Number(m[1]) : null; };\n  cands.sort((a,b) => { const ay = year(a), by = year(b); return ay === null ? (by === null ? 0 : 1) : by === null ? -1 : (p.sort === 'year_asc' ? ay-by : by-ay); });\n}\nconst limit = Math.min(100, Math.max(1, Number(p.limit) || 25));\nconst results = cands.filter(x => !fmt || x.ext === fmt).slice(0, limit);\nreturn {layout_ok, query: norm(p.query) || null, format: fmt || null, sort: p.sort || 'relevance', count: results.length, results, ...(!layout_ok ? {error: 'Unsupported book source layout.'} : {})};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Extract candidate book rows",
+      "timeout_ms": 30000
+    }
+  ],
+  "result": {
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "layout_ok": {
+          "type": "boolean"
+        },
+        "query": {
+          "type": "string"
+        },
+        "format": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "publisher": {
+                "type": "string"
+              },
+              "year": {
+                "type": "string"
+              },
+              "language": {
+                "type": "string"
+              },
+              "pages": {
+                "type": "string"
+              },
+              "size": {
+                "type": "string"
+              },
+              "ext": {
+                "type": "string"
+              },
+              "md5": {
+                "type": "string"
+              },
+              "edition_url": {
+                "type": "string"
+              },
+              "file_url": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s8",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Local Book Search: find books on online mirrors by title, author, or ISBN.",
+    "parameters": {
+      "query": "Title, author, or ISBN.",
+      "base_url": "Optional book source base URL. Include the trailing slash.",
+      "format": "Optional exact extension filter (epub, pdf, ...).",
+      "limit": "Max rows (default 25, cap 100).",
+      "sort": "Publication year: year_desc (newest), year_asc (oldest), or relevance. Unknown years sort last. LibGen sorts the loaded page; Anna uses server sorting.",
+      "mirror_urls": "Comma-separated fallback source base URLs, tried in order with --agent-output; maximum three total attempts.",
+      "max_attempts": "Maximum attempts with --agent-output, including the first source. Get advances slow partner servers between attempts.",
+      "mirror_index": "Get: slow partner link index, starting at zero. Agent output increments this on retries."
+    },
+    "examples": [
+      {
+        "description": "Find epub editions of a title",
+        "command": "rzn-browser run book search --param query=\"Brave New World Huxley\" --param format=epub"
+      },
+      {
+        "description": "Limit search results",
+        "command": "rzn-browser run book search --param query=\"Pride and Prejudice Austen\" --param limit=5"
+      }
+    ],
+    "returns": [
+      "Object: { layout_ok, query, format, count, results: [{ title, author, publisher, year, language, pages, size, ext, md5, edition_url, file_url }] }. layout_ok=false means the book source layout is unsupported — try another base_url."
+    ],
+    "notes": [
+      "Supports the LibGen table layout and Anna’s Archive result cards.",
+      "Anna’s Archive uses native publication-year sorting; LibGen sorts all loaded rows before applying limit.",
+      "Get navigates through source pages and only slow partner links; persistent verification needs human input.",
+      "Use --agent-output for at most three attempts; ordinary mode exposes mirror_index and base_url for explicit retries."
+    ]
+  }
+}

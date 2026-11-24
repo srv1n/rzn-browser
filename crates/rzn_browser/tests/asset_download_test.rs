@@ -4,7 +4,9 @@
 
 use std::time::Duration;
 
-use rzn_browser::asset_download::{download_asset, hash_existing};
+use rzn_browser::asset_download::{
+    download_asset, download_limit_bytes, hash_existing, DEFAULT_ASSET_MAX_BYTES,
+};
 
 /// Serve `body` once over HTTP on an ephemeral localhost port; returns the URL.
 async fn serve_once(body: Vec<u8>) -> String {
@@ -93,6 +95,97 @@ async fn existing_file_is_skipped() {
         .expect("existing file should be skipped, not fetched");
     assert!(outcome.skipped, "existing file must be skipped");
     assert_eq!(outcome.bytes, "already here".len() as u64);
+}
+
+/// Generate a body incrementally; optional length also lets tests simulate truncation.
+async fn serve_stream(size: usize, content_length: Option<usize>) -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0; 2048];
+        let _ = socket.read(&mut request).await;
+        let length = content_length
+            .map(|size| format!("Content-Length: {size}\r\n"))
+            .unwrap_or_default();
+        let header = format!("HTTP/1.1 200 OK\r\n{length}Connection: close\r\n\r\n");
+        if socket.write_all(header.as_bytes()).await.is_err() {
+            return;
+        }
+        let buffer = vec![b'x'; 64 * 1024];
+        let mut remaining = size;
+        while remaining > 0 {
+            let count = remaining.min(buffer.len());
+            if socket.write_all(&buffer[..count]).await.is_err() {
+                return;
+            }
+            remaining -= count;
+        }
+        let _ = socket.shutdown().await;
+    });
+    format!("http://{addr}/stream.bin")
+}
+
+#[test]
+fn configurable_size_limit_supports_large_and_unlimited_downloads() {
+    assert_eq!(DEFAULT_ASSET_MAX_BYTES, 1024 * 1024 * 1024);
+    assert_eq!(
+        download_limit_bytes(2048).unwrap(),
+        2 * DEFAULT_ASSET_MAX_BYTES
+    );
+    assert_eq!(download_limit_bytes(0).unwrap(), u64::MAX);
+    assert!(download_limit_bytes(u64::MAX).is_err());
+}
+
+#[tokio::test]
+async fn default_limit_downloads_and_hashes_more_than_the_old_100_mib_cap() {
+    use sha2::{Digest, Sha256};
+    let size = 101 * 1024 * 1024;
+    let url = serve_stream(size, Some(size)).await;
+    let dir = tempdir_path("large-stream");
+    let dest = dir.join("large.bin");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap();
+    let outcome = download_asset(&client, &url, &dest, DEFAULT_ASSET_MAX_BYTES)
+        .await
+        .unwrap();
+    assert_eq!(outcome.bytes, size as u64);
+    let mut expected = Sha256::new();
+    for _ in 0..(size / (64 * 1024)) {
+        expected.update([b'x'; 64 * 1024]);
+    }
+    assert_eq!(outcome.sha256, format!("{:x}", expected.finalize()));
+    assert_eq!(
+        hash_existing(&dest).await.unwrap(),
+        (outcome.bytes, outcome.sha256)
+    );
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn unknown_length_still_enforces_the_cap_and_cleans_partial_files() {
+    let url = serve_stream(5000, None).await;
+    let dir = tempdir_path("stream-cap");
+    let dest = dir.join("large.bin");
+    let error = download_asset(&client(), &url, &dest, 1000)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("exceeds cap"));
+    assert!(!dest.exists());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn interrupted_download_does_not_leave_a_file_that_would_be_skipped_on_retry() {
+    let url = serve_stream(100, Some(1000)).await;
+    let dir = tempdir_path("stream-interrupted");
+    let dest = dir.join("partial.bin");
+    assert!(download_asset(&client(), &url, &dest, 1000).await.is_err());
+    assert!(!dest.exists());
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 /// Unique temp dir path under the OS temp dir (no external crate needed).

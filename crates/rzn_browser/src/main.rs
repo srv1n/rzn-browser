@@ -8,6 +8,7 @@
     clippy::vec_init_then_push
 )]
 
+mod agent_output;
 mod cloud;
 mod fleet_cli;
 mod log_buffer;
@@ -92,6 +93,10 @@ use workflow_failure_report::{
 #[command(name = "rzn-browser")]
 #[command(about = "RZN Browser standalone CLI")]
 struct Cli {
+    /// Return workflow results/help as JSON without progress logs; books use opaque IDs.
+    #[arg(long, global = true)]
+    agent_output: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -238,6 +243,11 @@ struct RunArgs {
     /// Download all asset_urls + external_links from the result into this directory (writes manifest.json)
     #[arg(long = "download-dir")]
     download_dir: Option<PathBuf>,
+
+    /// Maximum size per downloaded file in MiB (0 disables the size cap).
+    #[arg(long, default_value_t = rzn_browser::asset_download::DEFAULT_ASSET_MAX_MIB,
+        value_parser = clap::value_parser!(u64).range(..=u64::MAX / (1024 * 1024)))]
+    max_download_mib: u64,
 }
 
 #[derive(Args, Debug)]
@@ -551,6 +561,11 @@ struct SupervisorRunArgs {
     /// Download all asset_urls + external_links from the result into this directory
     #[arg(long = "download-dir")]
     download_dir: Option<PathBuf>,
+
+    /// Maximum size per downloaded file in MiB (0 disables the size cap).
+    #[arg(long, default_value_t = rzn_browser::asset_download::DEFAULT_ASSET_MAX_MIB,
+        value_parser = clap::value_parser!(u64).range(..=u64::MAX / (1024 * 1024)))]
+    max_download_mib: u64,
 }
 
 #[derive(Args, Debug)]
@@ -1169,6 +1184,18 @@ fn write_log_with_data(level: &str, message: &str, data: Option<serde_json::Valu
 
 #[tokio::main]
 async fn main() {
+    let cli = Cli::parse();
+    if cli.agent_output {
+        // Resolve the same catalog/configuration as the ordinary runner without startup logs.
+        let _ = dotenvy::dotenv();
+        let value = agent_output::handle(&cli.command).await;
+        println!("{}", serde_json::to_string_pretty(&value).unwrap());
+        if value.get("success") == Some(&Value::Bool(false)) {
+            process::exit(1);
+        }
+        return;
+    }
+
     // Load .env file if it exists
     if let Err(e) = dotenvy::dotenv() {
         if !matches!(e, dotenvy::Error::Io(_)) {
@@ -1183,7 +1210,6 @@ async fn main() {
 
     env_logger::init();
 
-    let cli = Cli::parse();
     let config = PlanConfig::default();
 
     match cli.command {
@@ -3084,6 +3110,7 @@ async fn handle_run(args: RunArgs) -> anyhow::Result<()> {
         app_base,
         output_file,
         download_dir,
+        max_download_mib,
     } = args;
 
     handle_supervisor_run(SupervisorRunArgs {
@@ -3096,6 +3123,7 @@ async fn handle_run(args: RunArgs) -> anyhow::Result<()> {
         app_base,
         output_file,
         download_dir,
+        max_download_mib,
     })
     .await
 }
@@ -3378,6 +3406,7 @@ async fn process_workflow_output(
     payload: Option<&Value>,
     output_file: Option<&Path>,
     download_dir: Option<&Path>,
+    max_download_bytes: u64,
 ) -> anyhow::Result<()> {
     let output_payload = payload.map(workflow_output_payload);
     if let Some(path) = output_file {
@@ -3420,7 +3449,7 @@ async fn process_workflow_output(
             eprintln!("[WARN] --download-dir requested but workflow returned no result payload");
             return Ok(());
         };
-        download_payload_assets(payload, dir).await?;
+        download_payload_assets(payload, dir, max_download_bytes).await?;
     }
 
     Ok(())
@@ -3589,7 +3618,11 @@ fn filename_from_url(url: &str, fallback_ext: &str) -> String {
     name
 }
 
-async fn download_payload_assets(payload: &Value, dir: &Path) -> anyhow::Result<()> {
+async fn download_payload_assets(
+    payload: &Value,
+    dir: &Path,
+    max_bytes: u64,
+) -> anyhow::Result<()> {
     let images = collect_string_array_nested(payload, "image_urls");
     let videos = collect_string_array_nested(payload, "video_urls");
     let links = collect_string_array_nested(payload, "external_links");
@@ -3601,7 +3634,10 @@ async fn download_payload_assets(payload: &Value, dir: &Path) -> anyhow::Result<
 
     let client = reqwest::Client::builder()
         .user_agent("rzn-browser workflow downloader")
-        .timeout(std::time::Duration::from_secs(60))
+        .connect_timeout(std::time::Duration::from_secs(20))
+        .timeout(std::time::Duration::from_secs(
+            rzn_browser::asset_download::DEFAULT_ASSET_TIMEOUT_SECS,
+        ))
         .redirect(reqwest::redirect::Policy::limited(8))
         .build()
         .context("build workflow download HTTP client")?;
@@ -3626,13 +3662,7 @@ async fn download_payload_assets(payload: &Value, dir: &Path) -> anyhow::Result<
                 index + 1,
                 filename_from_url(url, fallback_ext)
             ));
-            match rzn_browser::asset_download::download_asset(
-                &client,
-                url,
-                &dest,
-                rzn_browser::asset_download::DEFAULT_ASSET_MAX_BYTES,
-            )
-            .await
+            match rzn_browser::asset_download::download_asset(&client, url, &dest, max_bytes).await
             {
                 Ok(outcome) => {
                     if outcome.skipped {
@@ -3673,13 +3703,8 @@ async fn download_payload_assets(payload: &Value, dir: &Path) -> anyhow::Result<
                 .map(|f| sanitize_filename_segment(f, 160))
                 .unwrap_or_else(|| filename_from_url(&asset.url, "bin"));
             let dest = subdir.join(format!("{:03}_{}", index + 1, name));
-            match rzn_browser::asset_download::download_asset(
-                &client,
-                &asset.url,
-                &dest,
-                rzn_browser::asset_download::DEFAULT_ASSET_MAX_BYTES,
-            )
-            .await
+            match rzn_browser::asset_download::download_asset(&client, &asset.url, &dest, max_bytes)
+                .await
             {
                 Ok(outcome) => {
                     if outcome.skipped {
@@ -3724,6 +3749,8 @@ async fn download_payload_assets(payload: &Value, dir: &Path) -> anyhow::Result<
 }
 
 async fn handle_supervisor_run(args: SupervisorRunArgs) -> anyhow::Result<()> {
+    let max_download_bytes =
+        rzn_browser::asset_download::download_limit_bytes(args.max_download_mib)?;
     let workflow_ref = workflow_ref_value(&args.workflow_ref)?;
     let resolved_workflow = match resolve_named_workflow_path(&workflow_ref) {
         Ok(path) => path,
@@ -3795,6 +3822,7 @@ async fn handle_supervisor_run(args: SupervisorRunArgs) -> anyhow::Result<()> {
                 payload.as_ref(),
                 output_file.as_deref(),
                 download_dir.as_deref(),
+                max_download_bytes,
             )
             .await?;
             Ok(())
@@ -3876,6 +3904,7 @@ async fn handle_test_browser(args: TestBrowserArgs) -> anyhow::Result<()> {
         app_base: None,
         output_file: None,
         download_dir: None,
+        max_download_mib: rzn_browser::asset_download::DEFAULT_ASSET_MAX_MIB,
     })
     .await;
 

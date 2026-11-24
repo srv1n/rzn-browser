@@ -2,22 +2,45 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "bing/images_download",
   "name": "Bing: Images Download",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "system": "bing",
   "capability": "bing.images.download",
-  "summary": "Download up to 20 Bing Images thumbnails through Chrome into ~/Downloads/<folder>/.",
-  "description": "Run a Bing Images search in a fresh tab and download the thumbnails through Chrome's download manager into `~/Downloads/<download_folder>/`. Use when you need files locally and want them to flow through the authenticated browser (firewalls, geo-blocks). Do not use to get metadata or original high-res URLs (use `bing_images_search`, then wget the `high_res_url`s).",
+  "summary": "Collect up to N (default 100) full-size original Bing Images URLs, Extra-large by default; with --download-dir the CLI saves the originals.",
+  "description": "Run a Bing Images search in a fresh tab, scroll the grid until `count` results are loaded (default 100, max 500), and return the original full-size URLs (Bing's `m.murl`) as `image_urls` plus per-item metadata. Run with `--download-dir <dir>` and the CLI downloads every original into `<dir>/images/`. Use when you want the actual image files. Do not use when you only need metadata for a handful of results (`bing_images_search`).",
   "params": {
     "properties": {
-      "download_folder": {
-        "kind": "string",
-        "required": true,
-        "description": "Subfolder under ~/Downloads to save the thumbnails into."
-      },
       "search_query": {
         "kind": "string",
         "required": true,
         "description": "Bing Images search query."
+      },
+      "count": {
+        "kind": "integer",
+        "required": false,
+        "default": 100,
+        "min": 1,
+        "max": 500,
+        "description": "How many images to collect. Defaults to 100. Capped by how far the grid loads in ~24s of scrolling."
+      },
+      "size": {
+        "kind": "string",
+        "required": false,
+        "default": "wallpaper",
+        "description": "Bing size filter: `wallpaper` (Bing's Extra large, the default), `large`, or `any` (no filter)."
+      },
+      "min_width": {
+        "kind": "integer",
+        "required": false,
+        "default": 0,
+        "min": 0,
+        "description": "Skip images narrower than this many pixels (0 = no minimum)."
+      },
+      "min_height": {
+        "kind": "integer",
+        "required": false,
+        "default": 0,
+        "min": 0,
+        "description": "Skip images shorter than this many pixels (0 = no minimum)."
       }
     },
     "additional_params": false
@@ -43,10 +66,7 @@
       "class": "external_read",
       "idempotency": "safe_retry",
       "confirmation_required": false,
-      "scopes": [
-        "bing.com",
-        "th.bing.com"
-      ]
+      "scopes": []
     },
     {
       "class": "file_write",
@@ -58,10 +78,7 @@
       "class": "network_access",
       "idempotency": "safe_retry",
       "confirmation_required": false,
-      "scopes": [
-        "bing.com",
-        "th.bing.com"
-      ]
+      "scopes": []
     },
     {
       "class": "read_only",
@@ -172,43 +189,90 @@
           "read_only"
         ],
         "target": {
-          "selector": "div.img_cont img[src*='th.bing.com']"
+          "selector": "a.iusc[m]"
         }
       },
-      "name": "Wait for thumbnail tiles",
+      "name": "Wait for the image grid",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s3a",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{size}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};\nconst size=(cleanArg(arg0)||'wallpaper').toLowerCase();\nconst qft={large:'+filterui:imagesize-large',wallpaper:'+filterui:imagesize-wallpaper'}[size];\nif(!qft)return {filtered:false,size:'any'};\nconst u=new URL(location.href);u.searchParams.set('qft',qft);\nsetTimeout(()=>location.assign(u.toString()),0);\nreturn {filtered:true,size,target:u.toString()};"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Apply Bing's image-size filter (same as picking it in the Filter menu)",
+      "timeout_ms": 10000
+    },
+    {
+      "id": "s3b",
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Allow the filtered grid to load",
+      "timeout_ms": 3000
+    },
+    {
+      "id": "s3c",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "a.iusc[m]"
+        }
+      },
+      "name": "Wait for the filtered image grid",
       "timeout_ms": 15000
     },
     {
       "id": "s4",
       "action": {
-        "kind": "download_images",
+        "kind": "execute_javascript",
         "inputs": {
-          "download_folder": "{download_folder}",
-          "limit": 20
+          "world": "main",
+          "args": [
+            "{count}",
+            "{min_width}",
+            "{min_height}"
+          ],
+          "script": "const cleanArg=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};\nconst n=parseInt(cleanArg(arg0),10);\nconst count=Number.isFinite(n)&&n>0?Math.min(n,500):100;\nconst sleep=(ms)=>new Promise(r=>setTimeout(r,ms));\nconst collect=()=>{const seen=new Set();const items=[];for(const a of document.querySelectorAll('a.iusc[m]')){let m=null;try{m=JSON.parse(a.getAttribute('m')||'{}');}catch(e){continue;}const u=(m&&m.murl)||'';if(!/^https?:\\/\\//i.test(u)||seen.has(u))continue;let width=0,height=0;try{const h=new URL(a.getAttribute('href')||'',location.origin).searchParams;width=parseInt(h.get('expw'),10)||0;height=parseInt(h.get('exph'),10)||0;}catch(e){}if((minW&&width<minW)||(minH&&height<minH))continue;seen.add(u);items.push({title:(m.t||'').trim(),width,height,high_res_url:u,thumbnail_url:m.turl||'',source_page:m.purl||''});}return items;};\nconst minW=parseInt(cleanArg(arg1),10)||0;const minH=parseInt(cleanArg(arg2),10)||0;\nconst deadline=Date.now()+24000;\nlet items=collect();let stalls=0;\nwhile(items.length<count&&Date.now()<deadline&&stalls<4){window.scrollTo(0,document.documentElement.scrollHeight);await sleep(1200);const more=document.querySelector('a.btn_seemore, .btn_seemore');if(more&&more.offsetParent)more.click();const next=collect();stalls=next.length>items.length?0:stalls+1;items=next;}\nitems=items.slice(0,count);\nreturn {requested:count,items_count:items.length,image_urls:items.map(i=>i.high_res_url),items};"
         },
         "side_effects": [
-          "browser_state",
-          "download",
-          "external_read",
-          "file_write",
-          "network_access"
-        ],
-        "target": {
-          "selector": "div.img_cont img[src*='th.bing.com']"
-        }
+          "read_only"
+        ]
       },
-      "name": "Download up to 20 thumbnails"
+      "name": "Scroll the grid and collect original image URLs",
+      "timeout_ms": 30000
     }
   ],
   "result": {
     "artifact_policy": {
-      "prefer_downloads": true
+      "prefer_downloads": false
     },
     "include_debug": false,
     "output_schema": {
       "type": "object",
       "properties": {
-        "downloaded": {
+        "requested": {
+          "type": "integer"
+        },
+        "items_count": {
           "type": "integer"
         },
         "image_urls": {
@@ -218,19 +282,28 @@
             "format": "uri"
           }
         },
-        "downloads": {
+        "items": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "url": {
+              "title": {
                 "type": "string"
               },
-              "filename": {
+              "high_res_url": {
                 "type": "string"
               },
-              "path": {
+              "thumbnail_url": {
                 "type": "string"
+              },
+              "source_page": {
+                "type": "string"
+              },
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
               }
             }
           }
@@ -243,24 +316,36 @@
     }
   },
   "help": {
-    "summary": "Download up to 20 Bing Images thumbnails through Chrome into ~/Downloads/<folder>/.",
+    "summary": "Collect up to N (default 100) full-size original Bing Images URLs, Extra-large by default; with --download-dir the CLI saves the originals.",
     "parameters": {
-      "download_folder": "Subfolder under ~/Downloads to save the thumbnails into.",
-      "search_query": "Bing Images search query."
+      "search_query": "Bing Images search query.",
+      "count": "How many images to collect (default 100, max 500).",
+      "size": "Bing size filter: `wallpaper` (Bing's Extra large, the default), `large`, or `any` (no filter).",
+      "min_width": "Skip images narrower than this many pixels (0 = no minimum).",
+      "min_height": "Skip images shorter than this many pixels (0 = no minimum)."
     },
     "examples": [
       {
-        "command": "rzn-browser run bing images-download --param search_query=\"cats\" --param download_folder=\"cats\"",
-        "description": "Saves up to 20 cat thumbnails to ~/Downloads/cats/."
+        "command": "rzn-browser run bing images-download --param search_query=\"red pandas\" --download-dir ~/Pictures/red-pandas",
+        "description": "Saves up to 100 full-size red panda images to ~/Pictures/red-pandas/images/."
+      },
+      {
+        "command": "rzn-browser run bing images-download --param search_query=\"red pandas\" --param count=30 --download-dir ~/Pictures/red-pandas",
+        "description": "Same, 30 images."
+      },
+      {
+        "command": "rzn-browser run bing images-download --param search_query=\"red pandas\" --param min_width=3840 --download-dir ~/Pictures/red-pandas",
+        "description": "Only originals at least 3840 px wide (4K)."
       }
     ],
     "returns": [
-      "Object with { downloaded (count), image_urls[] (thumbnail URLs queued), downloads[] (per-file { url, filename, path }) }. Files land in ~/Downloads/<download_folder>/ via the Chrome download manager."
+      "{ requested, items_count, image_urls[] (original full-size URLs), items[] { title, width, height, high_res_url, thumbnail_url, source_page } }. With --download-dir, files land in <dir>/images/NNN_<host>_<name> and a manifest is written alongside."
     ],
     "notes": [
       "Drives the Images landing's real search input rather than hitting `?q=...` directly.",
-      "Only thumbnails (Bing-hosted under `th.bing.com`) \u2014 the host origin's high-res is not fetched here. For real high-res use `bing_images_search` + wget.",
-      "Chrome may prompt the first time you run against a fresh profile. Subsequent runs reuse the prior choice.",
+      "`size` re-runs the search with Bing's own size filter (`qft=+filterui:imagesize-*`), the same URL the Filter menu produces. `min_width`/`min_height` filter on the original dimensions Bing reports for each result.",
+      "Originals are fetched from their host sites by the CLI (no browser cookies). Some hosts block hotlinking or have dead links; those are logged as [WARN] and skipped, so expect slightly fewer files than `count`.",
+      "Re-running into the same directory skips files that already exist.",
       "Opens a fresh tab."
     ]
   }

@@ -10,14 +10,12 @@ Read-only search workflows for Bing. All open a fresh tab so they can run in par
 | `bing_news_search` | Up to 10 news cards (title, url, source, time, snippet). | `search_query` |
 | `bing_videos_search` | Up to 20 video tiles (title, url, channel). | `search_query` |
 | `bing_images_search` | Up to 50 image entries with high-res URL, thumbnail URL, source page, title. | `search_query` |
-| `bing_images_download` | Up to 20 thumbnails streamed through Chrome into `~/Downloads/<folder>/`. | `search_query`, `download_folder` |
+| `bing_images_download` | Up to `count` (default 100) full-size original URLs; `--download-dir` saves the files. | `search_query` |
 
 ## Image pack split
 
-`bing_images_search` vs `bing_images_download` are kept separate because they have fundamentally different output contracts:
-
-- `bing_images_search` returns JSON with `high_res_url` (Bing's `m.murl`, the real original URL) and `thumbnail_url`. Pipe the URLs into `wget`/`curl` for full-resolution downloads — this is the high-quality path.
-- `bing_images_download` writes files directly via Chrome's download manager. Thumbnails only (Chrome's cross-origin download is reliable for `th.bing.com` but not for arbitrary host origins). Useful when the authenticated browser session is the only path through a firewall/geo-block.
+- `bing_images_search` returns metadata for the first ~50 results without scrolling.
+- `bing_images_download` scrolls the grid until `count` results load and returns their original URLs (Bing's `m.murl`) as `image_urls`. It applies Bing's Extra-large size filter by default (`size=wallpaper|large|any`) and can drop anything below `min_width`/`min_height` pixels. With `--download-dir`, the CLI fetches each original into `<dir>/images/` and writes `manifest.json`. Hosts that block hotlinking are logged and skipped, so expect a few fewer files than `count`.
 
 ## Running
 
@@ -26,14 +24,10 @@ rzn-browser run bing web-search --param search_query="claude code release notes"
 rzn-browser run bing news-search --param search_query="anthropic"
 rzn-browser run bing videos-search --param search_query="claude code tutorial"
 rzn-browser run bing images-search --param search_query="sunset photos"
-rzn-browser run bing images-download --param search_query="cats" --param download_folder="cats"
+rzn-browser run bing images-download --param search_query="cats" --param count=30 --download-dir ~/Pictures/cats
 
-# Pipeline for real high-res downloads:
-rzn-browser run bing images-search --param search_query="sunset" 2>&1 \
-  | sed -n '/^\[$/,/^\]$/p' \
-  | jq -r '.[0].result.items[].high_res_url' \
-  | head -10 \
-  | xargs -I {} wget -P ~/Downloads/sunset "{}"
+# 100 full-size originals into ~/Pictures/sunset/images/
+rzn-browser run bing images-download --param search_query="sunset" --download-dir ~/Pictures/sunset
 ```
 
 ## Design rules

@@ -3,6 +3,7 @@ use crate::run_store::{RunListFilter, RunStore};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -24,6 +25,10 @@ pub struct RunningRun {
     pub(crate) owner_pid: Option<u32>,
     #[serde(skip)]
     pub(crate) started: Instant,
+    #[serde(skip)]
+    lane: Option<String>,
+    #[serde(skip)]
+    cancel_requested: bool,
 }
 
 fn owner_is_live(pid: u32) -> bool {
@@ -46,9 +51,8 @@ struct Persisted {
 pub struct SupervisorControl {
     path: PathBuf,
     paused: AtomicBool,
-    cancel: AtomicBool,
     quiesced: AtomicBool,
-    running: Mutex<Option<RunningRun>>,
+    running: Mutex<BTreeMap<String, RunningRun>>,
     snapshot_cache: Mutex<(Vec<crate::run_store::RunRecord>, usize)>,
     pub logs: LogBuffer,
 }
@@ -62,9 +66,8 @@ impl SupervisorControl {
         Self {
             path,
             paused: AtomicBool::new(paused),
-            cancel: AtomicBool::new(false),
             quiesced: AtomicBool::new(false),
-            running: Mutex::new(None),
+            running: Mutex::new(BTreeMap::new()),
             snapshot_cache: Mutex::new((Vec::new(), 0)),
             logs: LogBuffer::new(2000),
         }
@@ -74,10 +77,12 @@ impl SupervisorControl {
     }
     pub fn pause(&self, cancel: bool) -> Result<Value> {
         {
-            let running = self.running.lock().unwrap();
+            let mut running = self.running.lock().unwrap();
             self.paused.store(true, Ordering::SeqCst);
-            if cancel && running.is_some() {
-                self.cancel.store(true, Ordering::SeqCst);
+            if cancel {
+                for run in running.values_mut() {
+                    run.cancel_requested = true;
+                }
             }
         }
         self.persist()?;
@@ -89,25 +94,34 @@ impl SupervisorControl {
         Ok(json!({"ok":true,"paused":false}))
     }
     pub fn cancel(&self, requested_run_id: Option<&str>) -> Value {
-        let running = self.running.lock().unwrap();
-        let Some(current) = running.as_ref() else {
-            return json!({"ok":false,"error":"no run is in progress"});
-        };
-        if requested_run_id.is_some_and(|id| id != current.run_id) {
-            return json!({"ok":false,"error":"requested run is not in progress","run_id":current.run_id});
+        let mut running = self.running.lock().unwrap();
+        if requested_run_id.is_none() && running.len() > 1 {
+            return json!({"ok":false,"error":"multiple runs are in progress; specify run_id"});
         }
-        self.cancel.store(true, Ordering::SeqCst);
+        let current = match requested_run_id {
+            Some(id) => running.get_mut(id),
+            None => running.values_mut().next(),
+        };
+        let Some(current) = current else {
+            return json!({"ok":false,"error":"requested run is not in progress"});
+        };
+        current.cancel_requested = true;
         json!({"ok":true,"cancel_requested":true,"run_id":current.run_id})
     }
+    // Legacy in-process runners hold an exclusive claim.
     pub fn cancel_requested(&self) -> bool {
-        self.cancel.load(Ordering::SeqCst)
+        self.running
+            .lock()
+            .unwrap()
+            .values()
+            .any(|run| run.cancel_requested)
     }
     pub fn cancel_requested_for(&self, run_id: &str) -> bool {
         self.running
             .lock()
             .unwrap()
-            .as_ref()
-            .is_some_and(|run| run.run_id == run_id && self.cancel_requested())
+            .get(run_id)
+            .is_some_and(|run| run.cancel_requested)
     }
     pub fn try_begin_run(
         &self,
@@ -126,6 +140,19 @@ impl SupervisorControl {
         total: usize,
         owner_pid: Option<u32>,
     ) -> std::result::Result<(), RunningRun> {
+        self.try_begin_run_in_lane(run_id, workflow_id, origin, total, owner_pid, None)
+    }
+    /// Independent session tabs may overlap. A missing lane remains exclusive;
+    /// matching lanes (explicit tab refs) wait for their current owner.
+    pub fn try_begin_run_in_lane(
+        &self,
+        run_id: String,
+        workflow_id: String,
+        origin: String,
+        total: usize,
+        owner_pid: Option<u32>,
+        lane: Option<String>,
+    ) -> std::result::Result<(), RunningRun> {
         let mut running = self.running.lock().unwrap();
         if self.quiesced.load(Ordering::SeqCst) {
             return Err(RunningRun {
@@ -136,38 +163,38 @@ impl SupervisorControl {
                 step_total: 0,
                 owner_pid: None,
                 started: Instant::now(),
+                lane: None,
+                cancel_requested: false,
             });
         }
-        if let Some(current) = running.as_ref() {
-            if !current.owner_pid.is_some_and(|pid| !owner_is_live(pid)) {
-                return Err(current.clone());
-            }
-            log::warn!(
-                "reclaiming run slot {} from exited client pid {:?}",
-                current.run_id,
-                current.owner_pid
-            );
+        running.retain(|_, run| !run.owner_pid.is_some_and(|pid| !owner_is_live(pid)));
+        if let Some(current) = running.values().find(|run| {
+            run.run_id == run_id || lane.is_none() || run.lane.is_none() || run.lane == lane
+        }) {
+            return Err(current.clone());
         }
-        self.cancel.store(false, Ordering::SeqCst);
-        *running = Some(RunningRun {
-            run_id,
-            workflow_id,
-            origin,
-            step_index: 0,
-            step_total: total,
-            owner_pid,
-            started: Instant::now(),
-        });
+        running.insert(
+            run_id.clone(),
+            RunningRun {
+                run_id,
+                workflow_id,
+                origin,
+                step_index: 0,
+                step_total: total,
+                owner_pid,
+                started: Instant::now(),
+                lane,
+                cancel_requested: false,
+            },
+        );
         Ok(())
     }
     /// Atomically stop new run claims if no workflow currently owns the slot.
     pub fn quiesce_if_idle(&self) -> std::result::Result<(), RunningRun> {
         let mut running = self.running.lock().unwrap();
-        if let Some(current) = running.as_ref() {
-            if !current.owner_pid.is_some_and(|pid| !owner_is_live(pid)) {
-                return Err(current.clone());
-            }
-            *running = None;
+        running.retain(|_, run| !run.owner_pid.is_some_and(|pid| !owner_is_live(pid)));
+        if let Some(current) = running.values().next() {
+            return Err(current.clone());
         }
         self.quiesced.store(true, Ordering::SeqCst);
         Ok(())
@@ -176,7 +203,13 @@ impl SupervisorControl {
         let _ = self.try_begin_run(run_id, workflow_id, origin, total);
     }
     pub fn step(&self, index: usize, total: usize) {
-        if let Some(run) = self.running.lock().unwrap().as_mut() {
+        if let Some(run) = self
+            .running
+            .lock()
+            .unwrap()
+            .values_mut()
+            .find(|run| run.lane.is_none())
+        {
             run.step_index = index + 1;
             run.step_total = total;
         }
@@ -186,23 +219,36 @@ impl SupervisorControl {
     }
     pub fn end_run_if(&self, run_id: Option<&str>) {
         let mut running = self.running.lock().unwrap();
-        if run_id.is_none_or(|id| running.as_ref().is_some_and(|run| run.run_id == id)) {
-            *running = None;
-            self.cancel.store(false, Ordering::SeqCst);
+        match run_id {
+            Some(id) => {
+                running.remove(id);
+            }
+            None => running.clear(),
         }
+    }
+    pub fn running_run(&self, run_id: &str) -> Value {
+        self.running
+            .lock()
+            .unwrap()
+            .get(run_id)
+            .map(run_snapshot)
+            .unwrap_or(Value::Null)
+    }
+    pub fn active_runs(&self) -> Vec<Value> {
+        self.running
+            .lock()
+            .unwrap()
+            .values()
+            .map(run_snapshot)
+            .collect()
     }
     pub fn now_running(&self) -> Value {
         self.running
             .lock()
             .unwrap()
-            .as_ref()
-            .map(|r| {
-                json!({
-                    "run_id":r.run_id,"workflow_id":r.workflow_id,"origin":r.origin,
-                    "step_index":r.step_index,"step_total":r.step_total,
-                    "elapsed_ms":r.started.elapsed().as_millis() as u64
-                })
-            })
+            .values()
+            .min_by_key(|run| run.started)
+            .map(run_snapshot)
             .unwrap_or(Value::Null)
     }
     pub fn refresh_snapshot_cache(&self, store: &RunStore) -> Result<()> {
@@ -234,6 +280,13 @@ impl SupervisorControl {
         .context("persist automation pause")
     }
 }
+fn run_snapshot(r: &RunningRun) -> Value {
+    json!({
+        "run_id":r.run_id,"workflow_id":r.workflow_id,"origin":r.origin,
+        "step_index":r.step_index,"step_total":r.step_total,
+        "elapsed_ms":r.started.elapsed().as_millis() as u64
+    })
+}
 pub fn status_snapshot(
     store: &RunStore,
     control: &SupervisorControl,
@@ -243,7 +296,7 @@ pub fn status_snapshot(
 ) -> Result<Value> {
     let (recent, flagged) = control.snapshot_cache.lock().unwrap().clone();
     Ok(
-        json!({"supervisor_version":env!("CARGO_PKG_VERSION"),"native_host_connected":native,"extension_connected":extension,"paused":control.paused(),"now_running":control.now_running(),"fleet":fleet,"recent_runs":recent,"flagged_workflows":flagged}),
+        json!({"supervisor_version":env!("CARGO_PKG_VERSION"),"native_host_connected":native,"extension_connected":extension,"paused":control.paused(),"now_running":control.now_running(),"active_runs":control.active_runs(),"fleet":fleet,"recent_runs":recent,"flagged_workflows":flagged}),
     )
 }
 pub fn failure_context(base: &Path, run_id: &str) -> Result<Value> {
@@ -357,6 +410,120 @@ mod tests {
         assert!(control
             .try_begin_run("run-2".into(), "wf".into(), "local_cli".into(), 1)
             .is_ok());
+    }
+
+    #[test]
+    fn independent_lanes_isolate_cancel_release_and_shutdown() {
+        let control = SupervisorControl::open(&temp());
+        let claim = |id: &str, lane: &str| {
+            control.try_begin_run_in_lane(
+                id.into(),
+                "wf".into(),
+                "cli".into(),
+                2,
+                Some(std::process::id()),
+                Some(lane.into()),
+            )
+        };
+        claim("a", "tab-a").unwrap();
+        claim("b", "tab-b").unwrap();
+        assert_eq!(control.active_runs().len(), 2);
+        assert_eq!(claim("c", "tab-a").unwrap_err().run_id, "a");
+        assert!(claim("a", "tab-c").is_err(), "run ids must be unique");
+        assert!(control
+            .try_begin_run("legacy".into(), "wf".into(), "fleet".into(), 1)
+            .is_err());
+        assert_eq!(
+            control.cancel(None)["ok"],
+            false,
+            "ambiguous cancel must do nothing"
+        );
+        assert!(!control.cancel_requested_for("a"));
+        assert_eq!(control.cancel(Some("b"))["ok"], true);
+        assert!(!control.cancel_requested_for("a"));
+        assert!(control.cancel_requested_for("b"));
+        control.end_run_if(Some("a"));
+        assert!(control.running_run("a").is_null());
+        assert_eq!(control.now_running()["run_id"], "b");
+        assert!(
+            control.cancel_requested_for("b"),
+            "releasing another lane must not reset cancellation"
+        );
+        assert!(control.quiesce_if_idle().is_err());
+        control.end_run_if(Some("b"));
+        control
+            .try_begin_run("legacy".into(), "wf".into(), "fleet".into(), 1)
+            .unwrap();
+        assert!(
+            claim("c", "tab-c").is_err(),
+            "exclusive runs block new lanes too"
+        );
+        control.end_run();
+        control.quiesce_if_idle().unwrap();
+        assert_eq!(
+            claim("c", "tab-c").unwrap_err().run_id,
+            SUPERVISOR_SHUTTING_DOWN_RUN_ID
+        );
+    }
+
+    #[test]
+    fn pause_cancels_every_lane_without_new_claim_resetting_them() {
+        let control = SupervisorControl::open(&temp());
+        for id in ["a", "b"] {
+            control
+                .try_begin_run_in_lane(
+                    id.into(),
+                    "wf".into(),
+                    "cli".into(),
+                    1,
+                    None,
+                    Some(id.into()),
+                )
+                .unwrap();
+        }
+        control.pause(true).unwrap();
+        assert!(control.cancel_requested_for("a"));
+        assert!(control.cancel_requested_for("b"));
+        control.resume().unwrap();
+        control
+            .try_begin_run_in_lane(
+                "c".into(),
+                "wf".into(),
+                "cli".into(),
+                1,
+                None,
+                Some("c".into()),
+            )
+            .unwrap();
+        assert!(control.cancel_requested_for("a"));
+        assert!(!control.cancel_requested_for("c"));
+    }
+
+    #[tokio::test]
+    async fn rpc_parallel_claims_can_be_queried_and_released_independently() {
+        let state = crate::supervisor::SupervisorState::new(crate::supervisor::SupervisorConfig {
+            app_base: Some(temp()),
+        });
+        for id in ["a", "b"] {
+            state
+                .dispatch("runs.claim", json!({"run_id":id,"lane":id}))
+                .await
+                .unwrap();
+        }
+        let result = state
+            .dispatch("runs.get", json!({"run_id":"b"}))
+            .await
+            .unwrap();
+        assert_eq!(result["record"]["run_id"], "b");
+        assert_eq!(result["record"]["status"], "running");
+        assert!(state.dispatch("runs.release", json!({})).await.is_err());
+        assert_eq!(state.control.active_runs().len(), 2);
+        state
+            .dispatch("runs.release", json!({"run_id":"a"}))
+            .await
+            .unwrap();
+        assert_eq!(state.control.active_runs().len(), 1);
+        assert_eq!(state.control.now_running()["run_id"], "b");
     }
 
     #[test]

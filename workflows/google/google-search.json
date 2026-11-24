@@ -2,7 +2,7 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "google/search",
   "name": "Google Search",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "system": "google",
   "capability": "google.search",
   "summary": "Search Google (web/news/books) and extract organic results.",
@@ -84,6 +84,20 @@
         ]
       },
       "name": "Redirect to the chosen vertical (web/news/books)"
+    },
+    {
+      "id": "s1b_navigation",
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*/search?*"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait for the search redirect to finish before querying the page",
+      "timeout_ms": 30000
     },
     {
       "id": "s2",

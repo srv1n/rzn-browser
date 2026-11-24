@@ -77,6 +77,9 @@ describe('siteChallengeKind', () => {
   });
 
   it('names the bot check from challenge-only markers', () => {
+    expect(siteChallengeKind(page({ title: 'DDoS-Guard' }))).toBe('ddos_guard');
+    expect(siteChallengeKind(page({ selectorHits: ['#ddg-l10n-title'] }))).toBe('ddos_guard');
+    expect(siteChallengeKind(page({ selectorHits: ['#ddg-captcha'], title: 'Checking your browser' }))).toBe('ddos_guard');
     expect(siteChallengeKind(page({ title: 'Just a moment...' }))).toBe('challenge');
     expect(siteChallengeKind(page({ selectorHits: ["iframe[src*='captcha-delivery.com']"] }))).toBe('datadome');
     expect(siteChallengeKind(page({ selectorHits: ['#challenge-form'] }))).toBe('cloudflare');

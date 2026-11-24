@@ -11,11 +11,20 @@ use std::path::Path;
 use anyhow::Context;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// Default per-asset size cap (100 MiB). Large enough for ad videos, small enough
-/// to stop a pathological URL from filling the disk.
-pub const DEFAULT_ASSET_MAX_BYTES: u64 = 100 * 1024 * 1024;
+/// Download defaults; callers may opt into a different size limit.
+pub const DEFAULT_ASSET_MAX_MIB: u64 = 1024;
+pub const DEFAULT_ASSET_MAX_BYTES: u64 = DEFAULT_ASSET_MAX_MIB * 1024 * 1024;
+pub const DEFAULT_ASSET_TIMEOUT_SECS: u64 = 30 * 60;
+
+pub fn download_limit_bytes(mib: u64) -> anyhow::Result<u64> {
+    if mib == 0 {
+        return Ok(u64::MAX);
+    }
+    mib.checked_mul(1024 * 1024)
+        .context("--max-download-mib is too large")
+}
 
 /// The result of downloading (or skipping) one asset.
 #[derive(Debug, Clone)]
@@ -28,12 +37,24 @@ pub struct AssetOutcome {
 
 /// Compute `(size, sha256_hex)` of an existing file.
 pub async fn hash_existing(path: &Path) -> anyhow::Result<(u64, String)> {
-    let data = tokio::fs::read(path)
+    let mut file = tokio::fs::File::open(path)
         .await
-        .with_context(|| format!("read {}", path.display()))?;
+        .with_context(|| format!("open {}", path.display()))?;
     let mut hasher = Sha256::new();
-    hasher.update(&data);
-    Ok((data.len() as u64, format!("{:x}", hasher.finalize())))
+    let mut buffer = vec![0; 64 * 1024];
+    let mut total = 0u64;
+    loop {
+        let count = file
+            .read(&mut buffer)
+            .await
+            .with_context(|| format!("read {}", path.display()))?;
+        if count == 0 {
+            break;
+        }
+        total += count as u64;
+        hasher.update(&buffer[..count]);
+    }
+    Ok((total, format!("{:x}", hasher.finalize())))
 }
 
 /// Download `url` into `dest`, streaming with a hard `max_bytes` cap and computing
@@ -76,26 +97,34 @@ pub async fn download_asset(
     let mut file = tokio::fs::File::create(dest)
         .await
         .with_context(|| format!("create {}", dest.display()))?;
-    let mut hasher = Sha256::new();
-    let mut total: u64 = 0;
-    let mut stream = resp.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.with_context(|| format!("read body {url}"))?;
-        total += chunk.len() as u64;
-        if total > max_bytes {
-            drop(file);
-            let _ = tokio::fs::remove_file(dest).await;
-            anyhow::bail!("asset exceeds cap {max_bytes} bytes");
+    let result = async {
+        let mut hasher = Sha256::new();
+        let mut total: u64 = 0;
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.with_context(|| format!("read body {url}"))?;
+            total += chunk.len() as u64;
+            if total > max_bytes {
+                anyhow::bail!("asset exceeds cap {max_bytes} bytes");
+            }
+            hasher.update(&chunk);
+            file.write_all(&chunk)
+                .await
+                .with_context(|| format!("write {}", dest.display()))?;
         }
-        hasher.update(&chunk);
-        file.write_all(&chunk)
+        file.flush()
             .await
-            .with_context(|| format!("write {}", dest.display()))?;
+            .with_context(|| format!("flush {}", dest.display()))?;
+        Ok(AssetOutcome {
+            bytes: total,
+            sha256: format!("{:x}", hasher.finalize()),
+            skipped: false,
+        })
     }
-    file.flush().await.ok();
-    Ok(AssetOutcome {
-        bytes: total,
-        sha256: format!("{:x}", hasher.finalize()),
-        skipped: false,
-    })
+    .await;
+    drop(file);
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(dest).await;
+    }
+    result
 }

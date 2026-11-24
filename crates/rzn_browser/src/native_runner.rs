@@ -19,7 +19,7 @@ use crate::workflow_runner::{
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use rzn_browser::site_queue::{self, SiteGate};
-use rzn_contracts::workflow::{RunError, RunStatus};
+use rzn_contracts::workflow::{parse_tab_ref, RunError, RunStatus};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::future::Future;
@@ -96,9 +96,7 @@ pub async fn run_supervisor_workflow(mut config: SupervisorRunConfig) -> Result<
     outcome
 }
 
-/// The supervisor drives one run at a time. A run that finds the slot taken
-/// waits for it, so parallel CLI calls for different sites queue instead of
-/// failing with "a run is already in progress".
+/// Wait for a conflicting tab lane or an exclusive legacy run to finish.
 async fn claim_run_slot<F, Fut>(mut claim: F) -> Result<Value>
 where
     F: FnMut() -> Fut,
@@ -110,7 +108,7 @@ where
             Err(e) if format!("{e:#}").contains("a run is already in progress") => {
                 if !announced {
                     eprintln!(
-                        "[queue] the browser is busy with another run; this run waits its turn"
+                        "[queue] this run conflicts with an active tab lane or exclusive run; waiting"
                     );
                     announced = true;
                 }
@@ -118,6 +116,25 @@ where
             }
             other => return other,
         }
+    }
+}
+
+// An explicit ref makes even an active-tab workflow deterministic. Switching
+// tabs can escape that binding, so those workflows still require exclusivity.
+fn run_lane(
+    run_id: &str,
+    tab_ref: Option<&str>,
+    uses_active_tab: bool,
+    switches_tabs: bool,
+) -> Option<String> {
+    if switches_tabs || (uses_active_tab && tab_ref.is_none()) {
+        None
+    } else if let Some(tab_ref) = tab_ref {
+        // Canonicalize aliases such as /tab/007 and /tab/7 into one lane.
+        // Invalid refs stay exclusive until normal tab validation rejects them.
+        parse_tab_ref(tab_ref).ok().map(|tab| tab.as_ref_string())
+    } else {
+        Some(run_id.to_string())
     }
 }
 
@@ -169,7 +186,13 @@ async fn run_once(
         "workflow_id": workflow_id,
         "origin": "cli",
         "step_total": workflow.steps.len(),
-        "pid": std::process::id()
+        "pid": std::process::id(),
+        "lane": run_lane(
+            &run_id,
+            config.tab_ref.as_deref(),
+            workflow.prefer_current_tab,
+            workflow.steps.iter().any(|step| step.step_type() == "switch_to_tab"),
+        )
     });
     claim_run_slot(|| supervisor::call(supervisor_config.clone(), "runs.claim", claim.clone()))
         .await?;
@@ -776,11 +799,40 @@ fn emit_runtime_status(message: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{claim_run_slot, ensure_supervisor_run_ready, should_auto_heal_run_readiness};
+    use super::{
+        claim_run_slot, ensure_supervisor_run_ready, run_lane, should_auto_heal_run_readiness,
+    };
     use anyhow::anyhow;
     use serde_json::{json, Value};
     use std::collections::VecDeque;
     use std::future;
+
+    #[test]
+    fn run_lanes_require_deterministic_tab_binding() {
+        assert_eq!(run_lane("a", None, false, false).as_deref(), Some("a"));
+        assert_ne!(
+            run_lane("a", None, false, false),
+            run_lane("b", None, false, false)
+        );
+        assert_eq!(run_lane("a", None, true, false), None);
+        assert_eq!(
+            run_lane("a", Some("rzn://browser/chrome/tab/7"), true, false).as_deref(),
+            Some("rzn://browser/chrome/tab/7")
+        );
+        assert_eq!(
+            run_lane("a", Some("rzn://browser/chrome/tab/7"), false, true),
+            None
+        );
+    }
+
+    #[test]
+    fn equivalent_tab_refs_share_a_lane() {
+        assert_eq!(
+            run_lane("a", Some("rzn://browser/chrome/tab/007"), false, false),
+            run_lane("b", Some("rzn://browser/chrome/tab/7"), false, false)
+        );
+        assert_eq!(run_lane("a", Some("invalid"), false, false), None);
+    }
 
     #[tokio::test]
     async fn busy_run_slot_waits_instead_of_failing() {

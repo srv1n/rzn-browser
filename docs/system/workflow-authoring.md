@@ -57,9 +57,13 @@ log.
 The CLI queues every manifest run by its `system`. Runs for one site execute one
 at a time across processes, and each starts as soon as the previous one ends.
 Eight parallel `capterra search` calls run one after another, not at once.
-The supervisor drives one run at a time across all sites, so a run that finds
-the browser busy with another site waits for it too (`[queue] the browser is
-busy ...`) instead of failing.
+CLI runs for different sites can overlap in separate session tabs. Claims using
+an explicit `--tab-ref` share a lane and queue when the ref matches. Workflows
+that use the active tab without an explicit ref, workflows that switch tabs,
+and legacy in-process/fleet runs retain exclusive supervisor access. A
+conflicting run waits with a `[queue]` message. `status.snapshot.active_runs` reports all active runs; `now_running`
+keeps reporting the oldest for existing clients. When several runs are active,
+`runs.cancel` requires a `run_id`.
 
 - Each run reuses the site's parked tab, which stays open between runs and
   comes to the front when the run starts. The exceptions are workflows with `requires_existing_session` (they bind the
@@ -99,7 +103,7 @@ ads can delay past the step timeout. The G2 and Capterra packs show the pattern.
 ## Shipped packs
 
 Production packs live in `workflows/<system>/`: search and research (Google,
-Bing, YouTube, PubMed, arXiv, ScienceDirect, Goodreads, Libgen, Yahoo Finance),
+Bing, YouTube, PubMed, arXiv, ScienceDirect, Goodreads, Local Book Search, Yahoo Finance),
 commerce and reviews (Amazon, Etsy, G2, Capterra, App Store, Airbnb), ads and
 market intelligence (Meta Ad Library, Google Ads Transparency, Apple Ads), AI
 apps (ChatGPT, Claude), and social (X, Reddit, Hacker News, Instagram,

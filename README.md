@@ -37,7 +37,7 @@ RZN ships with roughly 100 built-in workflows across 25 sites. For sites that ne
 | <img alt="arXiv" src="https://www.google.com/s2/favicons?sz=64&domain=arxiv.org" width="24" height="24"> | arXiv | Search and preprint extraction |
 | <img alt="ScienceDirect" src="https://www.google.com/s2/favicons?sz=64&domain=sciencedirect.com" width="24" height="24"> | ScienceDirect | Search and paper access workflows |
 | <img alt="Goodreads" src="https://www.google.com/s2/favicons?sz=64&domain=goodreads.com" width="24" height="24"> | Goodreads | Book search, book detail with rating histogram, shelf ranking, reviews, and similar-book lists |
-| <img alt="Libgen" src="https://www.google.com/s2/favicons?sz=64&domain=libgen.li" width="24" height="24"> | Libgen | Mirror search and direct download resolution |
+| 📚 | Local Book Search | Online book search and direct download resolution |
 | <img alt="Yahoo Finance" src="https://www.google.com/s2/favicons?sz=64&domain=finance.yahoo.com" width="24" height="24"> | Yahoo Finance | Quote lookup for stocks, ETFs, indices, crypto, forex, and futures, plus ticker news |
 
 ### Shopping, Travel & Reviews
@@ -277,7 +277,15 @@ rzn-browser llm-auto "Search Google for browser automation and extract the top r
 rzn-browser run x open --param url="https://x.com/..." --output-file thread.md
 
 # download every asset the result references, with a manifest.json alongside
-rzn-browser run libgen download --param query="..." --download-dir ./books
+rzn-browser run book get --param query="..." --download-dir ./books
+
+# return final JSON for any workflow, without progress logs
+rzn-browser run google search --agent-output --param search_query="..."
+
+# book search returns metadata + opaque IDs; retrieve the exact selected file
+rzn-browser run book search --agent-output --param query="..."
+rzn-browser run book get --agent-output --param id="<ID from search>" --download-dir ./books
+rzn-browser workflow show book search --agent-output
 
 # leave the tab open and reuse that exact tab on the next run
 rzn-browser run chatgpt send --param message_text="..." --keep-tab-open
@@ -287,7 +295,20 @@ rzn-browser run chatgpt read --tab-ref "rzn://browser/<instance>/tab/<id>" --par
 rzn-browser run google search --param search_query="..." --snapshot on-error
 ```
 
+Downloads allow 1 GiB per file by default. Set `--max-download-mib 2048` for
+2 GiB, or `--max-download-mib 0` to disable the size cap. Downloads stream to
+disk, allow up to 30 minutes per file, and remove partial files after errors.
+These settings also apply with `--agent-output`.
+
 A workflow must declare `file_write` in its side effects to use `--output-file` or `--download-dir`; the CLI refuses the post-processing otherwise rather than writing behind the manifest's back.
+
+`--agent-output` returns final JSON for any workflow and concise workflow
+show/inspect/list help. Progress, navigation details, and raw errors are captured.
+Regular results retain useful links (for example Google search links). Book
+results instead contain metadata and opaque IDs, with local receipts after a
+download. The flag is opt-in: ordinary commands retain their existing output.
+It is an output format, not an access-control boundary; see
+[the book pack](workflows/book/README.md) for the book contract and limitations.
 
 ## Beyond Workflows
 

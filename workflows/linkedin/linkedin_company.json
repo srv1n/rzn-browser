@@ -2,11 +2,11 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "linkedin/company",
   "name": "LinkedIn: Company",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "system": "linkedin",
   "capability": "linkedin.company",
   "summary": "Open a LinkedIn company page read-only and return one merged record: About fields, employee breakdown charts, employee growth, and recent posts.",
-  "description": "Open a LinkedIn company page once, then click through its own About / People / Posts tabs the way a person would, and return a single merged company record. Covers the About panel (overview text, website, industry, company size, headquarters, founded, specialties, associated members, location count), the People tab breakdown charts (what they do, where they live, where they studied, with each bucket's share of associated members), the employee growth percentage from the home tab, exact follower count, related company pages, and the most recent posts with permalinks and engagement counts. Read-only: never follows, likes, comments, or applies. Use linkedin_company_jobs for the full job listing and hiring-location picture.",
+  "description": "Open a LinkedIn company page once, then visit its About / People / Posts tabs with canonical URL fallback, and return a single merged company record. Covers the About panel (overview text, website, industry, company size, headquarters, founded, specialties, associated members, location count), the People tab breakdown charts (what they do, where they live, where they studied, with each bucket's share of associated members), the employee growth percentage from the home tab, exact follower count, related company pages, and the most recent posts with permalinks and engagement counts. Read-only: never follows, likes, comments, or applies. Use linkedin_company_jobs for the full job listing and hiring-location picture.",
   "params": {
     "properties": {
       "company": {
@@ -102,7 +102,7 @@
         "inputs": {
           "world": "main",
           "use_cdp_eval": true,
-          "script": "const clean=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};let raw=clean(arg0);let slug=raw;if(raw.indexOf('/company/')!==-1){slug=(raw.split('/company/')[1]||'').split('?')[0].split('/')[0];}else if(raw.indexOf('/school/')!==-1){slug=(raw.split('/school/')[1]||'').split('?')[0].split('/')[0];}else{slug=raw.replace(/^@+/,'').split('?')[0].split('/')[0];}if(!slug)slug=raw;try{sessionStorage.setItem('__rzn_co_slug',JSON.stringify(slug));}catch(e){}const url='https://www.linkedin.com/company/'+slug+'/';setTimeout(()=>location.assign(url),0);return {company_url:url,slug:slug};",
+          "script": "const clean=(v)=>{const t=String(v==null?'':v).trim();return /^\\{[a-zA-Z0-9_]+\\}$/.test(t)?'':t;};let raw=clean(arg0);let slug=raw;if(raw.indexOf('/company/')!==-1){slug=(raw.split('/company/')[1]||'').split('?')[0].split('/')[0];}else if(raw.indexOf('/school/')!==-1){slug=(raw.split('/school/')[1]||'').split('?')[0].split('/')[0];}else{slug=raw.replace(/^@+/,'').split('?')[0].split('/')[0];}if(!slug)slug=raw;for(const key of ['home','about','people','posts'])sessionStorage.removeItem('__rzn_co_'+key);try{sessionStorage.setItem('__rzn_co_slug',JSON.stringify(slug));}catch(e){}const url='https://www.linkedin.com/company/'+slug+'/';setTimeout(()=>location.assign(url),0);return {company_url:url,slug:slug};",
           "args": [
             "{company}"
           ]
@@ -208,18 +208,17 @@
     {
       "id": "s11",
       "action": {
-        "kind": "click_element",
+        "kind": "execute_javascript",
         "inputs": {
-          "wait_after_ms": 900
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const slug=JSON.parse(sessionStorage.getItem('__rzn_co_slug')||'null');\nif(!slug)throw new Error('Missing company slug');\nconst path='/company/'+encodeURIComponent(slug)+'/about/';\nconst link=[...document.querySelectorAll('a[href]')].find(a=>{try{return new URL(a.href,location.origin).pathname.replace(/\\/$/,'')===path.replace(/\\/$/,'');}catch(e){return false;}});\nif(link)link.click();else setTimeout(()=>location.assign('https://www.linkedin.com'+path),0);\nreturn {tab:'about',url:'https://www.linkedin.com'+path};"
         },
         "side_effects": [
           "browser_state"
-        ],
-        "target": {
-          "selector": "a[href*=\"/company/\"][href$=\"/about/\"]"
-        }
+        ]
       },
-      "name": "Click the About tab in the company page navigation",
+      "name": "Open the company About tab, using its canonical URL if the navigation link is absent",
       "timeout_ms": 15000
     },
     {
@@ -253,18 +252,17 @@
     {
       "id": "s14",
       "action": {
-        "kind": "click_element",
+        "kind": "execute_javascript",
         "inputs": {
-          "wait_after_ms": 900
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const slug=JSON.parse(sessionStorage.getItem('__rzn_co_slug')||'null');\nif(!slug)throw new Error('Missing company slug');\nconst path='/company/'+encodeURIComponent(slug)+'/people/';\nconst link=[...document.querySelectorAll('a[href]')].find(a=>{try{return new URL(a.href,location.origin).pathname.replace(/\\/$/,'')===path.replace(/\\/$/,'');}catch(e){return false;}});\nif(link)link.click();else setTimeout(()=>location.assign('https://www.linkedin.com'+path),0);\nreturn {tab:'people',url:'https://www.linkedin.com'+path};"
         },
         "side_effects": [
           "browser_state"
-        ],
-        "target": {
-          "selector": "a[href*=\"/company/\"][href$=\"/people/\"]"
-        }
+        ]
       },
-      "name": "Click the People tab in the company page navigation",
+      "name": "Open the company People tab, using its canonical URL if the navigation link is absent",
       "timeout_ms": 15000
     },
     {
@@ -324,18 +322,17 @@
     {
       "id": "s19",
       "action": {
-        "kind": "click_element",
+        "kind": "execute_javascript",
         "inputs": {
-          "wait_after_ms": 900
+          "world": "main",
+          "use_cdp_eval": true,
+          "script": "const slug=JSON.parse(sessionStorage.getItem('__rzn_co_slug')||'null');\nif(!slug)throw new Error('Missing company slug');\nconst path='/company/'+encodeURIComponent(slug)+'/posts/';\nconst link=[...document.querySelectorAll('a[href]')].find(a=>{try{return new URL(a.href,location.origin).pathname.replace(/\\/$/,'')===path.replace(/\\/$/,'');}catch(e){return false;}});\nif(link)link.click();else setTimeout(()=>location.assign('https://www.linkedin.com'+path),0);\nreturn {tab:'posts',url:'https://www.linkedin.com'+path};"
         },
         "side_effects": [
           "browser_state"
-        ],
-        "target": {
-          "selector": "a[href*=\"/company/\"][href$=\"/posts/\"]"
-        }
+        ]
       },
-      "name": "Click the Posts tab in the company page navigation",
+      "name": "Open the company Posts tab, using its canonical URL if the navigation link is absent",
       "timeout_ms": 15000
     },
     {
@@ -351,30 +348,13 @@
       "timeout_ms": 5500
     },
     {
-      "id": "s21",
-      "action": {
-        "kind": "infinite_scroll",
-        "inputs": {
-          "max_scrolls": 6,
-          "scroll_delay": 1800,
-          "target_selector": "[data-urn^=\"urn:li:activity:\"]",
-          "target_count": 20
-        },
-        "side_effects": [
-          "browser_state"
-        ]
-      },
-      "name": "Scroll the posts list until enough posts are loaded",
-      "timeout_ms": 40000
-    },
-    {
       "id": "s22",
       "action": {
         "kind": "execute_javascript",
         "inputs": {
           "world": "main",
           "use_cdp_eval": true,
-          "script": "const N=(s)=>String(s==null?'':s).replace(/\\u00a0/g,' ').replace(/\\s+/g,' ').trim();const LINES=String(document.body&&document.body.innerText||'').split('\\n').map(N).filter(Boolean);const T=LINES.join('\\n');const num=(s)=>{const m=String(s||'').replace(/,/g,'').match(/\\d+/);return m?parseInt(m[0],10):0;};const put=(k,v)=>{try{sessionStorage.setItem('__rzn_co_'+k,JSON.stringify(v));}catch(e){}};const get=(k)=>{try{return JSON.parse(sessionStorage.getItem('__rzn_co_'+k)||'null');}catch(e){return null;}};const CAP=Math.max(1,Math.min(50,parseInt(String(arg0).replace(/[^0-9]/g,''),10)||10));const nodes=[...document.querySelectorAll('[data-urn],[data-id]')].filter((e)=>{const u=e.getAttribute('data-urn')||e.getAttribute('data-id')||'';return u.indexOf('urn:li:activity:')===0;});const seen={};const posts=[];const now=Date.now();let recent30=0;const ageDays=(s)=>{const m=String(s||'').match(/(\\d+)\\s*(minute|hour|day|week|month|year)/i);if(!m)return -1;const n=parseInt(m[1],10);const u=m[2].toLowerCase();const f={minute:1/1440,hour:1/24,day:1,week:7,month:30,year:365}[u];return Math.round(n*f*10)/10;};for(const el of nodes){const urn=el.getAttribute('data-urn')||el.getAttribute('data-id');if(seen[urn])continue;seen[urn]=1;const txt=String(el.innerText||'');const flat=N(txt);const lab=(re)=>{const a=[...el.querySelectorAll('[aria-label]')].map((x)=>x.getAttribute('aria-label')||'');for(const s of a){const m=s.match(re);if(m)return num(m[1]);}return 0;};const reactions=lab(/^([\\d][\\d,]*)\\s+reaction/i);const comments=lab(/^([\\d][\\d,]*)\\s+comment/i);const reposts=lab(/^([\\d][\\d,]*)\\s+repost/i);const agem=flat.match(/\\u2022\\s*(\\d+\\s*(?:minute|hour|day|week|month|year)s?\\s*ago)/i);const posted=agem?N(agem[1]):'';const days=ageDays(posted);if(days>=0&&days<=30)recent30++;let body=txt.split('\\n').map(N).filter(Boolean);const vi=body.findIndex((l)=>/Visible to anyone/i.test(l));if(vi>=0)body=body.slice(vi+1);const NOISE=/^(Follow|Following|Like|Comment|Repost|Send|\\u2026more|see more|Feed post number|[\\d,]+ (reactions?|comments?|reposts?)|[\\d,]+ followers|Premium|Play|Pause|Loaded:|Remaining time|Current time|Playback speed|[\\d.]+x$|Turn (closed captions|fullscreen)|Unmute|Mute|Video Player|Activate to view larger image|Show more|Show less|\\u00b7)/i;body=body.filter((l)=>!NOISE.test(l)&&!/^[\\d,.%\\u00b7\\s]+$/.test(l));let text=body.join(' ');if(text.length>1200)text=text.slice(0,1200);posts.push({post_url:'https://www.linkedin.com/feed/update/'+urn+'/',urn:urn,is_repost:/reposted this/i.test(flat.slice(0,200)),posted:posted,age_days:days,text:text,reactions:reactions,comments:comments,reposts:reposts});if(posts.length>=CAP)break;}let followers=0;const nm=((get('about')||{}).name)||'';if(nm){const re=new RegExp(nm.replace(/[.*+?^${}()|[\\]\\\\]/g,'\\\\$&')+'\\\\s+([\\\\d][\\\\d,]{3,})\\\\s+followers');const fm2=T.match(re);if(fm2)followers=num(fm2[1]);}const out={posts:posts,posts_fetched:posts.length,posts_last_30_days:recent30,followers:followers,posts_url:location.href};put('posts',out);return out;",
+          "script": "const N=s=>String(s||'').replace(/\\s+/g,' ').trim();\nconst CAP=Math.max(1,Math.min(50,parseInt(arg0,10)||10));\nconst count=s=>{const m=N(s).replace(/,/g,'').match(/(\\d+(?:\\.\\d+)?)\\s*([KMB])?/i);return m?Math.round(Number(m[1])*({K:1e3,M:1e6,B:1e9}[(m[2]||'').toUpperCase()]||1)):0;};\nconst posts=new Map();const textKeys=new Map();\nconst menus='button[aria-label^=\"Open control menu for post by \"]';\nconst legacy='[data-urn^=\"urn:li:activity:\"],[data-id^=\"urn:li:activity:\"]';\nconst boxSelector='[data-testid=\"expandable-text-box\"],.update-components-text';\nconst cardOf=el=>{let card=el;for(let i=0;card&&i<20;i++,card=card.parentElement){if(card.querySelector(boxSelector)&&card.querySelector('button[aria-label=\"Comment\"],.social-actions-button.comment-button'))return card;}return null;};\nconst collect=()=>{\n for(const seed of document.querySelectorAll(menus+','+legacy)){\n  const el=cardOf(seed);if(!el)continue;\n  const box=el.querySelector(boxSelector);const text=N(box&&box.innerText);if(!text)continue;\n  const menu=el.querySelector(menus);const author=menu?N(menu.getAttribute('aria-label')):'';\n  const links=[...el.querySelectorAll('a[href]')];\n  const permalink=links.find(a=>/\\/feed\\/update\\/urn:li:(activity|share):|\\/posts\\/.*activity-\\d+/.test(a.href));\n  const attr=el.getAttribute('data-urn')||el.getAttribute('data-id')||seed.getAttribute('data-urn')||seed.getAttribute('data-id')||'';\n  const match=(attr+' '+(permalink?permalink.href:'')).match(/urn:li:(?:activity|share):\\d+|activity-(\\d+)/);\n  const urn=match?(match[1]?'urn:li:activity:'+match[1]:match[0]):'';\n  const post_url=permalink?permalink.href.split('?')[0]:(urn?'https://www.linkedin.com/feed/update/'+urn+'/':'');\n  const key=textKeys.get(text)||urn||post_url||author+'\\n'+text;\n  const labels=[...el.querySelectorAll('[aria-label]')].map(e=>e.getAttribute('aria-label')||'');\n  const flat=N(el.innerText);\n  // Current cards can expose a bare reaction total instead of a labelled count.\n  const bare=[...el.querySelectorAll('button,span')].find(e=>{const t=N(e.innerText);return /^[\\d,.]+\\s*[KMB]?$/i.test(t)&&!box.contains(e)&&(box.compareDocumentPosition(e)&Node.DOCUMENT_POSITION_FOLLOWING)&&!/(comment|repost)/i.test(e.getAttribute('aria-label')||e.parentElement&&e.parentElement.getAttribute('aria-label')||'');});\n  const metric=word=>{const re=new RegExp('([\\\\d,.]+\\\\s*[KMB]?)\\\\s+'+word+'s?\\\\b','i');for(const label of labels){const m=label.match(re);if(m)return count(m[1]);}const m=flat.match(re);return m?count(m[1]):0;};\n  const reactionEl=el.querySelector('.social-details-social-counts__reactions-count,[data-testid=\"social-actions-reactions-count\"]');\n  const time=el.querySelector('time');\n  const age=N(time&&(time.innerText||time.getAttribute('datetime')))||((flat.match(/\\b\\d+\\s*(?:minutes?|hours?|days?|weeks?|months?|years?)\\s+ago\\b|\\b\\d+\\s*(?:mo|[mhdwy])\\b/i)||[])[0]||'');\n  const am=age.match(/(\\d+)\\s*(mo|minutes?|hours?|days?|weeks?|months?|years?|[mhdwy])\\b/i);\n  const units={m:1/1440,h:1/24,d:1,w:7,mo:30,y:365};\n  const age_days=am?Math.round(Number(am[1])*(units[am[2].toLowerCase()]||units[/^month/i.test(am[2])?'mo':am[2][0].toLowerCase()])*10)/10:-1;\n  const post={post_url:post_url,urn:urn,is_repost:/reposted this/i.test(flat.slice(0,200)),posted:age,age_days:age_days,text:text.slice(0,1200),reactions:metric('reaction')||count(reactionEl&&reactionEl.innerText)||count(bare&&bare.innerText),comments:metric('comment'),reposts:metric('repost')};\n  if(posts.has(key)||posts.size<CAP){const old=posts.get(key);if(old){post.urn=post.urn||old.urn;post.post_url=post.post_url||old.post_url;}posts.set(key,post);textKeys.set(text,key);}\n }\n};\nfor(let i=0;i<=24;i++){\n collect();if(posts.size>=CAP||i===24)break;\n window.scrollBy(0,Math.max(500,Math.round(window.innerHeight*0.8)));\n await new Promise(resolve=>setTimeout(resolve,1500));\n}\nconst list=[...posts.values()];\nconst about=JSON.parse(sessionStorage.getItem('__rzn_co_about')||'{}');\nconst out={posts:list,posts_fetched:list.length,posts_last_30_days:list.filter(p=>p.age_days>=0&&p.age_days<=30).length,followers:about.followers||0,posts_url:location.href};\nsessionStorage.setItem('__rzn_co_posts',JSON.stringify(out));return out;",
           "args": [
             "{max_posts}"
           ]
@@ -383,8 +363,8 @@
           "read_only"
         ]
       },
-      "name": "Extract recent posts with permalinks, engagement counts, and posting recency",
-      "timeout_ms": 30000
+      "name": "Collect recent company posts and their own engagement counts while scrolling",
+      "timeout_ms": 55000
     },
     {
       "id": "s23",
@@ -577,13 +557,13 @@
     ],
     "notes": [
       "Read-only. Never follows, likes, comments, reposts, or applies.",
-      "Loads the company page once, then clicks its own About / People / Posts tabs instead of re-navigating, so the traffic pattern looks like a person browsing.",
+      "Uses the company navigation links for About / People / Posts, falling back to canonical company URLs when a tab link is absent.",
       "company_id is the numeric LinkedIn organisation id, scraped from the page's own f_C jobs link. Feed it to linkedin_company_jobs, or use jobs_search_url directly.",
       "employee_growth is the free 'Growth trends' percentage on the company home tab. The deeper hiring-trend chart is LinkedIn Premium only and is not scraped.",
       "LinkedIn does not publish a lifetime post count. posts_fetched is how many were loaded and posts_last_30_days is how many of those were posted within 30 days, which is the usable posting-cadence signal.",
       "The company About tab is the classic UI with real dt/dd pairs, so those fields are stable. Missing fields degrade to empty string, empty array, or 0.",
       "Every execute_javascript step sets use_cdp_eval because LinkedIn's CSP blocks script-tag injection on all pages.",
-      "Intermediate tab data is stashed in sessionStorage under __rzn_co_* keys so it survives the tab-to-tab navigations, then merged in the final step."
+      "Posts are collected between bounded scrolls so virtualized cards are retained. Intermediate tab data is stashed in sessionStorage under __rzn_co_* keys so it survives the tab-to-tab navigations, then merged in the final step."
     ]
   }
 }
