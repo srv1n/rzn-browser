@@ -44,7 +44,7 @@ run() { "$CLI" run "$@" 2>/dev/null; }       # prints run JSON to stdout
 res() { sed -n '/^{/,$p' "$1" | jq "$2" 2>/dev/null; }   # .output.result.<...>
 
 echo "[shelf] $SHELF (top $TOP) -> $OUT"
-run goodreads shelf --param shelf="$SHELF" --param max_pages=1 > "$OUT/shelf.json"
+run goodreads shelf --param shelf="$SHELF" > "$OUT/shelf.json"
 grep -oE 'https://www\.goodreads\.com/book/show/[^"]+' "$OUT/shelf.json" | awk '!seen[$0]++' | head -n "$TOP" > "$OUT/urls.txt"
 echo "[shelf] collected $(wc -l < "$OUT/urls.txt" | tr -d ' ') book urls"
 

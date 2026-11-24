@@ -27,7 +27,7 @@ pub(crate) const READ_WORKFLOWS_ON_NONE_BASELINE: usize = 87;
 /// Read workflows that still make requests of their own (see [`own_requests`]). Lower it in
 /// the change that moves one to `capture_responses`; never raise it.
 #[cfg(test)]
-pub(crate) const READ_WORKFLOWS_MAKING_REQUESTS_BASELINE: usize = 11;
+pub(crate) const READ_WORKFLOWS_MAKING_REQUESTS_BASELINE: usize = 8;
 
 /// Script calls that issue a request from the page.
 #[cfg(test)]

@@ -2,11 +2,11 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "goodreads/similar",
   "name": "Goodreads: Similar Books (Recommendations)",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "system": "goodreads",
   "capability": "goodreads.similar",
   "summary": "Given a Goodreads book, return the full 'Readers also enjoyed' recommendation list with title, author, average rating, ratings count, and URL.",
-  "description": "Opens a book page, resolves its /book/similar/<work_id> link, fetches that server-rendered recommendation page same-origin, and parses the .responsiveBook entries into a clean recommendation list. This is the read-only proxy for Goodreads recommendations seeded from a book you like (personalized account recommendations require login). Feed any book_url back into goodreads/book for details.",
+  "description": "Opens a book page, follows its /book/similar/<work_id> link as a person would, and reads the server-rendered .responsiveBook entries into a clean recommendation list. This is the read-only proxy for Goodreads recommendations seeded from a book you like (personalized account recommendations require login). Feed any book_url back into goodreads/book for details.",
   "params": {
     "properties": {
       "book_url": {
@@ -115,17 +115,58 @@
         "kind": "execute_javascript",
         "inputs": {
           "world": "main",
-          "return_value": true,
-          "script": "const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const origin=location.origin;const cleanPath=(h)=>{const m=(h||'').match(/\\/book\\/show\\/[^?#]+/);return m?m[0]:'';};const seedPath=cleanPath(location.pathname);const seedTitle=norm(document.querySelector(`h1[data-testid='bookTitle']`)?.textContent)||norm(document.querySelector('h1')?.textContent);const simHref=Array.from(document.querySelectorAll(`a[href*='/book/similar/']`)).map(a=>a.getAttribute('href')).find(Boolean);let result;if(!simHref){result={seed_title:seedTitle||'N/A',similar_url:'N/A',count:0,recommendations:[]};}else{const simUrl=simHref.startsWith('http')?simHref:origin+simHref;const res=await fetch(simUrl,{credentials:'same-origin'});const html=await res.text();const doc=new DOMParser().parseFromString(html,'text/html');const items=Array.from(doc.querySelectorAll('.responsiveBook'));const out=[];const seen=new Set();for(const it of items){const a=it.querySelector(`a[href*='/book/show/']`);if(!a)continue;const p=cleanPath(a.getAttribute('href'));if(!p||p===seedPath||seen.has(p))continue;const img=it.querySelector('img');const title=(img?norm(img.getAttribute('alt')):'')||'';const author=norm(it.querySelector(`a[href*='/author/show/']`)?.textContent);const t=norm(it.textContent);const rm=t.match(/([0-9.]+)\\s*avg\\.?\\s*rating/i);const cm=t.match(/avg\\.?\\s*rating[^0-9]*([0-9.,k]+)\\s*ratings?/i);seen.add(p);out.push({title:title||'N/A',author:author||'N/A',avg_rating:rm?rm[1]:'N/A',ratings_count:cm?cm[1].replace(/,/g,''):'N/A',book_url:origin+p});}result={seed_title:seedTitle||'N/A',similar_url:simUrl.replace(/[?#].*$/,''),count:out.length,recommendations:out};}return result;"
+          "script": "const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const cleanPath=(h)=>{const m=(h||'').match(/\\/book\\/show\\/[^?#]+/);return m?m[0]:'';};const simHref=Array.from(document.querySelectorAll(`a[href*='/book/similar/']`)).map(a=>a.getAttribute('href')).find(Boolean);if(!simHref)throw new Error('this book page has no Readers also enjoyed link');const seed={path:cleanPath(location.pathname),title:norm(document.querySelector(`h1[data-testid='bookTitle']`)?.textContent)||norm(document.querySelector('h1')?.textContent)};sessionStorage.setItem('__rzn_goodreads_seed',JSON.stringify(seed));const target=new URL(simHref,location.origin).toString();setTimeout(()=>location.assign(target),0);return {target};"
         },
         "side_effects": [
-          "read_only",
-          "network_access",
-          "external_read"
+          "browser_state"
         ]
       },
-      "name": "Resolve and parse the similar-books page",
+      "name": "Open the Readers also enjoyed page, as clicking its link would",
       "timeout_ms": 45000
+    },
+    {
+      "id": "s6",
+      "name": "Wait for the recommendations page",
+      "timeout_ms": 30000,
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*goodreads.com/book/similar/*"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      }
+    },
+    {
+      "id": "s7",
+      "name": "Wait for the recommendations",
+      "timeout_ms": 20000,
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".responsiveBook"
+        }
+      }
+    },
+    {
+      "id": "s8",
+      "name": "Read the recommendations the page shows",
+      "timeout_ms": 30000,
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "script": "const norm=(s)=>(s||'').replace(/\\s+/g,' ').trim();const origin=location.origin;const cleanPath=(h)=>{const m=(h||'').match(/\\/book\\/show\\/[^?#]+/);return m?m[0]:'';};let seed={};try{seed=JSON.parse(sessionStorage.getItem('__rzn_goodreads_seed')||'{}')}catch{}const out=[];const seen=new Set();for(const it of document.querySelectorAll('.responsiveBook')){const a=it.querySelector(`a[href*='/book/show/']`);if(!a)continue;const p=cleanPath(a.getAttribute('href'));if(!p||p===seed.path||seen.has(p))continue;const img=it.querySelector('img');const title=(img?norm(img.getAttribute('alt')):'')||'';const author=norm(it.querySelector(`a[href*='/author/show/']`)?.textContent);const t=norm(it.textContent);const rm=t.match(/([0-9.]+)\\s*avg\\.?\\s*rating/i);const cm=t.match(/avg\\.?\\s*rating[^0-9]*([0-9.,k]+)\\s*ratings?/i);seen.add(p);out.push({title:title||'N/A',author:author||'N/A',avg_rating:rm?rm[1]:'N/A',ratings_count:cm?cm[1].replace(/,/g,''):'N/A',book_url:origin+p});}return {seed_title:seed.title||'N/A',similar_url:(origin+location.pathname).replace(/[?#].*$/,''),count:out.length,recommendations:out};"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      }
     }
   ],
   "result": {
@@ -137,26 +178,42 @@
     "output_schema": {
       "type": "object",
       "properties": {
-        "seed_title": { "type": "string" },
-        "similar_url": { "type": "string" },
-        "count": { "type": "integer" },
+        "seed_title": {
+          "type": "string"
+        },
+        "similar_url": {
+          "type": "string"
+        },
+        "count": {
+          "type": "integer"
+        },
         "recommendations": {
           "type": "array",
           "items": {
             "type": "object",
             "properties": {
-              "title": { "type": "string" },
-              "author": { "type": "string" },
-              "avg_rating": { "type": "string" },
-              "ratings_count": { "type": "string" },
-              "book_url": { "type": "string" }
+              "title": {
+                "type": "string"
+              },
+              "author": {
+                "type": "string"
+              },
+              "avg_rating": {
+                "type": "string"
+              },
+              "ratings_count": {
+                "type": "string"
+              },
+              "book_url": {
+                "type": "string"
+              }
             }
           }
         }
       }
     },
     "output_selector": {
-      "step_id": "s5",
+      "step_id": "s8",
       "path": "$"
     }
   },
@@ -175,7 +232,7 @@
       "Object: { seed_title, similar_url, count, recommendations: [{ title, author, avg_rating, ratings_count, book_url }] }."
     ],
     "notes": [
-      "Reads the book page, then fetches its /book/similar/<work_id> page (server-rendered) and parses .responsiveBook entries.",
+      "Reads the book page, then opens its /book/similar/<work_id> page (server-rendered) and parses .responsiveBook entries; no request of its own. A book page without that link is an error.",
       "This is the seeded-by-a-book recommendation surface; account-personalized recommendations on /recommendations require a logged-in Goodreads session and are not covered here.",
       "ratings_count may be a compact form like '47.1k' as Goodreads renders it on the similar page."
     ]

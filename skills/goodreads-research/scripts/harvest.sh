@@ -206,7 +206,7 @@ log "DB ready: $DB (workers=$WORKERS)"
 if [ -n "$SHELF" ] && [ "$SKIP_SHELF" -eq 0 ]; then
   for p in $(seq 1 "$PAGES"); do
     pf="$RAW/shelf_p$p.json"
-    "$CLI" run goodreads shelf --param shelf="$SHELF" --param max_pages=1 --param start_page="$p" 2>/dev/null | res /dev/stdin > "$pf"
+    "$CLI" run goodreads shelf --param shelf="$SHELF" --param start_page="$p" 2>/dev/null | res /dev/stdin > "$pf"
     base=$(( (p-1)*50 ))
     jq --argjson base "$base" --arg shelf "$SHELF" '
       (.output.result.books // [])
