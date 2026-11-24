@@ -84,7 +84,7 @@
       "action": {
         "kind": "capture_responses",
         "inputs": {
-          "url_pattern": "/graphql/[^/?]+/SearchTimeline\\?",
+          "url_pattern": "/graphql/[^/?]+/Search[A-Za-z]*Timeline\\?",
           "methods": [
             "GET"
           ]

@@ -55,7 +55,7 @@
       "action": {
         "kind": "capture_responses",
         "inputs": {
-          "url_pattern": "/graphql/[^/?]+/UserTweets\\?",
+          "url_pattern": "/graphql/[^/?]+/User[A-Za-z]*(Tweets|Timeline)\\?",
           "methods": [
             "GET"
           ]
