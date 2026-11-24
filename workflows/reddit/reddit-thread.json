@@ -2,22 +2,22 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "reddit/thread",
   "name": "Reddit: Thread",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "system": "reddit",
   "capability": "reddit.thread.read",
   "summary": "Read one Reddit post and its comment tree as structured JSON.",
-  "description": "Opens old.reddit.com in the user's Chrome session, then fetches the post's .json listing same-origin (cookies included) and returns the thread as one rzn.item/v2. Works where API clients are IP-blocked; no page navigation race and no text truncation.",
+  "description": "Read one Reddit post and its comment tree as one rzn.item/v2. Opens the post's old.reddit.com page in the user's Chrome session, as a person would, and reads the post and every comment the page shows.",
   "params": {
     "properties": {
       "post": {
         "kind": "string",
         "required": true,
-        "description": "Reddit post URL (any reddit.com host, including /s/ share links resolved by the caller) or bare post id such as 1c3ij2e."
+        "description": "Reddit post URL (any reddit.com host; /s/ share links resolved by the caller) or bare post id such as 1c3ij2e."
       },
       "limit": {
         "kind": "integer",
         "required": false,
-        "description": "Max comments Reddit returns in the first listing page. Defaults to 500. Clamped to [1, 500].",
+        "description": "Max comments the page shows. Defaults to 500. Clamped by Reddit to 500.",
         "default": 500
       },
       "sort": {
@@ -73,7 +73,7 @@
           "browser_state"
         ]
       },
-      "name": "Open old.reddit.com so the fetch below is same-origin and carries the session cookies",
+      "name": "Open old.reddit.com",
       "timeout_ms": 30000
     },
     {
@@ -87,14 +87,61 @@
             "{limit}",
             "{sort}"
           ],
-          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst raw = cleanArg(arg0); if (!raw) throw new Error('post is required');\nconst m = raw.match(/\\/comments\\/([a-z0-9]+)/i); const id = m ? m[1] : (/^[a-z0-9]{4,12}$/i.test(raw) ? raw : ''); if (!id) throw new Error('could not find a post id in: ' + raw);\nconst limit = Math.max(1, Math.min(500, parseInt(cleanArg(arg1) || '500', 10) || 500));\nconst sortIn = (cleanArg(arg2) || 'best').toLowerCase(); const sort = sortIn === 'best' ? 'confidence' : sortIn;\nconst url = '/comments/' + id + '.json?limit=' + limit + '&sort=' + encodeURIComponent(sort) + '&raw_json=1';\nconst res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('reddit returned HTTP ' + res.status + ' for ' + url);\nconst data = await res.json(); if (!Array.isArray(data) || data.length < 2) throw new Error('unexpected listing shape');\nconst BASE = 'https://www.reddit.com';\nconst compact = (o) => { for (const k of Object.keys(o)) { const v = o[k]; if (v == null || v === '' || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)) delete o[k]; } return o; };\nconst num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);\nconst abs = (p) => (!p ? null : /^https?:\\/\\//.test(p) ? p : BASE + p);\nconst date = (v) => (typeof v === 'number' && v > 0 ? new Date(v * 1000).toISOString().replace(/\\.000Z$/, 'Z').replace(/Z$/, '+00:00') : null);\nconst user = (n) => (n && n !== '[deleted]' ? { name: 'u/' + n, id: n, url: BASE + '/user/' + n + '/' } : null);\nconst place = (s) => (s ? { name: 'r/' + s, id: s, url: BASE + '/r/' + s + '/' } : null);\nconst entry = (d) => compact({ type: 'rzn.item/v2', key: 'reddit:thread:' + d.id, kind: 'thread', url: abs(d.permalink) || BASE + '/comments/' + d.id, title: d.title, author: user(d.author), published_at: date(d.created_utc), published_in: place(d.subreddit),\n  marker: typeof d.edited === 'number' ? 'edited:' + d.edited : null,\n  fields: compact({ flair: d.link_flair_text, domain: d.domain, link: d.url, is_self: d.is_self, over_18: d.over_18 }),\n  counts: compact({ score: num(d.score), upvote_ratio: num(d.upvote_ratio), comments: num(d.num_comments) }) });\nconst p = (data[0].data.children[0] || {}).data || {}; if (!p.id) p.id = id;\nconst item = entry(p); const blocks = [];\nlet body = p.selftext || ''; if (!body.trim()) body = p.title || '';\nif (body.trim()) blocks.push({ id: p.id, kind: 'post', text: body });\nlet omitted = 0;\nconst walk = (children, parent, depth) => { for (const c of children || []) { if (c.kind === 'more') { omitted += (c.data && c.data.count) || 0; continue; } if (c.kind !== 't1') continue; const d = c.data || {}; if (!d.id) continue; let next = parent; const text = d.body || '';\n  if (text.trim() && text !== '[deleted]' && text !== '[removed]') { blocks.push(compact({ id: d.id, kind: 'comment', text, parent, url: abs(d.permalink), author: user(d.author), published_at: date(d.created_utc), fields: compact({ depth, is_op: d.is_submitter, distinguished: d.distinguished, stickied: d.stickied }), counts: compact({ score: num(d.score) }) })); next = d.id; }\n  if (d.replies && d.replies.data) walk(d.replies.data.children, next, depth + 1); } };\nwalk(data[1].data.children, blocks.length ? p.id : null, 0);\nif (blocks.length) item.blocks = blocks;\nconst total = num(p.num_comments) || 0;\nif (total > limit || omitted > 0) item.truncated = { reason: total > limit ? 'comment_limit' : 'more_comments_not_fetched', returned_blocks: blocks.length, total_blocks_hint: total + 1 };\nreturn item;"
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst raw = cleanArg(arg0); if (!raw) throw new Error('post is required');\nconst m = raw.match(/\\/comments\\/([a-z0-9]+)/i); const id = m ? m[1] : (/^[a-z0-9]{4,12}$/i.test(raw) ? raw : ''); if (!id) throw new Error('could not find a post id in: ' + raw);\nconst limit = Math.max(1, Math.min(500, parseInt(cleanArg(arg1) || '500', 10) || 500));\nconst sortIn = (cleanArg(arg2) || 'best').toLowerCase(); const sort = sortIn === 'best' ? 'confidence' : sortIn;\nconst target = 'https://old.reddit.com/comments/' + id + '/?limit=' + limit + '&sort=' + encodeURIComponent(sort);\nsetTimeout(() => location.assign(target), 0);\nreturn { id, target };"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Go to the post's page",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*old.reddit.com/r/*/comments/*"
         },
         "side_effects": [
           "read_only"
         ]
       },
-      "name": "Fetch the thread JSON same-origin and flatten it into post + nested comments",
-      "timeout_ms": 45000
+      "name": "Wait until the post page has loaded (old.reddit.com moves /comments/<id>/ to /r/<subreddit>/comments/<id>/<slug>/)",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".commentarea"
+        }
+      },
+      "name": "Wait for the comments",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{post}"
+          ],
+          "script": "// The thread page old.reddit.com rendered (its own response): the post row, its body, and the\n// comment tree as nested rows. No request of its own.\nconst cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst want = (cleanArg(arg0).match(/\\/comments\\/([a-z0-9]+)/i) || [])[1] || cleanArg(arg0);\nconst BASE = 'https://www.reddit.com';\nconst compact = (o) => { for (const k of Object.keys(o)) { const v = o[k]; if (v == null || v === '' || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)) delete o[k]; } return o; };\nconst abs = (p) => (!p ? null : /^https?:\\/\\//.test(p) ? p : BASE + p);\nconst int = (v) => (v != null && /^-?\\d+$/.test(String(v).trim()) ? Number(v) : null);\nconst date = (s) => { const d = s ? new Date(s) : null; return d && !isNaN(d) ? d.toISOString().replace(/\\.000Z$/, '+00:00') : null; };\nconst user = (n) => (n && n !== '[deleted]' ? { name: 'u/' + n, id: n, url: BASE + '/user/' + n + '/' } : null);\nconst place = (s) => (s ? { name: 'r/' + s, id: s, url: BASE + '/r/' + s + '/' } : null);\nconst text = (el) => (el ? String(el.innerText || el.textContent || '').trim() : '');\nconst post = document.querySelector('#siteTable > .thing.link');\nconst d = (n) => post?.getAttribute('data-' + n);\nconst id = String(d('fullname') || '').replace(/^t3_/, '');\nif (!post || id.toLowerCase() !== want.toLowerCase()) throw new Error('old.reddit.com did not show the post ' + want + ' (it shows ' + location.pathname + '; deleted, private, or the page changed)');\nconst tagline = post.querySelector(':scope > .entry .tagline');\nconst edited = tagline?.querySelector('time.edited-timestamp')?.getAttribute('datetime');\nconst ratio = (document.querySelector('.side .linkinfo .score')?.textContent || '').match(/(\\d+)% upvoted/);\nconst domain = d('domain') || '';\nconst item = compact({ type: 'rzn.item/v2', key: 'reddit:thread:' + id, kind: 'thread', url: BASE + (d('permalink') || '/comments/' + id + '/'),\n  title: text(post.querySelector('a.title')), author: user(d('author')), published_at: date(tagline?.querySelector('time:not(.edited-timestamp)')?.getAttribute('datetime')), published_in: place(d('subreddit')),\n  marker: edited ? 'edited:' + Math.floor(new Date(edited).getTime() / 1000) : null,\n  fields: compact({ flair: (post.querySelector('.linkflairlabel')?.getAttribute('title') || '').trim(), domain, link: abs(d('url')), is_self: domain.startsWith('self.'), over_18: d('nsfw') === 'true' }),\n  counts: compact({ score: int(d('score')), upvote_ratio: ratio ? Number(ratio[1]) / 100 : null, comments: int(d('comments-count')) }) });\nconst blocks = [];\nconst body = text(post.querySelector(':scope > .entry .expando .usertext-body .md')) || item.title || '';\nif (body) blocks.push({ id, kind: 'post', text: body });\n// Comments nest as rows inside their parent's .child; a deleted or removed comment keeps its replies.\nconst walk = (table, parent, depth) => { for (const row of table ? table.querySelectorAll(':scope > .thing.comment') : []) {\n  const cid = String(row.getAttribute('data-fullname') || '').replace(/^t1_/, ''); if (!cid) continue;\n  const entry = row.querySelector(':scope > .entry'); const line = entry?.querySelector('.tagline');\n  const author = line?.querySelector('a.author'); const said = text(entry?.querySelector('.usertext-body .md'));\n  let next = parent;\n  if (said && !row.classList.contains('deleted') && said !== '[deleted]' && said !== '[removed]') {\n    blocks.push(compact({ id: cid, kind: 'comment', text: said, parent, url: abs(row.getAttribute('data-permalink')), author: user(row.getAttribute('data-author')),\n      published_at: date(line?.querySelector('time:not(.edited-timestamp)')?.getAttribute('datetime')),\n      fields: compact({ depth, is_op: author ? author.classList.contains('submitter') : null, distinguished: author?.classList.contains('moderator') ? 'moderator' : author?.classList.contains('admin') ? 'admin' : null, stickied: row.classList.contains('stickied') }),\n      counts: compact({ score: int(line?.querySelector('.score.unvoted')?.getAttribute('title')) }) }));\n    next = cid;\n  }\n  walk(row.querySelector(':scope > .child > .sitetable'), next, depth + 1);\n} };\nwalk(document.querySelector('.commentarea > .sitetable'), blocks.length ? id : null, 0);\nif (blocks.length) item.blocks = blocks;\n// Comments the page left behind \"load more comments\" or \"continue this thread\" were not loaded.\nconst hidden = document.querySelectorAll('.commentarea .thing.morechildren, .commentarea .deepthread').length;\nif (hidden) item.truncated = { reason: 'more_comments_not_fetched', returned_blocks: blocks.length, total_blocks_hint: (int(d('comments-count')) || 0) + 1 };\nreturn item;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Read the post and its comments as rzn.item/v2",
+      "timeout_ms": 30000
     }
   ],
   "result": {
@@ -132,7 +179,7 @@
       }
     },
     "output_selector": {
-      "step_id": "s2",
+      "step_id": "s5",
       "path": "$"
     }
   },
@@ -140,7 +187,7 @@
     "summary": "Read one Reddit post and its comment tree as structured JSON.",
     "parameters": {
       "post": "Reddit post URL or bare post id.",
-      "limit": "Max comments in the first listing page (1-500, default 500).",
+      "limit": "Max comments the page shows (1-500, default 500).",
       "sort": "best (default), top, new, controversial, old or qa."
     },
     "examples": [
@@ -156,11 +203,11 @@
     "returns": [
       "rzn.item/v2 with the rzn-tools Reddit connector's keys: key reddit:thread:<id>, kind thread, title, author u/<name>, published_at, published_in r/<subreddit>, marker edited:<time> when edited, fields flair/domain/link/is_self/over_18, counts score/upvote_ratio/comments.",
       "Blocks: the post body (or title) as kind post, then every comment as kind comment with parent, author, published_at, url, fields depth/is_op/distinguished/stickied and counts score.",
-      "truncated is set when the thread has more comments than limit or Reddit collapsed some behind 'load more' (not fetched); such an item is not indexed."
+      "truncated is set when the page left comments behind 'load more comments' or 'continue this thread' (not loaded); such an item is not indexed."
     ],
     "notes": [
-      "Uses the signed-in Chrome session, so it works when Reddit blocks API clients by IP.",
-      "Fetches JSON in-page instead of navigating to it, which avoids the navigation race that makes reddit/search flaky and the 12k-character cap of innerText readers."
+      "Uses the signed-in Chrome session.",
+      "Makes no request of its own: it opens the post's page and reads what old.reddit.com rendered (post row attributes, the post body, each comment row's author, score, time and text, nested as on the page)."
     ]
   }
 }

@@ -22,12 +22,12 @@ use std::path::{Path, PathBuf};
 /// Read workflows (no `external_write`) still on `result.contract: none`. Lower it in the change
 /// that moves one; never raise it. The family and ratchet rules run in this module's repo test.
 #[cfg(test)]
-pub(crate) const READ_WORKFLOWS_ON_NONE_BASELINE: usize = 88;
+pub(crate) const READ_WORKFLOWS_ON_NONE_BASELINE: usize = 87;
 
 /// Read workflows that still make requests of their own (see [`own_requests`]). Lower it in
 /// the change that moves one to `capture_responses`; never raise it.
 #[cfg(test)]
-pub(crate) const READ_WORKFLOWS_MAKING_REQUESTS_BASELINE: usize = 14;
+pub(crate) const READ_WORKFLOWS_MAKING_REQUESTS_BASELINE: usize = 11;
 
 /// Script calls that issue a request from the page.
 #[cfg(test)]

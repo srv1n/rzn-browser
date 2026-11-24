@@ -1,0 +1,77 @@
+{
+  "sample_of": "x/open",
+  "source": "hand-built",
+  "note": "Built by scripts/workflow_samples/x_items_sample.mjs from the workflow's own mapping step, a hand-built fixture of captured post-page responses; replace with a recorded run.",
+  "output": {
+    "type": "rzn.item/v2",
+    "key": "x:post:1790000000000000001",
+    "kind": "post",
+    "url": "https://x.com/jack/status/1790000000000000001",
+    "author": {
+      "name": "jack",
+      "id": "jack",
+      "url": "https://x.com/jack"
+    },
+    "published_at": "2026-11-20T08:15:00Z",
+    "published_in": {
+      "name": "X",
+      "id": "x.com",
+      "url": "https://x.com"
+    },
+    "marker": "edit:0;posts:2",
+    "fields": {
+      "lang": "en",
+      "is_article": false
+    },
+    "counts": {
+      "likes": 4100,
+      "reposts": 320,
+      "replies": 85,
+      "quotes": 12,
+      "bookmarks": 40,
+      "views": 120000
+    },
+    "blocks": [
+      {
+        "id": "1790000000000000001",
+        "kind": "post",
+        "text": "Shipping notes for this week, a thread. https://example.com/notes",
+        "at": {
+          "order": 0
+        },
+        "url": "https://x.com/jack/status/1790000000000000001"
+      },
+      {
+        "id": "1790000000000000002",
+        "kind": "post",
+        "text": "Second: the chart below & the post it answers.",
+        "at": {
+          "order": 1
+        },
+        "url": "https://x.com/jack/status/1790000000000000002",
+        "published_at": "2026-11-20T08:16:30Z",
+        "attachments": [
+          {
+            "kind": "image",
+            "url": "https://pbs.twimg.com/media/chart.jpg",
+            "alt": "chart of weekly deploys"
+          }
+        ]
+      },
+      {
+        "id": "q-1780000000000000009",
+        "kind": "quoted",
+        "text": "The quoted post text.",
+        "at": {
+          "order": 2
+        },
+        "author": {
+          "name": "Other Person",
+          "id": "other",
+          "url": "https://x.com/other"
+        },
+        "url": "https://x.com/other/status/1780000000000000009"
+      }
+    ]
+  }
+}

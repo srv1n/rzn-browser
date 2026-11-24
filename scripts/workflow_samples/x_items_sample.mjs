@@ -1,6 +1,7 @@
 // Hand-built X samples through the capture path: the workflows' own mapping step run against a
-// hand-built fixture of what capture_responses keeps (UserTweets / SearchTimeline batches shaped
-// like X's GraphQL timeline responses) plus the few cards still in the DOM. Not a recording:
+// hand-built fixture of what capture_responses keeps (UserTweets / SearchTimeline batches and the
+// post page's TweetResultByRestId / TweetDetail, shaped like X's GraphQL responses) plus the few
+// cards still in the DOM. Not a recording:
 // replace with real runs (`source: "recorded"`).
 //
 //   node scripts/workflow_samples/x_items_sample.mjs            # check samples are current
@@ -87,4 +88,19 @@ const note = 'Built by scripts/workflow_samples/x_items_sample.mjs from the work
   + 'fixture of captured timeline responses and invented DOM cards; replace with a recorded run.';
 await sample('workflows/x/x_profile_posts.json', ['jack', '20'], 'x_items_sample.mjs', { params: { captured_responses: userTweets }, note });
 await sample('workflows/x/x_search_posts.json', ['jack', '40'], 'x_items_sample.mjs', { params: { captured_responses: searchTimeline }, note });
+
+// x/open on the thread's second post: the page's own TweetResultByRestId (that post) and TweetDetail
+// (its conversation: the thread, a reply from another account) responses.
+const reply99 = tweet('1790000000000000050', { user: user('99', 'other', 'Other Person'), legacy: { created_at: created('2026-11-20T09:00:00Z'),
+  conversation_id_str: '1790000000000000001', in_reply_to_status_id_str: '1790000000000000001', in_reply_to_user_id_str: '12', full_text: '@jack Nice chart.' } });
+const detail = { data: { threaded_conversation_with_injections_v2: { instructions: [{ type: 'TimelineAddEntries',
+  entries: [entry(thread1), entry(thread2), entry(reply99)] }] } } };
+const byRestId = { data: { tweetResult: { result: thread2 } } };
+const postPage = { url_pattern: '/graphql/[^/?]+/(TweetDetail|TweetResultByRestId)\\?', duplicates: 0, detached: null,
+  dropped: { too_large: 0, over_budget: 0, failed: 0, body_unavailable: 0 },
+  responses: [response('https://x.com/i/api/graphql/abcQueryId/TweetResultByRestId?variables=%7B%7D', byRestId), response('https://x.com/i/api/graphql/abcQueryId/TweetDetail?variables=%7B%7D', detail)] };
+postPage.responses.forEach((r, i) => { r.seq = i + 1; });
+globalThis.location = { pathname: '/jack/status/1790000000000000002' };
+await sample('workflows/x/x_open.json', ['https://x.com/jack/status/1790000000000000002'], 'x_items_sample.mjs', { params: { captured_responses: postPage },
+  note: note.replace('captured timeline responses and invented DOM cards', 'captured post-page responses') });
 finish();

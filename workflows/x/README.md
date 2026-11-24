@@ -7,7 +7,7 @@ Canonical pack for automating `x.com` via the authenticated Chrome session. Work
 | Workflow | Purpose | Required params |
 | --- | --- | --- |
 | `x_home_timeline_digest` | Scroll the home timeline and return a bounded digest. | — |
-| `x_open` | Open any X URL (post / longform article / same-author thread) and return a unified markdown rendering plus image, video, and linked-page URLs. Auto-detects kind. | `url` (+ optional `mode`) |
+| `x_open` | Open one post URL and return the post, the author's self-thread around it, or the article as one `rzn.item/v2`, from the responses the page itself loads. | `url` |
 | `x_screenshot` | Capture one post, reply, or longform article as a tightly cropped PNG. | `url` (+ optional `mode`) |
 | `x_open_inbox` | Open the DM inbox read-only. | — |
 | `x_open_dm_thread` | Open one DM thread URL read-only. | `thread_url` |
@@ -68,7 +68,7 @@ rzn-browser run x reply-dm-thread --param thread_url="https://x.com/messages/123
 ## Notes and limits
 
 - x.com is a fast-moving SPA; selectors can drift. Probe live DOM via the Claude-in-Chrome extension before editing.
-- `x_search_posts` and `x_open` (in article-redirect mode) build their URL and navigate via `setTimeout(() => location.assign(url), 0)` because awaiting `location.assign` inside an eval kills the execution context.
+- `x_search_posts` builds its URL and navigate via `setTimeout(() => location.assign(url), 0)` because awaiting `location.assign` inside an eval kills the execution context.
 - Landing-page consent banners can intercept clicks on the search box but do not block `location.assign` — direct URL navigation is used everywhere.
 - X Chat may redirect `/messages` → `/i/chat` and gate the inbox behind passcode onboarding. `x_send_dm` and `x_reply_dm_thread` treat that onboarding surface as a first-class state with its own review gate.
 - Operators can override approval behavior at runtime with `RZN_APPROVAL_MODE` / `RZN_INTERVENTION_POLICY` and `RZN_CONTINUE_ON_TIMEOUT` / `RZN_APPROVAL_CONTINUE_ON_TIMEOUT`.

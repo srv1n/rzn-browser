@@ -2,11 +2,11 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "reddit/listing",
   "name": "Reddit: Subreddit listing",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "system": "reddit",
   "capability": "reddit.listing.read",
   "summary": "List posts from a subreddit feed (top or hot) as structured JSON.",
-  "description": "Opens old.reddit.com in the user's Chrome session and fetches /r/<subreddit>/<sort>.json same-origin, following 'after' cursors until limit posts are collected, and returns them as rzn.items/v2 entries. Works where API clients are IP-blocked.",
+  "description": "Read one subreddit feed (top or hot) as rzn.items/v2. Opens the subreddit's old.reddit.com page in the user's Chrome session, as a person would, and reads the posts the page shows; next_cursor opens the next page. Use to list a subreddit's posts; read one post with reddit/thread.",
   "params": {
     "properties": {
       "subreddit": {
@@ -17,7 +17,7 @@
       "sort": {
         "kind": "string",
         "required": false,
-        "description": "Feed to read. new/rising are omitted: their .json listings return HTTP 403 even in a signed-in session (2026-11-11).",
+        "description": "Feed to read.",
         "enum_values": [
           "top",
           "hot"
@@ -41,8 +41,14 @@
       "limit": {
         "kind": "integer",
         "required": false,
-        "description": "Posts to return. Defaults to 25. Clamped to [1, 500].",
+        "description": "Posts to return, one page of old.reddit.com. Defaults to 25. Clamped to [1, 100].",
         "default": 25
+      },
+      "after": {
+        "kind": "string",
+        "required": false,
+        "default": "",
+        "description": "next_cursor of the previous page, to read the page after it."
       }
     },
     "additional_params": false
@@ -77,35 +83,48 @@
       "action": {
         "kind": "navigate_to_url",
         "inputs": {
-          "url": "https://old.reddit.com/"
+          "url": "https://old.reddit.com/r/{subreddit}/{sort}/?t={time}&limit={limit}&after={after}"
         },
         "side_effects": [
           "browser_state"
         ]
       },
-      "name": "Open old.reddit.com so the fetch below is same-origin and carries the session cookies",
+      "name": "Open the subreddit feed page on old.reddit.com",
       "timeout_ms": 30000
     },
     {
       "id": "s2",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": "#siteTable"
+        }
+      },
+      "name": "Wait for the post rows",
+      "timeout_ms": 20000
+    },
+    {
+      "id": "s3",
       "action": {
         "kind": "execute_javascript",
         "inputs": {
           "world": "main",
           "args": [
             "{subreddit}",
-            "{sort}",
-            "{time}",
             "{limit}"
           ],
-          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst sub = cleanArg(arg0).replace(/^\\/?r\\//i, '').replace(/\\/$/, ''); if (!/^[A-Za-z0-9_]{2,32}$/.test(sub)) throw new Error('subreddit is required (name without r/)');\nconst sort = (cleanArg(arg1) || 'top').toLowerCase(); if (!['top', 'hot'].includes(sort)) throw new Error('bad sort ' + sort);\nconst time = (cleanArg(arg2) || 'all').toLowerCase(); const limit = Math.max(1, Math.min(500, parseInt(cleanArg(arg3) || '25', 10) || 25));\nconst BASE = 'https://www.reddit.com';\nconst compact = (o) => { for (const k of Object.keys(o)) { const v = o[k]; if (v == null || v === '' || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)) delete o[k]; } return o; };\nconst num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);\nconst abs = (p) => (!p ? null : /^https?:\\/\\//.test(p) ? p : BASE + p);\nconst date = (v) => (typeof v === 'number' && v > 0 ? new Date(v * 1000).toISOString().replace(/\\.000Z$/, 'Z').replace(/Z$/, '+00:00') : null);\nconst user = (n) => (n && n !== '[deleted]' ? { name: 'u/' + n, id: n, url: BASE + '/user/' + n + '/' } : null);\nconst place = (s) => (s ? { name: 'r/' + s, id: s, url: BASE + '/r/' + s + '/' } : null);\nconst entry = (d) => compact({ type: 'rzn.item/v2', key: 'reddit:thread:' + d.id, kind: 'thread', url: abs(d.permalink) || BASE + '/comments/' + d.id, title: d.title, author: user(d.author), published_at: date(d.created_utc), published_in: place(d.subreddit),\n  marker: typeof d.edited === 'number' ? 'edited:' + d.edited : null,\n  fields: compact({ flair: d.link_flair_text, domain: d.domain, link: d.url, is_self: d.is_self, over_18: d.over_18 }),\n  counts: compact({ score: num(d.score), upvote_ratio: num(d.upvote_ratio), comments: num(d.num_comments) }) });\nconst items = []; let after = ''; let pages = 0;\nwhile (items.length < limit && pages < 10) { pages += 1; const q = new URLSearchParams({ limit: String(Math.min(100, limit - items.length)), raw_json: '1' }); if (sort === 'top') q.set('t', time); if (after) q.set('after', after);\n  const url = '/r/' + sub + (sort === 'hot' ? '' : '/' + sort) + '.json?' + q.toString();\n  const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('reddit returned HTTP ' + res.status + ' for ' + url);\n  const data = await res.json(); const kids = (data && data.data && data.data.children) || [];\n  for (const c of kids) { if (c.kind === 't3' && c.data && c.data.id) items.push(entry(c.data)); }\n  after = data && data.data && data.data.after; if (!after || !kids.length) break; }\nreturn { type: 'rzn.items/v2', items: items.slice(0, limit), next_cursor: null, listing: 'feed' };"
+          "script": "// The listing page old.reddit.com rendered (its own response); every post row carries its facts as\n// data- attributes. No request of its own.\nconst cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst sub = cleanArg(arg0).replace(/^\\/?r\\//i, '').replace(/\\/$/, ''); if (!/^[A-Za-z0-9_]{2,32}$/.test(sub)) throw new Error('subreddit is required (name without r/)');\nif (!location.pathname.toLowerCase().startsWith('/r/' + sub.toLowerCase() + '/')) throw new Error('old.reddit.com did not show r/' + sub + ' (it opened ' + location.pathname + '); the subreddit may not exist or be private');\nconst limit = Math.max(1, Math.min(100, parseInt(cleanArg(arg1) || '25', 10) || 25));\nconst BASE = 'https://www.reddit.com';\nconst compact = (o) => { for (const k of Object.keys(o)) { const v = o[k]; if (v == null || v === '' || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)) delete o[k]; } return o; };\nconst abs = (p) => (!p ? null : /^https?:\\/\\//.test(p) ? p : BASE + p);\nconst int = (v) => (v != null && /^-?\\d+$/.test(String(v).trim()) ? Number(v) : null);\nconst date = (ms) => (int(ms) > 0 ? new Date(int(ms)).toISOString().replace(/\\.000Z$/, '+00:00') : null);\nconst user = (n) => (n && n !== '[deleted]' ? { name: 'u/' + n, id: n, url: BASE + '/user/' + n + '/' } : null);\nconst place = (s) => (s ? { name: 'r/' + s, id: s, url: BASE + '/r/' + s + '/' } : null);\nconst items = [];\nfor (const row of document.querySelectorAll('#siteTable > .thing.link')) {\n  const d = (n) => row.getAttribute('data-' + n);\n  const id = String(d('fullname') || '').replace(/^t3_/, '');\n  if (!id || d('promoted') === 'true') continue;\n  const domain = d('domain') || '';\n  items.push(compact({ type: 'rzn.item/v2', key: 'reddit:thread:' + id, kind: 'thread', url: BASE + (d('permalink') || '/comments/' + id + '/'),\n    title: (row.querySelector('a.title')?.textContent || '').trim(), author: user(d('author')), published_at: date(d('timestamp')), published_in: place(d('subreddit')),\n    fields: compact({ flair: (row.querySelector('.linkflairlabel')?.getAttribute('title') || '').trim(), domain, link: abs(d('url')),\n      is_self: domain.startsWith('self.'), over_18: d('nsfw') === 'true' }),\n    counts: compact({ score: int(d('score')), comments: int(d('comments-count')) }) }));\n  if (items.length >= limit) break;\n}\nconst next = (document.querySelector('.nav-buttons .next-button a')?.getAttribute('href') || '').match(/[?&]after=([^&]+)/);\nreturn { type: 'rzn.items/v2', items, next_cursor: next ? decodeURIComponent(next[1]) : null, listing: 'feed' };"
         },
         "side_effects": [
           "read_only"
         ]
       },
-      "name": "Fetch listing pages same-origin and flatten posts",
-      "timeout_ms": 60000
+      "name": "Read the post rows the page shows as rzn.items/v2",
+      "timeout_ms": 30000
     }
   ],
   "result": {
@@ -150,7 +169,7 @@
       }
     },
     "output_selector": {
-      "step_id": "s2",
+      "step_id": "s3",
       "path": "$"
     }
   },
@@ -160,7 +179,8 @@
       "subreddit": "Subreddit name without r/.",
       "sort": "top (default) or hot.",
       "time": "For top: hour, day, week, month, year or all (default).",
-      "limit": "Posts to return (1-500, default 25)."
+      "limit": "Posts to return, one page of old.reddit.com. Defaults to 25. Clamped to [1, 100].",
+      "after": "next_cursor of the previous page, to read the page after it."
     },
     "examples": [
       {
@@ -176,8 +196,8 @@
       "rzn.items/v2 page, listing feed, of thread entries with the rzn-tools Reddit connector's keys (reddit:thread:<id>): title, author, published_at, published_in, marker, fields and counts, no blocks. next_cursor is null; raise limit for more."
     ],
     "notes": [
-      "Uses the signed-in Chrome session, so it works when Reddit blocks API clients by IP.",
-      "Pair with reddit/thread to read each post's comments."
+      "Uses the signed-in Chrome session.",
+      "Makes no request of its own: it opens the feed page and reads the rows old.reddit.com rendered (each row carries id, author, subreddit, score, comment count, time, link and domain as attributes). upvote_ratio and edits are not on a feed page; reddit/thread returns them."
     ]
   }
 }

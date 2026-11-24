@@ -31,8 +31,7 @@
         },
         "counts": {
           "score": 212,
-          "upvote_ratio": 0.97,
-          "comments": 3
+          "comments": 4
         }
       },
       {
@@ -52,7 +51,6 @@
           "id": "rust",
           "url": "https://www.reddit.com/r/rust/"
         },
-        "marker": "edited:1735776000",
         "fields": {
           "domain": "github.com",
           "link": "https://github.com/example/crate",
@@ -61,12 +59,11 @@
         },
         "counts": {
           "score": 98,
-          "upvote_ratio": 0.9,
           "comments": 14
         }
       }
     ],
-    "next_cursor": null,
+    "next_cursor": "t3_def456",
     "listing": "feed"
   }
 }
