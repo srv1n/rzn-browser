@@ -67,6 +67,8 @@ const JITTER_FRACTION: f64 = 0.33;
 const MAX_JOURNAL_TAIL: usize = 5;
 /// Fallback job deadline when the assignment omits `execution_deadline_seconds`.
 const DEFAULT_JOB_DEADLINE_SECS: u64 = 600;
+/// How often a claimed job retries the run slot while a local run holds the browser.
+const BROWSER_WAIT_POLL_MS: u64 = 500;
 /// How often the manifest cache is garbage-collected (once daily).
 const CACHE_GC_INTERVAL_SECS: u64 = 24 * 60 * 60;
 
@@ -530,6 +532,10 @@ struct JournalEntry {
     workflow_hash: String,
     #[serde(default)]
     single_delivery: bool,
+    /// The claim this entry belongs to: a retry keeps its job id under a new lease.
+    /// 0 for markers written without an assignment.
+    #[serde(default)]
+    lease_expires_at_ms: i64,
 }
 
 /// The compact `{job_id, state, ts_ms}` view surfaced in `fleet.status`.
@@ -554,6 +560,7 @@ impl JournalEntry {
             workflow_id: assignment.workflow_id.clone(),
             workflow_hash: assignment.workflow_hash.clone(),
             single_delivery: assignment.single_delivery,
+            lease_expires_at_ms: assignment.lease_expires_at_ms,
         }
     }
 
@@ -570,6 +577,7 @@ impl JournalEntry {
             workflow_id: prev.workflow_id.clone(),
             workflow_hash: prev.workflow_hash.clone(),
             single_delivery: prev.single_delivery,
+            lease_expires_at_ms: prev.lease_expires_at_ms,
         }
     }
 
@@ -587,6 +595,7 @@ impl JournalEntry {
             workflow_id: workflow_id.to_string(),
             workflow_hash: String::new(),
             single_delivery: false,
+            lease_expires_at_ms: 0,
         }
     }
 
@@ -651,6 +660,18 @@ impl Journal {
     fn latest(&self, job_id: &str) -> Option<JournalEntry> {
         let guard = self.entries.lock().unwrap();
         guard.iter().rev().find(|e| e.job_id == job_id).cloned()
+    }
+
+    /// Whether this claim of the job (job id plus lease) already ran to the end. The server
+    /// retries a job under the same id with a new lease, and that attempt must run. A
+    /// `posted` marker carries no lease, so it only matches a lease-less assignment.
+    fn claim_done(&self, job_id: &str, lease_expires_at_ms: i64) -> bool {
+        let guard = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
+        guard.iter().any(|e| {
+            e.job_id == job_id
+                && e.lease_expires_at_ms == lease_expires_at_ms
+                && matches!(e.state, JournalState::Finished | JournalState::Posted)
+        })
     }
 
     /// Latest entry per job (insertion order preserved by the file).
@@ -971,30 +992,36 @@ impl FleetJobExecutor for InProcessJobExecutor {
         } else {
             self.default_deadline_secs
         };
-        let deadline = Duration::from_secs(deadline_secs);
-
-        if let Err(current) = self.state.control.try_begin_run(
-            run_id.clone(),
-            assignment.workflow_id.clone(),
-            "fleet".into(),
+        // A local run holding the browser makes the job wait, inside its own deadline (so
+        // inside the lease), instead of failing and spending an attempt.
+        let waited = match take_browser(
+            &self.state.control,
+            &run_id,
+            &assignment.workflow_id,
             workflow.steps.len(),
-        ) {
-            if current.run_id == crate::supervisor_control::SUPERVISOR_SHUTTING_DOWN_RUN_ID {
+            &cancel,
+            Duration::from_secs(deadline_secs),
+        )
+        .await
+        {
+            BrowserWait::Ready(waited) => waited,
+            BrowserWait::ShuttingDown => {
                 return failed_result(
                     &run_id,
                     &assignment.workflow_id,
                     "supervisor is shutting down for maintenance".to_string(),
-                );
+                )
             }
-            return failed_result(
-                &run_id,
-                &assignment.workflow_id,
-                format!(
-                    "another run is in progress: {} ({})",
-                    current.run_id, current.origin
-                ),
-            );
-        }
+            BrowserWait::Cancelled => {
+                return failed_result(
+                    &run_id,
+                    &assignment.workflow_id,
+                    "cancelled while waiting for the browser".to_string(),
+                )
+            }
+            BrowserWait::TimedOut => return timed_out_result(&run_id, &assignment.workflow_id),
+        };
+        let deadline = Duration::from_secs(deadline_secs).saturating_sub(waited);
         let _run_guard = FleetRunGuard {
             state: self.state.clone(),
             run_id: run_id.clone(),
@@ -1059,6 +1086,47 @@ impl StepTransport for InProcessTransport {
                 Err(_) => Err(TransportError::Timeout),
             }
         }
+    }
+}
+
+/// How a fleet job's wait for the browser ended.
+#[derive(Debug, PartialEq)]
+enum BrowserWait {
+    /// The job holds the run slot; how long it waited for it.
+    Ready(Duration),
+    ShuttingDown,
+    Cancelled,
+    /// A local run held the browser for the job's whole deadline.
+    TimedOut,
+}
+
+/// Take the supervisor's run slot for a fleet job, waiting while a local run holds it.
+async fn take_browser(
+    control: &crate::supervisor_control::SupervisorControl,
+    run_id: &str,
+    workflow_id: &str,
+    steps: usize,
+    cancel: &AtomicBool,
+    deadline: Duration,
+) -> BrowserWait {
+    let started = std::time::Instant::now();
+    loop {
+        match control.try_begin_run(run_id.into(), workflow_id.into(), "fleet".into(), steps) {
+            Ok(()) => return BrowserWait::Ready(started.elapsed()),
+            Err(current)
+                if current.run_id == crate::supervisor_control::SUPERVISOR_SHUTTING_DOWN_RUN_ID =>
+            {
+                return BrowserWait::ShuttingDown
+            }
+            Err(_) => {}
+        }
+        if cancel.load(Ordering::SeqCst) {
+            return BrowserWait::Cancelled;
+        }
+        if started.elapsed() >= deadline {
+            return BrowserWait::TimedOut;
+        }
+        sleep_ms(BROWSER_WAIT_POLL_MS).await;
     }
 }
 
@@ -1175,10 +1243,16 @@ impl FleetLoop {
 
             let health = self.build_health(&active_ids).await;
             let sites_cleared = self.shared.pending_cleared();
+            // Ask for a job only when one can start now: the server claims what it sends.
+            let claim = should_claim_job(
+                current.is_none(),
+                self.state.automation_paused(),
+                !self.state.control.active_runs().is_empty(),
+            );
             let request = FleetPollRequest {
                 health,
                 active_job_ids: active_ids.clone(),
-                max_jobs: 1,
+                max_jobs: u32::from(claim),
                 catalog_hash: catalog_hash.clone(),
                 sites_cleared: sites_cleared.clone(),
             };
@@ -1233,8 +1307,8 @@ impl FleetLoop {
                         }
                     }
 
-                    // Claim a new job only when idle (one job at a time).
-                    if should_claim_job(current.is_none(), self.state.automation_paused()) {
+                    // Start the job claimed for this check-in (one job at a time).
+                    if current.is_none() {
                         if let Some(assignment) = response.jobs.into_iter().next() {
                             current = self.maybe_start_job(assignment).await;
                             if let Some(job) = &current {
@@ -1356,13 +1430,14 @@ impl FleetLoop {
     /// Accept + spawn a job, journaling `accepted` BEFORE any execution. Returns
     /// `None` (no execution) when the job is already finished/posted (dedupe).
     async fn maybe_start_job(&self, assignment: FleetJobAssignment) -> Option<RunningJob> {
-        if let Some(entry) = self.journal.latest(&assignment.job_id) {
-            if matches!(entry.state, JournalState::Finished | JournalState::Posted) {
-                // Already completed: never re-execute; a persisted result (if any)
-                // will be re-posted (server dedupes) on the next flush.
-                self.flush_pending().await;
-                return None;
-            }
+        if self
+            .journal
+            .claim_done(&assignment.job_id, assignment.lease_expires_at_ms)
+        {
+            // This claim already completed: never re-execute; a persisted result (if
+            // any) will be re-posted (server dedupes) on the next flush.
+            self.flush_pending().await;
+            return None;
         }
 
         // Journal `accepted` on disk before doing any execution work.
@@ -1586,8 +1661,10 @@ impl FleetLoop {
     }
 }
 
-fn should_claim_job(idle: bool, paused: bool) -> bool {
-    idle && !paused
+/// A job is claimed only when the loop is idle, automation is not paused and no local run
+/// holds the browser: a job left queued may go to another device and spends no attempt.
+fn should_claim_job(idle: bool, paused: bool, browser_busy: bool) -> bool {
+    idle && !paused && !browser_busy
 }
 
 // ---------------------------------------------------------------------------
@@ -1734,7 +1811,6 @@ fn failed_result(run_id: &str, workflow_id: &str, message: String) -> RunResult 
     }
 }
 
-#[cfg(test)]
 fn timed_out_result(run_id: &str, workflow_id: &str) -> RunResult {
     RunResult {
         version: RUN_RESULT_CONTRACT.to_string(),

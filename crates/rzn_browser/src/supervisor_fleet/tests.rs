@@ -333,9 +333,147 @@ fn journal_states(journal: &Journal, job_id: &str) -> Vec<JournalState> {
 
 #[test]
 fn paused_fleet_loop_does_not_claim() {
-    assert!(!should_claim_job(true, true));
-    assert!(!should_claim_job(false, false));
-    assert!(should_claim_job(true, false));
+    assert!(!should_claim_job(true, true, false));
+    assert!(!should_claim_job(false, false, false));
+    assert!(
+        !should_claim_job(true, false, true),
+        "a busy browser claims nothing"
+    );
+    assert!(should_claim_job(true, false, false));
+}
+
+// BFL-T-0022 A1: a retry keeps the job id under a new lease and must run again.
+#[tokio::test]
+async fn retried_job_runs_again_under_a_new_lease() {
+    let dir = temp_dir("retry-lease");
+    let journal = Arc::new(Journal::open(dir.join("j.jsonl")).unwrap());
+    let first = FleetJobAssignment {
+        lease_expires_at_ms: 1_000,
+        ..assignment("job_retry_lease")
+    };
+    let retry = FleetJobAssignment {
+        lease_expires_at_ms: 2_000,
+        ..first.clone()
+    };
+    let shared = Arc::new(FleetShared::new());
+    let api = Arc::new(MockApi::new(
+        vec![
+            MockPoll::Ok(poll_with_job(first)),
+            MockPoll::Ok(poll_active_empty()),
+            MockPoll::Ok(poll_active_empty()),
+            MockPoll::Ok(poll_with_job(retry.clone())),
+        ],
+        // The same claim delivered again is still deduped.
+        poll_with_job(retry),
+    ));
+    let executor = Arc::new(MockExecutor::new(ExecBehavior::Succeed));
+    let fleet = build_loop(
+        &dir,
+        api.clone(),
+        executor.clone(),
+        shared.clone(),
+        journal.clone(),
+    );
+    let handle = tokio::spawn(fleet.run());
+
+    wait_until(|| api.posts().len() >= 2, "both attempts posted").await;
+    wait_until(|| api.poll_count() >= 10, "re-deliveries of the retry").await;
+    shared.request_disable();
+    handle.await.unwrap();
+
+    assert_eq!(
+        executor.executed(),
+        vec!["job_retry_lease", "job_retry_lease"],
+        "each claim runs exactly once"
+    );
+    let _ = fs::remove_dir_all(dir);
+}
+
+// BFL-T-0022 A2: a local run holding the browser makes the check-in ask for no job.
+#[tokio::test]
+async fn busy_browser_asks_for_no_job_until_the_local_run_ends() {
+    let dir = temp_dir("busy-claim");
+    let journal = Arc::new(Journal::open(dir.join("j.jsonl")).unwrap());
+    let shared = Arc::new(FleetShared::new());
+    let api = Arc::new(MockApi::new(Vec::new(), poll_active_empty()));
+    let executor = Arc::new(MockExecutor::new(ExecBehavior::Succeed));
+    let fleet = build_loop(&dir, api.clone(), executor, shared.clone(), journal);
+    let state = fleet.state.clone();
+    state
+        .control
+        .try_begin_run("local-1".into(), "wf_local".into(), "cli".into(), 1)
+        .unwrap();
+    let handle = tokio::spawn(fleet.run());
+
+    wait_until(|| api.poll_count() >= 3, "check-ins while busy").await;
+    state.control.end_run_if(Some("local-1"));
+    let busy_polls = api.poll_count();
+    wait_until(|| api.poll_count() >= busy_polls + 3, "check-ins after").await;
+    shared.request_disable();
+    handle.await.unwrap();
+
+    let asks: Vec<u32> = api.requests().iter().map(|r| r.max_jobs).collect();
+    assert!(asks[..3].iter().all(|n| *n == 0), "busy: {asks:?}");
+    assert_eq!(asks.last(), Some(&1), "idle again: {asks:?}");
+    let _ = fs::remove_dir_all(dir);
+}
+
+// BFL-T-0022 A2: a job claimed just before a local run took the browser waits for it.
+#[tokio::test]
+async fn claimed_job_waits_for_the_local_run_then_takes_the_browser() {
+    let dir = temp_dir("busy-wait");
+    let control = Arc::new(crate::supervisor_control::SupervisorControl::open(&dir));
+    control
+        .try_begin_run("local-1".into(), "wf_local".into(), "cli".into(), 1)
+        .unwrap();
+    let release = control.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        release.end_run_if(Some("local-1"));
+    });
+    let cancel = AtomicBool::new(false);
+    let outcome = take_browser(
+        &control,
+        "fleet-j",
+        "wf",
+        1,
+        &cancel,
+        Duration::from_secs(30),
+    )
+    .await;
+    match outcome {
+        BrowserWait::Ready(waited) => assert!(waited >= Duration::from_millis(500)),
+        other => panic!("expected the browser, got {other:?}"),
+    }
+    assert!(
+        control.running_run("fleet-j").is_object(),
+        "fleet job holds the slot"
+    );
+
+    // Held for the whole deadline: timed out, never a plain failure.
+    let timed = take_browser(
+        &control,
+        "fleet-k",
+        "wf",
+        1,
+        &cancel,
+        Duration::from_millis(100),
+    )
+    .await;
+    assert_eq!(timed, BrowserWait::TimedOut);
+
+    cancel.store(true, Ordering::SeqCst);
+    let cancelled = take_browser(
+        &control,
+        "fleet-l",
+        "wf",
+        1,
+        &cancel,
+        Duration::from_secs(30),
+    )
+    .await;
+    assert_eq!(cancelled, BrowserWait::Cancelled);
+    let _ = fs::remove_dir_all(dir);
 }
 
 // ---------------------------------------------------------------------------
