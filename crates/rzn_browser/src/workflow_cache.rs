@@ -7,8 +7,10 @@
 //! matches the requested hash before it is trusted or stored.
 //!
 //! Layout: `<root>/<workflow_id>/<content_hash>.json`, where `workflow_id` is
-//! restricted to `[a-z0-9_-]` (defense-in-depth against path traversal) and
-//! `content_hash` is a 64-char lowercase sha256 hex digest.
+//! one or more `/`-separated segments of `[a-z0-9_-]` (defense-in-depth against
+//! path traversal), stored and fetched with each `/` as `%2F` so it stays one
+//! directory and one URL path segment, and `content_hash` is a 64-char
+//! lowercase sha256 hex digest.
 
 use std::fmt;
 use std::fs;
@@ -89,7 +91,7 @@ impl fmt::Display for CacheError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CacheError::InvalidWorkflowId(id) => {
-                write!(f, "invalid workflow_id (must match [a-z0-9_-]): {id:?}")
+                write!(f, "invalid workflow_id (segments must match [a-z0-9_-]): {id:?}")
             }
             CacheError::InvalidContentHash(hash) => {
                 write!(f, "invalid content_hash (must be 64-char lowercase hex): {hash:?}")
@@ -346,16 +348,19 @@ fn read_verified(path: &Path, expected_hash: &str) -> Result<Value, CacheError> 
     }
 }
 
-/// Validate that `id` is a safe cache subdirectory name. Rejects (rather than
-/// rewrites) anything outside `[a-z0-9_-]`, so `../`, `/`, `.`, and uppercase
-/// are all refused.
+/// Validate that `id` is a safe workflow id and return its one-segment form, each `/` as
+/// `%2F` (the cache subdirectory name and the URL path segment). Each `/`-separated segment
+/// must be non-empty `[a-z0-9_-]`, so `../`, a leading or doubled `/`, `.`, and uppercase are
+/// all refused (rather than rewritten).
 fn sanitize_workflow_id(id: &str) -> Result<String, CacheError> {
-    let ok = !id.is_empty()
-        && id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-');
+    let ok = id.split('/').all(|segment| {
+        !segment.is_empty()
+            && segment
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+    });
     if ok {
-        Ok(id.to_string())
+        Ok(id.replace('/', "%2F"))
     } else {
         Err(CacheError::InvalidWorkflowId(id.to_string()))
     }
@@ -434,9 +439,12 @@ impl ManifestFetcher for HttpManifestFetcher {
         workflow_id: &str,
         content_hash: &str,
     ) -> Result<FleetWorkflowFetchResponse, FetchError> {
+        // A workflow id holds `/` (`x/profile_posts`); the route takes it as one segment.
         let url = format!(
             "{}/v1/fleet/workflows/{}/{}",
-            self.server_url, workflow_id, content_hash
+            self.server_url,
+            workflow_id.replace('/', "%2F"),
+            content_hash
         );
         let response = self
             .client
@@ -753,7 +761,7 @@ mod tests {
         let manifest = serde_json::json!({ "name": "demo" });
         let hash = manifest_content_hash(&manifest);
 
-        for bad in ["../evil", "a/b", "UPPER", "", "with.dot", "sp ace"] {
+        for bad in ["../evil", "a//b", "/a", "a/", "UPPER", "", "with.dot", "sp ace"] {
             let (fetcher, calls) = MockFetcher::new(manifest.clone());
             let result = cache.get(bad, &hash, &fetcher).await;
             assert!(
@@ -766,6 +774,25 @@ mod tests {
                 "rejected id {bad:?} must not fetch"
             );
         }
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    // A workflow id with a site prefix (`x/profile_posts`) is cached as one directory.
+    #[tokio::test]
+    async fn site_prefixed_workflow_id_is_one_cache_directory() {
+        let root = temp_root("site-prefixed");
+        let cache = WorkflowCache::new(root.clone());
+        let manifest = serde_json::json!({ "id": "x/profile_posts" });
+        let hash = manifest_content_hash(&manifest);
+        let (fetcher, calls) = MockFetcher::new(manifest.clone());
+
+        let got = cache.get("x/profile_posts", &hash, &fetcher).await.unwrap();
+        assert_eq!(got, manifest);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(root.join("x%2Fprofile_posts").join(format!("{hash}.json")).exists());
+        cache.get("x/profile_posts", &hash, &fetcher).await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "second get is a cache hit");
 
         let _ = fs::remove_dir_all(root);
     }
