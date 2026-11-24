@@ -35,6 +35,7 @@
     }
   ],
   "result": {
+    "contract": "none",
     "artifact_policy": { "prefer_downloads": false },
     "include_debug": false,
     "output_schema": { "type": "object" },

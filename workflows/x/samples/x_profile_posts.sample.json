@@ -1,0 +1,202 @@
+{
+  "sample_of": "x/profile_posts",
+  "source": "hand-built",
+  "note": "Built by scripts/workflow_samples/x_items_sample.mjs from the workflow's own mapping step, a hand-built fixture of captured timeline responses and invented DOM cards; replace with a recorded run.",
+  "output": {
+    "type": "rzn.items/v2",
+    "items": [
+      {
+        "type": "rzn.item/v2",
+        "key": "x:post:1790000000000000001",
+        "kind": "post",
+        "url": "https://x.com/jack/status/1790000000000000001",
+        "author": {
+          "name": "jack",
+          "id": "jack",
+          "url": "https://x.com/jack"
+        },
+        "published_at": "2026-11-20T08:15:00Z",
+        "published_in": {
+          "name": "X",
+          "id": "x.com",
+          "url": "https://x.com"
+        },
+        "marker": "edit:0;posts:2",
+        "fields": {
+          "lang": "en",
+          "is_article": false
+        },
+        "counts": {
+          "likes": 4100,
+          "reposts": 320,
+          "replies": 85,
+          "quotes": 12,
+          "bookmarks": 40,
+          "views": 120000
+        },
+        "blocks": [
+          {
+            "id": "1790000000000000001",
+            "kind": "post",
+            "text": "Shipping notes for this week, a thread. https://example.com/notes",
+            "at": {
+              "order": 0
+            },
+            "url": "https://x.com/jack/status/1790000000000000001"
+          },
+          {
+            "id": "1790000000000000002",
+            "kind": "post",
+            "text": "Second: the chart below & the post it answers.",
+            "at": {
+              "order": 1
+            },
+            "url": "https://x.com/jack/status/1790000000000000002",
+            "published_at": "2026-11-20T08:16:30Z",
+            "attachments": [
+              {
+                "kind": "image",
+                "url": "https://pbs.twimg.com/media/chart.jpg",
+                "alt": "chart of weekly deploys"
+              }
+            ]
+          },
+          {
+            "id": "q-1780000000000000009",
+            "kind": "quoted",
+            "text": "The quoted post text.",
+            "at": {
+              "order": 2
+            },
+            "author": {
+              "name": "Other Person",
+              "id": "other",
+              "url": "https://x.com/other"
+            },
+            "url": "https://x.com/other/status/1780000000000000009"
+          }
+        ]
+      },
+      {
+        "type": "rzn.item/v2",
+        "key": "x:post:1789000000000000005",
+        "kind": "post",
+        "url": "https://x.com/jack/status/1789000000000000005",
+        "author": {
+          "name": "jack",
+          "id": "jack",
+          "url": "https://x.com/jack"
+        },
+        "published_at": "2026-11-18T21:00:00Z",
+        "published_in": {
+          "name": "X",
+          "id": "x.com",
+          "url": "https://x.com"
+        },
+        "marker": "edit:1;posts:1",
+        "fields": {
+          "lang": "en",
+          "is_article": false
+        },
+        "counts": {
+          "likes": 12,
+          "reposts": 1,
+          "replies": 2,
+          "quotes": 0,
+          "bookmarks": 3,
+          "views": 1000
+        },
+        "blocks": [
+          {
+            "id": "1789000000000000005",
+            "kind": "post",
+            "text": "A long post that runs past 280 characters, read in full from the note text rather than the cut card.",
+            "at": {
+              "order": 0
+            },
+            "url": "https://x.com/jack/status/1789000000000000005"
+          }
+        ]
+      },
+      {
+        "type": "rzn.item/v2",
+        "key": "x:post:1788000000000000007",
+        "kind": "post",
+        "url": "https://x.com/jack/status/1788000000000000007",
+        "author": {
+          "name": "jack",
+          "id": "jack",
+          "url": "https://x.com/jack"
+        },
+        "published_at": "2026-11-17T10:00:00Z",
+        "published_in": {
+          "name": "X",
+          "id": "x.com",
+          "url": "https://x.com"
+        },
+        "marker": "edit:0;posts:1",
+        "fields": {
+          "lang": "en",
+          "is_article": false,
+          "in_reply_to": "https://x.com/i/status/1787000000000000001"
+        },
+        "counts": {
+          "likes": 3,
+          "reposts": 0,
+          "replies": 0,
+          "quotes": 0,
+          "bookmarks": 0,
+          "views": 310
+        },
+        "blocks": [
+          {
+            "id": "1788000000000000007",
+            "kind": "post",
+            "text": "Agreed, and measured it too.",
+            "at": {
+              "order": 0
+            },
+            "url": "https://x.com/jack/status/1788000000000000007"
+          }
+        ]
+      },
+      {
+        "type": "rzn.item/v2",
+        "key": "x:post:1785000000000000004",
+        "kind": "post",
+        "url": "https://x.com/jack/status/1785000000000000004",
+        "author": {
+          "name": "jack",
+          "id": "jack",
+          "url": "https://x.com/jack"
+        },
+        "published_at": "2026-11-10T09:30:00Z",
+        "published_in": {
+          "name": "X",
+          "id": "x.com",
+          "url": "https://x.com"
+        },
+        "counts": {
+          "likes": 7
+        },
+        "blocks": [
+          {
+            "id": "1785000000000000004",
+            "kind": "post",
+            "text": "An older post only the page still showed.",
+            "at": {
+              "order": 0
+            },
+            "url": "https://x.com/jack/status/1785000000000000004"
+          }
+        ],
+        "truncated": {
+          "reason": "post_detail_unavailable",
+          "returned_blocks": 1
+        }
+      }
+    ],
+    "next_cursor": null,
+    "listing": "feed"
+  }
+}

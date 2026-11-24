@@ -1,0 +1,116 @@
+{
+  "type": "rzn.describe/v2",
+  "connector": "x-browser",
+  "kinds": [
+    {
+      "kind": "post",
+      "identity": "x:post:<first post id>",
+      "listing": "feed",
+      "scopes": [
+        "account"
+      ],
+      "list_tool": "x/search_posts",
+      "get_tool": "x/open",
+      "fields": [
+        {
+          "name": "title",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "author",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "published_at",
+          "of": "item",
+          "type": "date",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "published_in",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "kind",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "lang",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "is_article",
+          "of": "item",
+          "type": "boolean",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "in_reply_to",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "likes",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        },
+        {
+          "name": "reposts",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        },
+        {
+          "name": "replies",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        },
+        {
+          "name": "quotes",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        },
+        {
+          "name": "bookmarks",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        },
+        {
+          "name": "views",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        }
+      ]
+    }
+  ]
+}

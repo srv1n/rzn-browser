@@ -129,6 +129,7 @@
     }
   ],
   "result": {
+    "contract": "none",
     "artifact_policy": {
       "prefer_downloads": false
     },

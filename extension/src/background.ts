@@ -7,6 +7,7 @@ import { cdpIntegration } from './cdp/integration';
 import { accessibilityService } from './cdp/accessibility';
 import { ExecutionTier } from './cdp/executionStrategy';
 import { frameRouter } from './cdp/frameRouter';
+import { networkCapture } from './networkCaptureRuntime';
 import { cdpErrorText, isExecutionContextDestroyedCdpError } from './cdp/errors';
 import { setFlags, getFlags } from './config/flags';
 import { cdpSessionManager } from './runtime/cdp_session_manager';
@@ -1994,6 +1995,9 @@ async function disposeWorkflowSession(
   const normalized = normalizeSessionId(sessionId);
   const state = workflowSessions.get(normalized);
   const tabId = state?.workflowTabId;
+
+  // Capture ends with the run: detach before the tab is kept, parked or closed.
+  await networkCapture.stop(normalized).catch((error) => console.warn('[NetworkCapture] stop failed:', error));
 
   const fleetCleanup = await fleetWindows.closeSession(
     normalized,
@@ -4908,6 +4912,7 @@ async function handleBrokerMessage(
       const requiresExistingTab =
         stepType !== 'open_new_tab' &&
         stepType !== 'navigate_to_url' &&
+        stepType !== 'capture_responses' &&
         stepType !== 'switch_to_tab' &&
         stepType !== 'close_current_tab';
       const prefersCurrentTab =
@@ -5072,6 +5077,13 @@ async function handleBrokerMessage(
         }
       }
 
+      if (step?.type === 'capture_responses') { // Without a tab yet it starts on the tab navigate_to_url opens.
+        const reply = await guardedBrokerSideEffect(brokerLease, 'capture_responses', () => networkCapture.start(workflowSessionId, tabId, step as any))
+          .then((result) => ({ success: true, result }), (error: any) => ({ success: false, error_code: error?.code || 'CAPTURE_ERROR', error_msg: error?.message || String(error) }));
+        sendResponseToBroker({ req_id: isOrchestratorFormat ? undefined : requestId, task_id: isOrchestratorFormat ? requestId : undefined, ...reply } as any);
+        return;
+      }
+
       // Background-level navigation for `execute_step` to ensure we actually wait for page load.
       // The content-script `navigate_to_url` handler sets `window.location.href` and returns immediately,
       // which can cause follow-up steps (detect/extract) to run against the previous page.
@@ -5080,12 +5092,14 @@ async function handleBrokerMessage(
           const url = (step.url && typeof step.url === 'string') ? step.url.trim() : '';
           if (!url) throw new Error('Missing URL for navigation');
 
-          const createdTab = tabId === undefined;
+          // A pending capture opens the tab blank, attaches, then navigates: the first responses are kept too.
+          const capturePending = tabId === undefined && networkCapture.hasPending(workflowSessionId);
+          const createdTab = tabId === undefined && !capturePending;
           if (tabId === undefined) {
             const newTab = await guardedBrokerSideEffect(
               brokerLease,
               'chrome.tabs.create navigate_to_url',
-              () => createWorkflowTab(workflowSessionId, { url, active: true })
+              () => createWorkflowTab(workflowSessionId, { url: capturePending ? 'about:blank' : url, active: true })
             );
             tabId = newTab.id!;
             commitWorkflowTabIdForLease(
@@ -5094,7 +5108,11 @@ async function handleBrokerMessage(
               tabId,
               'bind navigate_to_url workflow tab'
             );
-          } else {
+            if (capturePending) {
+              await guardedBrokerSideEffect(brokerLease, 'capture navigate_to_url', () => networkCapture.attachPending(workflowSessionId, tabId!));
+            }
+          }
+          if (!createdTab) {
             if (typeof step.skip_if_url_contains === 'string') {
               const currentTab = await guardedBrokerSideEffect(
                 brokerLease,
@@ -5230,13 +5248,17 @@ async function handleBrokerMessage(
         try {
           const wantsCdpEval = shouldUseCdpEvalForStep(step);
           const evalRunner = wantsCdpEval ? runCdpEval : runScriptingEval;
+          // `captured_responses: true` hands the script what capture_responses kept.
+          const params = step.captured_responses === true
+            ? { ...(step.params ?? {}), captured_responses: await networkCapture.read(workflowSessionId) }
+            : step.params;
           const evalResponse = await guardedBrokerSideEffect(
             brokerLease,
             `execute ${wantsCdpEval ? 'CDP' : 'scripting'} eval`,
             () => evalRunner(undefined, {
               script: step.script,
               args: step.args,
-              params: step.params,
+              params,
               return_value: step.return_value,
               timeout_ms: step.timeout_ms ?? step.timeoutMs,
               world:
@@ -5272,7 +5294,7 @@ async function handleBrokerMessage(
             req_id: isOrchestratorFormat ? undefined : requestId,
             task_id: isOrchestratorFormat ? requestId : undefined,
             success: false,
-            error_code: 'EVAL_ERROR',
+            error_code: error?.code === 'CAPTURE_NOT_STARTED' ? 'CAPTURE_NOT_STARTED' : 'EVAL_ERROR',
             error_msg: error?.message || String(error)
           } as any);
           return;

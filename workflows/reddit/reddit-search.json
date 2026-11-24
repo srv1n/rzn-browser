@@ -2,11 +2,11 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "reddit/search",
   "name": "Reddit: Search",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "system": "reddit",
   "capability": "reddit.search",
   "summary": "Search Reddit via direct URL and return the top result rows.",
-  "description": "Search Reddit via direct URL navigation (old.reddit.com/search?q=...). Extracts the top N result rows with title, permalink, subreddit, author, score, and comment count.",
+  "description": "Search Reddit via direct URL navigation (old.reddit.com/search?q=...). Returns the top N result rows as rzn.items/v2 thread entries (key, title, permalink, subreddit, author, date, score, comment count).",
   "params": {
     "properties": {
       "limit": {
@@ -69,7 +69,7 @@
           "browser_state"
         ]
       },
-      "name": "Open an old.reddit.com tab (bootstrap \u2014 a tab must exist before execute_javascript can run)",
+      "name": "Open an old.reddit.com tab (bootstrap — a tab must exist before execute_javascript can run)",
       "timeout_ms": 30000
     },
     {
@@ -92,7 +92,13 @@
     },
     {
       "id": "s2b",
-      "action": { "kind": "wait_for_timeout", "inputs": {}, "side_effects": ["read_only"] },
+      "action": {
+        "kind": "wait_for_timeout",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ]
+      },
       "name": "Let the s2 navigation land before s3 waits on the results page (otherwise s3 fails with NAVIGATED_DURING_STEP)",
       "timeout_ms": 2500
     },
@@ -119,7 +125,7 @@
           "args": [
             "{limit}"
           ],
-          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const limitRaw = cleanArg(arg0); const limit = Math.max(1, Math.min(50, parseInt(limitRaw || '25', 10) || 25)); const rows = Array.from(document.querySelectorAll('.search-result-link, .search-result')).slice(0, limit).map((el) => { const a = el.querySelector('a.search-title, a.title'); const sub = el.querySelector('a.search-subreddit-link, a.subreddit'); const author = el.querySelector('a.author'); const score = el.querySelector('.search-score, .score'); const comments = el.querySelector('a.search-comments, a.comments'); const time = el.querySelector('time'); return { title: a?.textContent?.trim() || null, url: a?.href || null, subreddit: sub?.textContent?.trim() || null, author: author?.textContent?.trim() || null, score: score?.textContent?.trim() || null, comments: comments?.textContent?.trim() || null, timestamp: time?.getAttribute('datetime') || null }; }).filter(r => r.title || r.url); return JSON.stringify({ count: rows.length, results: rows });"
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst limit = Math.max(1, Math.min(50, parseInt(cleanArg(arg0) || '25', 10) || 25));\nconst BASE = 'https://www.reddit.com';\nconst compact = (o) => { for (const k of Object.keys(o)) { const v = o[k]; if (v == null || v === '' || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)) delete o[k]; } return o; };\nconst count = (s) => { const m = String(s || '').replace(/,/g, '').match(/-?\\d+/); return m ? Number(m[0]) : null; };\nconst www = (href) => { try { const u = new URL(href, location.origin); return BASE + u.pathname; } catch { return null; } };\nconst items = [];\nfor (const el of document.querySelectorAll('.search-result-link, .search-result')) {\n  const title = el.querySelector('a.search-title, a.title'); const comments = el.querySelector('a.search-comments, a.comments');\n  const permalink = www(comments?.getAttribute('href') || title?.getAttribute('href') || '');\n  const m = (permalink || '').match(/\\/comments\\/([a-z0-9]+)/i); if (!m) continue;\n  const sub = (el.querySelector('a.search-subreddit-link, a.subreddit')?.textContent || '').trim().replace(/^\\/?r\\//i, '').replace(/\\/$/, '');\n  const author = (el.querySelector('a.author')?.textContent || '').trim(); const at = el.querySelector('time')?.getAttribute('datetime');\n  items.push(compact({ type: 'rzn.item/v2', key: 'reddit:thread:' + m[1], kind: 'thread', url: permalink, title: (title?.textContent || '').trim(),\n    author: author && author !== '[deleted]' ? { name: 'u/' + author, id: author, url: BASE + '/user/' + author + '/' } : null,\n    published_at: at ? new Date(at).toISOString().replace(/\\.000Z$/, 'Z').replace(/Z$/, '+00:00') : null,\n    published_in: sub ? { name: 'r/' + sub, id: sub, url: BASE + '/r/' + sub + '/' } : null,\n    counts: compact({ score: count(el.querySelector('.search-score, .score')?.textContent), comments: count(comments?.textContent) }) }));\n  if (items.length >= limit) break;\n}\nreturn { type: 'rzn.items/v2', items, next_cursor: null, listing: 'feed' };"
         },
         "side_effects": [
           "read_only"
@@ -130,28 +136,43 @@
     }
   ],
   "result": {
+    "contract": "rzn.items/v2",
     "artifact_policy": {
       "prefer_downloads": false
     },
     "include_debug": false,
     "output_schema": {
       "type": "object",
+      "description": "rzn.items/v2 page (schema/rzn.items.v2.json) of listing entries, key reddit:thread:<id>, listing feed.",
+      "required": [
+        "type",
+        "items",
+        "listing"
+      ],
       "properties": {
-        "count": { "type": "integer" },
-        "results": {
+        "type": {
+          "const": "rzn.items/v2"
+        },
+        "items": {
           "type": "array",
           "items": {
             "type": "object",
-            "properties": {
-              "title": { "type": "string", "nullable": true },
-              "url": { "type": "string", "nullable": true },
-              "subreddit": { "type": "string", "nullable": true },
-              "author": { "type": "string", "nullable": true },
-              "score": { "type": "string", "nullable": true },
-              "comments": { "type": "string", "nullable": true },
-              "timestamp": { "type": "string", "nullable": true }
-            }
+            "required": [
+              "type",
+              "key",
+              "kind",
+              "url"
+            ]
           }
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "listing": {
+          "const": "feed"
         }
       }
     },
@@ -178,10 +199,10 @@
       }
     ],
     "returns": [
-      "JSON { count, results[] } where each result has title, url, subreddit, author, score, comments, timestamp."
+      "rzn.items/v2 page, listing feed, of thread entries (key reddit:thread:<id>, title, author, published_at, published_in, counts score/comments) read from the result rows. Rows without a thread id are skipped."
     ],
     "notes": [
-      "Uses direct URL navigation (old.reddit.com/search?q=\u2026) to avoid the homepage search-form consent-banner click interception landmine.",
+      "Uses direct URL navigation (old.reddit.com/search?q=…) to avoid the homepage search-form consent-banner click interception landmine.",
       "Requires no authentication; works on logged-out sessions too, though rate-limiting is stricter when logged out."
     ]
   }

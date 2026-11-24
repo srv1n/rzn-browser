@@ -181,6 +181,7 @@
     }
   ],
   "result": {
+    "contract": "none",
     "include_debug": false,
     "output_schema": {
       "type": "object",

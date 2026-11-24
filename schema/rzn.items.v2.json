@@ -1,0 +1,418 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Hand-derived from rzn-tools rzn_tools_core/src/item.rs at commit d6413f0 (item.rs sha256 2611c244cec2f4dde38920c441937b85fe1c4c14c650565edafeb36c4986820a), following schemars 1.1 output for items_page_schema(). Not generated: no cargo run was available. Re-derive when that file's hash changes; the rules a schema cannot express live in rzn_core::item_contract.",
+  "title": "ItemsPage",
+  "description": "A page of items from a list call.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "rzn.items/v2",
+      "default": "rzn.items/v2"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/Item"
+      }
+    },
+    "next_cursor": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "listing": {
+      "$ref": "#/$defs/Listing"
+    }
+  },
+  "required": [
+    "items",
+    "listing"
+  ],
+  "$defs": {
+    "At": {
+      "description": "Where a block sits inside its item.",
+      "oneOf": [
+        {
+          "description": "A time range in milliseconds (transcripts, media).",
+          "type": "object",
+          "properties": {
+            "time": {
+              "type": "object",
+              "properties": {
+                "start_ms": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "end_ms": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "start_ms",
+                "end_ms"
+              ]
+            }
+          },
+          "required": [
+            "time"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "A character span in the item's text.",
+          "type": "object",
+          "properties": {
+            "chars": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                },
+                "end": {
+                  "type": "integer",
+                  "format": "uint64",
+                  "minimum": 0
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            }
+          },
+          "required": [
+            "chars"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Position only.",
+          "type": "object",
+          "properties": {
+            "order": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "order"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "Attachment": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "image, video, audio, document, link.",
+          "type": "string"
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "alt": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "Block": {
+      "description": "One unit of an item's text. Items hold a flat, ordered list; a reply names what it answers in\n`parent`, headings above the block go in `path`.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "description": "transcript, paragraph, post, comment, quoted, description, entry, ...",
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "path": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "parent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "at": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/At"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "author": {
+          "description": "Set only when it differs from the item's author.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Party"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "published_at": {
+          "description": "Set only when it differs from the item's date.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fields": {
+          "$ref": "#/$defs/Fields"
+        },
+        "counts": {
+          "$ref": "#/$defs/Counts"
+        },
+        "attachments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Attachment"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text"
+      ]
+    },
+    "Counts": {
+      "description": "Numbers that keep changing (views, likes, score). Kept outside the content hash.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "DocumentRef": {
+      "description": "Bytes for a document-like source; they go through the file reader for `media_type`.",
+      "type": "object",
+      "properties": {
+        "uri": {
+          "type": "string"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "uri",
+        "media_type"
+      ]
+    },
+    "Fields": {
+      "description": "Facts the source knows about an item or a block. A value is a string, number, boolean, date\n(an RFC 3339 string) or a list of them.",
+      "type": "object",
+      "additionalProperties": true
+    },
+    "Item": {
+      "description": "`rzn.item/v2`.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "rzn.item/v2",
+          "default": "rzn.item/v2"
+        },
+        "key": {
+          "description": "Identity, one rule per item kind: `youtube:video:<id>`, `x:post:<first post id>`, a URL.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "video, page, post, thread, paper, entry, ...",
+          "type": "string"
+        },
+        "url": {
+          "description": "Canonical URL; what a citation opens.",
+          "type": "string"
+        },
+        "title": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "author": {
+          "description": "Required on a full item; a listing entry may leave it for `get` to fill.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Party"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "published_at": {
+          "description": "RFC 3339. Required on a full item.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "published_in": {
+          "description": "The place the item came out in: the channel, subreddit, journal or website. Required on a\nfull item.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Party"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "marker": {
+          "description": "Cheap change signal from the listing (an etag, an edit count, an update time).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fields": {
+          "$ref": "#/$defs/Fields"
+        },
+        "counts": {
+          "$ref": "#/$defs/Counts"
+        },
+        "blocks": {
+          "description": "Empty in a listing entry; `get` fills it. Never set together with `document`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Block"
+          }
+        },
+        "document": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DocumentRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "truncated": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Truncated"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "url"
+      ]
+    },
+    "Listing": {
+      "description": "`full`: the pages name everything in scope, so a key missing from a completed listing was\ndeleted. `feed`: they do not (a search, a front page), so absence means nothing.",
+      "type": "string",
+      "enum": [
+        "full",
+        "feed"
+      ]
+    },
+    "Party": {
+      "description": "A person, account or place: an author, a channel, a subreddit, a journal, a website.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "url": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "Truncated": {
+      "description": "Set when the connector returned fewer blocks than the item has. An index refuses such an item.",
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "returned_blocks": {
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "total_blocks_hint": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "reason",
+        "returned_blocks"
+      ]
+    }
+  }
+}

@@ -46,6 +46,27 @@ describe('FrameRouter lifecycle', () => {
     expect(Array.from(contexts.keys())).toEqual(['2::1']);
   });
 
+  test('a held attachment survives detach requests until the last hold is released', async () => {
+    const detached: number[] = [];
+    let attached = true;
+    (globalThis as any).chrome.debugger.detach = async ({ tabId }: { tabId: number }) => { detached.push(tabId); };
+    (globalThis as any).chrome.debugger.attach = async () => {
+      if (attached) throw new Error('Another debugger is already attached to the tab with id: 4.');
+    };
+    const router = new FrameRouter();
+    router.holdAttachment(4);
+    // Network capture attached first; the router reuses that attachment instead of replacing it.
+    await router.attachToTab(4);
+    await router.detachFromTab(4);
+    expect(detached).toEqual([]);
+    expect(await router.releaseAttachment(4)).toBe(false);
+    expect(detached).toEqual([4]);
+
+    attached = false;
+    router.holdAttachment(5);
+    expect(await router.releaseAttachment(5)).toBe(true);
+  });
+
   test('restricted URLs fail with a non-retryable RESTRICTED_URL error', async () => {
     tabUrl = 'chrome://extensions/';
     await expect(new FrameRouter().attachToTab(3)).rejects.toMatchObject({ code: 'RESTRICTED_URL', retryable: false });

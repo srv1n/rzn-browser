@@ -2,11 +2,11 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "x/profile_posts",
   "name": "X: Profile Posts",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "system": "x",
   "capability": "x.profile.posts",
   "summary": "Return up to 20 posts from one X handle's profile timeline.",
-  "description": "Open one X handle's profile timeline in a fresh tab and return up to 20 posts from the Posts tab. Use for a quick read of what an author has posted recently. Do not use when you also need replies, or posts within a specific date range (use `x_search_posts` with a date window).",
+  "description": "Open one X handle's profile timeline in a fresh tab and return up to 20 posts from the Posts tab as rzn.item/v2 items (one per thread). Use for a quick read of what an author has posted recently. Do not use when you also need replies, or posts within a specific date range (use `x_search_posts` with a date window).",
   "params": {
     "properties": {
       "handle": {
@@ -47,9 +47,25 @@
     "actor": "supervisor",
     "requires_cdp": false,
     "requires_existing_session": false,
-    "timeout_ms": 90000
+    "timeout_ms": 150000
   },
   "steps": [
+    {
+      "id": "capture",
+      "action": {
+        "kind": "capture_responses",
+        "inputs": {
+          "url_pattern": "/graphql/[^/?]+/UserTweets\\?",
+          "methods": [
+            "GET"
+          ]
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Keep the UserTweets batches the page downloads (no request of its own)"
+    },
     {
       "id": "s1",
       "action": {
@@ -121,88 +137,62 @@
     {
       "id": "s6",
       "action": {
-        "kind": "extract_structured_data",
+        "kind": "execute_javascript",
         "inputs": {
-          "item_selector": "main article[data-testid='tweet'], main [data-testid='cellInnerDiv'] article, main article",
-          "limit": 20,
-          "fields": [
-            {
-              "name": "author",
-              "selector": "div[data-testid='User-Name']"
-            },
-            {
-              "name": "text",
-              "selector": "div[data-testid='tweetText'], div[lang]"
-            },
-            {
-              "name": "posted_at",
-              "selector": "time",
-              "attribute": "datetime"
-            },
-            {
-              "name": "post_url",
-              "selector": "a[href*='/status/']",
-              "attribute": "href"
-            },
-            {
-              "name": "reply_count",
-              "selector": "button[data-testid='reply'], [data-testid='reply']"
-            },
-            {
-              "name": "repost_count",
-              "selector": "button[data-testid='retweet'], button[data-testid='unretweet'], [data-testid='retweet'], [data-testid='unretweet']"
-            },
-            {
-              "name": "like_count",
-              "selector": "button[data-testid='like'], button[data-testid='unlike'], [data-testid='like'], [data-testid='unlike']"
-            },
-            {
-              "name": "view_count",
-              "selector": "a[href*='/analytics']"
-            }
-          ]
+          "world": "main",
+          "args": [
+            "{handle}",
+            "20"
+          ],
+          "script": "const clean = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst handle = clean(arg0).replace(/^@+/, '');\nconst cap = Math.max(1, Math.min(100, parseInt(clean(arg1), 10) || 20));\nconst compact = (o) => { for (const k of Object.keys(o)) { const v = o[k]; if (v == null || v === '' || (Array.isArray(v) && !v.length) || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)) delete o[k]; } return o; };\nconst num = (s) => { const m = String(s == null ? '' : s).replace(/[,\\s]/g, '').match(/\\d+/); return m ? Number(m[0]) : null; };\nconst iso = (s) => { const d = s ? new Date(s) : null; return d && !isNaN(d) ? d.toISOString().replace('.000Z', 'Z') : null; };\nconst X = { name: 'X', id: 'x.com', url: 'https://x.com' };\nconst status = (sn, id) => 'https://x.com/' + sn + '/status/' + id;\nconst same = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();\nconst screenName = (u) => u?.core?.screen_name || u?.legacy?.screen_name || '';\n// The timeline batches the page itself downloaded (capture_responses). Every listed post is a\n// `tweet_results.result` in them, in page order, so posts X dropped from the DOM while scrolling are kept.\nconst captured = (params && params.captured_responses) || { responses: [] };\nconst listed = new Map(), everyId = new Set();\nconst unwrap = (r) => (r && r.__typename === 'TweetWithVisibilityResults' ? r.tweet : r);\nconst walk = (root) => { const stack = [root]; while (stack.length) { const x = stack.pop(); if (!x || typeof x !== 'object') continue;\n  if (Array.isArray(x)) { for (let i = x.length - 1; i >= 0; i--) stack.push(x[i]); continue; }\n  const t = unwrap(x.tweet_results?.result);\n  if (t?.legacy && t.rest_id && !x.promotedMetadata) { const id = String(t.rest_id); everyId.add(id); if (same(screenName(t.core?.user_results?.result), handle) && !t.legacy.retweeted_status_result) listed.set(id, t); }\n  const keys = Object.keys(x); for (let i = keys.length - 1; i >= 0; i--) { const v = x[keys[i]]; if (v && typeof v === 'object') stack.push(v); } } };\nfor (const r of captured.responses || []) if (r && r.status >= 200 && r.status < 300 && r.json) walk(r.json);\n// The page's own cards, read only for posts no captured response carried.\nconst dom = [];\nfor (const a of document.querySelectorAll(\"main article[data-testid='tweet'], main article\")) {\n  const link = a.querySelector(\"a[href*='/status/'] time\")?.closest('a') || a.querySelector(\"a[href*='/status/']\");\n  const m = (link?.getAttribute('href') || '').match(/^\\/([^/]+)\\/status\\/(\\d+)/);\n  if (!m || !same(m[1], handle) || everyId.has(m[2]) || dom.some((d) => d.id === m[2])) continue;\n  const label = (sel) => a.querySelector(sel)?.getAttribute('aria-label') || '';\n  dom.push({ id: m[2], screen_name: m[1],\n    name: (a.querySelector(\"[data-testid='User-Name'] span\")?.textContent || '').trim(),\n    text: (a.querySelector(\"[data-testid='tweetText']\")?.innerText || '').trim(),\n    at: iso(a.querySelector('time')?.getAttribute('datetime')),\n    counts: { likes: num(label(\"[data-testid='like'], [data-testid='unlike']\")), reposts: num(label(\"[data-testid='retweet'], [data-testid='unretweet']\")), replies: num(label(\"[data-testid='reply']\")), views: num(label(\"a[href*='/analytics']\")) } });\n}\nconst entityText = (t) => {\n  const note = t.note_tweet?.note_tweet_results?.result; const l = t.legacy || {}; let text, urls;\n  const decode = (s) => String(s || '').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');\n  if (note?.text) { text = decode(note.text); urls = note.entity_set?.urls || []; } else { text = Array.from(decode(l.full_text)).slice((l.display_text_range || [0])[0]).join(''); urls = l.entities?.urls || []; for (const m of l.extended_entities?.media || l.entities?.media || []) if (m.url) text = text.split(m.url).join(''); }\n  for (const u of urls) if (u.url && u.expanded_url) text = text.split(u.url).join(u.expanded_url);\n  return text.trim();\n};\nconst party = (u, sn0) => { const sn = screenName(u) || sn0; return { name: u?.core?.name || u?.legacy?.name || sn, id: sn, url: 'https://x.com/' + sn }; };\nconst media = (l) => (l.extended_entities?.media || l.entities?.media || []).map((m) => compact({ kind: m.type === 'photo' ? 'image' : 'video', url: m.type === 'photo' ? m.media_url_https : ((m.video_info?.variants || []).filter((v) => /^video\\//.test(v.content_type || '') && v.url).sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0]?.url || m.media_url_https), alt: m.ext_alt_text })).filter((m) => m.url);\nconst toPost = (t) => {\n  const l = t.legacy || {}; const u = t.core?.user_results?.result; const article = t.article?.article_results?.result || null; const id = String(t.rest_id);\n  const edits = t.edit_control?.edit_tweet_ids || t.edit_control?.edit_control_initial?.edit_tweet_ids;\n  const q = unwrap(t.quoted_status_result?.result);\n  return { id, user_id: l.user_id_str || u?.rest_id || '', author: party(u, handle),\n    text: article ? String(article.plain_text || article.preview_text || '').trim() : entityText(t), title: article?.title || null,\n    at: iso(l.created_at), conversation: l.conversation_id_str || id,\n    reply_to: l.in_reply_to_status_id_str || null, reply_to_user: l.in_reply_to_user_id_str || null,\n    lang: l.lang && l.lang !== 'und' ? l.lang : null, is_article: !!article,\n    counts: compact({ likes: l.favorite_count, reposts: l.retweet_count, replies: l.reply_count, quotes: l.quote_count, bookmarks: l.bookmark_count, views: num(t.views?.count) }),\n    edits: Array.isArray(edits) ? Math.max(0, edits.length - 1) : null, attachments: media(l),\n    quoted: q?.legacy ? { id: String(q.rest_id || q.legacy.id_str), text: entityText(q), author: party(q.core?.user_results?.result, q.legacy.user_id_str) } : null };\n};\nconst posts = [...listed.values()].slice(0, cap).map(toPost);\nconst byId = new Map(posts.map((p) => [p.id, p]));\nconst selfReply = (p) => !!(p.reply_to && p.reply_to_user && p.reply_to_user === p.user_id);\nconst startOf = (p) => { let cur = p; const guard = new Set([p.id]); while (selfReply(cur) && byId.has(cur.reply_to) && !guard.has(cur.reply_to)) { cur = byId.get(cur.reply_to); guard.add(cur.id); } return cur; };\nconst groups = new Map();\nfor (const p of posts) { const start = startOf(p); const key = selfReply(start) ? start.conversation : start.id; if (!groups.has(key)) groups.set(key, []); groups.get(key).push(p); }\nconst order = (a, b) => a.id.length - b.id.length || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);\nconst items = [...groups.entries()].map(([key, group]) => {\n  const ps = group.slice().sort(order); const first = ps.find((p) => p.id === key) || ps[0];\n  const blocks = [], quoted = new Set();\n  for (const p of ps) {\n    blocks.push(compact({ id: p.id, kind: 'post', text: p.text, at: { order: blocks.length }, url: status(p.author.id, p.id), published_at: p.at === first.at ? null : p.at, attachments: p.attachments }));\n    if (p.quoted && !quoted.has(p.quoted.id)) { quoted.add(p.quoted.id); blocks.push(compact({ id: 'q-' + p.quoted.id, kind: 'quoted', text: p.quoted.text, at: { order: blocks.length }, author: p.quoted.author, url: status(p.quoted.author.id, p.quoted.id) })); }\n  }\n  const broken = ps.some((p) => selfReply(startOf(p)));\n  return compact({ type: 'rzn.item/v2', key: 'x:post:' + key, kind: 'post', url: status(first.author.id, key), title: first.title, author: first.author, published_at: first.at, published_in: X,\n    marker: ps.every((p) => p.edits != null) ? 'edit:' + ps.reduce((n, p) => n + p.edits, 0) + ';posts:' + ps.length : null,\n    fields: compact({ lang: first.lang, is_article: first.is_article, in_reply_to: first.reply_to && !selfReply(first) ? 'https://x.com/i/status/' + first.reply_to : null }),\n    counts: first.counts, blocks,\n    truncated: broken ? { reason: ps.some((p) => p.id === key) ? 'thread_gap' : 'thread_start_not_listed', returned_blocks: blocks.length } : null });\n});\nfor (const b of dom.slice(0, Math.max(0, cap - posts.length))) {\n  const url = status(b.screen_name, b.id);\n  items.push(compact({ type: 'rzn.item/v2', key: 'x:post:' + b.id, kind: 'post', url, author: { name: b.name || b.screen_name, id: b.screen_name, url: 'https://x.com/' + b.screen_name }, published_at: b.at, published_in: X, counts: compact(b.counts),\n    blocks: b.text ? [{ id: b.id, kind: 'post', text: b.text, at: { order: 0 }, url }] : [], truncated: { reason: 'post_detail_unavailable', returned_blocks: b.text ? 1 : 0 } }));\n}\nreturn { type: 'rzn.items/v2', items, next_cursor: null, listing: 'feed' };",
+          "captured_responses": true
         },
         "side_effects": [
           "read_only"
         ]
       },
-      "name": "Extract profile posts"
+      "name": "Return the posts from the captured timeline batches as rzn.items/v2",
+      "timeout_ms": 60000
     }
   ],
   "result": {
+    "contract": "rzn.items/v2",
     "artifact_policy": {
       "prefer_downloads": false
     },
     "include_debug": false,
     "output_schema": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "author": {
-            "type": "string"
-          },
-          "text": {
-            "type": "string"
-          },
-          "posted_at": {
-            "type": "string"
-          },
-          "post_url": {
-            "type": "string"
-          },
-          "reply_count": {
-            "type": "string"
-          },
-          "repost_count": {
-            "type": "string"
-          },
-          "like_count": {
-            "type": "string"
-          },
-          "view_count": {
-            "type": "string"
+      "type": "object",
+      "description": "rzn.items/v2 page (schema/rzn.items.v2.json): one rzn.item/v2 per thread, key x:post:<first post id>.",
+      "required": [
+        "type",
+        "items",
+        "listing"
+      ],
+      "properties": {
+        "type": {
+          "const": "rzn.items/v2"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "type",
+              "key",
+              "kind",
+              "url"
+            ]
           }
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "listing": {
+          "const": "feed"
         }
       }
     },
@@ -223,12 +213,14 @@
       }
     ],
     "returns": [
-      "Array of post cards with author, text, posted_at, post_url, reply_count, repost_count, like_count, view_count."
+      "rzn.items/v2 page, listing feed: one rzn.item/v2 per thread (a lone post is a thread of one), key x:post:<first post id>, author, published_at (RFC 3339), published_in X, counts (likes, reposts, replies, quotes, bookmarks, views), marker edit:<edits>;posts:<n>, blocks of kind post plus one quoted block per quoted post, image/video URLs as attachments.",
+      "Reposts are not returned. A thread whose first post was not on the page, or with a gap, is returned with truncated set and is not indexed."
     ],
     "notes": [
       "Read-only.",
       "For date-windowed results use `x_search_posts` instead.",
-      "Opens a fresh tab for parallel-safe execution."
+      "Opens a fresh tab for parallel-safe execution.",
+      "Makes no request of its own: a capture_responses step keeps the UserTweets timeline batches the page itself downloads while it opens and scrolls, and the final step maps those (full text including long posts, exact counts, edit count, thread id), so posts X dropped from the page while scrolling are still returned. A post no captured batch carried comes back truncated (post_detail_unavailable) with the card's text."
     ]
   }
 }

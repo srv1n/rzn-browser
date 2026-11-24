@@ -1,0 +1,72 @@
+{
+  "sample_of": "reddit/listing",
+  "source": "hand-built",
+  "note": "Built by scripts/workflow_samples/reddit_items_sample.mjs from the workflow's own mapping step and invented page data; replace with a recorded run.",
+  "output": {
+    "type": "rzn.items/v2",
+    "items": [
+      {
+        "type": "rzn.item/v2",
+        "key": "reddit:thread:abc123",
+        "kind": "thread",
+        "url": "https://www.reddit.com/r/rust/comments/abc123/how_do_you_pace_async_rust_services/",
+        "title": "How do you pace async Rust services?",
+        "author": {
+          "name": "u/ferris",
+          "id": "ferris",
+          "url": "https://www.reddit.com/user/ferris/"
+        },
+        "published_at": "2025-01-01T00:00:00+00:00",
+        "published_in": {
+          "name": "r/rust",
+          "id": "rust",
+          "url": "https://www.reddit.com/r/rust/"
+        },
+        "fields": {
+          "flair": "question",
+          "domain": "self.rust",
+          "link": "https://www.reddit.com/r/rust/comments/abc123/how_do_you_pace_async_rust_services/",
+          "is_self": true,
+          "over_18": false
+        },
+        "counts": {
+          "score": 212,
+          "upvote_ratio": 0.97,
+          "comments": 3
+        }
+      },
+      {
+        "type": "rzn.item/v2",
+        "key": "reddit:thread:def456",
+        "kind": "thread",
+        "url": "https://www.reddit.com/r/rust/comments/def456/announcing_a_crate/",
+        "title": "Announcing a crate",
+        "author": {
+          "name": "u/maintainer",
+          "id": "maintainer",
+          "url": "https://www.reddit.com/user/maintainer/"
+        },
+        "published_at": "2025-01-01T23:00:00+00:00",
+        "published_in": {
+          "name": "r/rust",
+          "id": "rust",
+          "url": "https://www.reddit.com/r/rust/"
+        },
+        "marker": "edited:1735776000",
+        "fields": {
+          "domain": "github.com",
+          "link": "https://github.com/example/crate",
+          "is_self": false,
+          "over_18": false
+        },
+        "counts": {
+          "score": 98,
+          "upvote_ratio": 0.9,
+          "comments": 14
+        }
+      }
+    ],
+    "next_cursor": null,
+    "listing": "feed"
+  }
+}

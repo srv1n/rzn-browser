@@ -2,11 +2,11 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "reddit/thread",
   "name": "Reddit: Thread",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "system": "reddit",
   "capability": "reddit.thread.read",
   "summary": "Read one Reddit post and its comment tree as structured JSON.",
-  "description": "Opens old.reddit.com in the user's Chrome session, then fetches the post's .json listing same-origin (cookies included) and returns the post plus a nested comment tree. Works where API clients are IP-blocked; no page navigation race and no text truncation.",
+  "description": "Opens old.reddit.com in the user's Chrome session, then fetches the post's .json listing same-origin (cookies included) and returns the thread as one rzn.item/v2. Works where API clients are IP-blocked; no page navigation race and no text truncation.",
   "params": {
     "properties": {
       "post": {
@@ -24,7 +24,14 @@
         "kind": "string",
         "required": false,
         "description": "Comment sort order.",
-        "enum_values": ["best", "top", "new", "controversial", "old", "qa"],
+        "enum_values": [
+          "best",
+          "top",
+          "new",
+          "controversial",
+          "old",
+          "qa"
+        ],
         "default": "best"
       }
     },
@@ -35,13 +42,17 @@
       "class": "browser_state",
       "idempotency": "safe_retry",
       "confirmation_required": false,
-      "scopes": ["old.reddit.com"]
+      "scopes": [
+        "old.reddit.com"
+      ]
     },
     {
       "class": "read_only",
       "idempotency": "safe_retry",
       "confirmation_required": false,
-      "scopes": ["old.reddit.com"]
+      "scopes": [
+        "old.reddit.com"
+      ]
     }
   ],
   "runtime": {
@@ -55,8 +66,12 @@
       "id": "s1",
       "action": {
         "kind": "navigate_to_url",
-        "inputs": { "url": "https://old.reddit.com/" },
-        "side_effects": ["browser_state"]
+        "inputs": {
+          "url": "https://old.reddit.com/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
       },
       "name": "Open old.reddit.com so the fetch below is same-origin and carries the session cookies",
       "timeout_ms": 30000
@@ -67,29 +82,59 @@
         "kind": "execute_javascript",
         "inputs": {
           "world": "main",
-          "args": ["{post}", "{limit}", "{sort}"],
-          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const raw = cleanArg(arg0); if (!raw) throw new Error('post is required'); const m = raw.match(/\\/comments\\/([a-z0-9]+)/i); const id = m ? m[1] : (/^[a-z0-9]{4,12}$/i.test(raw) ? raw : ''); if (!id) throw new Error('could not find a post id in: ' + raw); const limit = Math.max(1, Math.min(500, parseInt(cleanArg(arg1) || '500', 10) || 500)); const sortIn = (cleanArg(arg2) || 'best').toLowerCase(); const sort = sortIn === 'best' ? 'confidence' : sortIn; const url = '/comments/' + id + '.json?limit=' + limit + '&sort=' + encodeURIComponent(sort) + '&raw_json=1'; const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('reddit returned HTTP ' + res.status + ' for ' + url); const data = await res.json(); if (!Array.isArray(data) || data.length < 2) throw new Error('unexpected listing shape'); const p = (data[0].data.children[0] || {}).data || {}; let omitted = 0; let count = 0; const walk = (children) => { const out = []; for (const c of (children || [])) { if (c.kind === 'more') { omitted += (c.data && c.data.count) || 0; continue; } if (c.kind !== 't1') continue; const d = c.data || {}; count += 1; out.push({ id: d.id, author: d.author || null, body: d.body || '', score: typeof d.score === 'number' ? d.score : null, created_utc: d.created_utc || null, permalink: d.permalink ? 'https://www.reddit.com' + d.permalink : null, replies: d.replies && d.replies.data ? walk(d.replies.data.children) : [] }); } return out; }; const comments = walk(data[1].data.children); return JSON.stringify({ post: { id: p.id || id, title: p.title || null, subreddit: p.subreddit || null, author: p.author || null, selftext: p.selftext || '', url: p.url || null, permalink: p.permalink ? 'https://www.reddit.com' + p.permalink : null, score: typeof p.score === 'number' ? p.score : null, num_comments: p.num_comments == null ? null : p.num_comments, created_utc: p.created_utc || null, over_18: !!p.over_18 }, comments: comments, comment_count: count, more_omitted: omitted, source_url: 'https://old.reddit.com' + url });"
+          "args": [
+            "{post}",
+            "{limit}",
+            "{sort}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst raw = cleanArg(arg0); if (!raw) throw new Error('post is required');\nconst m = raw.match(/\\/comments\\/([a-z0-9]+)/i); const id = m ? m[1] : (/^[a-z0-9]{4,12}$/i.test(raw) ? raw : ''); if (!id) throw new Error('could not find a post id in: ' + raw);\nconst limit = Math.max(1, Math.min(500, parseInt(cleanArg(arg1) || '500', 10) || 500));\nconst sortIn = (cleanArg(arg2) || 'best').toLowerCase(); const sort = sortIn === 'best' ? 'confidence' : sortIn;\nconst url = '/comments/' + id + '.json?limit=' + limit + '&sort=' + encodeURIComponent(sort) + '&raw_json=1';\nconst res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('reddit returned HTTP ' + res.status + ' for ' + url);\nconst data = await res.json(); if (!Array.isArray(data) || data.length < 2) throw new Error('unexpected listing shape');\nconst BASE = 'https://www.reddit.com';\nconst compact = (o) => { for (const k of Object.keys(o)) { const v = o[k]; if (v == null || v === '' || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)) delete o[k]; } return o; };\nconst num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);\nconst abs = (p) => (!p ? null : /^https?:\\/\\//.test(p) ? p : BASE + p);\nconst date = (v) => (typeof v === 'number' && v > 0 ? new Date(v * 1000).toISOString().replace(/\\.000Z$/, 'Z').replace(/Z$/, '+00:00') : null);\nconst user = (n) => (n && n !== '[deleted]' ? { name: 'u/' + n, id: n, url: BASE + '/user/' + n + '/' } : null);\nconst place = (s) => (s ? { name: 'r/' + s, id: s, url: BASE + '/r/' + s + '/' } : null);\nconst entry = (d) => compact({ type: 'rzn.item/v2', key: 'reddit:thread:' + d.id, kind: 'thread', url: abs(d.permalink) || BASE + '/comments/' + d.id, title: d.title, author: user(d.author), published_at: date(d.created_utc), published_in: place(d.subreddit),\n  marker: typeof d.edited === 'number' ? 'edited:' + d.edited : null,\n  fields: compact({ flair: d.link_flair_text, domain: d.domain, link: d.url, is_self: d.is_self, over_18: d.over_18 }),\n  counts: compact({ score: num(d.score), upvote_ratio: num(d.upvote_ratio), comments: num(d.num_comments) }) });\nconst p = (data[0].data.children[0] || {}).data || {}; if (!p.id) p.id = id;\nconst item = entry(p); const blocks = [];\nlet body = p.selftext || ''; if (!body.trim()) body = p.title || '';\nif (body.trim()) blocks.push({ id: p.id, kind: 'post', text: body });\nlet omitted = 0;\nconst walk = (children, parent, depth) => { for (const c of children || []) { if (c.kind === 'more') { omitted += (c.data && c.data.count) || 0; continue; } if (c.kind !== 't1') continue; const d = c.data || {}; if (!d.id) continue; let next = parent; const text = d.body || '';\n  if (text.trim() && text !== '[deleted]' && text !== '[removed]') { blocks.push(compact({ id: d.id, kind: 'comment', text, parent, url: abs(d.permalink), author: user(d.author), published_at: date(d.created_utc), fields: compact({ depth, is_op: d.is_submitter, distinguished: d.distinguished, stickied: d.stickied }), counts: compact({ score: num(d.score) }) })); next = d.id; }\n  if (d.replies && d.replies.data) walk(d.replies.data.children, next, depth + 1); } };\nwalk(data[1].data.children, blocks.length ? p.id : null, 0);\nif (blocks.length) item.blocks = blocks;\nconst total = num(p.num_comments) || 0;\nif (total > limit || omitted > 0) item.truncated = { reason: total > limit ? 'comment_limit' : 'more_comments_not_fetched', returned_blocks: blocks.length, total_blocks_hint: total + 1 };\nreturn item;"
         },
-        "side_effects": ["read_only"]
+        "side_effects": [
+          "read_only"
+        ]
       },
       "name": "Fetch the thread JSON same-origin and flatten it into post + nested comments",
       "timeout_ms": 45000
     }
   ],
   "result": {
-    "artifact_policy": { "prefer_downloads": false },
+    "contract": "rzn.item/v2",
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
     "include_debug": false,
     "output_schema": {
       "type": "object",
+      "description": "rzn.item/v2 (schema/rzn.item.v2.json): one thread, key reddit:thread:<id>; the post is the first block, each comment a block naming its parent.",
+      "required": [
+        "type",
+        "key",
+        "kind",
+        "url",
+        "author",
+        "published_at",
+        "published_in",
+        "blocks"
+      ],
       "properties": {
-        "post": { "type": "object" },
-        "comments": { "type": "array", "items": { "type": "object" } },
-        "comment_count": { "type": "integer" },
-        "more_omitted": { "type": "integer" },
-        "source_url": { "type": "string" }
+        "type": {
+          "const": "rzn.item/v2"
+        },
+        "key": {
+          "type": "string"
+        },
+        "blocks": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
       }
     },
-    "output_selector": { "step_id": "s2", "path": "$" }
+    "output_selector": {
+      "step_id": "s2",
+      "path": "$"
+    }
   },
   "help": {
     "summary": "Read one Reddit post and its comment tree as structured JSON.",
@@ -109,12 +154,12 @@
       }
     ],
     "returns": [
-      "JSON { post, comments[], comment_count, more_omitted, source_url }. Each comment has id, author, body, score, created_utc, permalink and nested replies[].",
-      "more_omitted counts comments Reddit collapsed behind 'load more' links; they are not fetched."
+      "rzn.item/v2 with the rzn-tools Reddit connector's keys: key reddit:thread:<id>, kind thread, title, author u/<name>, published_at, published_in r/<subreddit>, marker edited:<time> when edited, fields flair/domain/link/is_self/over_18, counts score/upvote_ratio/comments.",
+      "Blocks: the post body (or title) as kind post, then every comment as kind comment with parent, author, published_at, url, fields depth/is_op/distinguished/stickied and counts score.",
+      "truncated is set when the thread has more comments than limit or Reddit collapsed some behind 'load more' (not fetched); such an item is not indexed."
     ],
     "notes": [
       "Uses the signed-in Chrome session, so it works when Reddit blocks API clients by IP.",
-      "Returns a JSON string (like reddit/search) because the runner flattens objects nested deeper than two levels to \"[Object]\", which would drop reply trees.",
       "Fetches JSON in-page instead of navigating to it, which avoids the navigation race that makes reddit/search flaky and the 12k-character cap of innerText readers."
     ]
   }

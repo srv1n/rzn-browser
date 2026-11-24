@@ -2,11 +2,11 @@
   "schema_version": "rzn.workflow_manifest",
   "id": "reddit/listing",
   "name": "Reddit: Subreddit listing",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "system": "reddit",
   "capability": "reddit.listing.read",
   "summary": "List posts from a subreddit feed (top or hot) as structured JSON.",
-  "description": "Opens old.reddit.com in the user's Chrome session and fetches /r/<subreddit>/<sort>.json same-origin, following 'after' cursors until limit posts are collected. Works where API clients are IP-blocked.",
+  "description": "Opens old.reddit.com in the user's Chrome session and fetches /r/<subreddit>/<sort>.json same-origin, following 'after' cursors until limit posts are collected, and returns them as rzn.items/v2 entries. Works where API clients are IP-blocked.",
   "params": {
     "properties": {
       "subreddit": {
@@ -98,7 +98,7 @@
             "{time}",
             "{limit}"
           ],
-          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; }; const sub = cleanArg(arg0).replace(/^\\/?r\\//i, '').replace(/\\/$/, ''); if (!/^[A-Za-z0-9_]{2,32}$/.test(sub)) throw new Error('subreddit is required (name without r/)'); const sort = (cleanArg(arg1) || 'top').toLowerCase(); if (!['top','hot'].includes(sort)) throw new Error('bad sort ' + sort); const time = (cleanArg(arg2) || 'all').toLowerCase(); const limit = Math.max(1, Math.min(500, parseInt(cleanArg(arg3) || '25', 10) || 25)); const posts = []; let after = ''; let pages = 0; while (posts.length < limit && pages < 10) { pages += 1; const q = new URLSearchParams({ limit: String(Math.min(100, limit - posts.length)), raw_json: '1' }); if (sort === 'top') q.set('t', time); if (after) q.set('after', after); const url = '/r/' + sub + (sort === 'hot' ? '' : '/' + sort) + '.json?' + q.toString(); const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('reddit returned HTTP ' + res.status + ' for ' + url); const data = await res.json(); const kids = (data && data.data && data.data.children) || []; for (const c of kids) { const d = c.data || {}; posts.push({ id: d.id, title: d.title || null, subreddit: d.subreddit || sub, author: d.author || null, score: typeof d.score === 'number' ? d.score : null, num_comments: d.num_comments == null ? null : d.num_comments, created_utc: d.created_utc || null, permalink: d.permalink ? 'https://www.reddit.com' + d.permalink : null, url: d.url || null, is_self: !!d.is_self, over_18: !!d.over_18, stickied: !!d.stickied }); } after = data && data.data && data.data.after; if (!after || !kids.length) break; } return JSON.stringify({ subreddit: sub, sort: sort, time: sort === 'top' ? time : null, count: Math.min(posts.length, limit), posts: posts.slice(0, limit) });"
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst sub = cleanArg(arg0).replace(/^\\/?r\\//i, '').replace(/\\/$/, ''); if (!/^[A-Za-z0-9_]{2,32}$/.test(sub)) throw new Error('subreddit is required (name without r/)');\nconst sort = (cleanArg(arg1) || 'top').toLowerCase(); if (!['top', 'hot'].includes(sort)) throw new Error('bad sort ' + sort);\nconst time = (cleanArg(arg2) || 'all').toLowerCase(); const limit = Math.max(1, Math.min(500, parseInt(cleanArg(arg3) || '25', 10) || 25));\nconst BASE = 'https://www.reddit.com';\nconst compact = (o) => { for (const k of Object.keys(o)) { const v = o[k]; if (v == null || v === '' || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)) delete o[k]; } return o; };\nconst num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);\nconst abs = (p) => (!p ? null : /^https?:\\/\\//.test(p) ? p : BASE + p);\nconst date = (v) => (typeof v === 'number' && v > 0 ? new Date(v * 1000).toISOString().replace(/\\.000Z$/, 'Z').replace(/Z$/, '+00:00') : null);\nconst user = (n) => (n && n !== '[deleted]' ? { name: 'u/' + n, id: n, url: BASE + '/user/' + n + '/' } : null);\nconst place = (s) => (s ? { name: 'r/' + s, id: s, url: BASE + '/r/' + s + '/' } : null);\nconst entry = (d) => compact({ type: 'rzn.item/v2', key: 'reddit:thread:' + d.id, kind: 'thread', url: abs(d.permalink) || BASE + '/comments/' + d.id, title: d.title, author: user(d.author), published_at: date(d.created_utc), published_in: place(d.subreddit),\n  marker: typeof d.edited === 'number' ? 'edited:' + d.edited : null,\n  fields: compact({ flair: d.link_flair_text, domain: d.domain, link: d.url, is_self: d.is_self, over_18: d.over_18 }),\n  counts: compact({ score: num(d.score), upvote_ratio: num(d.upvote_ratio), comments: num(d.num_comments) }) });\nconst items = []; let after = ''; let pages = 0;\nwhile (items.length < limit && pages < 10) { pages += 1; const q = new URLSearchParams({ limit: String(Math.min(100, limit - items.length)), raw_json: '1' }); if (sort === 'top') q.set('t', time); if (after) q.set('after', after);\n  const url = '/r/' + sub + (sort === 'hot' ? '' : '/' + sort) + '.json?' + q.toString();\n  const res = await fetch(url, { credentials: 'include', headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('reddit returned HTTP ' + res.status + ' for ' + url);\n  const data = await res.json(); const kids = (data && data.data && data.data.children) || [];\n  for (const c of kids) { if (c.kind === 't3' && c.data && c.data.id) items.push(entry(c.data)); }\n  after = data && data.data && data.data.after; if (!after || !kids.length) break; }\nreturn { type: 'rzn.items/v2', items: items.slice(0, limit), next_cursor: null, listing: 'feed' };"
         },
         "side_effects": [
           "read_only"
@@ -109,27 +109,43 @@
     }
   ],
   "result": {
+    "contract": "rzn.items/v2",
     "artifact_policy": {
       "prefer_downloads": false
     },
     "include_debug": false,
     "output_schema": {
       "type": "object",
+      "description": "rzn.items/v2 page (schema/rzn.items.v2.json) of listing entries, key reddit:thread:<id>, listing feed.",
+      "required": [
+        "type",
+        "items",
+        "listing"
+      ],
       "properties": {
-        "subreddit": {
-          "type": "string"
+        "type": {
+          "const": "rzn.items/v2"
         },
-        "sort": {
-          "type": "string"
-        },
-        "count": {
-          "type": "integer"
-        },
-        "posts": {
+        "items": {
           "type": "array",
           "items": {
-            "type": "object"
+            "type": "object",
+            "required": [
+              "type",
+              "key",
+              "kind",
+              "url"
+            ]
           }
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "listing": {
+          "const": "feed"
         }
       }
     },
@@ -157,7 +173,7 @@
       }
     ],
     "returns": [
-      "JSON { subreddit, sort, time, count, posts[] } where each post has id, title, subreddit, author, score, num_comments, created_utc, permalink, url, is_self, over_18, stickied."
+      "rzn.items/v2 page, listing feed, of thread entries with the rzn-tools Reddit connector's keys (reddit:thread:<id>): title, author, published_at, published_in, marker, fields and counts, no blocks. next_cursor is null; raise limit for more."
     ],
     "notes": [
       "Uses the signed-in Chrome session, so it works when Reddit blocks API clients by IP.",

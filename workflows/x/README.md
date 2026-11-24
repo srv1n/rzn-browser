@@ -16,11 +16,25 @@ Canonical pack for automating `x.com` via the authenticated Chrome session. Work
 | `x_create_post` | Publish one top-level post after a review gate. | `post_text` |
 | `x_send_dm` | Start a new DM with a handle after a review gate. | `recipient_handle`, `message_text` |
 | `x_reply_dm_thread` | Reply inside an existing DM thread after a review gate. | `thread_url`, `message_text` |
-| `x_search_posts` | Search posts from a handle, optionally within a date window (top/latest/live). | `handle` (+ optional `since_date`, `until_date`, `timeline_mode`) |
-| `x_profile_posts` | Return up to 20 recent posts from one profile. | `handle` |
+| `x_search_posts` | Search posts from a handle, optionally within a date window (top/latest/live); returns `rzn.items/v2`. | `handle` (+ optional `since_date`, `until_date`, `timeline_mode`) |
+| `x_profile_posts` | Return up to 20 recent posts from one profile; returns `rzn.items/v2`. | `handle` |
 | `x_export_account` | Export one account over a date range in one tab, including full text, media URLs, articles when exposed by X, and detected threads. | `handle`, `since_date`, `until_date` |
 
 All mutating flows (`x_like_post`, `x_reply_post`, `x_create_post`, `x_send_dm`, `x_reply_dm_thread`) pause at an in-page review gate (`approval_mode: "ask_user"`, `continue_on_timeout: false`) and only send on explicit continue.
+
+## Items for an index
+
+`x_profile_posts` and `x_search_posts` declare `result.contract: rzn.items/v2` and return one
+`rzn.item/v2` per thread (key `x:post:<first post id>`), listing `feed`. They make no request of
+their own: a first `capture_responses` step keeps the `UserTweets` / `SearchTimeline` batches the
+page itself downloads while the workflow opens and scrolls, and the final `execute_javascript` step
+(`captured_responses: true`) maps those for the full text (long posts included), thread id, edit
+count and exact counts. Posts X removed from the page while scrolling are still returned. A post no
+captured batch carried comes back from its card, `truncated` (`post_detail_unavailable`). Reposts
+and ads are dropped; a thread whose first post was not listed comes back `truncated` and is not
+indexed.
+`describe.json` is the family's `rzn.describe/v2` (connector `x-browser`); `samples/` holds the
+outputs the lint checks (hand-built until recorded, see `scripts/workflow_samples/`).
 
 ## Auth
 

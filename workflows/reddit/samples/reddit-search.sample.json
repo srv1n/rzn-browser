@@ -1,0 +1,56 @@
+{
+  "sample_of": "reddit/search",
+  "source": "hand-built",
+  "note": "Built by scripts/workflow_samples/reddit_items_sample.mjs from the workflow's own mapping step and invented page data; replace with a recorded run.",
+  "output": {
+    "type": "rzn.items/v2",
+    "items": [
+      {
+        "type": "rzn.item/v2",
+        "key": "reddit:thread:abc123",
+        "kind": "thread",
+        "url": "https://www.reddit.com/r/rust/comments/abc123/slug/",
+        "title": "How do you pace async Rust services?",
+        "author": {
+          "name": "u/ferris",
+          "id": "ferris",
+          "url": "https://www.reddit.com/user/ferris/"
+        },
+        "published_at": "2025-01-01T00:00:00+00:00",
+        "published_in": {
+          "name": "r/rust",
+          "id": "rust",
+          "url": "https://www.reddit.com/r/rust/"
+        },
+        "counts": {
+          "score": 1212,
+          "comments": 56
+        }
+      },
+      {
+        "type": "rzn.item/v2",
+        "key": "reddit:thread:ghi789",
+        "kind": "thread",
+        "url": "https://www.reddit.com/r/learnrust/comments/ghi789/slug/",
+        "title": "Tokio vs async-std in 2025",
+        "author": {
+          "name": "u/newcomer",
+          "id": "newcomer",
+          "url": "https://www.reddit.com/user/newcomer/"
+        },
+        "published_at": "2025-01-03T09:30:00+00:00",
+        "published_in": {
+          "name": "r/learnrust",
+          "id": "learnrust",
+          "url": "https://www.reddit.com/r/learnrust/"
+        },
+        "counts": {
+          "score": 7,
+          "comments": 3
+        }
+      }
+    ],
+    "next_cursor": null,
+    "listing": "feed"
+  }
+}

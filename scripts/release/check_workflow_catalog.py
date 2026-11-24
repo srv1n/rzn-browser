@@ -15,6 +15,9 @@ from release_utils import repo_root
 
 CONTRACT = "rzn.workflow_manifest"
 REQUIRED_FIELDS = ("id", "name", "version", "system", "capability")
+# result.contract values; samples, describe and the ratchet are checked by the Rust lint
+# (crates/rzn_browser/src/workflow_contract_lint.rs).
+CONTRACTS = ("rzn.item/v2", "rzn.items/v2", "none")
 
 
 def side_effect_classes(value: object) -> set[str]:
@@ -49,6 +52,10 @@ def main() -> None:
         missing = [field for field in REQUIRED_FIELDS if not data.get(field)]
         if missing:
             errors.append(f"{rel}: missing required field(s): {', '.join(missing)}")
+
+        contract = (data.get("result") or {}).get("contract")
+        if contract not in CONTRACTS:
+            errors.append(f"{rel}: result.contract must be one of {', '.join(CONTRACTS)}")
 
         steps = data.get("steps")
         if steps is not None and (not isinstance(steps, list) or not steps):

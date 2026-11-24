@@ -2,6 +2,7 @@ pub mod ads_smoke;
 pub mod errors;
 pub mod executor;
 pub mod framing;
+pub mod item_contract;
 pub mod runtime_paths;
 pub mod secure_files;
 pub mod workflow_contract {

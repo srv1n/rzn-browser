@@ -1,6 +1,6 @@
 // Auto-generated from schema/actions.json
 // schema-version: rzn.actions
-// schema-sha256: 2353a3c2651e62fecf5ee6f56df4f3323dd6e40d05da7a6474ca6966e31390f3
+// schema-sha256: 0261896f66098189e0f73bdc6d9365811d6ad4c1906f6e60c13d10de0433dc2f
 // DO NOT EDIT MANUALLY
 
 export interface RobustSelectors {
@@ -331,6 +331,7 @@ export interface ExecuteJavascript {
   return_value?: boolean;
   world?: 'isolated' | 'main';
   timeout_ms?: number;
+  captured_responses?: boolean;
   [key: string]: any;
 }
 
@@ -556,6 +557,18 @@ export interface ExtractPageAssets {
   [key: string]: any;
 }
 
+export interface CaptureResponses {
+  type: 'capture_responses';
+  url_pattern?: string;
+  resource_types?: string[];
+  methods?: string[];
+  max_responses?: number;
+  max_body_bytes?: number;
+  max_total_bytes?: number;
+  stop?: boolean;
+  [key: string]: any;
+}
+
 export type Action = 
   | NavigateToUrl
   | OpenNewTab
@@ -617,7 +630,8 @@ export type Action =
   | WaitForAuth
   | WaitForTotp
   | WaitForVerification
-  | ExtractPageAssets;
+  | ExtractPageAssets
+  | CaptureResponses;
 
 // Type guards
 export function isNavigateToUrl(action: Action): action is NavigateToUrl {
@@ -862,6 +876,10 @@ export function isWaitForVerification(action: Action): action is WaitForVerifica
 
 export function isExtractPageAssets(action: Action): action is ExtractPageAssets {
   return action.type === 'extract_page_assets';
+}
+
+export function isCaptureResponses(action: Action): action is CaptureResponses {
+  return action.type === 'capture_responses';
 }
 
 
@@ -1161,6 +1179,7 @@ export const ExecuteJavascriptSchema = z.object({
   return_value: z.boolean().optional(),
   world: z.enum(['isolated', 'main']).optional(),
   timeout_ms: z.number().int().min(0).optional(),
+  captured_responses: z.boolean().optional(),
 }).passthrough();
 
 export const EvalMainWorldSchema = z.object({
@@ -1358,6 +1377,17 @@ export const ExtractPageAssetsSchema = z.object({
   limit: z.number().int().min(0).optional(),
 }).passthrough();
 
+export const CaptureResponsesSchema = z.object({
+  type: z.literal('capture_responses'),
+  url_pattern: z.string().optional(),
+  resource_types: z.array(z.string()).optional(),
+  methods: z.array(z.string()).optional(),
+  max_responses: z.number().int().min(1).optional(),
+  max_body_bytes: z.number().int().min(1).optional(),
+  max_total_bytes: z.number().int().min(1).optional(),
+  stop: z.boolean().optional(),
+}).passthrough();
+
 export const ActionSchema = z.discriminatedUnion('type', [
   NavigateToUrlSchema,
   OpenNewTabSchema,
@@ -1420,6 +1450,7 @@ export const ActionSchema = z.discriminatedUnion('type', [
   WaitForTotpSchema,
   WaitForVerificationSchema,
   ExtractPageAssetsSchema,
+  CaptureResponsesSchema,
 ]);
 
 export type ActionFromSchema = z.infer<typeof ActionSchema>;

@@ -29,6 +29,7 @@
     }
   ],
   "result": {
+    "contract": "none",
     "include_debug": false,
     "artifact_policy": {
       "prefer_downloads": false

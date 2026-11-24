@@ -1342,3 +1342,27 @@ const MANIFEST_GOOGLE_SEARCH: &str = r#"{
     "output_selector": { "step_id": "extract", "path": "$" }
   }
 }"#;
+
+#[test]
+fn x_read_workflows_capture_before_they_navigate_and_map_the_capture() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../workflows/x");
+    for file in ["x_profile_posts.json", "x_search_posts.json"] {
+        let path = root.join(file);
+        let params = HashMap::from([("handle".to_string(), "jack".to_string())]);
+        let loaded = load_workflow_for_run(&path.to_string_lossy(), &params).expect(file);
+        validate_steps(&loaded.steps).expect("steps pass schema/actions.json");
+        let steps = loaded
+            .steps
+            .iter()
+            .map(RuntimeStep::executor_step)
+            .collect::<Vec<_>>();
+        assert_eq!(steps[0]["type"], "capture_responses", "{file}");
+        assert!(steps[0]["url_pattern"]
+            .as_str()
+            .is_some_and(|p| !p.is_empty()));
+        assert_eq!(steps[1]["type"], "navigate_to_url", "{file}");
+        let last = steps.last().expect("steps");
+        assert_eq!(last["captured_responses"], true, "{file}");
+        assert!(!last["script"].as_str().unwrap_or("").contains("fetch("));
+    }
+}

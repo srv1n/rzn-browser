@@ -89,9 +89,38 @@ The extension applies two rules to every workflow, so a plain
   `SITE_CHALLENGE` / `site_challenge`, which pauses the site.
 
 The steps set the rest of the pace. Click a link on the current page when the
-flow follows one. Do not `fetch` extra pages in the background. Scroll
-(`scroll_window_to`) and pause (`wait_for_timeout`) before you extract from a
-page a person would read.
+flow follows one. Scroll (`scroll_window_to`) and pause (`wait_for_timeout`)
+before you extract from a page a person would read.
+
+### Read what the page already loaded
+
+A read workflow makes no request of its own: no `fetch`, `XMLHttpRequest`,
+`navigator.sendBeacon`, `WebSocket` or `EventSource` in a script, no
+`same_origin_request` step, no per-item lookups. Keep a copy of the responses
+the site's own app downloads instead:
+
+```json
+{ "id": "capture", "action": { "kind": "capture_responses",
+  "inputs": { "url_pattern": "/graphql/[^/?]+/UserTweets\\?", "methods": ["GET"] },
+  "side_effects": ["browser_state"] } }
+```
+
+Put it before `navigate_to_url`; the tab then opens blank, starts capturing and
+navigates, so the first batch is kept too. `url_pattern` is a JavaScript regular
+expression tested against each response URL. Optional: `resource_types`
+(default `["XHR", "Fetch"]`, `["*"]` for any), `methods`, `max_responses` (200),
+`max_body_bytes` (8 MiB) and `max_total_bytes` (24 MiB). `{"stop": true}` ends a
+capture early; otherwise it ends with the run. The extension reads bodies the
+browser already received (CDP `Network.getResponseBody`), so nothing is sent.
+If it cannot watch the tab, the step fails with `CAPTURE_ATTACH_FAILED`.
+
+A later `execute_javascript` step with `"captured_responses": true` gets
+`params.captured_responses`: `{ url_pattern, responses: [{ seq, url, method,
+status, mime_type, resource_type, bytes, json | text }], duplicates, dropped,
+detached }`, in arrival order, identical bodies once. Map those; read the DOM
+only for what no response carried. `x_profile_posts` shows the pattern. The lint
+`READ_WORKFLOWS_MAKING_REQUESTS_BASELINE` counts read workflows still making
+their own requests; lower it in the change that moves one.
 
 Keep timing out of page JavaScript. Chrome throttles timers in background tabs
 to about once a minute, so `setTimeout` loops and `simulate_human_behavior`
@@ -108,6 +137,30 @@ commerce and reviews (Amazon, Etsy, G2, Capterra, App Store, Airbnb), ads and
 market intelligence (Meta Ad Library, Google Ads Transparency, Apple Ads), AI
 apps (ChatGPT, Claude), and social (X, Reddit, Hacker News, Instagram,
 LinkedIn). Each pack keeps site logic in JSON and shares the generic engine.
+
+## Declare the output contract
+
+Every manifest sets `result.contract`:
+
+- `rzn.items/v2` (a page) or `rzn.item/v2` (one item) for a read workflow whose output feeds an
+  index. The shape is rzn-tools `rzn_tools_core::item`, vendored as `schema/rzn.item.v2.json`,
+  `schema/rzn.items.v2.json` and `schema/rzn.describe.v2.json` (each names the rzn-tools commit and
+  file hash it follows). Do the site mapping in the workflow's final step, usually
+  `execute_javascript`; keep the engine generic.
+- `none` for write, utility and not-yet-moved read workflows.
+
+An item contract also needs:
+
+- `workflows/<system>/samples/<file stem>.sample.json`:
+  `{"sample_of": "<workflow id>", "source": "recorded" | "hand-built", "output": <result>}`. The
+  output must pass the vendored schema and the rules a schema cannot express: full items carry
+  `author`, `published_at` (RFC 3339), `published_in` and `blocks`; keys are `<site>:<kind>:<id>`;
+  `listing` is `full` or `feed` (say `feed` unless the pages name every item in scope).
+- `workflows/<system>/describe.json`: the family's `rzn.describe/v2`, naming workflows of that
+  family as `list_tool` and `get_tool`.
+
+`READ_WORKFLOWS_ON_NONE_BASELINE` in `crates/rzn_browser/src/workflow_contract_lint.rs` counts read
+workflows (no `external_write`) still on `none`. Lower it in the change that moves one; never raise it.
 
 ## Validate
 

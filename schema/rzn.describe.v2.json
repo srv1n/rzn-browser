@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Hand-derived from rzn-tools rzn_tools_core/src/item.rs at commit d6413f0 (item.rs sha256 2611c244cec2f4dde38920c441937b85fe1c4c14c650565edafeb36c4986820a), following schemars 1.1 output for description_schema(). Not generated: no cargo run was available. Re-derive when that file's hash changes; the rules a schema cannot express live in rzn_core::item_contract.",
+  "title": "Description",
+  "description": "What a connector exposes, returned once by its `describe` tool.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "rzn.describe/v2",
+      "default": "rzn.describe/v2"
+    },
+    "connector": {
+      "type": "string"
+    },
+    "kinds": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/KindDescription"
+      }
+    }
+  },
+  "required": [
+    "connector",
+    "kinds"
+  ],
+  "$defs": {
+    "FieldDescription": {
+      "description": "One field a connector exposes. `of` is a fact about the source; `changes: true` marks a count.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "of": {
+          "$ref": "#/$defs/FieldOf"
+        },
+        "type": {
+          "$ref": "#/$defs/FieldType"
+        },
+        "list": {
+          "type": "boolean",
+          "default": false
+        },
+        "changes": {
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "required": [
+        "name",
+        "of",
+        "type"
+      ]
+    },
+    "FieldOf": {
+      "type": "string",
+      "enum": [
+        "item",
+        "passage"
+      ]
+    },
+    "FieldType": {
+      "type": "string",
+      "enum": [
+        "string",
+        "number",
+        "date",
+        "boolean"
+      ]
+    },
+    "KindDescription": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "identity": {
+          "description": "The identity rule, for example `youtube:video:<video id>`.",
+          "type": "string"
+        },
+        "listing": {
+          "$ref": "#/$defs/Listing"
+        },
+        "scopes": {
+          "description": "Scope arguments the list tool accepts (channel, playlist, subreddit, ...).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "list_tool": {
+          "description": "The tool that lists items and the tool that fetches one.",
+          "type": "string"
+        },
+        "get_tool": {
+          "type": "string"
+        },
+        "fields": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FieldDescription"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "identity",
+        "listing",
+        "scopes",
+        "list_tool",
+        "get_tool",
+        "fields"
+      ]
+    },
+    "Listing": {
+      "description": "`full`: the pages name everything in scope, so a key missing from a completed listing was\ndeleted. `feed`: they do not (a search, a front page), so absence means nothing.",
+      "type": "string",
+      "enum": [
+        "full",
+        "feed"
+      ]
+    }
+  }
+}

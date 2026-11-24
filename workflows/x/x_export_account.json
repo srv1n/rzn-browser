@@ -70,6 +70,7 @@
     }
   ],
   "result": {
+    "contract": "none",
     "artifact_policy": { "prefer_downloads": false },
     "include_debug": false,
     "output_selector": { "step_id": "s3", "path": "$" },

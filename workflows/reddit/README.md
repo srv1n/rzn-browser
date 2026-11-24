@@ -14,6 +14,16 @@ rzn-browser workflow show reddit/profile-history
 rzn-browser workflow inspect reddit profile-history --json
 ```
 
+## Items for an index
+
+`reddit/thread` returns one `rzn.item/v2`; `reddit/listing` and `reddit/search` return
+`rzn.items/v2` pages (listing `feed`) of thread entries. Keys and fields are the rzn-tools Reddit
+connector's (`reddit:thread:<id>`, `u/<name>`, `r/<subreddit>`, counts `score`/`upvote_ratio`/
+`comments`), so a thread read here and through rzn-tools lands as one document. A thread with more
+comments than `limit`, or with comments behind "load more", comes back `truncated` and is not
+indexed. `describe.json` is the family's `rzn.describe/v2`; `samples/` holds the outputs the lint
+checks (hand-built until recorded, see `scripts/workflow_samples/`).
+
 ## Profile history without OAuth
 
 `reddit/profile-history` drives the rendered `www.reddit.com` profile feed

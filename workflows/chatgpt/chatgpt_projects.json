@@ -75,6 +75,7 @@
     "timeout_ms": 90000
   },
   "result": {
+    "contract": "none",
     "artifact_policy": {
       "prefer_downloads": false
     },

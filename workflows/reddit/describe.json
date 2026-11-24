@@ -1,0 +1,138 @@
+{
+  "type": "rzn.describe/v2",
+  "connector": "reddit-browser",
+  "kinds": [
+    {
+      "kind": "thread",
+      "identity": "reddit:thread:<thread id>",
+      "listing": "feed",
+      "scopes": [
+        "subreddit",
+        "query"
+      ],
+      "list_tool": "reddit/listing",
+      "get_tool": "reddit/thread",
+      "fields": [
+        {
+          "name": "title",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "author",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "published_at",
+          "of": "item",
+          "type": "date",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "published_in",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "kind",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "flair",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "domain",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "link",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "is_self",
+          "of": "item",
+          "type": "boolean",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "over_18",
+          "of": "item",
+          "type": "boolean",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "score",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        },
+        {
+          "name": "upvote_ratio",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        },
+        {
+          "name": "comments",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        },
+        {
+          "name": "depth",
+          "of": "passage",
+          "type": "number",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "is_op",
+          "of": "passage",
+          "type": "boolean",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "distinguished",
+          "of": "passage",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "stickied",
+          "of": "passage",
+          "type": "boolean",
+          "list": false,
+          "changes": false
+        }
+      ]
+    }
+  ]
+}

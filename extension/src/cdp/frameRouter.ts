@@ -73,6 +73,10 @@ export class FrameRouter {
   private sessions = new Map<string, SessionInfo>(); // sessionId -> info
   private frameToSession = new Map<string, string>(); // frameId -> sessionId
   private attachPromises = new Map<number, Promise<void>>();
+  // Network capture keeps the tab's debugger attachment for the whole workflow run;
+  // a detach requested meanwhile waits until the last hold is released.
+  private attachmentHolds = new Map<number, number>();
+  private deferredDetach = new Set<number>();
   
   // Event listeners for cleanup
   private eventListeners = new Map<number, (source: any, method: string, params: any) => void>();
@@ -93,6 +97,7 @@ export class FrameRouter {
    */
   async attachToTab(tabId: number): Promise<void> {
     if (this.attachedTabs.has(tabId)) {
+      this.deferredDetach.delete(tabId);
       console.log(`[FrameRouter] Tab ${tabId} already attached`);
       return;
     }
@@ -158,6 +163,8 @@ export class FrameRouter {
       const msg = (error && error.message) ? String(error.message) : String(error);
       // If another debugger is attached, do not loop/throw; mark as not attached and return
       if (msg.includes('Another debugger')) {
+        // A held attachment is this extension's own (network capture): reuse it.
+        if (this.isAttachmentHeld(tabId)) return await this.finishAttach(tabId);
         await chrome.debugger.detach({ tabId }).catch(() => {});
         try {
           await chrome.debugger.attach({ tabId }, '1.3');
@@ -217,6 +224,10 @@ export class FrameRouter {
    * Detach CDP from tab and clean up resources
    */
   async detachFromTab(tabId: number): Promise<void> {
+    if (this.isAttachmentHeld(tabId)) {
+      this.deferredDetach.add(tabId);
+      return;
+    }
     console.log(`[FrameRouter] Detaching from tab ${tabId}`);
 
     try {
@@ -249,8 +260,36 @@ export class FrameRouter {
     }
   }
 
+  isAttachmentHeld(tabId: number): boolean {
+    return (this.attachmentHolds.get(tabId) ?? 0) > 0;
+  }
+
+  /** Keep the tab's debugger attachment alive across detachFromTab calls. */
+  holdAttachment(tabId: number): void {
+    this.attachmentHolds.set(tabId, (this.attachmentHolds.get(tabId) ?? 0) + 1);
+  }
+
+  /**
+   * Drop a hold. Runs a detach that was deferred while held; returns true when nobody
+   * else still uses the attachment, so the holder may detach what it attached.
+   */
+  async releaseAttachment(tabId: number): Promise<boolean> {
+    const remaining = (this.attachmentHolds.get(tabId) ?? 0) - 1;
+    if (remaining > 0) {
+      this.attachmentHolds.set(tabId, remaining);
+      return false;
+    }
+    this.attachmentHolds.delete(tabId);
+    if (this.deferredDetach.delete(tabId)) {
+      await this.detachFromTab(tabId);
+      return false;
+    }
+    return !this.attachedTabs.has(tabId);
+  }
+
   markTabDetached(tabId: number, reason = 'detached'): void {
     console.warn(`[FrameRouter] Marking tab ${tabId} detached: ${reason}`);
+    this.deferredDetach.delete(tabId);
 
     const eventListener = this.eventListeners.get(tabId);
     if (eventListener && typeof chrome !== 'undefined' && chrome.debugger?.onEvent) {

@@ -453,23 +453,27 @@ fn validate_manifest_contracts(
     issues: &mut Vec<CatalogValidationIssue>,
 ) {
     for record in records {
-        match validate_manifest_value(&record.value) {
-            Ok(_) => {}
-            Err(contract_issues) => {
-                for issue in contract_issues {
-                    issues.push(CatalogValidationIssue {
-                        level: CatalogValidationLevel::Error,
-                        source: record.source.clone(),
-                        path: record.path.to_string_lossy().to_string(),
-                        field: if issue.field.trim().is_empty() {
-                            "manifest".to_string()
-                        } else {
-                            issue.field
-                        },
-                        message: issue.message,
-                    });
-                }
-            }
+        let lint = crate::workflow_contract_lint::lint_manifest(&record.path, &record.value);
+        let contract_issues = match validate_manifest_value(&record.value) {
+            Ok(_) => Vec::new(),
+            Err(contract_issues) => contract_issues,
+        };
+        for (field, message) in contract_issues
+            .into_iter()
+            .map(|issue| (issue.field, issue.message))
+            .chain(lint.into_iter().map(|issue| (issue.field, issue.message)))
+        {
+            issues.push(CatalogValidationIssue {
+                level: CatalogValidationLevel::Error,
+                source: record.source.clone(),
+                path: record.path.to_string_lossy().to_string(),
+                field: if field.trim().is_empty() {
+                    "manifest".to_string()
+                } else {
+                    field
+                },
+                message,
+            });
         }
     }
 }

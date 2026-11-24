@@ -25,6 +25,7 @@ mod supervisor_fleet;
 mod supervisor_service;
 mod workflow_cache;
 mod workflow_catalog;
+mod workflow_contract_lint;
 mod workflow_failure_report;
 mod workflow_health;
 mod workflow_params;
@@ -6114,6 +6115,14 @@ fn validate_workflow_strict_contract(
 
     let mut report = validate_manifest_file(reference, resolved_path, value, true);
     report.strict = true;
+    for issue in workflow_contract_lint::lint_manifest(resolved_path, value) {
+        report.issues.push(WorkflowValidationIssue {
+            level: WorkflowValidationLevel::Error,
+            field: issue.field,
+            message: issue.message,
+            suggestion: None,
+        });
+    }
 
     let entry = find_catalog_entry_for_path(resolved_path);
     let Some(entry) = entry else {

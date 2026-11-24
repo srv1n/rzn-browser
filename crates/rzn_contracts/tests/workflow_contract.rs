@@ -57,6 +57,35 @@ fn manifest_rejects_zero_retry_attempts() {
 }
 
 #[test]
+fn capture_responses_needs_a_url_pattern_or_stop() {
+    let mut manifest = fixture_manifest();
+    manifest.steps[0].action = WorkflowAction::new(WorkflowActionKind::CaptureResponses);
+    let errors = manifest.validate().expect_err("missing url_pattern fails");
+    assert!(errors
+        .iter()
+        .any(|error| error.field == "steps[0].action.inputs.url_pattern"));
+
+    let inputs = &mut manifest.steps[0].action.inputs;
+    inputs.insert("url_pattern".into(), json!("/graphql/[^/]+/UserTweets"));
+    inputs.insert("methods".into(), json!("GET"));
+    let errors = manifest.validate().expect_err("methods must be an array");
+    assert!(errors
+        .iter()
+        .any(|error| error.field == "steps[0].action.inputs.methods"));
+
+    let inputs = &mut manifest.steps[0].action.inputs;
+    inputs.insert("methods".into(), json!(["GET"]));
+    manifest
+        .validate()
+        .expect("a pattern with string filters validates");
+
+    let mut stop = Map::new();
+    stop.insert("stop".into(), Value::Bool(true));
+    manifest.steps[0].action.inputs = stop;
+    manifest.validate().expect("stop needs no pattern");
+}
+
+#[test]
 fn retry_policy_max_attempts_is_total_attempts() {
     let retry = RetryPolicy {
         max_attempts: 3,
@@ -85,6 +114,7 @@ fn registered_engine_action_kinds_roundtrip() {
         "assert_selector_state",
         "assert_text_in_element",
         "assert_url_matches",
+        "capture_responses",
         "capture_ui_bundle",
         "clear_cookies",
         "clear_enhanced_caches",
@@ -331,6 +361,7 @@ fn fixture_manifest() -> WorkflowManifest {
             continue_on_error: false,
         }],
         result: ResultContract {
+            contract: Some(OutputContract::None),
             output_schema: Some(json!({"type": "array"})),
             output_selector: Some(OutputSelector {
                 step_id: "open_search".to_string(),
@@ -351,4 +382,31 @@ fn fixture_manifest() -> WorkflowManifest {
         }),
         metadata: None,
     }
+}
+
+#[test]
+fn result_contract_accepts_only_known_values_and_needs_a_selector() {
+    let mut value = serde_json::to_value(fixture_manifest()).expect("manifest json");
+    for (raw, expected) in [
+        ("rzn.item/v2", OutputContract::ItemV2),
+        ("rzn.items/v2", OutputContract::ItemsV2),
+        ("none", OutputContract::None),
+    ] {
+        value["result"]["contract"] = json!(raw);
+        let manifest = validate_manifest_value(&value).expect("known contract validates");
+        assert_eq!(manifest.result.contract, Some(expected));
+    }
+
+    value["result"]["contract"] = json!("rzn.item/v1");
+    assert!(validate_manifest_value(&value).is_err());
+
+    value["result"]["contract"] = json!("rzn.items/v2");
+    value["result"]
+        .as_object_mut()
+        .expect("result object")
+        .remove("output_selector");
+    let issues = validate_manifest_value(&value).expect_err("item contract needs a selector");
+    assert!(issues
+        .iter()
+        .any(|issue| issue.field == "result.output_selector"));
 }

@@ -68,7 +68,8 @@
         "wait_for_auth",
         "wait_for_totp",
         "wait_for_verification",
-        "extract_page_assets"
+        "extract_page_assets",
+        "capture_responses"
       ]
     },
     "id": { "type": "string" },
@@ -136,7 +137,8 @@
     { "$ref": "#/definitions/wait_for_auth" },
     { "$ref": "#/definitions/wait_for_totp" },
     { "$ref": "#/definitions/wait_for_verification" },
-    { "$ref": "#/definitions/extract_page_assets" }
+    { "$ref": "#/definitions/extract_page_assets" },
+    { "$ref": "#/definitions/capture_responses" }
   ],
   "definitions": {
     "field_spec": {
@@ -572,7 +574,8 @@
         "args": { "type": "array" },
         "return_value": { "type": "boolean" },
         "world": { "type": "string", "enum": ["isolated", "main"] },
-        "timeout_ms": { "type": "integer", "minimum": 0 }
+        "timeout_ms": { "type": "integer", "minimum": 0 },
+        "captured_responses": { "type": "boolean" }
       },
       "required": ["type", "script"],
       "additionalProperties": true
@@ -903,6 +906,21 @@
           "items": { "type": "string" }
         },
         "limit": { "type": "integer", "minimum": 0 }
+      },
+      "required": ["type"],
+      "additionalProperties": true
+    },
+    "capture_responses": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "capture_responses" },
+        "url_pattern": { "type": "string", "minLength": 1 },
+        "resource_types": { "type": "array", "items": { "type": "string" } },
+        "methods": { "type": "array", "items": { "type": "string" } },
+        "max_responses": { "type": "integer", "minimum": 1 },
+        "max_body_bytes": { "type": "integer", "minimum": 1 },
+        "max_total_bytes": { "type": "integer", "minimum": 1 },
+        "stop": { "type": "boolean" }
       },
       "required": ["type"],
       "additionalProperties": true

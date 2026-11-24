@@ -158,6 +158,9 @@ impl WorkflowManifest {
             }
             step.retry
                 .validate_into(format!("{base}.retry"), &mut issues);
+            if step.action.kind == WorkflowActionKind::CaptureResponses {
+                validate_capture_inputs(&step.action.inputs, &base, &mut issues);
+            }
 
             for class in &step.action.side_effects {
                 if !allowed_side_effects.contains(class) {
@@ -167,6 +170,15 @@ impl WorkflowManifest {
                     ));
                 }
             }
+        }
+
+        if self.result.contract.is_some_and(OutputContract::is_item)
+            && self.result.output_selector.is_none()
+        {
+            issues.push(ContractValidationIssue::new(
+                "result.output_selector",
+                "an item contract needs an output selector naming the step that returns the items",
+            ));
         }
 
         if let Some(selector) = &self.result.output_selector {
@@ -191,6 +203,42 @@ impl WorkflowManifest {
         input: &Value,
     ) -> Result<Map<String, Value>, Vec<ParamValidationIssue>> {
         self.params.normalize(input)
+    }
+}
+
+/// A `capture_responses` step either starts a capture (`url_pattern`, a regular expression
+/// matched against response URLs) or ends one (`stop: true`).
+fn validate_capture_inputs(
+    inputs: &Map<String, Value>,
+    base: &str,
+    issues: &mut Vec<ContractValidationIssue>,
+) {
+    if inputs.get("stop").and_then(Value::as_bool) == Some(true) {
+        return;
+    }
+    let pattern = inputs
+        .get("url_pattern")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or("");
+    if pattern.is_empty() {
+        issues.push(ContractValidationIssue::new(
+            format!("{base}.action.inputs.url_pattern"),
+            "capture_responses needs url_pattern (a regular expression) or stop: true",
+        ));
+    }
+    for key in ["resource_types", "methods"] {
+        if let Some(value) = inputs.get(key) {
+            let strings = value
+                .as_array()
+                .is_some_and(|items| items.iter().all(Value::is_string));
+            if !strings {
+                issues.push(ContractValidationIssue::new(
+                    format!("{base}.action.inputs.{key}"),
+                    "must be an array of strings",
+                ));
+            }
+        }
     }
 }
 
@@ -605,6 +653,10 @@ pub enum WorkflowActionKind {
     ClearEnhancedCaches,
     GetPerformanceStats,
     DownloadFile,
+    /// Keep the responses the page's own app downloads whose URL matches
+    /// `inputs.url_pattern`; an `execute_javascript` step with
+    /// `inputs.captured_responses: true` reads them. Issues no request.
+    CaptureResponses,
     Custom,
 }
 
@@ -689,6 +741,7 @@ impl WorkflowActionKind {
             Self::ClearEnhancedCaches => Some("clear_enhanced_caches"),
             Self::GetPerformanceStats => Some("get_performance_stats"),
             Self::DownloadFile => Some("download_file"),
+            Self::CaptureResponses => Some("capture_responses"),
             Self::Custom => None,
         }
     }
@@ -928,6 +981,10 @@ pub enum RunStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(deny_unknown_fields)]
 pub struct ResultContract {
+    /// The item contract the output follows. Every production manifest declares it; the catalog
+    /// lint enforces presence, this type enforces the value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract: Option<OutputContract>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -936,6 +993,32 @@ pub struct ResultContract {
     pub artifact_policy: ArtifactPolicy,
     #[serde(default)]
     pub include_debug: bool,
+}
+
+/// `result.contract`: what an index can ingest from the output. `none` is free-form output (action,
+/// utility and not-yet-moved read workflows).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+pub enum OutputContract {
+    #[serde(rename = "rzn.item/v2")]
+    ItemV2,
+    #[serde(rename = "rzn.items/v2")]
+    ItemsV2,
+    #[serde(rename = "none")]
+    None,
+}
+
+impl OutputContract {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ItemV2 => "rzn.item/v2",
+            Self::ItemsV2 => "rzn.items/v2",
+            Self::None => "none",
+        }
+    }
+
+    pub fn is_item(self) -> bool {
+        !matches!(self, Self::None)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

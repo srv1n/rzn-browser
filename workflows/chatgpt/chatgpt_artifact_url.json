@@ -47,5 +47,6 @@
       "timeout_ms": 90000
     }
   ],
-  "result": { "artifact_policy": { "prefer_downloads": false }, "include_debug": false, "output_schema": { "type": "object" }, "output_selector": { "step_id": "s2", "path": "$" } }
+  "result": {
+    "contract": "none", "artifact_policy": { "prefer_downloads": false }, "include_debug": false, "output_schema": { "type": "object" }, "output_selector": { "step_id": "s2", "path": "$" } }
 }
