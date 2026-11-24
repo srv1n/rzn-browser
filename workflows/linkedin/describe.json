@@ -1,0 +1,74 @@
+{
+  "type": "rzn.describe/v2",
+  "connector": "linkedin-browser",
+  "kinds": [
+    {
+      "kind": "post",
+      "identity": "linkedin:post:<activity, share or ugcPost id>",
+      "listing": "feed",
+      "scopes": [
+        "account"
+      ],
+      "list_tool": "linkedin/posts",
+      "get_tool": "linkedin/open",
+      "fields": [
+        {
+          "name": "title",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "author",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "published_at",
+          "of": "item",
+          "type": "date",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "published_in",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "kind",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "reactions",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        },
+        {
+          "name": "comments",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        },
+        {
+          "name": "reposts",
+          "of": "item",
+          "type": "number",
+          "list": false,
+          "changes": true
+        }
+      ]
+    }
+  ]
+}

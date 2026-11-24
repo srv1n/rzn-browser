@@ -1,0 +1,215 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "linkedin/posts",
+  "name": "LinkedIn: Posts",
+  "version": "1.0.0",
+  "system": "linkedin",
+  "capability": "linkedin.posts.read",
+  "summary": "Return up to 20 recent posts of one LinkedIn person or company as rzn.items/v2.",
+  "description": "Open one LinkedIn person's activity list or one company's Posts tab in the user's signed-in Chrome, as a person would, and return up to 20 of the account's own posts as rzn.item/v2 items (reposts of other people's posts are left out). Use to index what an account posts on LinkedIn.",
+  "params": {
+    "properties": {
+      "account": {
+        "kind": "string",
+        "required": true,
+        "description": "in/<profile slug> for a person or company/<company slug> for a company, e.g. in/satyanadella or company/microsoft."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "auth",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "browser_state",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    },
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": [
+        "linkedin.com"
+      ]
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": true,
+    "timeout_ms": 120000
+  },
+  "result": {
+    "contract": "rzn.items/v2",
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "description": "rzn.items/v2 page (schema/rzn.items.v2.json): one rzn.item/v2 per post, key linkedin:post:<id>.",
+      "required": [
+        "type",
+        "items",
+        "listing"
+      ],
+      "properties": {
+        "type": {
+          "const": "rzn.items/v2"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "type",
+              "key",
+              "kind",
+              "url"
+            ]
+          }
+        },
+        "next_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "listing": {
+          "const": "feed"
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "s6",
+      "path": "$"
+    }
+  },
+  "help": {
+    "summary": "Return up to 20 recent posts of one LinkedIn person or company as rzn.items/v2.",
+    "parameters": {
+      "account": "in/<profile slug> or company/<company slug>."
+    },
+    "examples": [
+      {
+        "command": "rzn-browser run linkedin posts --param account=in/satyanadella",
+        "description": "A person's latest posts."
+      },
+      {
+        "command": "rzn-browser run linkedin posts --param account=company/microsoft",
+        "description": "A company's latest posts."
+      }
+    ],
+    "returns": [
+      "rzn.items/v2 page, listing feed, next_cursor null (one page per run): key linkedin:post:<id> (the id of the post's own urn:li:activity|share|ugcPost link; the activity id where the page shows one), kind post, url /feed/update/urn:li:<type>:<id>/, author (name, id = profile or company slug, url), published_at (RFC 3339, from the id's time bits), published_in LinkedIn, marker text:<hash of the text>, counts reactions/comments/reposts; one post block (the whole text) plus a quoted block when the post quotes another. truncated is set when the text stayed collapsed; such an item is not indexed."
+    ],
+    "notes": [
+      "Requires a signed-in LinkedIn session; read-only.",
+      "Makes no request of its own: it opens the account's page, then its activity or Posts tab, scrolls the list and clicks '… more' as a person would, and reads what LinkedIn rendered."
+    ]
+  },
+  "steps": [
+    {
+      "id": "s1",
+      "action": {
+        "kind": "navigate_to_url",
+        "inputs": {
+          "url": "https://www.linkedin.com/{account}/"
+        },
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Open the person's or company's page",
+      "timeout_ms": 60000
+    },
+    {
+      "id": "s2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "args": [
+            "{account}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst m = location.pathname.match(/^\\/(in|company|showcase|school)\\/([^/]+)/);\nif (!m) throw new Error('not a LinkedIn person or company page: ' + location.pathname + ' (asked for ' + cleanArg(arg0) + ')');\nconst to = '/' + m[1] + '/' + m[2] + (m[1] === 'in' ? '/recent-activity/all/' : '/posts/');\nsetTimeout(() => location.assign(to), 0);\nreturn { to };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Go to the activity list (person) or the Posts tab (company)",
+      "timeout_ms": 15000
+    },
+    {
+      "id": "s3",
+      "action": {
+        "kind": "wait_for_navigation",
+        "inputs": {
+          "url_pattern": "*linkedin.com/*/*/*/*"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Wait until the activity list or Posts tab has loaded",
+      "timeout_ms": 45000
+    },
+    {
+      "id": "s4",
+      "action": {
+        "kind": "dismiss_popups",
+        "inputs": {},
+        "side_effects": [
+          "browser_state"
+        ]
+      },
+      "name": "Dismiss popups if present"
+    },
+    {
+      "id": "s5",
+      "action": {
+        "kind": "wait_for_element",
+        "inputs": {},
+        "side_effects": [
+          "read_only"
+        ],
+        "target": {
+          "selector": ".feed-shared-update-v2[data-urn], [role='listitem'][componentkey^='update-card']"
+        }
+      },
+      "name": "Wait for the first post",
+      "timeout_ms": 30000
+    },
+    {
+      "id": "s6",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "use_cdp_eval": true,
+          "args": [
+            "{account}"
+          ],
+          "script": "const cleanArg = (v) => { const t = String(v == null ? '' : v).trim(); return /^\\{[a-zA-Z0-9_]+\\}$/.test(t) ? '' : t; };\nconst LI = { name: 'LinkedIn', id: 'linkedin.com', url: 'https://www.linkedin.com' };\nconst N = (s) => String(s == null ? '' : s).replace(/ /g, ' ').replace(/[ \\t\\r\\f\\v]+/g, ' ').trim();\nconst compact = (o) => { for (const k of Object.keys(o)) { const v = o[k]; if (v == null || v === '' || (Array.isArray(v) && !v.length) || (typeof v === 'object' && !Array.isArray(v) && !Object.keys(v).length)) delete o[k]; } return o; };\nconst count = (s) => { const m = N(s).replace(/,/g, '').match(/^(\\d+(?:\\.\\d+)?)\\s*([KMB])?$/i); return m ? Math.round(Number(m[1]) * ({ K: 1e3, M: 1e6, B: 1e9 }[(m[2] || '').toUpperCase()] || 1)) : null; };\n// LinkedIn ids carry their creation time in the top bits (milliseconds since 1970 = id >> 22).\nconst when = (id) => { try { return new Date(Number(BigInt(id) >> 22n)).toISOString().replace('.000Z', 'Z'); } catch (e) { return null; } };\nconst fnv = (t) => { let h = 0x811c9dc5; for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193); } return (h >>> 0).toString(16).padStart(8, '0'); };\nconst URN = /urn:li:(activity|share|ugcPost):(\\d+)/;\nconst CARDS = '.feed-shared-update-v2[data-urn], [role=\"listitem\"][componentkey^=\"update-card\"]';\nconst BOX = '[data-testid=\"expandable-text-box\"], .update-components-text';\nconst MORE = /^(…|\\.\\.\\.)\\s*(see\\s+)?more$/i;\nconst MENU = 'Open control menu for post by ';\nconst sleep = (ms) => new Promise((r) => setTimeout(r, ms));\nconst isMore = (b) => MORE.test(N(b.innerText || b.textContent));\n// \"… more\" shows the rest of a post's text, as a person would click it.\nconst expand = async () => { let n = 0; for (const b of document.querySelectorAll(CARDS.split(', ').map((c) => c + ' button').join(', '))) { if (isMore(b)) { b.click(); n++; } } if (n) await sleep(1500); };\nconst textOf = (box) => { const c = box.cloneNode(true); c.querySelectorAll('.visually-hidden, button').forEach((e) => e.remove()); c.querySelectorAll('br').forEach((b) => b.replaceWith('\\n')); return c.textContent.split('\\n').map(N).join('\\n').replace(/\\n{3,}/g, '\\n\\n').trim(); };\nconst account = (href) => { try { const u = new URL(href, location.origin); const m = u.pathname.match(/^\\/(in|company|showcase|school)\\/([^/]+)/); return m ? { id: decodeURIComponent(m[2]), url: 'https://www.linkedin.com/' + m[1] + '/' + m[2] + '/' } : null; } catch (e) { return null; } };\nconst after = (a, b) => !!(a && b && (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));\nconst urnUrl = (type, id) => 'https://www.linkedin.com/feed/update/urn:li:' + type + ':' + id + '/';\nconst mapCard = (card, forced) => {\n  const boxes = [...card.querySelectorAll(BOX)].filter((b, _, all) => !all.some((o) => o !== b && o.contains(b)));\n  if (!boxes.length) return null;\n  // The author: a company page's card names its actor (the original author, also on a repost);\n  // a person's activity list names the author in the post menu.\n  const actor = card.querySelector('.update-components-actor__meta-link');\n  const menu = card.querySelector('button[aria-label^=\"' + MENU + '\"]');\n  const name = actor ? N(((card.querySelector('.update-components-actor__title') || {}).innerText || '').split('\\n')[0]) : (menu ? N(menu.getAttribute('aria-label').slice(MENU.length)) : '');\n  const links = [...card.querySelectorAll('a[href]')].map((a) => ({ a, who: account(a.getAttribute('href')), label: N(a.getAttribute('aria-label') || a.innerText) })).filter((l) => l.who);\n  const own = (actor && links.find((l) => l.a === actor)) || links.find((l) => name && (l.label.startsWith(name) || l.label.startsWith('View: ' + name)));\n  if (!own) return null;\n  const author = { name: name || own.who.id, id: own.who.id, url: own.who.url };\n  // A quoted post sits under the post's own text with its own author; its links are not the post's.\n  const quotedBy = boxes.length > 1 ? links.find((l) => l.who.id !== author.id && after(boxes[0], l.a) && !after(boxes[1], l.a)) : null;\n  let urn = forced || (card.getAttribute('data-urn') || '').match(URN);\n  if (!urn) for (const a of card.querySelectorAll('a[href*=\"urn:li:\"]')) { if (quotedBy && after(quotedBy.a, a)) break; const m = (a.getAttribute('href') || '').match(URN); if (m) { urn = m; break; } }\n  if (!urn) return null;\n  const [, type, id] = urn;\n  const text = textOf(boxes[0]);\n  if (!text) return null;\n  const blocks = [{ id, kind: 'post', text, at: { order: 0 } }];\n  if (quotedBy && boxes[1]) {\n    const qt = textOf(boxes[1]);\n    const qname = N(((links.find((l) => l.who.id === quotedBy.who.id && N(l.a.innerText)) || quotedBy).a.innerText || '').split('\\n')[0]) || quotedBy.who.id;\n    if (qt) blocks.push({ id: 'quoted', kind: 'quoted', text: qt, at: { order: 1 }, author: { name: qname, id: quotedBy.who.id, url: quotedBy.who.url } });\n  }\n  const buttons = [...card.querySelectorAll('button')];\n  const metric = (re, plain) => { for (const b of buttons) { const al = b.getAttribute('aria-label') || ''; const m = al.match(re); if (m) return count(m[1]); if (plain.test(al)) { const c = count(b.innerText); if (c != null) return c; } } return null; };\n  const collapsed = boxes.some((b) => [...b.querySelectorAll('button')].some(isMore) || / …\\s*more$/.test(N(b.textContent)));\n  return compact({ type: 'rzn.item/v2', key: 'linkedin:post:' + id, kind: 'post', url: urnUrl(type, id), author, published_at: when(id), published_in: LI,\n    marker: 'text:' + fnv(blocks.map((b) => b.text).join('\\n')),\n    counts: compact({ reactions: metric(/^([\\d,.]+\\s*[KMB]?) reactions?\\b/i, /^Reaction button state/i), comments: metric(/^([\\d,.]+\\s*[KMB]?) comments?\\b/i, /^Comment$/i), reposts: metric(/^([\\d,.]+\\s*[KMB]?) reposts?\\b/i, /^Repost$/i) }),\n    blocks, truncated: collapsed ? { reason: 'text_collapsed', returned_blocks: blocks.length } : null });\n};\n\n// The account's posts tab as LinkedIn rendered it (its own page; no request of its own). Both page\n// styles are read: the activity list of a person (list items) and a company's posts (update cards).\nconst want = cleanArg(arg0).replace(/^https?:\\/\\/[^/]+\\//, '').replace(/^\\/+|\\/+$/g, '').split('/').slice(0, 2).join('/');\nconst owner = (want.match(/^(?:in|company|showcase|school)\\/([^/]+)$/) || [])[1];\nif (!owner) throw new Error('account must be in/<slug> or company/<slug>, got: ' + cleanArg(arg0));\nconst cap = 20;\nconst scroller = document.querySelector('main#workspace');\nfor (let i = 0, last = -1; i < 6; i++) {\n  const n = document.querySelectorAll(CARDS).length;\n  if (n >= cap || n === last) break;\n  last = n;\n  if (scroller && scroller.scrollHeight > scroller.clientHeight + 50) scroller.scrollTo(0, scroller.scrollHeight); else window.scrollTo(0, document.body.scrollHeight);\n  await sleep(1800);\n}\nawait expand();\nconst items = [], seen = new Set();\nfor (const card of document.querySelectorAll(CARDS)) {\n  const item = mapCard(card, null);\n  // Reposts are not sent: a card whose author is not the account is someone else's post.\n  if (!item || item.author.id.toLowerCase() !== decodeURIComponent(owner).toLowerCase() || seen.has(item.key)) continue;\n  seen.add(item.key); items.push(item);\n  if (items.length >= cap) break;\n}\nreturn { type: 'rzn.items/v2', items, next_cursor: null, listing: 'feed' };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "name": "Scroll the list, open collapsed texts and map each post the page shows",
+      "timeout_ms": 60000
+    }
+  ]
+}

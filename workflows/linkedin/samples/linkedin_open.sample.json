@@ -1,0 +1,38 @@
+{
+  "sample_of": "linkedin/open",
+  "source": "recorded",
+  "note": "Recorded 25 Nov 2026 (BFL-T-0010): rzn-browser run linkedin/open --param url=https://www.linkedin.com/feed/update/urn:li:activity:7528555595000545281/ in a signed-in Chrome; equal to the same post in the linkedin/posts sample.",
+  "output": {
+    "author": {
+      "id": "satyanadella",
+      "name": "Satya Nadella",
+      "url": "https://www.linkedin.com/in/satyanadella/"
+    },
+    "blocks": [
+      {
+        "at": {
+          "order": 0
+        },
+        "id": "7528555595000545281",
+        "kind": "post",
+        "text": "Our ambition with everything we are announcing at Ignite today is to parlay technological advances into real outcomes and new points of leverage for people, organizations, and society at large.\n\nJust a few of the things we’re announcing:\n\nCopilot Workspaces. The time has come to move beyond single-player AI to a world where people and their agents work together, with shared context, towards a common goal. That's Copilot Workspaces.\n\nNew models. For us, it's about mapping intelligence to a given task, with the best economics. This is something we can uniquely do in the context of real-world tasks by tuning our products, harness, tools, and the model system end to end.\n\nToday, we're announcing Microsoft-Decision 1.1 (now GA), Code 2 (at the cost-performance frontier for enterprise coding), and Cyber 2 Flash (outperforming frontier models on security tasks at a fraction of the cost).\n\nAnd, of course, we have all the most popular closed and open weight models in Foundry too. We are very excited to bring OpenAI's GPT-6.2 to Foundry.\n\nAnd we are announcing that Meta's latest models are all coming to Foundry, as well!\n\nAgent 365 Business Analytics. You can think of this as your ERP system for AI, helping organizations connect spend to business value and continuously optimize their return on intelligence.\n\nMicrosoft Perception. Now GA, it brings together teams of red, blue, and green agents to deliver security outcomes at machine speed, with you always in control.\n\nMicrosoft AI Transparency Initiative. We're working with 40+ organizations to establish open standards for AI that is accountable, independently verifiable, and safe by design.\n\nHorizonDB. Our distributed PostgreSQL database is now GA in Azure, delivering up to 8X the performance of self-managed Postgres.\n\nAnd by bringing HorizonDB into Fabric, agents will be able to reason over live transactions alongside petabytes of historical data in real time.\n\nFinally, we are also rearchitecting the core compute, storage, and networking primitives in Azure to execute, connect, and share context at agent scale.\n\nPlus, we announced new partnerships and shared work we are doing with customers in every industry sector, including Alaska Airlines, AT&T, BlackRock, BNY, Chevron, Epic, Publicis Groupe, Salesforce, Unilever, and more.\n\nUltimately, the key imperatives for us are to ensure human ambition, a firm's control of its own intelligence, and trust in technology that gets broadly diffused is maintained.\n\nThis is the promise of a frontier ecosystem. Read more: https://lnkd.in/gyGc-7AF"
+      }
+    ],
+    "counts": {
+      "comments": 404,
+      "reactions": 8403,
+      "reposts": 778
+    },
+    "key": "linkedin:post:7528555595000545281",
+    "kind": "post",
+    "marker": "text:7546fbbb",
+    "published_at": "2026-11-17T20:32:07.647Z",
+    "published_in": {
+      "id": "linkedin.com",
+      "name": "LinkedIn",
+      "url": "https://www.linkedin.com"
+    },
+    "type": "rzn.item/v2",
+    "url": "https://www.linkedin.com/feed/update/urn:li:activity:7528555595000545281/"
+  }
+}

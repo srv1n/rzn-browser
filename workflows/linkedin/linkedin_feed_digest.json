@@ -6,7 +6,7 @@
   "system": "linkedin",
   "capability": "linkedin.feed.digest",
   "summary": "Scroll the logged-in LinkedIn home feed read-only and return up to max_posts recent posts with author, body text, and reaction/comment/repost counts.",
-  "description": "Open the logged-in LinkedIn home feed (/feed/) in the existing session, scroll to load posts, and return a flat array of recent feed posts. Each item carries the author name, author profile/company URL, the post body text, and visible reaction/comment/repost counts. Read-only: never likes, comments, reposts, or connects. Use linkedin_open to expand a single post with its comments.",
+  "description": "Open the logged-in LinkedIn home feed (/feed/) in the existing session, scroll to load posts, and return a flat array of recent feed posts. Each item carries the author name, author profile/company URL, the post body text, and visible reaction/comment/repost counts. Read-only: never likes, comments, reposts, or connects. Use linkedin/open to read a single post as an rzn.item/v2 (no comments).",
   "params": {
     "properties": {
       "max_posts": {
@@ -201,7 +201,7 @@
       "Read-only. Never likes, comments, reposts, or connects.",
       "Requires an existing logged-in LinkedIn session.",
       "The feed is virtualized; very large max_posts values may return fewer items than requested.",
-      "Use linkedin_open to expand a single post with its comment thread."
+      "Use linkedin/open to read a single post as an rzn.item/v2 (no comments)."
     ]
   }
 }
