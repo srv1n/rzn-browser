@@ -3,6 +3,7 @@ import {
   closeExactWorkflowTab,
   exactTabMissingError,
   isExactTabMissingError,
+  liveTabOrDefer,
 } from './workflowTabLifecycle';
 
 describe('closeExactWorkflowTab', () => {
@@ -29,5 +30,28 @@ describe('closeExactWorkflowTab', () => {
 
     expect(isExactTabMissingError(error)).toBe(true);
     expect(error.message).toContain('42');
+  });
+});
+
+describe('liveTabOrDefer', () => {
+  // Chrome's wording when a tab id outlived its tab (e.g. a parked tab after an extension reload).
+  const gone = async () => {
+    throw new Error('No tab with given id 639035019.');
+  };
+
+  it('keeps a live session tab', async () => {
+    await expect(liveTabOrDefer(7, false, async () => ({}))).resolves.toBe(7);
+  });
+
+  it('defers to the navigation path when the session tab is gone', async () => {
+    await expect(liveTabOrDefer(639035019, false, gone)).resolves.toBeUndefined();
+  });
+
+  it('reports a gone exact tab ref as TAB_MISSING so the runner opens a fresh tab', async () => {
+    await expect(liveTabOrDefer(639035019, true, gone)).rejects.toMatchObject({ code: 'TAB_MISSING' });
+  });
+
+  it('waits for a tab when the session has none', async () => {
+    await expect(liveTabOrDefer(undefined, true, gone)).resolves.toBeUndefined();
   });
 });

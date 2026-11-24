@@ -59,6 +59,7 @@ import {
   closeExactWorkflowTab,
   exactTabMissingError,
   isExactTabMissingError,
+  liveTabOrDefer,
 } from './workflowTabLifecycle';
 
 // CDP Lease Manager - keeps sessions alive briefly to avoid repeated attach/detach
@@ -5078,7 +5079,13 @@ async function handleBrokerMessage(
       }
 
       if (step?.type === 'capture_responses') { // Without a tab yet it starts on the tab navigate_to_url opens.
-        const reply = await guardedBrokerSideEffect(brokerLease, 'capture_responses', () => networkCapture.start(workflowSessionId, tabId, step as any))
+        const reply = await guardedBrokerSideEffect(brokerLease, 'capture_responses', async () => {
+          const liveTabId = await liveTabOrDefer(tabId, messageUsesExactTabRef(message), (id) => chrome.tabs.get(id));
+          if (liveTabId === undefined && tabId !== undefined) {
+            commitWorkflowTabIdForLease(brokerLease, setSessionWorkflowTabId, undefined, 'clear missing capture tab');
+          }
+          return networkCapture.start(workflowSessionId, liveTabId, step as any);
+        })
           .then((result) => ({ success: true, result }), (error: any) => ({ success: false, error_code: error?.code || 'CAPTURE_ERROR', error_msg: error?.message || String(error) }));
         sendResponseToBroker({ req_id: isOrchestratorFormat ? undefined : requestId, task_id: isOrchestratorFormat ? requestId : undefined, ...reply } as any);
         return;

@@ -25,6 +25,26 @@ export function isExactTabMissingError(error: unknown): error is Error & { code:
   return typeof error === 'object' && error !== null && (error as any).code === 'TAB_MISSING';
 }
 
+// A step that may start before the tab exists (capture_responses) uses the session's
+// tab only while Chrome still has it. A gone exact tab ref fails closed as TAB_MISSING
+// (the CLI site queue then reruns on a fresh tab); a gone session tab returns undefined
+// so the step waits for the tab navigate_to_url opens.
+export async function liveTabOrDefer(
+  tabId: number | undefined,
+  exactTabRef: boolean,
+  get: (tabId: number) => Promise<unknown>,
+): Promise<number | undefined> {
+  if (tabId === undefined) return undefined;
+  try {
+    await get(tabId);
+    return tabId;
+  } catch (error) {
+    if (!isAlreadyMissingTabError(error)) throw error;
+    if (exactTabRef) throw exactTabMissingError(tabId, error);
+    return undefined;
+  }
+}
+
 // `remove` deliberately receives the caller's tab ID rather than looking up an
 // active tab. A terminal cleanup can therefore be idempotent without ever
 // changing its target when the original tab has already disappeared.
