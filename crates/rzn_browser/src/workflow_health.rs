@@ -40,7 +40,11 @@ pub fn classify_error(code: &str, message: &str) -> ErrorClass {
     // the page text around it may mention navigation or timeouts, so it is read first.
     if text.contains(rzn_browser::site_queue::CHALLENGE_MARKER) {
         ErrorClass::SiteChallenge
-    } else if text.contains("selector") && (text.contains("not found") || text.contains("missing")) {
+    } else if (text.contains("selector") && (text.contains("not found") || text.contains("missing")))
+        // A step that waits for an element and runs out of time found no element: the page
+        // changed under the workflow, not a slow site (the fleet weighs a timeout half).
+        || text.contains("wait_for_element")
+    {
         ErrorClass::SelectorNotFound
     } else if text.contains("timeout") || text.contains("timed out") || text.contains("deadline") {
         ErrorClass::Timeout
@@ -216,9 +220,20 @@ mod tests {
             classify_error("", "selector not found"),
             ErrorClass::SelectorNotFound
         );
+        assert_eq!(
+            classify_error("TIMEOUT", "TIMEOUT: step wait (wait_for_element) failed"),
+            ErrorClass::SelectorNotFound
+        );
+        assert_eq!(
+            classify_error("TIMEOUT", "step open (navigate_to_url) timed out"),
+            ErrorClass::Timeout
+        );
         assert_eq!(classify_error("odd", "wat"), ErrorClass::Unknown);
         assert_eq!(
-            classify_error("", "site_challenge: navigation timed out on a verification page"),
+            classify_error(
+                "",
+                "site_challenge: navigation timed out on a verification page"
+            ),
             ErrorClass::SiteChallenge
         );
         let rows = vec![
