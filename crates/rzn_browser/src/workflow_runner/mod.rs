@@ -497,9 +497,11 @@ pub(crate) async fn run_workflow(
                     report_context,
                     failing_step_index: idx,
                     failure_capture,
+                    // The step kind rides along so the class can tell a wait for an element
+                    // that ran out of time (a missing selector) from a slow site.
                     classification_message: error_code
-                        .map(|code| format!("{}: {}", code, error))
-                        .unwrap_or_else(|| error.to_string()),
+                        .map(|code| format!("{}: {} ({})", code, error, step_type))
+                        .unwrap_or_else(|| format!("{} ({})", error, step_type)),
                 }));
             }
 
