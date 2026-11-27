@@ -1,0 +1,92 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "web/links",
+  "name": "Web: List the open page's links",
+  "version": "1.0.0",
+  "system": "web",
+  "capability": "web.links",
+  "summary": "List the same-site pages the open page links to, as rzn.items/v2 listing entries.",
+  "description": "List the links of the page the owner has open that stay on its site, each once, as listing entries keyed web:page:<normalized URL>. No navigation, scrolling or request. The listing tool of the web family; web/page reads one entry.",
+  "params": {
+    "properties": {
+      "url": {
+        "kind": "string",
+        "required": true,
+        "description": "The page's URL. The page is read where it is open; the URL names it in the run record."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": []
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": true,
+    "timeout_ms": 30000
+  },
+  "steps": [
+    {
+      "id": "read",
+      "name": "List the open page's same-site links as rzn.items/v2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{url}"
+          ],
+          "script": "// The links of the page the owner has open, as listing entries: same-site pages only, each once.\nconst norm = (raw) => { const u = new URL(raw); u.hash = ''; let t = u.toString(); if (u.pathname !== '/' && !u.search && t.endsWith('/')) t = t.slice(0, -1); return t; };\nconst host = location.hostname.replace(/^www\\./, '');\nconst seen = new Set(); const items = [];\nfor (const a of document.querySelectorAll('a[href]')) {\n  let url; try { url = new URL(a.getAttribute('href'), location.href); } catch (e) { continue; }\n  if (!/^https?:$/.test(url.protocol) || url.hostname.replace(/^www\\./, '') !== host) continue;\n  const page = norm(url.toString()); if (seen.has(page)) continue; seen.add(page);\n  const title = String(a.textContent || '').replace(/\\s+/g, ' ').trim();\n  const item = { type: 'rzn.item/v2', key: 'web:page:' + page, kind: 'page', url: page };\n  if (title) item.title = title;\n  items.push(item);\n  if (items.length >= 500) break;\n}\nreturn { type: 'rzn.items/v2', listing: 'feed', next_cursor: null, items };"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "timeout_ms": 20000
+    }
+  ],
+  "result": {
+    "contract": "rzn.items/v2",
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "description": "rzn.items/v2 (schema/rzn.items.v2.json): same-site page entries, listing feed.",
+      "required": [
+        "type",
+        "listing",
+        "items"
+      ],
+      "properties": {
+        "type": {
+          "const": "rzn.items/v2"
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "read",
+      "path": "$.result"
+    }
+  },
+  "help": {
+    "summary": "List the same-site pages the open page links to, as rzn.items/v2 listing entries.",
+    "parameters": {
+      "url": "The open page's URL."
+    },
+    "examples": [],
+    "returns": [
+      "rzn.items/v2, listing feed (a page shows some links, never all), up to 500 entries: key web:page:<link>, url the normalized link, kind page, title the link text."
+    ],
+    "notes": [
+      "Read-only, in place: one script over the loaded document, no request of its own."
+    ]
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "type": "rzn.describe/v2",
+  "connector": "web-browser",
+  "kinds": [
+    {
+      "kind": "page",
+      "identity": "web:page:<normalized URL>",
+      "listing": "feed",
+      "scopes": [
+        "url"
+      ],
+      "list_tool": "web/links",
+      "get_tool": "web/page",
+      "fields": [
+        {
+          "name": "title",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "author",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "published_at",
+          "of": "item",
+          "type": "date",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "published_in",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "kind",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": false
+        },
+        {
+          "name": "description",
+          "of": "item",
+          "type": "string",
+          "list": false,
+          "changes": true
+        },
+        {
+          "name": "keywords",
+          "of": "item",
+          "type": "string",
+          "list": true,
+          "changes": true
+        }
+      ]
+    }
+  ]
+}

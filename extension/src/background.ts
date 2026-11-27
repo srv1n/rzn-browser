@@ -26,6 +26,7 @@ import { normalizeCloudServerUrl } from './cloudTransport';
 import {handleFleetRunNotice,installFleetNotificationClickHandler} from './ui/notifications';
 import { FleetWindowRegistry } from './ui/fleetWindow';
 import { badgeForState } from './ui/badge';
+import { captureSitesOf, onPageLoaded } from './capture';
 import {
   activeLeaseExpirationsAfterStartup,
   cdpTargetTabIdsToDetachOnStartup,
@@ -8507,6 +8508,49 @@ function requireContentSender(
 
 async function updateAutomationBadge(snapshot:any|null){const b=badgeForState(snapshot?{reachable:true,paused:snapshot.paused,runningCount:snapshot.now_running?1:0,lastRunFailed:snapshot.recent_runs?.[0]?.status==='failed',flaggedWorkflows:snapshot.flagged_workflows}:{reachable:false});await chrome.action.setBadgeText({text:b.text});await chrome.action.setBadgeBackgroundColor({color:b.color});}
 
+// Capture of opened pages (BFL-T-0025, capture.ts): the owner's switched-on sites, read from the
+// supervisor at most once a minute and again after every settings change.
+let captureSiteList: string[] = [];
+let captureSitesReadAt = 0;
+let captureSitesRead: Promise<void> | null = null;
+async function refreshCaptureSites(force = false): Promise<void> {
+  if (!force && Date.now() - captureSitesReadAt < 60_000) return;
+  captureSitesRead ??= (async () => {
+    try {
+      const response: any = await callNativeHostControl('supervisor_rpc', { method: 'settings.get', params: {} }, { timeoutMs: 5_000 });
+      captureSiteList = response?.success === false ? [] : captureSitesOf(response?.result);
+    } catch {
+      captureSiteList = [];
+    }
+    captureSitesReadAt = Date.now();
+  })().finally(() => { captureSitesRead = null; });
+  await captureSitesRead;
+}
+function isWorkflowSessionTab(tabId: number): boolean {
+  for (const state of workflowSessions.values()) if (state.workflowTabId === tabId) return true;
+  return false;
+}
+async function capturePageLoad(details: { tabId: number; frameId: number; url: string }): Promise<void> {
+  if (details.frameId !== 0 || !/^https?:/.test(details.url)) return;
+  await refreshCaptureSites();
+  await onPageLoaded(details, {
+    sites: () => captureSiteList,
+    isWorkflowTab: isWorkflowSessionTab,
+    browserInstanceId: ensureBrowserInstanceId,
+    call: async (method, params) => {
+      const response: any = await callNativeHostControl('supervisor_rpc', { method, params }, { timeoutMs: 10_000 });
+      if (response?.success === false) throw new Error(String(response?.error || `${method} failed`));
+      return response?.result;
+    },
+  });
+}
+if (guardListener(chrome.webNavigation?.onCompleted, 'chrome.webNavigation.onCompleted')) {
+  chrome.webNavigation.onCompleted.addListener((details) => { void capturePageLoad(details); });
+}
+if (guardListener(chrome.webNavigation?.onHistoryStateUpdated, 'chrome.webNavigation.onHistoryStateUpdated')) {
+  chrome.webNavigation.onHistoryStateUpdated.addListener((details) => { void capturePageLoad(details); });
+}
+
 // Handle native input messages from content script
 if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -8514,7 +8558,7 @@ if (guardListener(chrome.runtime?.onMessage, 'chrome.runtime.onMessage')) {
     if (!requirePopupSender(message.cmd, sender, sendResponse)) return false;
     const method = message.payload?.method || '<missing>';
     const timeoutMs = method === 'diagnostics.export' ? 65_000 : method === 'logs.tail' ? 35_000 : 12_000;
-    (async()=>{try{const response:any=await callNativeHostControl('supervisor_rpc',message.payload||{}, {timeoutMs});if(method==='status.snapshot')void updateAutomationBadge(response.result);sendResponse(response);}catch(error:any){void updateAutomationBadge(null);sendResponse({success:false,error_code:'SUPERVISOR_UNREACHABLE',transport_error:true,error:`${method}: ${error?.message||String(error)}`});}})();
+    (async()=>{try{const response:any=await callNativeHostControl('supervisor_rpc',message.payload||{}, {timeoutMs});if(method==='status.snapshot')void updateAutomationBadge(response.result);if(method==='settings.set')void refreshCaptureSites(true);sendResponse(response);}catch(error:any){void updateAutomationBadge(null);sendResponse({success:false,error_code:'SUPERVISOR_UNREACHABLE',transport_error:true,error:`${method}: ${error?.message||String(error)}`});}})();
     return true;
   }
   // Forward content logs into native logger and console

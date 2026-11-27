@@ -1,0 +1,99 @@
+{
+  "schema_version": "rzn.workflow_manifest",
+  "id": "web/page",
+  "name": "Web: Read the open page",
+  "version": "1.0.0",
+  "system": "web",
+  "capability": "web.page",
+  "summary": "Read the web page open in the tab as one rzn.item/v2, keyed web:page:<normalized URL>.",
+  "description": "Read the page the owner has open, where it is: its main text as blocks (headings, paragraphs, list items, quotes, code), title, author, date and site from the page's own metadata. No navigation, scrolling or request. Used by capture of opened pages (BFL-T-0025). Do not use to fetch a page by URL; the server's web connector does that.",
+  "params": {
+    "properties": {
+      "url": {
+        "kind": "string",
+        "required": true,
+        "description": "The page's URL. The page is read where it is open; the URL names it in the run record."
+      }
+    },
+    "additional_params": false
+  },
+  "side_effects": [
+    {
+      "class": "read_only",
+      "idempotency": "safe_retry",
+      "confirmation_required": false,
+      "scopes": []
+    }
+  ],
+  "runtime": {
+    "actor": "supervisor",
+    "requires_cdp": false,
+    "requires_existing_session": true,
+    "timeout_ms": 30000
+  },
+  "steps": [
+    {
+      "id": "read",
+      "name": "Read the open page's text and metadata as rzn.item/v2",
+      "action": {
+        "kind": "execute_javascript",
+        "inputs": {
+          "world": "main",
+          "args": [
+            "{url}"
+          ],
+          "script": "// The page the owner has open, read where it is: no navigation, no scrolling, no request.\nconst norm = (raw) => { const u = new URL(raw); u.hash = ''; let t = u.toString(); if (u.pathname !== '/' && !u.search && t.endsWith('/')) t = t.slice(0, -1); return t; };\nconst meta = (...names) => { for (const n of names) { const el = document.querySelector(`meta[property=\"${n}\"], meta[name=\"${n}\"]`); const v = el && String(el.getAttribute('content') || '').trim(); if (v) return v; } return null; };\nconst iso = (s) => { const d = s ? new Date(s) : null; return d && !isNaN(d) ? d.toISOString().replace('.000Z', 'Z') : null; };\nconst ld = []; for (const s of document.querySelectorAll('script[type=\"application/ld+json\"]')) { try { const v = JSON.parse(s.textContent || 'null'); const stack = [v]; while (stack.length) { const x = stack.pop(); if (!x || typeof x !== 'object') continue; if (Array.isArray(x)) { stack.push(...x); continue; } ld.push(x); if (x['@graph']) stack.push(x['@graph']); } } catch (e) {} }\nconst ldGet = (k) => { for (const x of ld) if (x[k]) return x[k]; return null; };\nconst ldName = (v) => { const one = Array.isArray(v) ? v[0] : v; return typeof one === 'string' ? one : (one && one.name) || null; };\nconst url = norm(location.href);\nconst key = 'web:page:' + url;\nconst host = location.hostname.replace(/^www\\./, '');\nconst site = { name: meta('og:site_name') || ldName(ldGet('publisher')) || host, id: host, url: location.origin };\nconst authorName = meta('author', 'article:author') || ldName(ldGet('author'));\nconst author = authorName && !/^https?:/.test(authorName) ? { name: authorName } : site;\nconst timeEl = document.querySelector('time[datetime]');\nconst published = iso(meta('article:published_time', 'og:published_time', 'date', 'dc.date')) || iso(ldGet('datePublished')) || iso(timeEl && timeEl.getAttribute('datetime')) || new Date().toISOString().replace(/\\.\\d{3}Z$/, 'Z');\nconst title = meta('og:title') || String(document.title || '').trim() || String((document.querySelector('h1') || {}).textContent || '').trim();\nconst root = document.querySelector('article') || document.querySelector('main') || document.querySelector('[role=\"main\"]') || document.body;\nconst SKIP = 'nav, header, footer, aside, form, [role=\"navigation\"], [role=\"banner\"], [role=\"contentinfo\"], [aria-hidden=\"true\"], script, style, noscript';\nconst BLOCKS = 'h1, h2, h3, h4, p, li, blockquote, pre';\nconst kindOf = (el) => { const t = el.tagName.toLowerCase(); if (/^h[1-4]$/.test(t)) return 'heading'; if (t === 'li') return 'list_item'; if (t === 'pre') return 'code'; if (t === 'blockquote' || el.closest('blockquote')) return 'quote'; return 'paragraph'; };\nconst blocks = []; const heads = []; let all = '';\nfor (const el of root.querySelectorAll(BLOCKS)) {\n  if (el.closest(SKIP) && !root.matches(SKIP)) continue;\n  if (el.tagName !== 'PRE' && el.querySelector(BLOCKS)) continue;\n  const text = String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();\n  if (text.length < 2) continue;\n  const kind = kindOf(el);\n  if (kind === 'heading') { const level = Number(el.tagName[1]); heads.length = Math.max(0, level - 1); heads[level - 1] = text; }\n  const path = kind === 'heading' ? heads.slice(0, -1).filter(Boolean) : heads.filter(Boolean);\n  const block = { id: 'b' + blocks.length, kind, text };\n  if (path.length) block.path = path;\n  blocks.push(block); all += text + '\\n';\n  if (blocks.length >= 2000) break;\n}\nif (!blocks.length) throw new Error('no readable text on ' + url);\nlet h = 0x811c9dc5; for (let i = 0; i < all.length; i++) { h ^= all.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }\nconst robots = String(meta('robots') || '').toLowerCase();\nconst declaredPublic = !!(document.querySelector('link[rel=\"canonical\"]') || meta('og:url')) && !robots.includes('noindex');\nconst fields = {}; const description = meta('description', 'og:description'); if (description) fields.description = description;\nconst keywords = meta('keywords'); if (keywords) fields.keywords = keywords.split(',').map((k) => k.trim()).filter(Boolean);\nconst item = { type: 'rzn.item/v2', key, kind: 'page', url, author, published_at: published, published_in: site,\n  marker: 'text:' + h.toString(16) + ':' + all.length, audience: declaredPublic ? 'public' : 'restricted', blocks };\nif (title) item.title = title;\nif (Object.keys(fields).length) item.fields = fields;\nreturn item;"
+        },
+        "side_effects": [
+          "read_only"
+        ]
+      },
+      "timeout_ms": 20000
+    }
+  ],
+  "result": {
+    "contract": "rzn.item/v2",
+    "artifact_policy": {
+      "prefer_downloads": false
+    },
+    "include_debug": false,
+    "output_schema": {
+      "type": "object",
+      "description": "rzn.item/v2 (schema/rzn.item.v2.json): one page, key web:page:<normalized URL>, kind page.",
+      "required": [
+        "type",
+        "key",
+        "kind",
+        "url",
+        "author",
+        "published_at",
+        "published_in",
+        "blocks"
+      ],
+      "properties": {
+        "type": {
+          "const": "rzn.item/v2"
+        }
+      }
+    },
+    "output_selector": {
+      "step_id": "read",
+      "path": "$.result"
+    }
+  },
+  "help": {
+    "summary": "Read the web page open in the tab as one rzn.item/v2, keyed web:page:<normalized URL>.",
+    "parameters": {
+      "url": "The open page's URL."
+    },
+    "examples": [],
+    "returns": [
+      "rzn.item/v2: key web:page:<url>, url the page's URL without fragment or trailing slash (the web connector's normalization), kind page, title (og:title, else the document title), author (meta author or JSON-LD, else the site), published_at (article:published_time, JSON-LD datePublished or the first time element; else the time of the read), published_in the site (og:site_name or host), marker text:<hash>:<length> of the text read, fields description and keywords.",
+      "Blocks from the page's article, main or body, without nav, header, footer, aside and forms: heading, paragraph, list_item, quote, code; the headings above a block in path.",
+      "audience public when the page names a canonical URL (link rel=canonical or og:url) and is not noindex; restricted otherwise."
+    ],
+    "notes": [
+      "Read-only, in place: one script over the loaded document, no request of its own."
+    ]
+  }
+}

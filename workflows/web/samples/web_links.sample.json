@@ -1,0 +1,26 @@
+{
+  "sample_of": "web/links",
+  "source": "hand-built",
+  "note": "Built by hand from extension/tests/fixtures/capture/article.html.",
+  "output": {
+    "type": "rzn.items/v2",
+    "listing": "feed",
+    "next_cursor": null,
+    "items": [
+      {
+        "type": "rzn.item/v2",
+        "key": "web:page:http://127.0.0.1:8123",
+        "kind": "page",
+        "url": "http://127.0.0.1:8123",
+        "title": "Home"
+      },
+      {
+        "type": "rzn.item/v2",
+        "key": "web:page:http://127.0.0.1:8123/blog",
+        "kind": "page",
+        "url": "http://127.0.0.1:8123/blog",
+        "title": "Blog"
+      }
+    ]
+  }
+}

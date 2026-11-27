@@ -15,6 +15,10 @@ pub struct Settings {
     pub notifications_enabled: bool,
     pub notify_on: String,
     pub fleet_keep_window_on_failure: bool,
+    /// Sites whose pages the owner opens are captured into their private index (BFL-T-0025);
+    /// empty, the default, captures nothing. A site is a host such as `voicebraindump.com`
+    /// and covers its subdomains.
+    pub capture_sites: Vec<String>,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -24,6 +28,7 @@ impl Default for Settings {
             notifications_enabled: true,
             notify_on: "all".into(),
             fleet_keep_window_on_failure: false,
+            capture_sites: Vec::new(),
         }
     }
 }
@@ -77,6 +82,7 @@ impl SettingsStore {
                     | "notifications_enabled"
                     | "notify_on"
                     | "fleet_keep_window_on_failure"
+                    | "capture_sites"
             ) {
                 bail!("unknown setting: {k}")
             }
@@ -85,7 +91,8 @@ impl SettingsStore {
         for (k, v) in o {
             next[k] = v.clone()
         }
-        let next: Settings = serde_json::from_value(next)?;
+        let mut next: Settings = serde_json::from_value(next)?;
+        next.capture_sites = capture_sites(&next.capture_sites)?;
         if !(10..=10000).contains(&next.run_retention_count) {
             bail!("run_retention_count must be 10..10000")
         }
@@ -111,6 +118,27 @@ impl SettingsStore {
         Ok(next)
     }
 }
+/// The capture site list as stored: hosts, lowercase, without `www.`, sorted, no repeats.
+fn capture_sites(sites: &[String]) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    for site in sites {
+        let host = site.trim().to_ascii_lowercase();
+        let host = host.strip_prefix("www.").unwrap_or(&host).to_string();
+        if host.is_empty() {
+            continue;
+        }
+        let host_chars = host
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-');
+        if !host_chars || !(host.contains('.') || host == "localhost") {
+            bail!("capture_sites takes hosts such as example.com, not {site:?}")
+        }
+        out.push(host);
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,7 +151,18 @@ mod tests {
             .is_err());
         s.patch(serde_json::json!({"notifications_enabled":false}))
             .unwrap();
-        assert!(!SettingsStore::open(d).get().notifications_enabled);
+        assert!(!SettingsStore::open(d.clone()).get().notifications_enabled);
+        assert!(
+            s.get().capture_sites.is_empty(),
+            "capture is off by default"
+        );
+        let saved = s
+            .patch(serde_json::json!({"capture_sites":["WWW.Example.com"," lambda.ai ","example.com",""]}))
+            .unwrap();
+        assert_eq!(saved.capture_sites, vec!["example.com", "lambda.ai"]);
+        assert!(s
+            .patch(serde_json::json!({"capture_sites":["https://example.com/a"]}))
+            .is_err());
     }
     #[test]
     fn fleet_run_notice_settings_gate() {

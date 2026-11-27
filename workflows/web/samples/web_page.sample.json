@@ -1,0 +1,58 @@
+{
+  "sample_of": "web/page",
+  "source": "recorded",
+  "note": "Recorded by extension/tests/e2e/capture_pages.spec.ts (fixture mode, headless Chromium on the MacBook Air, 27 Nov 2026) reading tests/fixtures/capture/article.html; the fixture server's port is written as 8123.",
+  "output": {
+    "audience": "public",
+    "author": {
+      "name": "Ada Example"
+    },
+    "blocks": [
+      {
+        "id": "b0",
+        "kind": "heading",
+        "text": "Notes that work offline"
+      },
+      {
+        "id": "b1",
+        "kind": "paragraph",
+        "path": [
+          "Notes that work offline"
+        ],
+        "text": "A notes app that needs the network loses the thought you had on the train."
+      },
+      {
+        "id": "b2",
+        "kind": "heading",
+        "path": [
+          "Notes that work offline"
+        ],
+        "text": "Transcription on the device"
+      },
+      {
+        "id": "b3",
+        "kind": "paragraph",
+        "path": [
+          "Notes that work offline",
+          "Transcription on the device"
+        ],
+        "text": "Offline transcription runs the speech model on the phone, so nothing leaves it."
+      }
+    ],
+    "fields": {
+      "description": "Why a notes app should keep working with no network."
+    },
+    "key": "web:page:http://127.0.0.1:8123/blog/offline-notes",
+    "kind": "page",
+    "marker": "text:cba04ef6:207",
+    "published_at": "2026-11-20T09:00:00Z",
+    "published_in": {
+      "id": "127.0.0.1",
+      "name": "Example Notes",
+      "url": "http://127.0.0.1:8123"
+    },
+    "title": "Notes that work offline",
+    "type": "rzn.item/v2",
+    "url": "http://127.0.0.1:8123/blog/offline-notes"
+  }
+}

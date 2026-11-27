@@ -1074,9 +1074,9 @@ impl FleetJobExecutor for InProcessJobExecutor {
 /// In-process `StepTransport`: drives `SupervisorState::dispatch` directly (never
 /// the local socket). The shared runner observes cancellation during in-flight
 /// calls and still closes the session before returning.
-struct InProcessTransport {
-    state: Arc<SupervisorState>,
-    cancel: Arc<AtomicBool>,
+pub(crate) struct InProcessTransport {
+    pub(crate) state: Arc<SupervisorState>,
+    pub(crate) cancel: Arc<AtomicBool>,
 }
 
 #[async_trait]

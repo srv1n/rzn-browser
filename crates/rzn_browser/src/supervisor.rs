@@ -43,6 +43,9 @@ use crate::workflow_runner::{
     SnapshotMode, StepTransport, TransportError,
 };
 
+#[path = "supervisor_capture.rs"]
+mod capture;
+
 pub(crate) const RZN_LOCAL_PROTOCOL: &str = "rzn.local";
 const SUPERVISOR_LOCK_FILENAME: &str = "rzn-supervisor.lock";
 pub(crate) const SUPERVISOR_OWNER_LOCK_FILENAME: &str = "rzn-supervisor-owner.lock";
@@ -208,6 +211,7 @@ pub(crate) struct SupervisorState {
     run_store: RunStore,
     pub(crate) control: SupervisorControl,
     settings: SettingsStore,
+    capture: capture::Capture,
     token: OnceLock<String>,
     shutdown: AtomicBool,
 }
@@ -1515,6 +1519,7 @@ impl SupervisorState {
         let run_store = RunStore::open(&paths.app_base).expect("create supervisor run store");
         let control = SupervisorControl::open(&paths.app_base);
         let settings = SettingsStore::open(paths.app_base.clone());
+        let capture = capture::Capture::open(&paths.app_base);
         let supervisor_boot_id = format!("supervisor-{}", Uuid::new_v4());
         Self {
             config,
@@ -1532,6 +1537,7 @@ impl SupervisorState {
             run_store,
             control,
             settings,
+            capture,
             token: OnceLock::new(),
             shutdown: AtomicBool::new(false),
         }
@@ -2246,6 +2252,8 @@ impl SupervisorState {
                 self.start_local_run(&record.workflow_id, replay_params)
                     .await
             }
+            "capture.page" => capture::page(self, params).await,
+            "capture.flush" => capture::flush(self).await,
             "native_host.rpc" => {
                 let inner = params
                     .get("method")
@@ -4852,6 +4860,7 @@ fn native_host_rpc_allowed(method: &str) -> bool {
             | "diagnostics.export"
             | "settings.get"
             | "settings.set"
+            | "capture.page"
     )
 }
 pub(crate) fn fleet_notice_enabled(settings: &crate::settings::Settings, phase: &str) -> bool {
