@@ -7,8 +7,10 @@
 //   RZN_E2E_CAPTURE=1 bun x playwright test tests/e2e/capture_pages.spec.ts
 //
 // Fixture mode (default): a local server serves tests/fixtures/capture/article.html and plays the
-// push door. Live mode: RZN_E2E_CAPTURE_LIVE_URL names a public page and RZN_E2E_CAPTURE_TARGET a
-// capture.json (server_url, index_id, source_key, token) for a pushed source of a test index;
+// push door and the account's token endpoint (the helper is signed in through account.json, the
+// index and pushed source are Settings). Live mode: RZN_E2E_CAPTURE_LIVE_URL names a public page,
+// RZN_E2E_CAPTURE_ACCOUNT a signed-in account.json and RZN_E2E_CAPTURE_TARGET a JSON
+// {index_id, source_key} naming a pushed source of a test index;
 // the batch goes to that server. RZN_E2E_CAPTURE_LIVE_REDDIT names a public Reddit thread to open
 // logged out in the readers test (one page). Never run against a browser profile of a person.
 import { chromium, test, expect, type BrowserContext } from '@playwright/test';
@@ -30,6 +32,7 @@ const liveReddit = process.env.RZN_E2E_CAPTURE_LIVE_REDDIT;
 const enabled = process.env.RZN_E2E_CAPTURE === '1';
 const liveUrl = process.env.RZN_E2E_CAPTURE_LIVE_URL;
 const liveTarget = process.env.RZN_E2E_CAPTURE_TARGET;
+const liveAccount = process.env.RZN_E2E_CAPTURE_ACCOUNT;
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function binary(name: 'rzn-browser' | 'rzn-native-host'): string {
@@ -96,6 +99,12 @@ async function fixtureServer() {
       res.end(fs.readFileSync(fixture));
       return;
     }
+    if (req.method === 'POST' && req.url === '/oauth/token') {
+      req.resume();
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ access_token: 'test-token', expires_in: 3600, refresh_token: 'test-refresh' }));
+      return;
+    }
     if (req.method === 'POST' && /^\/api\/indexes\/[^/]+\/sources\/[^/]+\/items$/.test(req.url || '')) {
       let raw = '';
       req.on('data', (chunk) => { raw += chunk; });
@@ -115,13 +124,20 @@ async function fixtureServer() {
 
 
 /** A supervisor, the native host and a headless Chromium with the extension, reaching each other. */
-async function harness(target: string) {
+/** Where pushes go: the signed-in session (`account.json`) and the index and source in Settings. */
+type Target = { account: string; index_id: string; source_key: string };
+
+function fixtureTarget(origin: string): Target {
+  return { account: JSON.stringify({ version: 'rzn.account.session', server_url: origin, refresh_token: 'test-refresh' }), index_id: 'capture-test', source_key: 'main' };
+}
+
+async function harness(target: Target) {
   const root = await fs.promises.mkdtemp('/tmp/rzn-capture-');
   const home = path.join(root, 'home');
   const appBase = path.join(root, 'app-base');
   await fs.promises.mkdir(appBase, { recursive: true });
   const env = envFor(home, appBase);
-  fs.writeFileSync(path.join(appBase, 'capture.json'), target, { mode: 0o600 });
+  fs.writeFileSync(path.join(appBase, 'account.json'), target.account, { mode: 0o600 });
   const first = await launch(path.join(root, 'profile-first'), env);
   const id = await extensionId(first);
   await first.close();
@@ -159,9 +175,9 @@ async function harness(target: string) {
   const switchOn = async (sites: string[]) => {
     const dashboard = await context!.newPage();
     await dashboard.goto(`chrome-extension://${id}/dashboard.html`);
-    const saved = await dashboard.evaluate(async (sites) => await chrome.runtime.sendMessage({
-      cmd: 'supervisor_rpc', payload: { method: 'settings.set', params: { patch: { capture_sites: sites } } },
-    }), sites);
+    const saved = await dashboard.evaluate(async (patch) => await chrome.runtime.sendMessage({
+      cmd: 'supervisor_rpc', payload: { method: 'settings.set', params: { patch } },
+    }), { capture_sites: sites, capture_index: target.index_id, capture_source: target.source_key });
     expect([...(saved?.result?.capture_sites ?? [])].sort()).toEqual([...sites].sort());
     await dashboard.close();
     await sleep(1_000);
@@ -177,9 +193,9 @@ test.describe('capture of opened pages', () => {
     const local = liveUrl ? null : await fixtureServer();
     const pageUrl = liveUrl || `${local!.origin}/blog/offline-notes`;
     const site = new URL(pageUrl).hostname.replace(/^www\./, '');
-    const target = liveTarget
-      ? fs.readFileSync(liveTarget, 'utf8')
-      : JSON.stringify({ server_url: local!.origin, index_id: 'capture-test', source_key: 'main', token: 'test-token' });
+    const target = liveTarget && liveAccount
+      ? { ...JSON.parse(fs.readFileSync(liveTarget, 'utf8')), account: fs.readFileSync(liveAccount, 'utf8') }
+      : fixtureTarget(local!.origin);
     const h = await harness(target);
     const { appBase, context } = h;
     try {
@@ -242,7 +258,7 @@ test.describe('capture of opened pages', () => {
   test('an X post, a LinkedIn post and a Reddit thread are read in place by their site readers', async () => {
     test.setTimeout(360_000);
     const local = await fixtureServer();
-    const h = await harness(JSON.stringify({ server_url: local.origin, index_id: 'capture-test', source_key: 'main', token: 'test-token' }));
+    const h = await harness(fixtureTarget(local.origin));
     const { appBase, context } = h;
     // The saved pages at the sites' own URLs; nothing of these sites is fetched from the network.
     const pages: Record<string, string> = {
