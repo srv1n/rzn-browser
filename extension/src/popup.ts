@@ -7,7 +7,7 @@ const app=document.querySelector<HTMLElement>('#app')!;
 let shown='';
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
-async function activeSite():Promise<string|null>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});return tab?.url?siteOf(tab.url):null;}
+async function activeSite():Promise<{site:string|null;icon:string|null}>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});return {site:tab?.url?siteOf(tab.url):null,icon:tab?.favIconUrl||null};}
 
 // Re-render only when something changed, so the 2 s refresh never steals keyboard focus.
 function show(html:string,bind:()=>void){if(html===shown)return;const focused=(document.activeElement as HTMLElement|null)?.id;shown=html;app.innerHTML=html;bind();if(focused)app.querySelector<HTMLElement>(`#${focused}`)?.focus();}
@@ -15,8 +15,8 @@ function show(html:string,bind:()=>void){if(html===shown)return;const focused=(d
 export async function refresh(){
   if(refreshTimer)clearTimeout(refreshTimer);
   try{
-    const [snapshot,account,settings,site]=await Promise.all([rpc<Snapshot>('status.snapshot'),rpc<Account>('account.status'),rpc<Settings>('settings.get'),activeSite()]);
-    const state:PopupState={snapshot,account,settings,site};
+    const [snapshot,account,settings,{site,icon}]=await Promise.all([rpc<Snapshot>('status.snapshot'),rpc<Account>('account.status'),rpc<Settings>('settings.get'),activeSite()]);
+    const state:PopupState={snapshot,account,settings,site,icon};
     show(popupHtml(state),()=>bindPopupActions(app,state,refresh));
   }catch(error){
     const retry=()=>app.querySelector('#retry')?.addEventListener('click',async()=>{await chrome.runtime.sendMessage({type:'RZN_WAKE_NATIVE',resetTerminal:true});await refresh();});

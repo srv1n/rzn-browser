@@ -1,0 +1,25 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in to RZN</title><style>
+:root{color-scheme:light;--ink:#17171a;--ink-2:#46464d;--ink-3:#6a6a72;--line:#e6e5e1;--line-strong:#c9c8c3;--accent:#4b45d8;--accent-hover:#3d37c2;--ring:rgba(75,69,216,.28)}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:12vh 16px 48px;background:#f5f5f3;color:var(--ink);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.brand{display:flex;align-items:center;gap:8px;margin-bottom:24px;font-size:17px;font-weight:600;letter-spacing:-.02em}
+.brand svg{display:block;color:var(--accent)}
+main{width:100%;max-width:400px;padding:36px 32px 32px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 2px rgba(23,23,26,.04),0 4px 16px rgba(23,23,26,.05)}
+h1{margin:0 0 8px;font-size:22px;line-height:1.3;font-weight:600;letter-spacing:-.015em}
+p{margin:0 0 24px;color:var(--ink-2)}
+strong{color:var(--ink);font-weight:600}
+p strong{white-space:nowrap}
+label{display:block;font-size:14px;font-weight:500}
+input{display:block;width:100%;min-height:44px;margin:8px 0 16px;padding:10px 12px;border:1px solid var(--line-strong);border-radius:8px;background:#fff;color:var(--ink);font:inherit;font-size:16px;font-weight:400;box-shadow:0 1px 1px rgba(23,23,26,.03)}
+input::placeholder{color:#8f8e98}
+input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--ring)}
+input[name=otp]{font-size:22px;letter-spacing:.35em;text-align:center;font-variant-numeric:tabular-nums}
+button{display:block;width:100%;min-height:44px;padding:0 16px;border:1px solid var(--accent);border-radius:8px;background:var(--accent);color:#fff;font:inherit;font-weight:500;cursor:pointer;box-shadow:0 1px 2px rgba(61,55,194,.25)}
+button:hover{border-color:var(--accent-hover);background:var(--accent-hover)}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.note,.sent{margin:0 0 20px;padding:12px 14px;border:1px solid;border-radius:8px;font-size:14px}
+.note{border-color:#f3cbc6;background:#fdefed;color:#b42318}
+.sent{border-color:#c3e3cf;background:#e7f4ec;color:#17703f}
+.sent strong{color:inherit}
+.fine{margin:20px 0 0;color:var(--ink-3);font-size:13px;text-align:center}
+</style></head><body><div class="brand"><svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><rect width="24" height="24" rx="6.5" fill="currentColor"/><path d="M7 8.5h10M7 12h7M7 15.5h4" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg><span>RZN</span></div><main><h1>Check your email</h1><p>Enter the code to finish connecting <strong>RZN Browser</strong> to your RZN account.</p><p class="sent">We emailed a code to <strong>sam@example.com</strong>.</p><p class="note">That code did not work. Check it, or start again for a new one.</p><form method="post" action="/oauth/authorize"><input type="hidden" name="response_type" value="code"><input type="hidden" name="client_id" value="rzn-browser"><input type="hidden" name="redirect_uri" value="https://bogjdnehdficgkhklinmnbgiiofbamji.chromiumapp.org/"><input type="hidden" name="code_challenge" value="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"><input type="hidden" name="code_challenge_method" value="S256"><input type="hidden" name="state" value="st"><input type="hidden" name="scope" value=""><input type="hidden" name="resource" value=""><input type="hidden" name="email" value="sam@example.com"><label>Code <input name="otp" inputmode="numeric" autocomplete="one-time-code" required autofocus></label><button>Sign in</button></form><p class="fine">No code? Check your spam folder, or start again from RZN Browser.</p></main></body></html>

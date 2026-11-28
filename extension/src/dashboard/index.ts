@@ -1,4 +1,5 @@
 import './style.css';
+import { mark } from '../ui/brand';
 import { rpc, SupervisorUnreachable } from '../ui/rpc';
 import { mountAccount } from './account';
 import { mountLogs } from './logs';
@@ -30,7 +31,7 @@ export async function render(): Promise<void> {
   const current = route();
   const link = (tab: string) => `<a class="${tab === current.tab ? 'active' : ''}" href="#${tab}" ${tab === current.tab ? 'aria-current="page"' : ''}>${tabLabels[tab]}</a>`;
   const advanced = advancedTabs.includes(current.tab) ? `<span class="label nav-label">Advanced</span>${advancedTabs.map(link).join('')}` : '';
-  app.innerHTML = `<aside class="sidebar"><div class="brand">RZN</div><nav aria-label="RZN">${mainTabs.map(link).join('')}${advanced}</nav></aside><main><p class="muted">Loading…</p></main>`;
+  app.innerHTML = `<aside class="sidebar"><div class="brand mark">${mark(24)}</div><nav aria-label="RZN">${mainTabs.map(link).join('')}${advanced}</nav></aside><main><p class="muted">Loading…</p></main>`;
   const main = app.querySelector<HTMLElement>('main')!;
   const navigate = (hash: string) => { location.hash = hash; };
   try {

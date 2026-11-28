@@ -1,4 +1,5 @@
 import { switchedOn } from '../capture';
+import { avatar, mark, markSvg } from './brand';
 import { friendly } from './errors';
 import { rpc } from './rpc';
 
@@ -11,31 +12,37 @@ export type Snapshot = {
 export type Account = { signed_in:boolean; user_email?:string|null; user_id?:string|null; server_url?:string|null; fleet?:{ state?:string }|null };
 export type Settings = { capture_sites?:string[]; capture_index?:string; server_url?:string };
 /** Everything the popup shows: the helper's snapshot, the account, settings and the active tab's site. */
-export type PopupState = { snapshot:Snapshot; account:Account; settings:Settings; site:string|null };
+export type PopupState = { snapshot:Snapshot; account:Account; settings:Settings; site:string|null; icon?:string|null };
 
 const esc=(value:unknown)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const DEFAULT_SERVER='https://app.rzn.ai';
 
-const header=`<header class="top"><span class="wordmark">RZN</span><a class="top-link" href="dashboard.html#settings" target="_blank">Settings</a></header>`;
+const header=`<header class="top"><span class="mark">${mark(22)}</span><a class="top-link" href="dashboard.html#settings" target="_blank">Settings</a></header>`;
 
-export const signedOutHtml=`${header}<main class="hero"><h1>Welcome to RZN</h1><p>Sign in to save the pages you choose and search them any time.</p><a class="button primary wide" id="sign-in" href="dashboard.html#account" target="_blank">Sign in to RZN</a></main>`;
+export const signedOutHtml=`${header}<main class="hero"><span class="hero-mark">${markSvg(40)}</span><h1>Welcome to RZN</h1><p>Sign in to save the pages you choose and search them any time.</p><a class="button primary wide" id="sign-in" href="dashboard.html#account" target="_blank">Sign in to RZN</a></main>`;
 
 /** A problem as one title, one plain sentence and a retry; the raw detail goes to the console. */
 export function problemHtml(error:unknown):string{
   const {title,line}=friendly(error,'RZN popup');
-  return `${header}<main class="hero"><h1>${esc(title)}</h1><p>${esc(line)}</p><button id="retry" class="primary wide">Try again</button></main>`;
+  return `${header}<main class="hero"><span class="hero-icon" aria-hidden="true">!</span><h1>${esc(title)}</h1><p>${esc(line)}</p><button id="retry" class="primary wide">Try again</button></main>`;
 }
 
 /** Whether pages of the tab's site are saved, and the list entry that covers it. */
 function coveringEntry(sites:readonly string[],site:string):string|undefined{return sites.find(entry=>switchedOn([entry],site));}
+
+/** The site's own icon when the tab has a web one, else its first letter. */
+function siteIcon(site:string,icon?:string|null):string{
+  const letter=avatar(site,'site');
+  return icon&&/^(https:|data:image\/)/.test(icon)?letter.replace('</span>',`<img src="${esc(icon)}" alt=""></span>`):letter;
+}
 
 function siteCard(state:PopupState):string{
   const {site,settings}=state;
   if(!site)return `<section class="card site"><span class="label">This page</span><p class="quiet">Pages like this one can't be saved.</p></section>`;
   const sites=settings.capture_sites??[];const entry=coveringEntry(sites,site);const on=Boolean(entry);
   const where=settings.capture_index?`Pages you open here are saved to <b>${esc(settings.capture_index)}</b>.`:'Choose where pages go in <a href="dashboard.html#settings" target="_blank">Settings</a>.';
-  const via=entry&&entry!==site?` <span class="muted">(via ${esc(entry)})</span>`:'';
-  return `<section class="card site"><span class="label">This site</span><div class="row"><label class="site-name" for="capture-switch">${esc(site)}${via}</label><input id="capture-switch" class="switch" type="checkbox" role="switch" ${on?'checked':''} aria-describedby="capture-help"></div><p id="capture-help" class="quiet">${on?where:'Off. Nothing from this site leaves your browser.'}</p></section>`;
+  const via=entry&&entry!==site?`<span class="via">via ${esc(entry)}</span>`:'';
+  return `<section class="card site"><span class="label">This site</span><div class="row">${siteIcon(site,state.icon)}<label class="site-name" for="capture-switch"><span class="site-host">${esc(site)}</span>${via}</label><input id="capture-switch" class="switch" type="checkbox" role="switch" ${on?'checked':''} aria-describedby="capture-help"></div><p id="capture-help" class="quiet">${on?where:'Off. Nothing from this site leaves your browser.'}</p></section>`;
 }
 
 function notices(snapshot:Snapshot):string{
@@ -51,10 +58,12 @@ export function popupHtml(state:PopupState):string{
   const stopped=String(account.fleet?.state||'').startsWith('stopped');
   const status=stopped?'<span class="chip bad">Signed out from the app</span>':'<span class="chip ok">Connected</span>';
   const server=(account.server_url||state.settings.server_url||DEFAULT_SERVER).replace(/\/+$/,'');
-  return `${header}<main><section class="account"><span class="label">Signed in as</span><div class="row"><span class="who" title="${esc(who)}">${esc(who)}</span>${status}</div></section>${siteCard(state)}${notices(state.snapshot)}<a class="button primary wide" id="open-rzn" href="${esc(server)}" target="_blank" rel="noopener">Open RZN</a></main>`;
+  return `${header}<main><section class="account">${avatar(who)}<div class="account-text"><span class="label">Signed in as</span><span class="who" title="${esc(who)}">${esc(who)}</span></div>${status}</section>${siteCard(state)}${notices(state.snapshot)}<a class="button primary wide" id="open-rzn" href="${esc(server)}" target="_blank" rel="noopener">Open RZN</a></main>`;
 }
 
 export function bindPopupActions(root:ParentNode,state:PopupState,refresh:()=>void|Promise<void>,call=rpc):void{
+  // A site icon that fails to load falls back to the letter underneath it.
+  root.querySelector('.avatar img')?.addEventListener('error',event=>(event.target as HTMLElement).remove());
   root.querySelectorAll?.('[data-cleared]').forEach(button=>button.addEventListener('click',()=>{void call('fleet.site_cleared',{system:(button as HTMLElement).dataset.cleared}).then(refresh);}));
   root.querySelector('#stop')?.addEventListener('click',()=>{void call('runs.cancel',{run_id:state.snapshot.now_running?.run_id}).then(refresh);});
   root.querySelector('#capture-switch')?.addEventListener('change',async event=>{

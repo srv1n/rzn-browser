@@ -1,5 +1,6 @@
 /* RZN design tokens and base elements, shared by the popup and the Settings pages.
-   One font family, Geist (OFL), bundled because MV3 blocks remote fonts. */
+   One font family, Geist Sans (OFL), bundled because MV3 blocks remote fonts.
+   Type scale 13/14/15/17/22/28; spacing on an 8 px grid; one accent. */
 
 @font-face { font-family: "Geist"; font-weight: 400; font-style: normal; font-display: swap; src: url("/fonts/geist-sans-latin-400-normal.woff2") format("woff2"); }
 @font-face { font-family: "Geist"; font-weight: 500; font-style: normal; font-display: swap; src: url("/fonts/geist-sans-latin-500-normal.woff2") format("woff2"); }
@@ -9,105 +10,140 @@
   color-scheme: light;
   --font: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 
-  --bg: #ffffff;           /* page */
-  --surface: #fafafa;      /* cards, sidebar */
-  --hover: #f4f4f5;
-  --ink: #18181b;          /* text and primary button: 17.7:1 on white */
-  --ink-2: #3f3f46;        /* secondary text: 10.4:1 */
-  --ink-3: #6b6b74;        /* labels, hints: 5.3:1 */
-  --line: #e4e4e7;         /* hairlines (decorative) */
-  --line-strong: #8e8e96;  /* control outlines: 3.3:1, meets non-text contrast */
-  --ok: #1f6b3a;
-  --ok-soft: #e8f3ec;
-  --warn: #8a5a00;
-  --danger: #b42318;
-  --danger-soft: #fdf0ee;
-  --focus: #2563eb;
+  --page: #f5f5f3;         /* soft warm grey page */
+  --card: #ffffff;
+  --sunken: #f8f8f6;       /* rows inside cards, disclosure hover */
+  --hover: #f1f1ee;
+  --ink: #17171a;          /* text: 17.4:1 on white */
+  --ink-2: #46464d;        /* secondary text: 9.4:1 */
+  --ink-3: #6a6a72;        /* hints: 5.4:1 on white, 5.0:1 on the page */
+  --line: #e6e5e1;         /* hairlines */
+  --line-strong: #c9c8c3;  /* input outlines */
+  --control: #8d8c86;      /* switch off track: 3.3:1, meets non-text contrast */
 
-  --radius: 6px;
+  --accent: #4b45d8;       /* RZN indigo: white text 6.6:1, as text on white 6.6:1 */
+  --accent-hover: #3d37c2;
+  --accent-soft: #eeedfd;
+  --accent-ring: rgba(75, 69, 216, .28);
+
+  --ok: #17703f;  --ok-soft: #e7f4ec;  --ok-line: #c3e3cf;
+  --warn: #8a5300; --warn-soft: #fdf3e2; --warn-line: #f0d9ae;
+  --danger: #b42318; --danger-soft: #fdefed; --danger-line: #f3cbc6;
+
+  --radius-sm: 8px;
+  --radius: 12px;
   --radius-pill: 999px;
+  --shadow: 0 1px 2px rgba(23, 23, 26, .04), 0 2px 8px rgba(23, 23, 26, .04);
 
   font-family: var(--font);
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 15px;
+  line-height: 1.55;
   color: var(--ink);
-  background: var(--bg);
+  background: var(--page);
   -webkit-font-smoothing: antialiased;
 }
 
 * { box-sizing: border-box; }
 /* Chromium gives extension pages body { font-size: 75% }; undo it. */
-body { margin: 0; font-size: 1rem; color: var(--ink); background: var(--bg); }
+body { margin: 0; font-size: 1rem; color: var(--ink); background: var(--page); }
 
-h1, h2, h3 { margin: 0; color: var(--ink); font-weight: 600; letter-spacing: -.015em; line-height: 1.25; }
+h1, h2, h3 { margin: 0; color: var(--ink); font-weight: 600; letter-spacing: -.012em; line-height: 1.3; }
+h1 { font-size: 28px; letter-spacing: -.022em; line-height: 1.2; }
+h2 { font-size: 17px; }
+h3 { font-size: 15px; }
 p { margin: 0; color: var(--ink-2); }
-code, pre { font-family: var(--font); font-variant-numeric: tabular-nums; font-size: 13px; }
-a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
-a:hover { text-decoration-color: var(--ink); }
+b, strong { font-weight: 600; color: var(--ink); }
+code, pre { font-family: var(--font); font-variant-numeric: tabular-nums; font-size: 14px; }
+a { color: var(--accent); font-weight: 500; text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
-/* Small sentence-case label in muted gray. */
-.label { display: block; color: var(--ink-3); font-size: 12px; font-weight: 500; line-height: 1.4; }
+/* Small sentence-case label in muted grey. */
+.label { display: block; color: var(--ink-3); font-size: 13px; font-weight: 500; line-height: 1.4; }
 
 :focus { outline: none; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: var(--radius); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
 
-/* Buttons: primary is solid near-black with white text; secondary is a neutral outline. */
+/* The RZN mark: an indigo tile with three index lines. */
+.mark { display: inline-flex; align-items: center; gap: 8px; color: var(--ink); font-size: 16px; font-weight: 600; letter-spacing: -.02em; text-decoration: none; }
+.mark svg { flex: none; display: block; color: var(--accent); }
+.mark:hover { text-decoration: none; }
+
+/* Buttons: primary is the accent; secondary is white with a hairline. */
 button, .button {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-height: 36px; padding: 7px 16px;
-  border: 1px solid var(--line-strong); border-radius: var(--radius);
-  background: var(--bg); color: var(--ink);
-  font: 500 14px/1.2 var(--font); text-decoration: none; white-space: nowrap;
-  cursor: pointer; transition: background-color .12s ease, border-color .12s ease;
+  min-height: 36px; padding: 0 16px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--card); color: var(--ink);
+  font: 500 14px/1 var(--font); text-decoration: none; white-space: nowrap;
+  box-shadow: 0 1px 1px rgba(23, 23, 26, .04);
+  cursor: pointer; transition: background-color .12s ease, border-color .12s ease, box-shadow .12s ease;
 }
-button:hover:not(:disabled), .button:hover { background: var(--hover); }
-button.primary, .button.primary { border-color: var(--ink); background: var(--ink); color: #ffffff; }
-button.primary:hover:not(:disabled), .button.primary:hover { border-color: #000; background: #000; }
-button.quiet { border-color: transparent; padding-inline: 8px; color: var(--ink-2); }
-button.quiet:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
-button.danger { border-color: var(--danger); color: var(--danger); }
-button.danger:hover:not(:disabled) { background: var(--danger-soft); }
-button:disabled { opacity: .5; cursor: not-allowed; }
+button:hover:not(:disabled), .button:hover { background: var(--sunken); border-color: var(--control); text-decoration: none; }
+button.primary, .button.primary { border-color: var(--accent); background: var(--accent); color: #ffffff; box-shadow: 0 1px 2px rgba(61, 55, 194, .25), inset 0 1px 0 rgba(255, 255, 255, .12); }
+button.primary:hover:not(:disabled), .button.primary:hover { border-color: var(--accent-hover); background: var(--accent-hover); }
+button.quiet { border-color: transparent; background: transparent; box-shadow: none; padding-inline: 10px; color: var(--ink-2); }
+button.quiet:hover:not(:disabled) { background: var(--hover); border-color: transparent; color: var(--ink); }
+button.danger { color: var(--danger); }
+button.danger:hover:not(:disabled) { border-color: var(--danger-line); background: var(--danger-soft); }
+button:disabled { opacity: .55; cursor: not-allowed; }
+button:focus-visible, .button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Pill chips with a tiny dot. */
+/* Soft status chips with a dot. */
 .chip {
   display: inline-flex; align-items: center; gap: 6px;
-  padding: 2px 9px; border: 1px solid var(--line); border-radius: var(--radius-pill);
-  background: var(--bg); color: var(--ink-2);
-  font: 500 12px/1.5 var(--font); white-space: nowrap;
+  padding: 2px 10px; border: 1px solid var(--line); border-radius: var(--radius-pill);
+  background: var(--sunken); color: var(--ink-2);
+  font: 500 13px/20px var(--font); white-space: nowrap;
 }
-.chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
-.chip.ok { color: var(--ok); border-color: #c9e2d1; background: var(--ok-soft); }
-.chip.ok::before { background: var(--ok); }
-.chip.bad { color: var(--danger); border-color: #f2cdc8; background: var(--danger-soft); }
+.chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--control); }
+.chip.ok { color: var(--ok); border-color: var(--ok-line); background: var(--ok-soft); }
+.chip.ok::before { background: #22a05a; }
+.chip.warn { color: var(--warn); border-color: var(--warn-line); background: var(--warn-soft); }
+.chip.warn::before { background: #d48a12; }
+.chip.bad { color: var(--danger); border-color: var(--danger-line); background: var(--danger-soft); }
 .chip.bad::before { background: var(--danger); }
-.chip.warn { color: var(--warn); }
-.chip.warn::before { background: var(--warn); }
+
+/* Round avatars: a letter on a soft tint, or a site's icon. */
+.avatar {
+  position: relative; display: inline-grid; flex: none; place-items: center; overflow: hidden;
+  width: 32px; height: 32px; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent); font-size: 14px; font-weight: 600; text-transform: uppercase;
+}
+.avatar.lg { width: 44px; height: 44px; font-size: 18px; }
+.avatar.site { border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--sunken); color: var(--ink-2); }
+.avatar img { position: absolute; inset: 0; width: 100%; height: 100%; padding: 5px; object-fit: contain; background: var(--card); }
+.avatar.tint-1 { background: #e9f3ee; color: #23704a; }
+.avatar.tint-2 { background: #fbefe4; color: #9a4f10; }
+.avatar.tint-3 { background: #e8f0fb; color: #285fa8; }
+.avatar.tint-4 { background: #f6eaf3; color: #8d2f73; }
 
 /* A switch: a native checkbox with role="switch", so Space and screen readers work. */
 input.switch {
   appearance: none; flex: none; position: relative; width: 36px; height: 20px; margin: 0;
-  border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: #e4e4e7;
-  cursor: pointer; transition: background-color .15s ease, border-color .15s ease;
+  border: 0; border-radius: var(--radius-pill); background: var(--control);
+  cursor: pointer; transition: background-color .15s ease;
 }
 input.switch::after {
-  content: ""; position: absolute; top: 1px; left: 1px; width: 16px; height: 16px;
-  border-radius: 50%; background: #ffffff; box-shadow: 0 1px 2px rgba(0, 0, 0, .25); transition: transform .15s ease;
+  content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #ffffff; box-shadow: 0 1px 2px rgba(0, 0, 0, .2); transition: transform .15s ease;
 }
-input.switch:checked { border-color: var(--ink); background: var(--ink); }
+input.switch:checked { background: var(--accent); }
 input.switch:checked::after { transform: translateX(16px); }
-input.switch:focus-visible { outline-offset: 3px; border-radius: var(--radius-pill); }
+input.switch:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-pill); }
 input.switch:disabled { opacity: .5; cursor: not-allowed; }
 
 input:not([type="checkbox"]):not([type="radio"]), select, textarea {
-  width: 100%; min-height: 36px; padding: 7px 10px;
-  border: 1px solid var(--line-strong); border-radius: var(--radius);
-  background: var(--bg); color: var(--ink); font: 400 14px/1.4 var(--font);
+  width: 100%; min-height: 38px; padding: 8px 12px;
+  border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--card); color: var(--ink); font: 400 15px/1.4 var(--font);
+  box-shadow: 0 1px 1px rgba(23, 23, 26, .03);
+  transition: border-color .12s ease, box-shadow .12s ease;
 }
 textarea { min-height: 96px; resize: vertical; }
-input::placeholder, textarea::placeholder { color: var(--ink-3); }
-input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--focus); }
-input[type="checkbox"]:not(.switch), input[type="radio"] { width: 16px; height: 16px; margin: 0 8px 0 0; accent-color: var(--ink); }
+input::placeholder, textarea::placeholder { color: #8f8e98; }
+input:not([type="checkbox"]):not([type="radio"]):hover, select:hover, textarea:hover { border-color: var(--control); }
+input:not([type="checkbox"]):not([type="radio"]):focus-visible, select:focus-visible, textarea:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
+input[type="checkbox"]:not(.switch), input[type="radio"] { flex: none; width: 16px; height: 16px; margin: 0 10px 0 0; accent-color: var(--accent); }
 
 .muted { color: var(--ink-3); }
 .ok { color: var(--ok); }

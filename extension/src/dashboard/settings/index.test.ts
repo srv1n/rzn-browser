@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mountSettings } from '.';
+import { mountSettings, siteEntry } from '.';
 import { TestElement, TestRoot, route } from '../testDom';
 
 const stored = { run_retention_count: 500, run_retention_days: 30, notifications_enabled: true, notify_on: 'all', fleet_keep_window_on_failure: false, capture_sites: ['example.com'], capture_index: 'my-index' };
@@ -26,5 +26,19 @@ describe('Settings tab DOM', () => {
     await mountSettings(root as any, call, route('settings')); await form.fire('submit');
     expect(call).toHaveBeenCalledWith('settings.set', expect.objectContaining({ patch: expect.objectContaining({ run_retention_count: 20, capture_sites: ['example.com', 'lambda.ai'] }) }));
     expect(root.innerHTML).toContain('Couldn&#39;t save. disk full'); expect(root.innerHTML).toContain('value="500"');
+  });
+
+  it('lists each site as a row with a switch, and keeps the list in the saved field', async () => {
+    const root = new TestRoot(); root.children.set('[data-settings]', new TestElement());
+    await mountSettings(root as any, helper(() => ({ ...stored, capture_sites: ['example.com', 'lambda.ai'] })), route('settings'));
+    expect(root.innerHTML.match(/class="site-row"/g)).toHaveLength(2);
+    expect(root.innerHTML).toContain('data-site="lambda.ai" checked');
+    expect(root.innerHTML).toContain('name="capture_sites" value="example.com\nlambda.ai"');
+  });
+
+  it('turns a typed address into the bare site', () => {
+    expect(siteEntry(' https://News.Example.com:8443/a?b ')).toBe('news.example.com');
+    expect(siteEntry('lambda.ai/')).toBe('lambda.ai');
+    expect(siteEntry('  ')).toBe('');
   });
 });

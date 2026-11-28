@@ -43,7 +43,7 @@ export function isPaused(snapshot: any): boolean { return Boolean(snapshot?.paus
 /** One title and one plain sentence; the raw detail goes to the console (see errors.ts). */
 export function problem(root: HTMLElement, error: unknown): void {
   const { title, line } = friendly(error, 'RZN settings');
-  root.innerHTML = `<section class="narrow"><div class="empty"><h1>${esc(title)}</h1><p class="lede">${esc(line)}</p></div></section>`;
+  root.innerHTML = `<section class="narrow"><div class="card empty"><h1>${esc(title)}</h1><p class="lede">${esc(line)}</p></div></section>`;
 }
 
 export const unavailable = problem;
