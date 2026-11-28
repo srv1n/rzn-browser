@@ -94,10 +94,15 @@ pub(crate) fn inject_script_params(value: &mut Value, params: &HashMap<String, S
         }
         Value::Object(map) => {
             if is_script_step(map) {
-                let params_value = params
-                    .iter()
-                    .map(|(key, value)| (key.clone(), Value::String(value.clone())))
-                    .collect();
+                // The run's params, over any the step declares itself (a read in place adds
+                // `in_place`).
+                let mut params_value = match map.remove("params") {
+                    Some(Value::Object(own)) => own,
+                    _ => serde_json::Map::new(),
+                };
+                for (key, value) in params {
+                    params_value.insert(key.clone(), Value::String(value.clone()));
+                }
                 map.insert("params".to_string(), Value::Object(params_value));
             }
             for value in map.values_mut() {
@@ -142,6 +147,18 @@ mod tests {
 
         assert_eq!(step["params"]["message_body"], "O'Reilly");
         assert_eq!(step["script"], "return window.__rzn_params.message_body;");
+    }
+
+    #[test]
+    fn a_script_step_keeps_its_own_params_under_the_runs() {
+        let workflow = json!({"steps": [{"type": "execute_javascript", "script": "return 1",
+            "params": {"in_place": true, "url": "step"}}]});
+        let params = HashMap::from([("url".to_string(), "https://x.com/a/status/1".to_string())]);
+        let applied = apply_parameters(workflow, &params);
+        assert_eq!(
+            applied["steps"][0]["params"],
+            json!({"in_place": true, "url": "https://x.com/a/status/1"})
+        );
     }
 
     #[test]

@@ -163,12 +163,20 @@ fn a_reload_is_not_read_twice() {
 }
 
 #[test]
-fn in_place_runs_no_navigation_or_scrolling_and_never_a_write() {
+fn in_place_runs_only_read_only_steps_and_never_a_write() {
+    let ro = json!(["read_only"]);
     let mut manifest = json!({"side_effects": [{"class": "read_only"}], "steps": [
-        {"id": "a", "action": {"kind": "navigate_to_url"}},
-        {"id": "b", "action": {"kind": "scroll_element_into_view"}},
-        {"id": "c", "action": {"kind": "infinite_scroll"}},
-        {"id": "d", "action": {"kind": "execute_javascript"}},
+        {"id": "a", "action": {"kind": "navigate_to_url", "side_effects": ["browser_state"]}},
+        {"id": "b", "action": {"kind": "scroll_element_into_view", "side_effects": ro}},
+        {"id": "c", "action": {"kind": "infinite_scroll", "side_effects": ro}},
+        {"id": "d", "action": {"kind": "dismiss_popups", "side_effects": ro}},
+        {"id": "e", "action": {"kind": "execute_javascript", "side_effects": ["browser_state"],
+            "inputs": {"script": "location.assign('/x')"}}},
+        {"id": "f", "action": {"kind": "wait_for_navigation", "side_effects": ro}},
+        {"id": "g", "action": {"kind": "wait_for_element", "side_effects": ro}},
+        {"id": "h", "action": {"kind": "execute_javascript", "side_effects": ro,
+            "inputs": {"script": "return 1", "captured_responses": true}}},
+        {"id": "i", "action": {"kind": "execute_javascript"}},
     ]});
     in_place(&mut manifest).expect("in place");
     let kept: Vec<_> = manifest["steps"]
@@ -177,11 +185,115 @@ fn in_place_runs_no_navigation_or_scrolling_and_never_a_write() {
         .iter()
         .map(|s| s["id"].clone())
         .collect();
-    assert_eq!(kept, vec![json!("d")]);
+    assert_eq!(kept, vec![json!("g"), json!("h")]);
+    let script = &manifest["steps"][1]["action"]["inputs"];
+    assert_eq!(script["params"]["in_place"], true, "the script knows");
+    assert!(script.get("captured_responses").is_none(), "{script}");
     let mut writes = json!({"side_effects": [{"class": "external_write"}], "steps": [{"action": {"kind": "click"}}]});
     assert!(in_place(&mut writes).is_err());
     let mut only_navigation = json!({"steps": [{"action": {"kind": "navigate_to_url"}}]});
     assert!(in_place(&mut only_navigation).is_err());
+}
+
+#[test]
+fn a_post_or_thread_is_read_by_its_site_reader() {
+    for (url, reader) in [
+        ("https://x.com/jack/status/20", Some(("x/open", "url"))),
+        (
+            "https://twitter.com/jack/status/20?s=20",
+            Some(("x/open", "url")),
+        ),
+        ("https://x.com/i/web/status/20", Some(("x/open", "url"))),
+        ("https://x.com/a/article/1890", Some(("x/open", "url"))),
+        ("https://x.com/home", None),
+        ("https://x.com/jack", None),
+        (
+            "https://www.linkedin.com/feed/update/urn:li:activity:7400000000000000000/",
+            Some(("linkedin/open", "url")),
+        ),
+        (
+            "https://www.linkedin.com/posts/ada_notes-activity-7400000000000000000-AbCd",
+            Some(("linkedin/open", "url")),
+        ),
+        ("https://www.linkedin.com/feed/", None),
+        ("https://www.linkedin.com/in/ada/", None),
+        (
+            "https://www.reddit.com/r/rust/comments/1y2ifey/a_title/",
+            Some(("reddit/thread", "post")),
+        ),
+        (
+            "https://old.reddit.com/r/rust/comments/1y2ifey/",
+            Some(("reddit/thread", "post")),
+        ),
+        (
+            "https://www.reddit.com/comments/1y2ifey",
+            Some(("reddit/thread", "post")),
+        ),
+        ("https://www.reddit.com/r/rust/", None),
+        (
+            "https://voicebraindump.com/offline",
+            Some((WEB_PAGE_WORKFLOW, "url")),
+        ),
+        (
+            "https://notx.com/a/status/1",
+            Some((WEB_PAGE_WORKFLOW, "url")),
+        ),
+    ] {
+        assert_eq!(reader_for(url), reader, "{url}");
+    }
+}
+
+#[test]
+fn a_truncated_item_is_held_back() {
+    let whole = json!({"type": "rzn.item/v2", "key": "reddit:thread:a"});
+    let cut = json!({"type": "rzn.item/v2", "key": "reddit:thread:b",
+        "truncated": {"reason": "more_comments_not_fetched", "returned_blocks": 3}});
+    let (queued, held) = whole_items(vec![whole.clone(), cut]);
+    assert_eq!(queued, vec![whole]);
+    assert_eq!(
+        held,
+        vec![json!({"key": "reddit:thread:b", "reason": "more_comments_not_fetched"})]
+    );
+}
+
+#[test]
+fn the_site_readers_are_valid_in_place() {
+    for (file, param, url, left) in [
+        (
+            "x/x_open.json",
+            "url",
+            "https://x.com/jack/status/20",
+            vec!["s3", "s4", "s5"],
+        ),
+        (
+            "linkedin/linkedin_open.json",
+            "url",
+            "https://www.linkedin.com/feed/update/urn:li:activity:7400000000000000000/",
+            vec!["s3", "s4"],
+        ),
+        (
+            "reddit/reddit-thread.json",
+            "post",
+            "https://www.reddit.com/r/rust/comments/1y2ifey/",
+            vec!["s4", "s5"],
+        ),
+    ] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../workflows")
+            .join(file);
+        let mut manifest: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("manifest")).expect("json");
+        in_place(&mut manifest).expect("in place");
+        let kept: Vec<_> = manifest["steps"]
+            .as_array()
+            .expect("steps")
+            .iter()
+            .filter_map(|s| s["id"].as_str())
+            .collect();
+        assert_eq!(kept, left, "{file}");
+        let params = HashMap::from([(param.to_string(), url.to_string())]);
+        load_workflow_value_for_run(manifest, &params).expect("valid manifest");
+    }
 }
 
 #[test]
