@@ -1,6 +1,6 @@
 import './style.css';
 import { rpc, SupervisorUnreachable } from '../ui/rpc';
-import { mountFleet } from './fleet';
+import { mountAccount } from './account';
 import { mountLogs } from './logs';
 import { mountRuns } from './runs';
 import { applicationError, DashboardRoute, esc, tabs, unavailable } from './shared';
@@ -34,7 +34,7 @@ export async function render(): Promise<void> {
   try {
     if (current.tab === 'runs') await mountRuns(main, rpc, current, { navigate });
     else if (current.tab === 'workflows') await mountWorkflows(main, rpc, current, { navigate });
-    else if (current.tab === 'fleet') adopt(await mountFleet(main, rpc, current, { navigate }));
+    else if (current.tab === 'account') adopt(await mountAccount(main, rpc, current));
     else if (current.tab === 'logs') adopt(await mountLogs(main, rpc, current));
     else await mountSettings(main, rpc, current);
   } catch (error) {

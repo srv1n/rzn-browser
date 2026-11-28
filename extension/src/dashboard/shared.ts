@@ -2,7 +2,7 @@ export type RpcClient = <T = any>(method: string, params?: Record<string, unknow
 
 export type DashboardRoute = { tab: string; id?: string; query: URLSearchParams };
 
-export const tabs = ['runs', 'workflows', 'fleet', 'logs', 'settings'];
+export const tabs = ['runs', 'workflows', 'account', 'logs', 'settings'];
 
 export const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',

@@ -12,7 +12,8 @@
 //!   "server_url": "https://fleet.example.com",
 //!   "device_id": "dev_42",
 //!   "device_token": "fld_...",
-//!   "tenant_id": "tnt_1",
+//!   "user_id": "usr_1",
+//!   "user_email": "me@example.com",
 //!   "poll_interval_seconds": 30
 //! }
 //! ```
@@ -44,6 +45,7 @@ const FLEET_HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const SUPERVISOR_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) mod repair;
+pub(crate) mod signin;
 
 // ---------------------------------------------------------------------------
 // CLI surface
@@ -132,7 +134,10 @@ struct FleetDeviceConfig {
     server_url: String,
     device_id: String,
     device_token: String,
-    tenant_id: String,
+    /// The user the device belongs to; it works for that user's tenants.
+    user_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    user_email: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     poll_interval_seconds: Option<u64>,
 }
@@ -152,6 +157,11 @@ fn fleet_config_path() -> PathBuf {
 /// Write the config atomically with 0600 perms (temp file + rename).
 fn write_fleet_config(path: &Path, config: &FleetDeviceConfig) -> Result<()> {
     let bytes = serde_json::to_vec_pretty(config).context("serialize fleet config")?;
+    write_private(path, &bytes)
+}
+
+/// Write a secret file atomically with 0600 perms (temp file + rename).
+fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         rzn_core::secure_files::ensure_private_dir(parent)
             .with_context(|| format!("prepare config dir {}", parent.display()))?;
@@ -161,7 +171,7 @@ fn write_fleet_config(path: &Path, config: &FleetDeviceConfig) -> Result<()> {
         .and_then(|name| name.to_str())
         .unwrap_or(FLEET_CONFIG_FILENAME);
     let tmp = path.with_file_name(format!("{file_name}.tmp"));
-    rzn_core::secure_files::write_secret_file(&tmp, &bytes)
+    rzn_core::secure_files::write_secret_file(&tmp, bytes)
         .with_context(|| format!("write temp config {}", tmp.display()))?;
     std::fs::rename(&tmp, path)
         .with_context(|| format!("atomically replace {}", path.display()))?;
@@ -218,7 +228,7 @@ pub(crate) async fn enroll_from_rpc(server: &str, code: &str) -> Result<Value> {
     // Start polling now with the new identity instead of on the next restart.
     let loop_started = crate::supervisor_fleet::restart_fleet_loop().await;
     Ok(
-        json!({"ok":true,"device_id":config.device_id,"tenant_id":config.tenant_id,"server_url":config.server_url,"loop_started":loop_started}),
+        json!({"ok":true,"device_id":config.device_id,"user_id":config.user_id,"user_email":config.user_email,"server_url":config.server_url,"loop_started":loop_started}),
     )
 }
 
@@ -256,7 +266,7 @@ async fn run_enroll(args: FleetEnrollArgs) -> Result<()> {
 
     // Never print the device token.
     println!("device_id={}", config.device_id);
-    println!("tenant_id={}", config.tenant_id);
+    println!("user_id={}", config.user_id);
     println!("server={}", config.server_url);
     println!("config written to {}", config_path.display());
     if notify_supervisor_start().await {
@@ -305,7 +315,8 @@ async fn perform_enroll(
         server_url: server_url.to_string(),
         device_id: enroll.device_id.clone(),
         device_token: enroll.device_token.clone(),
-        tenant_id: enroll.tenant_id.clone(),
+        user_id: enroll.user_id.clone(),
+        user_email: enroll.user_email.clone(),
         poll_interval_seconds: (enroll.poll_interval_seconds > 0)
             .then_some(enroll.poll_interval_seconds),
     };
@@ -324,7 +335,11 @@ struct FleetStatusReport {
     device_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
-    tenant_id: String,
+    user_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    user_email: Option<String>,
+    /// The tenants the device works for now (its user's memberships); empty when unreachable.
+    tenant_ids: Vec<String>,
     server_url: String,
     server_reachable: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -403,7 +418,11 @@ fn build_status_report(
         enrolled: true,
         device_id: config.device_id.clone(),
         name: device_self.map(|view| view.name.clone()),
-        tenant_id: config.tenant_id.clone(),
+        user_id: config.user_id.clone(),
+        user_email: config.user_email.clone(),
+        tenant_ids: device_self
+            .map(|view| view.tenant_ids.clone())
+            .unwrap_or_default(),
         server_url: config.server_url.clone(),
         server_reachable,
         device_status: device_self.map(|view| device_status_str(&view.status).to_string()),
@@ -415,7 +434,11 @@ fn build_status_report(
 fn render_status_human(report: &FleetStatusReport) {
     let name = report.name.as_deref().unwrap_or("-");
     println!("Fleet device {} ({})", report.device_id, name);
-    println!("  tenant:    {}", report.tenant_id);
+    println!(
+        "  user:      {}",
+        report.user_email.as_deref().unwrap_or(&report.user_id)
+    );
+    println!("  tenants:   {}", report.tenant_ids.join(", "));
     println!("  server:    {}", report.server_url);
     println!(
         "  reachable: {}",
@@ -727,7 +750,8 @@ mod tests {
             server_url: "https://fleet.example.com".to_string(),
             device_id: "dev_42".to_string(),
             device_token: "fld_secret_value".to_string(),
-            tenant_id: "tnt_1".to_string(),
+            user_id: "usr_1".to_string(),
+            user_email: Some("me@example.com".to_string()),
             poll_interval_seconds: Some(30),
         }
     }
@@ -782,7 +806,8 @@ mod tests {
             Json(FleetEnrollResponse {
                 device_id: "dev_enrolled".to_string(),
                 device_token: "fld_top_secret".to_string(),
-                tenant_id: "tnt_9".to_string(),
+                user_id: "usr_9".to_string(),
+                user_email: None,
                 poll_interval_seconds: 45,
                 server_time_ms: 1_720_000_000_000,
             })
@@ -806,7 +831,7 @@ mod tests {
 
         assert_eq!(config.device_id, "dev_enrolled");
         assert_eq!(config.device_token, "fld_top_secret");
-        assert_eq!(config.tenant_id, "tnt_9");
+        assert_eq!(config.user_id, "usr_9");
         assert_eq!(config.poll_interval_seconds, Some(45));
         assert_eq!(config.version, FLEET_DEVICE_CONFIG_CONTRACT);
 
@@ -864,7 +889,8 @@ mod tests {
             Json(FleetEnrollResponse {
                 device_id: "dev_second".to_string(),
                 device_token: "fld_second".to_string(),
-                tenant_id: "tnt_2".to_string(),
+                user_id: "usr_2".to_string(),
+                user_email: None,
                 poll_interval_seconds: 0,
                 server_time_ms: 0,
             })
@@ -916,7 +942,9 @@ mod tests {
                 device_id: "dev_42".to_string(),
                 name: "sarav-mbp".to_string(),
                 status: FleetDeviceStatus::Active,
-                tenant_id: "tnt_1".to_string(),
+                user_id: "usr_1".to_string(),
+                user_email: Some("me@example.com".to_string()),
+                tenant_ids: vec!["tnt_1".to_string(), "tnt_2".to_string()],
                 last_seen_at_ms: Some(1_720_000_000_000),
             })
         }
@@ -939,7 +967,9 @@ mod tests {
         assert_eq!(value["enrolled"], json!(true));
         assert_eq!(value["device_id"], json!("dev_42"));
         assert_eq!(value["name"], json!("sarav-mbp"));
-        assert_eq!(value["tenant_id"], json!("tnt_1"));
+        assert_eq!(value["user_id"], json!("usr_1"));
+        assert_eq!(value["user_email"], json!("me@example.com"));
+        assert_eq!(value["tenant_ids"], json!(["tnt_1", "tnt_2"]));
         assert_eq!(value["server_reachable"], json!(true));
         assert_eq!(value["device_status"], json!("active"));
         assert_eq!(value["last_seen_at_ms"], json!(1_720_000_000_000i64));

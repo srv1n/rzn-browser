@@ -19,6 +19,16 @@ pub struct Settings {
     /// empty, the default, captures nothing. A site is a host such as `voicebraindump.com`
     /// and covers its subdomains.
     pub capture_sites: Vec<String>,
+    /// The RZN server this browser signs in to; empty, the default, is `https://app.rzn.ai`.
+    /// Set for build1 or a local server.
+    #[serde(default)]
+    pub server_url: String,
+    /// Where captured pages go: a pushed source (`capture_source`) of one of the signed-in
+    /// user's own indexes (`capture_index`). Empty holds captured pages until set.
+    #[serde(default)]
+    pub capture_index: String,
+    #[serde(default)]
+    pub capture_source: String,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -29,6 +39,9 @@ impl Default for Settings {
             notify_on: "all".into(),
             fleet_keep_window_on_failure: false,
             capture_sites: Vec::new(),
+            server_url: String::new(),
+            capture_index: String::new(),
+            capture_source: String::new(),
         }
     }
 }
@@ -83,6 +96,9 @@ impl SettingsStore {
                     | "notify_on"
                     | "fleet_keep_window_on_failure"
                     | "capture_sites"
+                    | "server_url"
+                    | "capture_index"
+                    | "capture_source"
             ) {
                 bail!("unknown setting: {k}")
             }
@@ -93,6 +109,22 @@ impl SettingsStore {
         }
         let mut next: Settings = serde_json::from_value(next)?;
         next.capture_sites = capture_sites(&next.capture_sites)?;
+        next.server_url = next.server_url.trim().trim_end_matches('/').to_string();
+        if !next.server_url.is_empty() && url::Url::parse(&next.server_url).is_err() {
+            bail!("server_url must be a URL such as https://app.rzn.ai")
+        }
+        for (name, value) in [
+            ("capture_index", &mut next.capture_index),
+            ("capture_source", &mut next.capture_source),
+        ] {
+            *value = value.trim().to_string();
+            if !value
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+            {
+                bail!("{name} takes an id such as my-index, not {value:?}")
+            }
+        }
         if !(10..=10000).contains(&next.run_retention_count) {
             bail!("run_retention_count must be 10..10000")
         }
@@ -160,6 +192,13 @@ mod tests {
             .patch(serde_json::json!({"capture_sites":["WWW.Example.com"," lambda.ai ","example.com",""]}))
             .unwrap();
         assert_eq!(saved.capture_sites, vec!["example.com", "lambda.ai"]);
+        let saved = s
+            .patch(serde_json::json!({"server_url":" https://build1-api.rzn.ai/ ","capture_index":"x-push-1","capture_source":"capture"}))
+            .unwrap();
+        assert_eq!(saved.server_url, "https://build1-api.rzn.ai");
+        assert_eq!(saved.capture_index, "x-push-1");
+        assert!(s.patch(serde_json::json!({"capture_index":"a/b"})).is_err());
+        assert!(s.patch(serde_json::json!({"server_url":"not a url"})).is_err());
         assert!(s
             .patch(serde_json::json!({"capture_sites":["https://example.com/a"]}))
             .is_err());

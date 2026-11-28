@@ -61,7 +61,11 @@ pub struct FleetEnrollRequest {
 pub struct FleetEnrollResponse {
     pub device_id: String,
     pub device_token: String,
-    pub tenant_id: String,
+    /// The user the device belongs to. It works for that user's tenants (their memberships,
+    /// read by the server at each check-in), so no tenant is fixed at enrolment.
+    pub user_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_email: Option<String>,
     #[serde(default)]
     pub poll_interval_seconds: u64,
     #[serde(default)]
@@ -355,7 +359,13 @@ pub struct FleetDeviceSelf {
     pub device_id: String,
     pub name: String,
     pub status: FleetDeviceStatus,
-    pub tenant_id: String,
+    /// The user the device belongs to.
+    pub user_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user_email: Option<String>,
+    /// The tenants it works for now: its user's memberships, oldest first.
+    #[serde(default)]
+    pub tenant_ids: Vec<String>,
     #[serde(default)]
     pub last_seen_at_ms: Option<i64>,
 }
@@ -459,7 +469,8 @@ mod tests {
         let value = FleetEnrollResponse {
             device_id: "dev_42".to_string(),
             device_token: "fld_secret".to_string(),
-            tenant_id: "tnt_1".to_string(),
+            user_id: "usr_1".to_string(),
+            user_email: Some("me@example.com".to_string()),
             poll_interval_seconds: 15,
             server_time_ms: 1_720_000_000_000,
         };
@@ -469,7 +480,8 @@ mod tests {
             json!({
                 "device_id": "dev_42",
                 "device_token": "fld_secret",
-                "tenant_id": "tnt_1",
+                "user_id": "usr_1",
+                "user_email": "me@example.com",
                 "poll_interval_seconds": 15,
                 "server_time_ms": 1_720_000_000_000i64
             }),
@@ -767,7 +779,9 @@ mod tests {
             device_id: "dev_42".to_string(),
             name: "sarav-mbp".to_string(),
             status: FleetDeviceStatus::Dormant,
-            tenant_id: "tnt_1".to_string(),
+            user_id: "usr_1".to_string(),
+            user_email: None,
+            tenant_ids: vec!["tnt_1".to_string(), "tnt_2".to_string()],
             last_seen_at_ms: Some(1_720_000_000_000),
         };
         round_trip(&value);
@@ -777,7 +791,8 @@ mod tests {
                 "device_id": "dev_42",
                 "name": "sarav-mbp",
                 "status": "dormant",
-                "tenant_id": "tnt_1",
+                "user_id": "usr_1",
+                "tenant_ids": ["tnt_1", "tnt_2"],
                 "last_seen_at_ms": 1_720_000_000_000i64
             }),
         );

@@ -1519,7 +1519,7 @@ impl SupervisorState {
         let run_store = RunStore::open(&paths.app_base).expect("create supervisor run store");
         let control = SupervisorControl::open(&paths.app_base);
         let settings = SettingsStore::open(paths.app_base.clone());
-        let capture = capture::Capture::open(&paths.app_base);
+        let capture = capture::Capture::open(&paths.app_base, settings.clone());
         let supervisor_boot_id = format!("supervisor-{}", Uuid::new_v4());
         Self {
             config,
@@ -2479,6 +2479,10 @@ impl SupervisorState {
                 crate::fleet_cli::enroll_from_rpc(server, code).await
             }
             "fleet.unenroll" => crate::fleet_cli::unenroll_from_rpc(),
+            // BFL-T-0012: sign in with an RZN account; the Account page.
+            "account.sign_in" => crate::fleet_cli::signin::sign_in_from_rpc(&params).await,
+            "account.sign_out" => crate::fleet_cli::signin::sign_out_from_rpc().await,
+            "account.status" => crate::fleet_cli::signin::status_rpc(),
             "diagnostics.export" => crate::supervisor_control::export_diagnostics(
                 &self.paths.app_base,
                 &self.run_store,
@@ -4845,6 +4849,9 @@ fn native_host_rpc_allowed(method: &str) -> bool {
             | "fleet.site_cleared"
             | "fleet.enroll"
             | "fleet.unenroll"
+            | "account.sign_in"
+            | "account.sign_out"
+            | "account.status"
             | "runs.list"
             | "runs.get"
             | "runs.start"

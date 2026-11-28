@@ -24,14 +24,28 @@ impl Door for CountingDoor {
     }
 }
 
+/// A fixed target; `None` is a browser not signed in or with no index chosen.
+struct Fixed(Option<CaptureTarget>);
+
+#[async_trait]
+impl Targets for Fixed {
+    async fn target(&self) -> Result<CaptureTarget> {
+        self.0.clone().ok_or_else(|| anyhow!("not signed in to RZN"))
+    }
+}
+
+fn signed_in() -> Arc<dyn Targets> {
+    Arc::new(Fixed(Some(CaptureTarget {
+        server_url: "http://127.0.0.1:1".into(),
+        index_id: "i".into(),
+        source_key: "main".into(),
+        token: "t".into(),
+    })))
+}
+
 fn base() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("rzn-capture-{}", Uuid::new_v4()));
     std::fs::create_dir_all(&dir).expect("temp dir");
-    std::fs::write(
-        dir.join(TARGET_FILE),
-        r#"{"server_url":"http://127.0.0.1:1","index_id":"i","source_key":"main","token":"t"}"#,
-    )
-    .expect("target");
     dir
 }
 
@@ -71,7 +85,7 @@ fn a1_a_site_is_read_only_when_switched_on() {
 async fn a2_thirty_pages_make_at_most_two_push_calls() {
     let dir = base();
     let door = Arc::new(CountingDoor::default());
-    let capture = Capture::with_door(&dir, door.clone());
+    let capture = Capture::with_door(&dir, door.clone(), signed_in());
     let start = 1_700_000_000_000;
     // The owner opens 30 pages, one every two seconds, the timer ticking every 5 s.
     for n in 0..30 {
@@ -103,7 +117,7 @@ async fn a2_thirty_pages_make_at_most_two_push_calls() {
 async fn a_failed_push_is_held_and_sent_with_the_next_batch() {
     let dir = base();
     let door = Arc::new(CountingDoor::default());
-    let capture = Capture::with_door(&dir, door.clone());
+    let capture = Capture::with_door(&dir, door.clone(), signed_in());
     door.fail.store(true, Ordering::SeqCst);
     capture.offer(vec![page_item(1)], 0).await;
     assert_eq!(capture.tick(BATCH_MAX_AGE_MS, false).await, 1);
@@ -131,9 +145,8 @@ async fn a_failed_push_is_held_and_sent_with_the_next_batch() {
 #[tokio::test]
 async fn no_target_holds_the_batch() {
     let dir = base();
-    std::fs::remove_file(dir.join(TARGET_FILE)).expect("remove target");
     let door = Arc::new(CountingDoor::default());
-    let capture = Capture::with_door(&dir, door.clone());
+    let capture = Capture::with_door(&dir, door.clone(), Arc::new(Fixed(None)));
     capture.offer(vec![page_item(1)], 0).await;
     capture.tick(0, true).await;
     assert_eq!(door.calls.load(Ordering::SeqCst), 0);
@@ -143,7 +156,7 @@ async fn no_target_holds_the_batch() {
 
 #[test]
 fn a_reload_is_not_read_twice() {
-    let capture = Capture::with_door(&base(), Arc::new(CountingDoor::default()));
+    let capture = Capture::with_door(&base(), Arc::new(CountingDoor::default()), signed_in());
     assert!(capture.fresh("https://example.com/a", 0));
     assert!(!capture.fresh("https://example.com/a", REREAD_AFTER_MS - 1));
     assert!(capture.fresh("https://example.com/a", REREAD_AFTER_MS));

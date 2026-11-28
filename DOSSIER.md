@@ -1,5 +1,5 @@
 # RZN Browser — dossier
-Last updated: 2026-11-27 (update this line every edit)
+Last updated: 2026-11-28 (update this line every edit)
 
 ## One paragraph
 RZN Browser is a local browser-automation runtime that runs reusable JSON workflows against a person's own signed-in browser. A CLI, MCP client, or coding agent can invoke catalogued tasks for search, research, shopping, ads, AI chat, and social sites; fixed workflows execute through a Rust supervisor, native-messaging host, and browser extension, while optional LLM planning handles tasks without a fixed workflow.
@@ -53,6 +53,7 @@ The documented audience is developers and coding-agent users automating repeatab
 
 ## Recent changes (rolling, newest first, keep last ~10)
 Reproduce dates and summaries with `git log --date=short --format='%ad %s'`; these are source-history changes, not proof of deployment.
+- 2026-11-28: sign in with an RZN account (BFL-T-0012). The dashboard's Fleet page is now Account: "Sign in to RZN" opens the server's sign-in page in a tab as OAuth client `rzn-browser` with PKCE (server built in as `https://app.rzn.ai`, Settings override `server_url`); the helper trades the code, mints and redeems a one-time enrollment code itself, and keeps the session's refresh token in `account.json` (0600). The device belongs to the user and works for every tenant the user is a member of. Capture pushes go to `capture_index`/`capture_source` from Settings with the signed-in user's token; `capture.json` is gone. Account shows who, this browser, recent jobs and sign out; a browser revoked in the app is told and offers sign-in again. Typed enrollment codes remain only through `rzn-browser fleet enroll` for headless machines.
 - 2026-11-27: capture of opened pages (BFL-T-0025). Per-site switch in the dashboard settings (`capture_sites`, default none); a page of a switched-on site is read in place by the new `web/page` workflow (no navigation, scroll or request) and the supervisor pushes items in batches (25 items or 60 s) to a pushed source of the owner's private index named in `<app base>/capture.json`; one activity line per page read and batch sent in `capture/activity.jsonl`. Proved in a headless Chromium on the MacBook Air: a voicebraindump.com page reached a test index on build1. Stubs: target and token are a hand-written file; every site reads with `web/page` (X/LinkedIn/Reddit readers need page-load network capture); an unsent batch is lost on a supervisor restart.
 - 2026-08-14: ChatGPT reads were bound to the exact submitted user turn, including concurrent-turn handling.
 - 2026-08-13: ChatGPT send results began returning a boundary used to identify the matching response.

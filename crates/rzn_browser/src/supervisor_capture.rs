@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -34,6 +34,7 @@ use tokio::time::Duration;
 use uuid::Uuid;
 
 use super::SupervisorState;
+use crate::settings::SettingsStore;
 use crate::workflow_runner::{
     execute_workflow, load_workflow_value_for_run, RunEventSink, RunOptions, SessionSpec,
     SnapshotMode,
@@ -49,7 +50,6 @@ const FLUSH_TICK: Duration = Duration::from_secs(5);
 const REREAD_AFTER_MS: i64 = 30_000;
 /// The read workflow of every switched-on site this round.
 pub(super) const WEB_PAGE_WORKFLOW: &str = "web/page";
-const TARGET_FILE: &str = "capture.json";
 const ACTIVITY_FILE: &str = "activity.jsonl";
 const READ_DEADLINE: Duration = Duration::from_secs(60);
 /// Step kinds a read in place never runs: the owner did not navigate or scroll.
@@ -61,14 +61,45 @@ const NOT_IN_PLACE: [&str; 4] = [
 ];
 
 /// Where batches go: a pushed source of the owner's own index.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone)]
 pub(super) struct CaptureTarget {
     pub server_url: String,
     pub index_id: String,
     pub source_key: String,
-    /// Bearer token of the index's owner (stub: no shared login yet).
+    /// The signed-in owner's access token.
     pub token: String,
+}
+
+/// Where the next batch goes, asked at each send; a seam for tests.
+#[async_trait]
+pub(super) trait Targets: Send + Sync {
+    async fn target(&self) -> Result<CaptureTarget>;
+}
+
+/// The signed-in owner's target (BFL-T-0012, replacing the hand-written `capture.json`): the
+/// server and access token of the RZN account this browser signed in with
+/// (`fleet_cli::signin`), the index and pushed source from Settings (`capture_index`,
+/// `capture_source`). A browser revoked in the app sends nothing until it signs in again.
+pub(super) struct SignedIn(pub SettingsStore);
+
+#[async_trait]
+impl Targets for SignedIn {
+    async fn target(&self) -> Result<CaptureTarget> {
+        let settings = self.0.get();
+        if settings.capture_index.is_empty() || settings.capture_source.is_empty() {
+            bail!("choose the index and pushed source for captured pages in Settings");
+        }
+        if crate::supervisor_fleet::fleet_status_rpc()["state"] == "stopped_revoked" {
+            bail!("this browser was signed out from the app; sign in again on the Account page");
+        }
+        let (server_url, token) = crate::fleet_cli::signin::access_token().await?;
+        Ok(CaptureTarget {
+            server_url,
+            index_id: settings.capture_index,
+            source_key: settings.capture_source,
+            token,
+        })
+    }
 }
 
 /// Items waiting to be pushed; one key at most once (a later read of a page replaces the earlier).
@@ -171,7 +202,7 @@ impl Door for HttpDoor {
 /// The supervisor's capture state.
 pub(super) struct Capture {
     dir: PathBuf,
-    target_path: PathBuf,
+    targets: Arc<dyn Targets>,
     batch: StdMutex<Batcher>,
     /// When each page was last read, to skip a reload.
     recent: StdMutex<HashMap<String, i64>>,
@@ -180,14 +211,22 @@ pub(super) struct Capture {
 }
 
 impl Capture {
-    pub(super) fn open(app_base: &Path) -> Self {
-        Self::with_door(app_base, Arc::new(HttpDoor(reqwest::Client::new())))
+    pub(super) fn open(app_base: &Path, settings: SettingsStore) -> Self {
+        Self::with_door(
+            app_base,
+            Arc::new(HttpDoor(reqwest::Client::new())),
+            Arc::new(SignedIn(settings)),
+        )
     }
 
-    pub(super) fn with_door(app_base: &Path, door: Arc<dyn Door>) -> Self {
+    pub(super) fn with_door(
+        app_base: &Path,
+        door: Arc<dyn Door>,
+        targets: Arc<dyn Targets>,
+    ) -> Self {
         Capture {
             dir: app_base.join("capture"),
-            target_path: app_base.join(TARGET_FILE),
+            targets,
             batch: StdMutex::new(Batcher::default()),
             recent: StdMutex::new(HashMap::new()),
             door,
@@ -244,7 +283,7 @@ impl Capture {
 
     async fn send(&self, batch: Vec<Value>, now: i64) {
         let keys: Vec<Value> = batch.iter().filter_map(|i| i.get("key").cloned()).collect();
-        let target = match self.target() {
+        let target = match self.targets.target().await {
             Ok(target) => target,
             Err(error) => {
                 self.log(json!({"event": "batch_held", "items": keys.len(), "error": format!("{error:#}")}));
@@ -270,13 +309,6 @@ impl Capture {
                 lock(&self.batch).put_back(batch, now);
             }
         }
-    }
-
-    fn target(&self) -> Result<CaptureTarget> {
-        let bytes = std::fs::read(&self.target_path)
-            .with_context(|| format!("no capture target at {}", self.target_path.display()))?;
-        serde_json::from_slice(&bytes)
-            .with_context(|| format!("capture target {}", self.target_path.display()))
     }
 
     /// One activity line: what was read or sent, when. Never the token.

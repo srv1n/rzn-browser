@@ -169,7 +169,6 @@ struct FleetDeviceConfig {
     server_url: String,
     device_id: String,
     device_token: String,
-    tenant_id: String,
     #[serde(default)]
     poll_interval_seconds: Option<u64>,
 }
