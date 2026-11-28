@@ -7,7 +7,7 @@
       "identity": "x:post:<first post id>",
       "listing": "feed",
       "scopes": [
-        "account"
+        "handle"
       ],
       "list_tool": "x/search_posts",
       "get_tool": "x/open",
