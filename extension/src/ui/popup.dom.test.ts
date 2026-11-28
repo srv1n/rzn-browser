@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { bindPopupActions, errorHtml, popupHtml, unreachableHtml, type PopupState, type Snapshot } from './popupView';
+import { bindPopupActions, popupHtml, problemHtml, type PopupState, type Snapshot } from './popupView';
+import { SupervisorApplicationError, SupervisorUnreachable } from './rpc';
 
 const snapshot: Snapshot = { supervisor_version: '1', native_host_connected: true, extension_connected: true, paused: false, now_running: null, fleet: null, recent_runs: [], flagged_workflows: 0 };
 const signedIn = { signed_in: true, user_email: 'me@example.com', server_url: 'https://app.rzn.ai', fleet: { state: 'polling' } };
@@ -30,7 +31,7 @@ describe('popup states', () => {
 
   it('never shows automation words', () => {
     const busy = popupHtml(state({ snapshot: { ...snapshot, now_running: { run_id: 'r', workflow_id: 'x/open' }, fleet: { login_walls: ['linkedin'] } } }));
-    for (const html of [busy, popupHtml(state({ site: null })), unreachableHtml, errorHtml(new Error('x'))]) {
+    for (const html of [busy, popupHtml(state({ site: null })), problemHtml(new SupervisorUnreachable('x')), problemHtml(new Error('x'))]) {
       expect(html).not.toMatch(/fleet|automation|supervisor|workflow|job|worker|tenant/i);
     }
     expect(busy).toContain('Sign in to linkedin'); expect(busy).toContain('id="stop"');
@@ -40,6 +41,18 @@ describe('popup states', () => {
 
   it('a revoked browser says it was signed out from the app', () => {
     expect(popupHtml(state({ account: { ...signedIn, fleet: { state: 'stopped_revoked' } } }))).toContain('Signed out from the app');
+  });
+});
+
+describe('popup problems', () => {
+  it('an old helper reads as an update, never as raw RPC or JSON', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const raw = 'Supervisor native_host.rpc failed: {"code":-32000,"message":"native-host RPC method not allowed: account.status"}';
+    const html = problemHtml(new SupervisorApplicationError(raw));
+    expect(html).toContain('RZN needs an update'); expect(html).not.toMatch(/rpc|code|\{|account\.status/i);
+    expect(problemHtml(new SupervisorApplicationError('{"code":-1,"message":"boom"}'))).toContain('That didn’t work');
+    expect(problemHtml(new SupervisorUnreachable('gone'))).toContain('RZN isn&#39;t responding');
+    expect(console.warn).toHaveBeenCalled();
   });
 });
 

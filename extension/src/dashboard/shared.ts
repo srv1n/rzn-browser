@@ -1,3 +1,4 @@
+import { friendly } from '../ui/errors';
 export type RpcClient = <T = any>(method: string, params?: Record<string, unknown>) => Promise<T>;
 
 export type DashboardRoute = { tab: string; id?: string; query: URLSearchParams };
@@ -39,12 +40,11 @@ export const dot = (status?: string) => `<span class="status-dot ${statusClass(s
 
 export function isPaused(snapshot: any): boolean { return Boolean(snapshot?.paused); }
 
-const details = (error: unknown) => `<details class="details"><summary>Details</summary><pre>${esc(error instanceof Error ? error.message : error)}</pre></details>`;
-
-export function unavailable(root: HTMLElement, error: unknown): void {
-  root.innerHTML = `<section><div class="empty"><span class="label">Not connected</span><h1>RZN isn't <em>answering</em></h1><p>The RZN helper on this computer didn't respond. Make sure RZN is installed and running, then reload this page.</p>${details(error)}</div></section>`;
+/** One title and one plain sentence; the raw detail goes to the console (see errors.ts). */
+export function problem(root: HTMLElement, error: unknown): void {
+  const { title, line } = friendly(error, 'RZN settings');
+  root.innerHTML = `<section class="narrow"><div class="empty"><h1>${esc(title)}</h1><p class="lede">${esc(line)}</p></div></section>`;
 }
 
-export function applicationError(root: HTMLElement, error: unknown): void {
-  root.innerHTML = `<section><div class="empty"><span class="label">Something went wrong</span><h1>That didn't <em>work</em></h1>${details(error)}</div></section>`;
-}
+export const unavailable = problem;
+export const applicationError = problem;

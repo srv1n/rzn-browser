@@ -1,7 +1,7 @@
 import './popup.css';
 import { siteOf } from './capture';
-import { rpc, SupervisorUnreachable } from './ui/rpc';
-import { bindPopupActions, errorHtml, popupHtml, unreachableHtml, type Account, type PopupState, type Settings, type Snapshot } from './ui/popupView';
+import { rpc } from './ui/rpc';
+import { bindPopupActions, popupHtml, problemHtml, type Account, type PopupState, type Settings, type Snapshot } from './ui/popupView';
 
 const app=document.querySelector<HTMLElement>('#app')!;
 let shown='';
@@ -20,8 +20,8 @@ export async function refresh(){
     show(popupHtml(state),()=>bindPopupActions(app,state,refresh));
   }catch(error){
     const retry=()=>app.querySelector('#retry')?.addEventListener('click',async()=>{await chrome.runtime.sendMessage({type:'RZN_WAKE_NATIVE',resetTerminal:true});await refresh();});
-    show(error instanceof SupervisorUnreachable?unreachableHtml:errorHtml(error),retry);
+    show(problemHtml(error),retry);
   }finally{refreshTimer=setTimeout(refresh,2000);}
 }
-app.innerHTML='<p class="skeleton label">Connecting</p>';
+app.innerHTML='<p class="skeleton muted">Connecting…</p>';
 void refresh();

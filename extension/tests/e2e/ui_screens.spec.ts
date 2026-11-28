@@ -16,7 +16,7 @@ const extensionDir = path.resolve(__dirname, '../../dist/chromium');
 const shots = process.env.RZN_UI_SHOTS ? path.resolve(process.cwd(), process.env.RZN_UI_SHOTS) : '';
 const banned = /fleet|automation|supervisor|workflow|\bjobs?\b|worker|tenant|enrol/i;
 
-type Answers = Record<string, unknown> & { unreachable?: boolean; tabUrl?: string };
+type Answers = Record<string, unknown> & { unreachable?: boolean; tabUrl?: string; errors?: Record<string, string> };
 const snapshot = { supervisor_version: '0.1.6', native_host_connected: true, extension_connected: true, paused: false, now_running: null, fleet: null, recent_runs: [], flagged_workflows: 0 };
 const settings = { run_retention_count: 500, run_retention_days: 30, notifications_enabled: true, notify_on: 'failures_only', fleet_keep_window_on_failure: false, capture_sites: ['lambda.ai'], capture_index: 'reading', capture_source: 'capture', server_url: '' };
 const signedIn = { signed_in: true, enrolled: true, user_email: 'sam@example.com', user_id: 'u1', device_id: 'b7f1c2e4-1d2a-4c55-9e0e-6f1f0c9a77d3', device_name: 'Sam’s MacBook Air', server_url: 'https://app.rzn.ai', fleet: { state: 'polling', last_poll_ms: Date.now() - 42_000 } };
@@ -32,6 +32,7 @@ function mock(page: Page, a: Answers) {
       if (message?.cmd !== 'supervisor_rpc') return { success: true };
       const { method, params } = message.payload; (window as any).__rznCalls.push({ method, params });
       if (state.unreachable) return { success: false, transport_error: true, error: 'native host disconnected' };
+      if (state.errors?.[method]) return { success: false, error: state.errors[method] };
       if (method === 'settings.set') { state['settings.get'] = { ...state['settings.get'], ...params.patch }; return { success: true, result: state['settings.get'] }; }
       if (method in state) return { success: true, result: state[method] };
       return { success: true, result: { ok: true } };
@@ -61,8 +62,11 @@ const popup = (a: Answers) => open('popup.html', a, { width: 360, height: 560 })
 const dashboard = (hash: string, a: Answers) => open(`dashboard.html#${hash}`, a, { width: 1280, height: 800 });
 async function shot(page: Page, name: string, element = false) {
   await page.evaluate(() => document.fonts.ready);
-  const fonts = await page.evaluate(() => [...document.fonts].filter(f => f.status === 'loaded').map(f => f.family));
-  expect(fonts).toContain('Geist');
+  // One font family, upright only.
+  const fonts = await page.evaluate(() => [...new Set([...document.fonts].map(f => `${f.family.replace(/"/g, '')} ${f.style}`))]);
+  expect(fonts).toEqual(['Geist normal']);
+  const loaded = await page.evaluate(() => [...document.fonts].some(f => f.status === 'loaded'));
+  expect(loaded).toBe(true);
   if (shots) element ? await page.locator('body').screenshot({ path: path.join(shots, `${name}.png`) }) : await page.screenshot({ path: path.join(shots, `${name}.png`) });
 }
 const text = (page: Page) => page.locator('body').innerText();
@@ -105,6 +109,15 @@ test.describe('end-user screens', () => {
     await expect(page.locator('#retry')).toHaveText('Try again');
     expect(await text(page)).not.toMatch(banned);
     await shot(page, 'popup-unreachable', true); await page.close();
+  });
+
+  test('popup, helper too old for a method: an update notice, never raw RPC', async () => {
+    const raw = 'Supervisor native_host.rpc failed: {"code":-32000,"message":"native-host RPC method not allowed: account.status"}';
+    const page = await popup(answers({ errors: { 'account.status': raw } }));
+    await expect(page.locator('h1')).toHaveText('RZN needs an update');
+    const shown = await text(page);
+    expect(shown).not.toMatch(/rpc|json|\{|-32000|account\.status|supervisor/i);
+    await shot(page, 'popup-needs-update', true); await page.close();
   });
 
   test('popup, a page that is not a website', async () => {

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const mounts = vi.hoisted(() => ({ mountAccount: vi.fn(), mountLogs: vi.fn() }));
 vi.mock('./style.css', () => ({}));
-vi.mock('../ui/rpc', () => ({ rpc: vi.fn(), SupervisorUnreachable: class extends Error {} }));
+vi.mock('../ui/rpc', () => ({ rpc: vi.fn(), SupervisorUnreachable: class extends Error {}, SupervisorApplicationError: class extends Error {} }));
 vi.mock('./account', () => ({ mountAccount: mounts.mountAccount }));
 vi.mock('./logs', () => ({ mountLogs: mounts.mountLogs }));
 vi.mock('./runs', () => ({ mountRuns: vi.fn() }));

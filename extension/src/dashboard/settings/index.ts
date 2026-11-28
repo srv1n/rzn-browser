@@ -1,3 +1,4 @@
+import { friendly } from '../../ui/errors';
 import { DashboardRoute, esc, relativeTime, RpcClient } from '../shared';
 
 const field = (label: string, control: string, help = '') => `<label class="field"><span class="field-label">${label}</span>${control}${help ? `<small class="field-help">${help}</small>` : ''}</label>`;
@@ -15,10 +16,9 @@ export async function mountSettings(root: HTMLElement, call: RpcClient, _route: 
   const render = (current: any, message = '', open = false, failed = false): void => {
     // The save message shows beside the Save button the reader can see.
     const saveRow = (attr: string, here: boolean) => `<div class="actions"><button type="submit" class="primary">Save</button><p ${attr} class="${failed ? 'error' : 'muted'}" role="status">${here ? esc(message) : ''}</p></div>`;
-    root.innerHTML = `<section class="narrow"><span class="label">Settings</span><h1>Saving <em>pages</em></h1>
-<p class="lede">RZN reads the pages you open on the sites below, exactly as you see them, and saves them to your library. Nothing from any other site leaves your browser.</p>
+    root.innerHTML = `<section class="narrow"><h1>Settings</h1>
 <form data-settings>
-<div class="group">
+<div class="group"><div><h2>Saving pages</h2><p class="field-help group-help">RZN reads the pages you open on these sites, exactly as you see them, and saves them to your library. Nothing from any other site leaves your browser.</p></div>
 ${field('Sites', `<textarea name="capture_sites" rows="4" placeholder="example.com">${esc((current.capture_sites || []).join('\n'))}</textarea>`, 'One site per line, such as example.com. Its subdomains are included. You can also switch a site on or off from the RZN button in the toolbar.')}
 ${field('Save to index', `<input name="capture_index" placeholder="my-index" value="${esc(current.capture_index || '')}">`, 'The RZN index these pages go to.')}
 </div>
@@ -56,7 +56,7 @@ ${saveRow('data-save-message-advanced', open)}
       const data = new FormData(form);
       const patch = { run_retention_count: Number(data.get('run_retention_count')), run_retention_days: Number(data.get('run_retention_days')), notifications_enabled: data.get('notifications_enabled') === 'on', notify_on: data.get('notify_on'), fleet_keep_window_on_failure: data.get('fleet_keep_window_on_failure') === 'on', capture_sites: String(data.get('capture_sites') || '').split('\n').map(site => site.trim()).filter(Boolean), server_url: String(data.get('server_url') || ''), capture_index: String(data.get('capture_index') || ''), capture_source: String(data.get('capture_source') || '') };
       try { const saved: any = await call('settings.set', { patch }); render(saved, 'Saved.', advancedOpen); }
-      catch (cause) { render(current, cause instanceof Error ? `Couldn't save: ${cause.message}` : "Couldn't save.", advancedOpen, true); }
+      catch (cause) { render(current, `Couldn't save. ${friendly(cause, 'RZN settings').line}`, advancedOpen, true); }
     });
   };
   render(stored);

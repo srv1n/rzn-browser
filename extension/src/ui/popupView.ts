@@ -1,4 +1,5 @@
 import { switchedOn } from '../capture';
+import { friendly } from './errors';
 import { rpc } from './rpc';
 
 export type Snapshot = {
@@ -15,13 +16,15 @@ export type PopupState = { snapshot:Snapshot; account:Account; settings:Settings
 const esc=(value:unknown)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const DEFAULT_SERVER='https://app.rzn.ai';
 
-const header=`<header class="top"><span class="wordmark">RZN</span><a class="top-link label" href="dashboard.html#settings" target="_blank">Settings</a></header>`;
+const header=`<header class="top"><span class="wordmark">RZN</span><a class="top-link" href="dashboard.html#settings" target="_blank">Settings</a></header>`;
 
-export const signedOutHtml=`${header}<main class="hero"><span class="label">Welcome</span><h1>Keep what you <em>read</em>.</h1><p>Sign in to save the pages you choose to RZN and search them any time.</p><a class="button primary wide" id="sign-in" href="dashboard.html#account" target="_blank">Sign in to RZN</a></main>`;
+export const signedOutHtml=`${header}<main class="hero"><h1>Welcome to RZN</h1><p>Sign in to save the pages you choose and search them any time.</p><a class="button primary wide" id="sign-in" href="dashboard.html#account" target="_blank">Sign in to RZN</a></main>`;
 
-export const unreachableHtml=`${header}<main class="hero"><span class="label">Not connected</span><h1>RZN isn't <em>answering</em></h1><p>The RZN helper on this computer didn't respond. Make sure RZN is installed and running, then try again.</p><button id="retry" class="primary wide">Try again</button></main>`;
-
-export const errorHtml=(error:unknown)=>`${header}<main class="hero"><span class="label">Something went wrong</span><h1>That didn't <em>work</em></h1><p>${esc(error instanceof Error?error.message:error)}</p><button id="retry" class="primary wide">Try again</button></main>`;
+/** A problem as one title, one plain sentence and a retry; the raw detail goes to the console. */
+export function problemHtml(error:unknown):string{
+  const {title,line}=friendly(error,'RZN popup');
+  return `${header}<main class="hero"><h1>${esc(title)}</h1><p>${esc(line)}</p><button id="retry" class="primary wide">Try again</button></main>`;
+}
 
 /** Whether pages of the tab's site are saved, and the list entry that covers it. */
 function coveringEntry(sites:readonly string[],site:string):string|undefined{return sites.find(entry=>switchedOn([entry],site));}
@@ -66,7 +69,7 @@ export function bindPopupActions(root:ParentNode,state:PopupState,refresh:()=>vo
       await call('settings.set',{patch:{capture_sites:next}});
     }catch(error){
       input.checked=!input.checked;input.removeAttribute?.('aria-busy');
-      const help=root.querySelector('#capture-help');if(help)help.textContent=`Couldn't change this: ${error instanceof Error?error.message:String(error)}`;
+      const help=root.querySelector('#capture-help');if(help)help.textContent=`Couldn't change this. ${friendly(error,'RZN popup').line}`;
       return;
     }
     await refresh();

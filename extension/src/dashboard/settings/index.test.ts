@@ -25,6 +25,6 @@ describe('Settings tab DOM', () => {
     let saves = 0; const call = helper(() => { if (saves++ === 0) return stored; throw new Error('disk full'); });
     await mountSettings(root as any, call, route('settings')); await form.fire('submit');
     expect(call).toHaveBeenCalledWith('settings.set', expect.objectContaining({ patch: expect.objectContaining({ run_retention_count: 20, capture_sites: ['example.com', 'lambda.ai'] }) }));
-    expect(root.innerHTML).toContain('Couldn&#39;t save: disk full'); expect(root.innerHTML).toContain('value="500"');
+    expect(root.innerHTML).toContain('Couldn&#39;t save. disk full'); expect(root.innerHTML).toContain('value="500"');
   });
 });

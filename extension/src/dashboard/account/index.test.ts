@@ -31,7 +31,7 @@ describe('Account tab', () => {
     const root = new TestRoot();
     const call: any = vi.fn(async (method: string): Promise<any> => method === 'account.status' ? signedIn : {});
     const dispose = await mountAccount(root as any, call, route('account'));
-    for (const text of ['Signed in as', 'me@example.com', 'This browser', 'mac', 'Connected', 'Sign out']) expect(root.innerHTML).toContain(text);
+    for (const text of ['Account', 'Signed in as', 'me@example.com', 'This browser', 'mac', 'Connected', 'Sign out']) expect(root.innerHTML).toContain(text);
     expect(root.innerHTML).not.toMatch(/fleet|job|enrol|device id|workflow/i);
     dispose();
   });
