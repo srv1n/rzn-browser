@@ -15,10 +15,15 @@
 //!
 //! Every page read and every batch sent is one line of `<app base>/capture/activity.jsonl`.
 //!
+//! The read workflow is the site's reader for an X post, a LinkedIn post or a Reddit thread
+//! ([`reader_for`]), so the item has the key and shape that reader gives it in a job; another
+//! page of those three sites is not read, and every other site is read with `web/page`. A
+//! `truncated` item (comments the page did not load, text behind "more") is logged and not
+//! queued: the push door refuses a batch that holds one.
+//!
 //! Stubbed this round: the push target and its bearer token are a hand-written file (no shared
-//! login, design 8.4); every site is read with `web/page` (a family's own reader, such as
-//! `x/open`, captures network responses from its own navigation and cannot read in place yet);
-//! an unsent batch lives in memory, so a supervisor restart loses at most one minute of reads.
+//! login, design 8.4); an unsent batch lives in memory, so a supervisor restart loses at most one
+//! minute of reads.
 
 use std::collections::HashMap;
 use std::io::Write as _;
@@ -48,16 +53,27 @@ pub(super) const BATCH_MAX_AGE_MS: i64 = 60_000;
 const FLUSH_TICK: Duration = Duration::from_secs(5);
 /// A page read again within this window (a reload) is not read twice.
 const REREAD_AFTER_MS: i64 = 30_000;
-/// The read workflow of every switched-on site this round.
+/// The read workflow of a site without a reader of its own.
 pub(super) const WEB_PAGE_WORKFLOW: &str = "web/page";
 const ACTIVITY_FILE: &str = "activity.jsonl";
 const READ_DEADLINE: Duration = Duration::from_secs(60);
-/// Step kinds a read in place never runs: the owner did not navigate or scroll.
-const NOT_IN_PLACE: [&str; 4] = [
+/// Step kinds a read in place never runs, whatever they declare: the owner did not navigate,
+/// scroll or close a popup, and the page is already loaded (no response left to capture).
+const NOT_IN_PLACE: [&str; 7] = [
     "navigate_to_url",
     "open_new_tab",
     "infinite_scroll",
     "scroll_window_to",
+    "dismiss_popups",
+    "capture_responses",
+    "wait_for_navigation",
+];
+/// Script steps; a read in place tells them so (`__rzn_params.in_place`) and gives them no
+/// captured responses.
+const SCRIPT_STEPS: [&str; 3] = [
+    "execute_javascript",
+    "eval_main_world",
+    "eval_isolated_world",
 ];
 
 /// Where batches go: a pushed source of the owner's own index.
@@ -349,21 +365,27 @@ pub(super) async fn page(state: &Arc<SupervisorState>, params: Value) -> Result<
     if state.control.paused() {
         return Ok(json!({"read": false, "reason": "automation_paused"}));
     }
+    let Some((workflow_id, param)) = reader_for(&url) else {
+        return Ok(json!({"read": false, "reason": "not_an_item_page"}));
+    };
     if !state.capture.fresh(&url, now_ms()) {
         return Ok(json!({"read": false, "reason": "read_recently"}));
     }
     ensure_ticker(state);
-    let workflow_id = WEB_PAGE_WORKFLOW;
     let owned = state.clone();
     tokio::spawn(async move {
         let started = now_ms();
-        let entry = match read_in_place(&owned, workflow_id, &url, &tab_ref).await {
+        let entry = match read_in_place(&owned, workflow_id, param, &url, &tab_ref).await {
             Ok(items) => {
-                let keys: Vec<Value> = items.iter().filter_map(|i| i.get("key").cloned()).collect();
-                let entry = json!({"event": "page_read", "url": url, "workflow_id": workflow_id,
+                let (whole, held) = whole_items(items);
+                let keys: Vec<Value> = whole.iter().filter_map(|i| i.get("key").cloned()).collect();
+                let mut entry = json!({"event": "page_read", "url": url, "workflow_id": workflow_id,
                     "items": keys.len(), "keys": keys, "ms": now_ms() - started});
+                if !held.is_empty() {
+                    entry["truncated"] = Value::Array(held);
+                }
                 owned.capture.log(entry);
-                owned.capture.offer(items, now_ms()).await;
+                owned.capture.offer(whole, now_ms()).await;
                 return;
             }
             Err(error) => json!({"event": "page_read", "url": url, "workflow_id": workflow_id,
@@ -395,10 +417,66 @@ fn ensure_ticker(state: &Arc<SupervisorState>) {
     });
 }
 
-/// Run `workflow_id` on the owner's tab with no navigation or scrolling; its items.
+/// The read workflow of a page and the parameter its URL goes in: the site's reader for an X
+/// post, a LinkedIn post or a Reddit thread; `None` for another page of those sites (a feed,
+/// a profile, a search: no reader returns it as one item); `web/page` for every other site.
+pub(super) fn reader_for(url: &str) -> Option<(&'static str, &'static str)> {
+    let parsed = url::Url::parse(url).ok()?;
+    let site = site_of(url)?;
+    let segments: Vec<&str> = parsed
+        .path_segments()
+        .map(|s| s.filter(|seg| !seg.is_empty()).collect())
+        .unwrap_or_default();
+    let on = |domain: &str| site == domain || site.ends_with(&format!(".{domain}"));
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    if on("x.com") || on("twitter.com") {
+        // /<handle>/status/<id>, /<handle>/article/<id>, /i/web/status/<id>
+        let post = segments
+            .windows(2)
+            .any(|w| matches!(w[0], "status" | "article") && digits(w[1]));
+        return post.then_some(("x/open", "url"));
+    }
+    if on("linkedin.com") {
+        let path = parsed.path();
+        let post = ["urn:li:activity:", "urn:li:share:", "urn:li:ugcPost:"]
+            .iter()
+            .any(|urn| path.contains(urn))
+            || (segments.first() == Some(&"posts") && path.contains("-activity-"));
+        return post.then_some(("linkedin/open", "url"));
+    }
+    if on("reddit.com") {
+        let thread = segments
+            .windows(2)
+            .any(|w| w[0] == "comments" && w[1].bytes().all(|b| b.is_ascii_alphanumeric()));
+        return thread.then_some(("reddit/thread", "post"));
+    }
+    Some((WEB_PAGE_WORKFLOW, "url"))
+}
+
+/// The items to queue, and the keys and reasons of those held back as `truncated`.
+pub(super) fn whole_items(items: Vec<Value>) -> (Vec<Value>, Vec<Value>) {
+    let mut held = Vec::new();
+    let whole = items
+        .into_iter()
+        .filter(
+            |item| match item.get("truncated").filter(|t| !t.is_null()) {
+                Some(truncated) => {
+                    held.push(json!({"key": item.get("key"), "reason": truncated.get("reason")}));
+                    false
+                }
+                None => true,
+            },
+        )
+        .collect();
+    (whole, held)
+}
+
+/// Run `workflow_id` on the owner's tab with no navigation or scrolling, the page's URL as
+/// `param`; its items.
 async fn read_in_place(
     state: &Arc<SupervisorState>,
     workflow_id: &str,
+    param: &str,
     url: &str,
     tab_ref: &str,
 ) -> Result<Vec<Value>> {
@@ -406,7 +484,7 @@ async fn read_in_place(
     let mut manifest: Value = serde_json::from_slice(&std::fs::read(&path)?)
         .with_context(|| format!("read workflow {}", path.display()))?;
     in_place(&mut manifest)?;
-    let params = HashMap::from([("url".to_string(), url.to_string())]);
+    let params = HashMap::from([(param.to_string(), url.to_string())]);
     let workflow = load_workflow_value_for_run(manifest, &params)?;
     let transport = crate::supervisor_fleet::InProcessTransport {
         state: state.clone(),
@@ -441,7 +519,9 @@ async fn read_in_place(
 struct QuietSink;
 impl RunEventSink for QuietSink {}
 
-/// Drop the steps a read in place never runs; refuse a workflow that writes to the site.
+/// Keep only the steps a read in place runs: those that declare nothing but `read_only` and
+/// are not of a kind in [`NOT_IN_PLACE`]. Script steps are told they run in place and get no
+/// captured responses. A workflow that writes to the site is refused.
 pub(super) fn in_place(manifest: &mut Value) -> Result<()> {
     let writes = manifest
         .get("side_effects")
@@ -463,10 +543,32 @@ pub(super) fn in_place(manifest: &mut Value) -> Result<()> {
             .pointer("/action/kind")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        !NOT_IN_PLACE.contains(&kind) && !kind.starts_with("scroll")
+        let read_only = step
+            .pointer("/action/side_effects")
+            .and_then(Value::as_array)
+            .is_some_and(|effects| {
+                !effects.is_empty() && effects.iter().all(|e| e.as_str() == Some("read_only"))
+            });
+        read_only && !NOT_IN_PLACE.contains(&kind) && !kind.starts_with("scroll")
     });
     if steps.is_empty() {
         return Err(anyhow!("nothing of the workflow runs in place"));
+    }
+    for step in steps.iter_mut() {
+        let kind = step.pointer("/action/kind").and_then(Value::as_str);
+        if !kind.is_some_and(|k| SCRIPT_STEPS.contains(&k)) {
+            continue;
+        }
+        if let Some(inputs) = step
+            .pointer_mut("/action/inputs")
+            .and_then(Value::as_object_mut)
+        {
+            inputs.remove("captured_responses");
+            let params = inputs.entry("params").or_insert_with(|| json!({}));
+            if let Some(params) = params.as_object_mut() {
+                params.insert("in_place".into(), Value::Bool(true));
+            }
+        }
     }
     Ok(())
 }
