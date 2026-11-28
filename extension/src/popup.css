@@ -17,10 +17,10 @@ main { display: grid; gap: 12px; padding-top: 16px; }
 .who { overflow: hidden; font-size: 15px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 
 .card { padding: 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); box-shadow: var(--shadow); }
-.card .label { margin-bottom: 10px; }
+.card .label { margin-bottom: 12px; }
 .card .row { margin-bottom: 10px; }
 .site-name { display: grid; flex: 1; min-width: 0; cursor: pointer; }
-.site-host { overflow: hidden; font-size: 17px; font-weight: 600; letter-spacing: -.01em; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.site-host { overflow: hidden; font-size: 17px; font-weight: 600; letter-spacing: -.02em; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
 .via { color: var(--ink-3); font-size: 13px; }
 .quiet { color: var(--ink-3); font-size: 14px; line-height: 1.5; }
 .quiet b { color: var(--ink); }
@@ -30,10 +30,10 @@ main { display: grid; gap: 12px; padding-top: 16px; }
 
 /* Signed out and problems: centred, one action. */
 .hero { justify-items: center; gap: 8px; padding: 32px 8px 8px; text-align: center; }
-.hero-mark { display: inline-flex; margin-bottom: 8px; color: var(--accent); }
+.hero-mark { display: inline-flex; margin-bottom: 8px; color: var(--ink); }
 .hero-icon { display: grid; place-items: center; width: 40px; height: 40px; margin-bottom: 8px; border-radius: 50%; background: var(--warn-soft); color: var(--warn); font-size: 20px; font-weight: 600; }
-.hero h1 { font-size: 22px; }
+.hero h1 { font-size: 26px; }
 .hero p { margin-bottom: 16px; font-size: 15px; }
 
-.wide { width: 100%; min-height: 40px; font-size: 15px; }
+.wide { width: 100%; min-height: 42px; font-size: 15px; }
 .skeleton { padding: 120px 0; text-align: center; }

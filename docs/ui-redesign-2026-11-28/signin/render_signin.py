@@ -11,7 +11,8 @@ src = Path(sys.argv[1]).read_text()
 out = Path(sys.argv[2]); out.mkdir(parents=True, exist_ok=True)
 
 def raw(name):
-    return re.search(rf'const {name}: &str = r#*"(.*?)"#*;', src, re.S).group(1)
+    # A raw string ends at a quote followed by its own number of hashes.
+    return re.search(rf'const {name}: &str = r(#*)"(.*?)"\1;', src, re.S).group(2)
 
 def fmt(template, **values):
     # Rust format strings: {{ and }} are literal braces; {name} and {0} are arguments.

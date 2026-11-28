@@ -64,9 +64,9 @@ const popup = (a: Answers) => open('popup.html', a, { width: 360, height: 560 })
 const dashboard = (hash: string, a: Answers) => open(`dashboard.html#${hash}`, a, { width: 1280, height: 800 });
 async function shot(page: Page, name: string, element = false) {
   await page.evaluate(() => document.fonts.ready);
-  // One font family, upright only.
+  // Geist, plus Geist Mono for the small section labels; upright only, no serif or italics.
   const fonts = await page.evaluate(() => [...new Set([...document.fonts].map(f => `${f.family.replace(/"/g, '')} ${f.style}`))]);
-  expect(fonts).toEqual(['Geist normal']);
+  expect(fonts.sort()).toEqual(['Geist Mono normal', 'Geist normal']);
   const loaded = await page.evaluate(() => [...document.fonts].some(f => f.status === 'loaded'));
   expect(loaded).toBe(true);
   if (shots) element ? await page.locator('body').screenshot({ path: path.join(shots, `${name}.png`) }) : await page.screenshot({ path: path.join(shots, `${name}.png`), fullPage: true });
