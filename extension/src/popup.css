@@ -1,63 +1,31 @@
-:root {
-  color-scheme: light dark;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 15px;
-  --bg: #ffffff;
-  --surface: #f5f6f7;
-  --text: #1d1d1f;
-  --muted: #666a70;
-  --border: #dfe1e5;
-  --accent: #1769d2;
-  --success: #137333;
-  --warning: #946200;
-  --danger: #b3261e;
-  background: var(--bg);
-  color: var(--text);
-}
+@import './ui/tokens.css';
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #202124;
-    --surface: #292a2d;
-    --text: #f1f3f4;
-    --muted: #a8abb0;
-    --border: #3c4043;
-    --accent: #8ab4f8;
-    --success: #81c995;
-    --warning: #fdd663;
-    --danger: #f28b82;
-  }
-}
+body { width: 360px; min-height: 0; }
+#app { padding: 0 20px 20px; }
 
-* { box-sizing: border-box; }
-body { width: 400px; min-height: 520px; margin: 0; background: var(--bg); color: var(--text); }
-#app { padding: 18px; }
-header, footer, .health, .toggle, .run { display: flex; align-items: center; gap: 10px; }
-header { justify-content: space-between; padding-bottom: 14px; border-bottom: 1px solid var(--border); font-size: 16px; }
-footer { min-height: 38px; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--border); color: var(--muted); }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-section, .toggle { margin: 0; padding: 16px 0; border-bottom: 1px solid var(--border); }
-.health { flex-wrap: wrap; padding: 10px 0; color: var(--muted); font-size: 12px; }
-.health span { white-space: nowrap; }
-.health small { color: var(--muted); }
-.toggle { justify-content: space-between; }
-.toggle input { order: 2; accent-color: var(--accent); }
-.run { min-height: 38px; padding: 7px 0; border-bottom: 1px solid var(--border); color: var(--text); }
-.run:last-child { border: 0; }
-.run:hover { text-decoration: none; }
-.run small { color: var(--muted); }
-.run .origin { margin-left: auto; }
-.ok { color: var(--success); }
-.bad { color: var(--danger); }
-.running { color: var(--accent); }
-.cancelled { color: var(--warning); }
-.muted { color: var(--muted); }
-.origin { color: var(--muted); font-size: 11px; text-transform: uppercase; }
-button { min-height: 32px; padding: 6px 11px; border: 1px solid var(--accent); border-radius: 6px; background: var(--accent); color: white; font: inherit; font-weight: 600; cursor: pointer; }
-.danger { border-color: var(--danger); background: transparent; color: var(--danger); }
-.offline { margin-top: 100px; border: 0; text-align: center; }
-.skeleton { padding-top: 180px; color: var(--muted); text-align: center; }
-h2 { margin: 4px 0; font-size: 22px; letter-spacing: -.02em; }
-h3 { margin: 0 0 8px; font-size: 13px; color: var(--muted); letter-spacing: .04em; text-transform: uppercase; }
-p { color: var(--muted); }
+.top { display: flex; align-items: center; justify-content: space-between; height: 52px; margin: 0 -20px 4px; padding: 0 20px; border-bottom: 1px solid var(--line); background: var(--paper); }
+.wordmark { font-size: 17px; font-weight: 600; letter-spacing: -.04em; }
+.top-link { padding: 6px 2px; text-decoration: none; }
+.top-link:hover { color: var(--ink); }
+
+main { display: grid; gap: 14px; padding-top: 16px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.account .row { margin-top: 6px; }
+.who { overflow: hidden; font-size: 15px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+
+.card { padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper-raised); }
+.card .row { margin: 8px 0 6px; }
+.site-name { overflow: hidden; font-size: 17px; font-weight: 600; letter-spacing: -.02em; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.site-name .muted { font-size: 13px; font-weight: 400; letter-spacing: 0; }
+.quiet { color: var(--ink-3); font-size: 13px; }
+
+.notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-left: 2px solid var(--ink); border-radius: var(--radius); background: var(--paper-raised); }
+.notice p { font-size: 13px; }
+
+.hero { gap: 12px; padding: 34px 4px 6px; }
+.hero h1 { font-size: 30px; letter-spacing: -.035em; }
+.hero h1 em { font-size: 34px; }
+.hero p { margin-bottom: 10px; font-size: 14px; }
+
+.wide { width: 100%; min-height: 40px; }
+.skeleton { padding: 120px 0; text-align: center; }

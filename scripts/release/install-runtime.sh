@@ -331,6 +331,6 @@ if ! path_contains_dir "$GLOBAL_BIN_DIR"; then
 fi
 echo "Next:"
 echo "1. Open chrome://extensions"
-echo "2. Click Reload on RZN Browser Automation"
+echo "2. Click Reload on RZN"
 echo "3. If this is the first install, load unpacked from: $EXT_DIR"
 echo "4. Run: rzn-browser supervisor ensure-ready"

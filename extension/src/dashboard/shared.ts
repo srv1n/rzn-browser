@@ -2,7 +2,12 @@ export type RpcClient = <T = any>(method: string, params?: Record<string, unknow
 
 export type DashboardRoute = { tab: string; id?: string; query: URLSearchParams };
 
-export const tabs = ['runs', 'workflows', 'account', 'logs', 'settings'];
+/** Pages in the side navigation. */
+export const mainTabs = ['account', 'settings'];
+/** Our own tools, reached from Settings › Advanced; not in the main navigation. */
+export const advancedTabs = ['runs', 'workflows', 'logs'];
+export const tabs = [...mainTabs, ...advancedTabs];
+export const tabLabels: Record<string, string> = { account: 'Account', settings: 'Settings', runs: 'Runs', workflows: 'Workflows', logs: 'Logs' };
 
 export const esc = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -34,10 +39,12 @@ export const dot = (status?: string) => `<span class="status-dot ${statusClass(s
 
 export function isPaused(snapshot: any): boolean { return Boolean(snapshot?.paused); }
 
+const details = (error: unknown) => `<details class="details"><summary>Details</summary><pre>${esc(error instanceof Error ? error.message : error)}</pre></details>`;
+
 export function unavailable(root: HTMLElement, error: unknown): void {
-  root.innerHTML = `<section><div class="empty"><h1>Supervisor unreachable</h1><p>Reconnect the native host and retry.</p><pre>${esc(error instanceof Error ? error.message : error)}</pre></div></section>`;
+  root.innerHTML = `<section><div class="empty"><span class="label">Not connected</span><h1>RZN isn't <em>answering</em></h1><p>The RZN helper on this computer didn't respond. Make sure RZN is installed and running, then reload this page.</p>${details(error)}</div></section>`;
 }
 
 export function applicationError(root: HTMLElement, error: unknown): void {
-  root.innerHTML = `<section><div class="empty"><h1>Request failed</h1><pre>${esc(error instanceof Error ? error.message : error)}</pre></div></section>`;
+  root.innerHTML = `<section><div class="empty"><span class="label">Something went wrong</span><h1>That didn't <em>work</em></h1>${details(error)}</div></section>`;
 }

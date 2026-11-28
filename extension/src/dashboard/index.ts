@@ -3,7 +3,7 @@ import { rpc, SupervisorUnreachable } from '../ui/rpc';
 import { mountAccount } from './account';
 import { mountLogs } from './logs';
 import { mountRuns } from './runs';
-import { applicationError, DashboardRoute, esc, tabs, unavailable } from './shared';
+import { advancedTabs, applicationError, DashboardRoute, mainTabs, tabLabels, tabs, unavailable } from './shared';
 import { mountSettings } from './settings';
 import { mountWorkflows } from './workflows';
 
@@ -13,8 +13,8 @@ let renderGeneration = 0;
 
 export function route(hash = location.hash): DashboardRoute {
   const [path, queryString = ''] = hash.slice(1).split('?');
-  const [tab = 'runs', id] = path.split('/');
-  return { tab: tabs.includes(tab) ? tab : 'runs', id, query: new URLSearchParams(queryString) };
+  const [tab = 'account', id] = path.split('/');
+  return { tab: tabs.includes(tab) ? tab : 'account', id, query: new URLSearchParams(queryString) };
 }
 
 export async function render(): Promise<void> {
@@ -28,7 +28,9 @@ export async function render(): Promise<void> {
     else d?.();
   };
   const current = route();
-  app.innerHTML = `<aside class="sidebar"><div class="brand">RZN <small>Browser Automation</small></div><nav aria-label="Dashboard">${tabs.map(tab => `<a class="${tab === current.tab ? 'active' : ''}" href="#${tab}" ${tab === current.tab ? 'aria-current="page"' : ''}>${tab}</a>`).join('')}</nav></aside><main><p class="muted">Loading…</p></main>`;
+  const link = (tab: string) => `<a class="${tab === current.tab ? 'active' : ''}" href="#${tab}" ${tab === current.tab ? 'aria-current="page"' : ''}>${tabLabels[tab]}</a>`;
+  const advanced = advancedTabs.includes(current.tab) ? `<span class="label nav-label">Advanced</span>${advancedTabs.map(link).join('')}` : '';
+  app.innerHTML = `<aside class="sidebar"><div class="brand">RZN</div><nav aria-label="RZN">${mainTabs.map(link).join('')}${advanced}</nav></aside><main><p class="label">Loading</p></main>`;
   const main = app.querySelector<HTMLElement>('main')!;
   const navigate = (hash: string) => { location.hash = hash; };
   try {

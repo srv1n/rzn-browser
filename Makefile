@@ -475,7 +475,7 @@ reload-ext:
 	@echo "🔄 Reloading extension..."
 	@echo "Note: This requires manual reload in chrome://extensions/"
 	@echo "1. Open chrome://extensions/"
-	@echo "2. Find 'RZN Browser Automation'"
+	@echo "2. Find 'RZN'"
 	@echo "3. Click the refresh button"
 	@open -a "Google Chrome" "chrome://extensions/"
 

@@ -27,7 +27,7 @@ export async function mountRuns(root: HTMLElement, call: RpcClient, route: Dashb
     const statuses = [...new Set(runs.map(run => run.status))].sort();
     const origins = [...new Set(runs.map(run => originLabel(run.origin)))].sort();
     const total = Number(listed.total || 0);
-    root.innerHTML = `<section><header class="page-header"><div><h1>Runs</h1><p>Recent workflow activity from this browser and fleet.</p></div></header><div class="filters">
+    root.innerHTML = `<section><header class="page-header"><div><h1>Runs</h1><p>Recent activity in this browser, including remote tasks.</p></div></header><div class="filters">
       <label class="control"><span>Workflow</span><select data-filter="workflow">${option('', workflow)}${workflows.map(value => option(value, workflow)).join('')}</select></label>
       <label class="control"><span>Status</span><select data-filter="status">${option('', status)}${statuses.map(value => option(value, status)).join('')}</select></label>
       <label class="control"><span>Origin</span><select data-filter="origin">${option('', origin)}${origins.map(value => option(value, origin)).join('')}</select></label>

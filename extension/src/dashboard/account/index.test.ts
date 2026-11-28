@@ -13,7 +13,7 @@ describe('Account tab', () => {
     const call: any = vi.fn(async (method: string): Promise<any> => method === 'account.status' ? { signed_in: false } : method === 'settings.get' ? { server_url: '' } : { runs: [] });
     const signIn = vi.fn().mockResolvedValue({ ok: true });
     const dispose = await mountAccount(root as any, call, route('account'), { signIn });
-    expect(root.innerHTML).toContain('Sign in to RZN'); expect(root.innerHTML).toContain('https://app.rzn.ai'); expect(root.innerHTML).not.toContain('Enrollment code');
+    expect(root.innerHTML).toContain('Sign in to RZN'); expect(root.innerHTML).not.toContain('app.rzn.ai'); expect(root.innerHTML).not.toContain('Enrollment code');
     await button.fire('click');
     expect(signIn).toHaveBeenCalledWith('https://app.rzn.ai', call);
     dispose();
@@ -27,11 +27,12 @@ describe('Account tab', () => {
     expect(signIn).toHaveBeenCalledWith('https://build1-api.rzn.ai', call); dispose();
   });
 
-  it('shows who, this browser, recent jobs and sign out', async () => {
+  it('shows who, this browser and sign out, in plain words', async () => {
     const root = new TestRoot();
-    const call: any = vi.fn(async (method: string): Promise<any> => method === 'account.status' ? signedIn : method === 'settings.get' ? {} : { runs: [{ workflow_id: 'x/open', status: 'succeeded', started_at: 1 }] });
+    const call: any = vi.fn(async (method: string): Promise<any> => method === 'account.status' ? signedIn : {});
     const dispose = await mountAccount(root as any, call, route('account'));
-    for (const text of ['me@example.com', 'dev-1', 'x/open', 'Recent jobs', 'Sign out']) expect(root.innerHTML).toContain(text);
+    for (const text of ['Signed in as', 'me@example.com', 'This browser', 'mac', 'Connected', 'Sign out']) expect(root.innerHTML).toContain(text);
+    expect(root.innerHTML).not.toMatch(/fleet|job|enrol|device id|workflow/i);
     dispose();
   });
 

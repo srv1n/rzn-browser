@@ -1,10 +1,27 @@
 import './popup.css';
+import { siteOf } from './capture';
 import { rpc, SupervisorUnreachable } from './ui/rpc';
-import { bindPopupActions, popupHtml, unreachableHtml, type Snapshot } from './ui/popupView';
+import { bindPopupActions, errorHtml, popupHtml, unreachableHtml, type Account, type PopupState, type Settings, type Snapshot } from './ui/popupView';
 
 const app=document.querySelector<HTMLElement>('#app')!;
-function render(snapshot:Snapshot){app.innerHTML=popupHtml(snapshot);bindPopupActions(app,snapshot,refresh);}
+let shown='';
 let refreshTimer: ReturnType<typeof setTimeout> | undefined;
-export async function refresh(){if(refreshTimer)clearTimeout(refreshTimer);try{render(await rpc<Snapshot>('status.snapshot'));}catch(error){if(error instanceof SupervisorUnreachable){app.innerHTML=unreachableHtml;app.querySelector('#retry')?.addEventListener('click',async()=>{await chrome.runtime.sendMessage({type:'RZN_WAKE_NATIVE',resetTerminal:true});await refresh();});}}finally{refreshTimer=setTimeout(refresh,2000);}}
-app.innerHTML='<div class="skeleton">Connecting…</div>';
+
+async function activeSite():Promise<string|null>{const [tab]=await chrome.tabs.query({active:true,currentWindow:true});return tab?.url?siteOf(tab.url):null;}
+
+// Re-render only when something changed, so the 2 s refresh never steals keyboard focus.
+function show(html:string,bind:()=>void){if(html===shown)return;const focused=(document.activeElement as HTMLElement|null)?.id;shown=html;app.innerHTML=html;bind();if(focused)app.querySelector<HTMLElement>(`#${focused}`)?.focus();}
+
+export async function refresh(){
+  if(refreshTimer)clearTimeout(refreshTimer);
+  try{
+    const [snapshot,account,settings,site]=await Promise.all([rpc<Snapshot>('status.snapshot'),rpc<Account>('account.status'),rpc<Settings>('settings.get'),activeSite()]);
+    const state:PopupState={snapshot,account,settings,site};
+    show(popupHtml(state),()=>bindPopupActions(app,state,refresh));
+  }catch(error){
+    const retry=()=>app.querySelector('#retry')?.addEventListener('click',async()=>{await chrome.runtime.sendMessage({type:'RZN_WAKE_NATIVE',resetTerminal:true});await refresh();});
+    show(error instanceof SupervisorUnreachable?unreachableHtml:errorHtml(error),retry);
+  }finally{refreshTimer=setTimeout(refresh,2000);}
+}
+app.innerHTML='<p class="skeleton label">Connecting</p>';
 void refresh();

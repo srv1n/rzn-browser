@@ -164,9 +164,13 @@ test.describe('sign in with an RZN account', () => {
       }, 120_000, 1_000);
       await dashboard.reload();
       await expect(dashboard.locator('main')).toContainText(email, { timeout: 30_000 });
-      await expect(dashboard.locator('main')).toContainText(account.device_id);
-      await expect(dashboard.locator('main')).toContainText('Recent jobs');
+      await expect(dashboard.locator('main')).toContainText('This browser');
+      await expect(dashboard.locator('[data-sign-out]')).toHaveText('Sign out');
       await dashboard.screenshot({ path: path.join(ctl, 'account.png'), fullPage: true });
+      // The device id is ours, not the user's: Settings shows it under Advanced.
+      await dashboard.goto(`chrome-extension://${id}/dashboard.html#settings`);
+      await expect(dashboard.locator('details[data-advanced]')).toContainText(account.device_id, { timeout: 30_000 });
+      await dashboard.goto(`chrome-extension://${id}/dashboard.html#account`);
       mark('signed-in.json', { device_id: account.device_id, user_id: account.user_id, user_email: account.user_email, server_url: account.server_url, fleet_state: polling.fleet.state, last_poll_ms: polling.fleet.last_poll_ms });
 
       // Capture: a page of the switched-on site goes to the user's own index with the user's token.
