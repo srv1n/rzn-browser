@@ -134,7 +134,10 @@ struct FleetDeviceConfig {
     server_url: String,
     device_id: String,
     device_token: String,
-    /// The user the device belongs to; it works for that user's tenants.
+    /// The user the device belongs to; it works for that user's tenants. Empty for a device
+    /// enrolled with a typed code before sign-in existed: it still polls, and reads as enrolled
+    /// but not signed in instead of failing every `account.status`.
+    #[serde(default)]
     user_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     user_email: Option<String>,
