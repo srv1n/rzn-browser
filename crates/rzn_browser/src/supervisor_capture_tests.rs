@@ -30,7 +30,9 @@ struct Fixed(Option<CaptureTarget>);
 #[async_trait]
 impl Targets for Fixed {
     async fn target(&self) -> Result<CaptureTarget> {
-        self.0.clone().ok_or_else(|| anyhow!("not signed in to RZN"))
+        self.0
+            .clone()
+            .ok_or_else(|| anyhow!("not signed in to RZN"))
     }
 }
 

@@ -198,7 +198,9 @@ mod tests {
         assert_eq!(saved.server_url, "https://build1-api.rzn.ai");
         assert_eq!(saved.capture_index, "x-push-1");
         assert!(s.patch(serde_json::json!({"capture_index":"a/b"})).is_err());
-        assert!(s.patch(serde_json::json!({"server_url":"not a url"})).is_err());
+        assert!(s
+            .patch(serde_json::json!({"server_url":"not a url"}))
+            .is_err());
         assert!(s
             .patch(serde_json::json!({"capture_sites":["https://example.com/a"]}))
             .is_err());

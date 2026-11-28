@@ -1030,15 +1030,27 @@ async fn http_poll_and_result_round_trip() {
 
 #[tokio::test]
 async fn http_poll_403_revoked_maps_to_stop() {
-    async fn poll_revoked_handler() -> (StatusCode, Json<FleetError>) {
+    // The backend's own error envelope (`FleetError::into_response` in rzn-fleet).
+    async fn poll_revoked_handler() -> (StatusCode, Json<serde_json::Value>) {
         (
             StatusCode::FORBIDDEN,
-            Json(FleetError {
-                code: error_codes::DEVICE_REVOKED.to_string(),
-                message: "device token revoked".to_string(),
-            }),
+            Json(serde_json::json!({"error": {
+                "code": error_codes::DEVICE_REVOKED,
+                "message": "device token revoked",
+            }})),
         )
     }
+    // A bare error reads the same.
+    let bare = serde_json::to_string(&FleetError {
+        code: error_codes::DEVICE_DORMANT.to_string(),
+        message: "dormant".to_string(),
+    })
+    .unwrap();
+    assert_eq!(
+        fleet_error(&bare).map(|e| e.code).as_deref(),
+        Some(error_codes::DEVICE_DORMANT)
+    );
+    assert!(fleet_error("not json").is_none());
     let router = Router::new().route("/v1/fleet/poll", post(poll_revoked_handler));
     let base = spawn_http_mock(router).await;
 

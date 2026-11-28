@@ -344,12 +344,17 @@ mod tests {
                         let grant = form["grant_type"].clone();
                         seen.lock().unwrap().push(format!(
                             "token:{grant}:{}",
-                            form.get("refresh_token").or(form.get("code")).cloned().unwrap_or_default()
+                            form.get("refresh_token")
+                                .or(form.get("code"))
+                                .cloned()
+                                .unwrap_or_default()
                         ));
                         assert_eq!(form["client_id"], CLIENT_ID);
                         let n = seen.lock().unwrap().len();
-                        Json(json!({"access_token": format!("acc{n}"), "token_type": "Bearer",
-                                    "expires_in": 0, "refresh_token": format!("ref{n}")}))
+                        Json(
+                            json!({"access_token": format!("acc{n}"), "token_type": "Bearer",
+                                    "expires_in": 0, "refresh_token": format!("ref{n}")}),
+                        )
                     }
                 }),
             )
@@ -368,8 +373,10 @@ mod tests {
                 "/v1/fleet/enroll",
                 post(|Json(body): Json<Value>| async move {
                     assert_eq!(body["code"], "ONETIME000");
-                    Json(json!({"device_id": "dev_1", "device_token": "fld_x", "user_id": "usr_1",
-                                "user_email": "me@example.com", "poll_interval_seconds": 45}))
+                    Json(
+                        json!({"device_id": "dev_1", "device_token": "fld_x", "user_id": "usr_1",
+                                "user_email": "me@example.com", "poll_interval_seconds": 45}),
+                    )
                 }),
             )
     }
@@ -381,9 +388,16 @@ mod tests {
         let config_path = temp_config();
         let client = reqwest::Client::new();
 
-        let config = sign_in(&client, &base, "authcode", "verifier", "https://x/", &config_path)
-            .await
-            .expect("sign in");
+        let config = sign_in(
+            &client,
+            &base,
+            "authcode",
+            "verifier",
+            "https://x/",
+            &config_path,
+        )
+        .await
+        .expect("sign in");
         assert_eq!(config.user_id, "usr_1");
         assert_eq!(config.user_email.as_deref(), Some("me@example.com"));
         assert_eq!(config.device_token, "fld_x");
@@ -391,7 +405,10 @@ mod tests {
         assert_eq!(session.refresh_token, "ref1");
         assert_eq!(
             seen.lock().unwrap().clone(),
-            vec!["token:authorization_code:authcode".to_string(), "mint:Bearer acc1".to_string()]
+            vec![
+                "token:authorization_code:authcode".to_string(),
+                "mint:Bearer acc1".to_string()
+            ]
         );
 
         // The first access token expired at once (expires_in 0): the next use renews it, and
@@ -405,7 +422,10 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(session_path(&config_path)).unwrap().permissions().mode();
+            let mode = std::fs::metadata(session_path(&config_path))
+                .unwrap()
+                .permissions()
+                .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
     }
@@ -417,7 +437,9 @@ mod tests {
             .await
             .unwrap_err();
         assert!(format!("{error:#}").contains("not signed in"));
-        let answer = sign_out_at(&reqwest::Client::new(), &config_path).await.unwrap();
+        let answer = sign_out_at(&reqwest::Client::new(), &config_path)
+            .await
+            .unwrap();
         assert_eq!(answer["session_revoked"], false);
     }
 }

@@ -729,6 +729,20 @@ impl Journal {
 // Fleet control-plane API
 // ---------------------------------------------------------------------------
 
+/// The server's error, sent as `{"error": {"code", "message"}}` (every backend route renders
+/// this envelope); a bare `{"code", "message"}` is read too. Before 28 Nov only the bare form was
+/// read, so a revoked device took `device_revoked` for a network error and kept polling.
+fn fleet_error(body: &str) -> Option<rzn_contracts::fleet::FleetError> {
+    #[derive(serde::Deserialize)]
+    struct Envelope {
+        error: rzn_contracts::fleet::FleetError,
+    }
+    serde_json::from_str::<Envelope>(body)
+        .map(|e| e.error)
+        .or_else(|_| serde_json::from_str(body))
+        .ok()
+}
+
 /// A poll/post failure the loop must distinguish.
 #[derive(Debug)]
 enum FleetCallError {
@@ -791,7 +805,7 @@ impl FleetApi for HttpFleetApi {
         let status = response.status();
         if status.as_u16() == 403 {
             let body = response.text().await.unwrap_or_default();
-            if let Ok(err) = serde_json::from_str::<rzn_contracts::fleet::FleetError>(&body) {
+            if let Some(err) = fleet_error(&body) {
                 if err.code == error_codes::DEVICE_REVOKED
                     || err.code == error_codes::DEVICE_DORMANT
                 {
@@ -832,9 +846,7 @@ impl FleetApi for HttpFleetApi {
         let status = response.status();
         if status.as_u16() == 409 {
             let body = response.text().await.unwrap_or_default();
-            let code = serde_json::from_str::<rzn_contracts::fleet::FleetError>(&body)
-                .map(|e| e.code)
-                .unwrap_or_default();
+            let code = fleet_error(&body).map(|e| e.code).unwrap_or_default();
             if code == error_codes::JOB_NOT_CLAIMED_BY_DEVICE {
                 // The claim ended (its lease expired, or another attempt holds the job): the
                 // server will never take this result, so stop retrying it.
