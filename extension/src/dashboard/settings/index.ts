@@ -45,7 +45,7 @@ ${footer('data-save-message', !open)}
 ${card('This browser', '', `<dl class="facts"><dt>Device ID</dt><dd><code>${esc(account.device_id || '—')}</code></dd><dt>Server</dt><dd><code>${esc(account.server_url || '—')}</code></dd><dt>Last check-in</dt><dd>${relativeTime(account.fleet?.last_poll_ms)}</dd><dt>Helper version</dt><dd><code>${esc(snapshot.supervisor_version || '—')}</code></dd></dl>`)}
 ${card('Server and source', '', `<div class="stack">
 ${field('RZN server', `<input name="server_url" placeholder="https://app.rzn.ai" value="${esc(current.server_url || '')}">`, 'Empty uses https://app.rzn.ai. After changing it, sign in again on the Account page.')}
-${field('Source', `<input name="capture_source" placeholder="capture" value="${esc(current.capture_source || '')}">`, 'The pushed source inside the index. Every page read and batch sent is listed in <code>capture/activity.jsonl</code>.')}
+${field('Source', `<input name="capture_source" placeholder="main" value="${esc(current.capture_source || 'main')}">`, 'The pushed source inside the index; <b>main</b> is the index&#39;s first source. Every page read and batch sent is listed in <code>capture/activity.jsonl</code>.')}
 </div>`)}
 ${card('Remote tasks', '', `<div class="stack tight">
 <label class="check"><input data-pause type="checkbox" ${snapshot.paused ? 'checked' : ''}> Pause tasks in this browser</label>

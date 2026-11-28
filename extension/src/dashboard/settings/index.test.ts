@@ -16,6 +16,7 @@ describe('Settings tab DOM', () => {
     const [main, advanced] = [html.slice(0, advancedAt), html.slice(advancedAt)];
     for (const name of ['capture_sites', 'capture_index']) expect(main).toContain(`name="${name}"`);
     expect(main).not.toMatch(/fleet|automation|workflow|server|job|token|log/i);
+    expect(advanced).toContain('name="capture_source" placeholder="main" value="main"');
     for (const text of ['name="server_url"', 'name="capture_source"', 'Retention days', 'Failures only', 'Poll interval', 'dev-1', '1.2.3', 'href="#runs"', 'href="#workflows"', 'href="#logs"', 'data-pause']) expect(advanced).toContain(text);
   });
 
